@@ -11,10 +11,11 @@ import {
   type ReactNode,
 } from "react";
 import {
-  createSession,
+  bootstrapPublicUser,
   clearVoiceTarget,
   getConversationSnapshot,
   getSessionSnapshot,
+  redeemInvite,
   openSessionStream,
   sendSocketDraftAsrTurn,
   sendSocketMessage,
@@ -60,6 +61,7 @@ const SHELL_API_ERROR_HINT =
   "This deployment must proxy /api/* requests to the backend before the shell can load live data.";
 const RESUME_FALLBACK_WARNING_PREFIX = "Could not resume the requested session.";
 const GLOBAL_MESSAGE_AUTO_DISMISS_MS = 6_000;
+const AUTH_REQUIRED_STATUS = "Request failed with status 401";
 
 function describeApiFailure(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) {
@@ -102,6 +104,46 @@ function ShellLoadingPanel() {
       className="glass-panel mx-4 my-4 rounded-[30px] border border-white/80 px-6 py-6 text-[14px] text-muted-foreground md:mx-6 md:my-6 xl:mx-8 xl:my-8"
     >
       Connecting to session…
+    </div>
+  );
+}
+
+function InviteLoginPanel({
+  error,
+  onRedeem,
+}: {
+  error: string | null;
+  onRedeem: (code: string) => Promise<void>;
+}) {
+  const [code, setCode] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  return (
+    <div className="page-wash flex min-h-dvh items-center justify-center bg-[#f5f6f8] px-4 text-[#111827]">
+      <div className="paper-panel w-full max-w-[420px] rounded-[30px] border border-white/80 px-6 py-6 shadow-[0_24px_54px_-40px_rgba(15,23,42,0.22)]">
+        <div className="text-[11px] uppercase tracking-[0.24em] text-[#8d5a62]">Invite access</div>
+        <div className="serif-flow mt-3 text-[32px] tracking-[-0.05em] text-foreground">Newbro</div>
+        <form
+          className="mt-5 space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!code.trim() || submitting) return;
+            setSubmitting(true);
+            void onRedeem(code.trim()).finally(() => setSubmitting(false));
+          }}
+        >
+          <input
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            placeholder="Invite code"
+            className="command-field w-full px-4 py-3 text-[14px] outline-none"
+            autoComplete="one-time-code"
+          />
+          <button disabled={!code.trim() || submitting} className="nb-page-primary-action w-full" type="submit">
+            {submitting ? "Opening..." : "Enter"}
+          </button>
+          {error ? <div className="text-[13px] leading-6 text-red-600">{error}</div> : null}
+        </form>
+      </div>
     </div>
   );
 }
@@ -162,6 +204,9 @@ function useNewbroShellState() {
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [activeShellSessionId, setActiveShellSessionId] = useState<string | null>(null);
+  const [defaultPersonaId, setDefaultPersonaId] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [hasLoadedShellSnapshot, setHasLoadedShellSnapshot] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
   const [shellWarning, setShellWarning] = useState<string | null>(null);
@@ -208,6 +253,13 @@ function useNewbroShellState() {
 
   const { state: voiceSession, start, stop, toggleMute } = useVoiceSession();
 
+  const bootstrapHostedUser = useEffectEvent(async () => {
+    const bootstrap = await bootstrapPublicUser();
+    setDefaultPersonaId(bootstrap.default_persona_id);
+    replaceSessionIdInUrl(bootstrap.session_id);
+    await loadShellSession(bootstrap.session_id);
+  });
+
   useEffect(() => {
     mountedRef.current = true;
 
@@ -223,11 +275,7 @@ function useNewbroShellState() {
           return;
         } catch {
           try {
-            const session = await createSession();
-            if (!mountedRef.current) {
-              return;
-            }
-            await loadShellSession(session.session_id);
+            await bootstrapHostedUser();
             if (!mountedRef.current) {
               return;
             }
@@ -253,17 +301,24 @@ function useNewbroShellState() {
       }
 
       try {
-        const session = await createSession();
-        if (!mountedRef.current) {
-          return;
-        }
-        await loadShellSession(session.session_id);
+        await bootstrapHostedUser();
         if (!mountedRef.current) {
           return;
         }
         startTransition(() => setShellWarning(null));
       } catch (error: unknown) {
         if (!mountedRef.current) {
+          return;
+        }
+        if (error instanceof Error && error.message.includes(AUTH_REQUIRED_STATUS)) {
+          startTransition(() => {
+            setAuthRequired(true);
+            setAuthError(null);
+            setActiveShellSessionId(null);
+            setHasLoadedShellSnapshot(false);
+            setShellWarning(null);
+            setShellError(null);
+          });
           return;
         }
         startTransition(() => {
@@ -389,10 +444,33 @@ function useNewbroShellState() {
     return requestId;
   }, []);
 
+  const redeemInviteCode = useEffectEvent(async (code: string) => {
+    setAuthError(null);
+    try {
+      await redeemInvite(code);
+      if (!mountedRef.current) return;
+      await bootstrapHostedUser();
+      if (!mountedRef.current) return;
+      startTransition(() => {
+        setAuthRequired(false);
+        setAuthError(null);
+        setShellWarning(null);
+      });
+    } catch (error: unknown) {
+      if (!mountedRef.current) return;
+      startTransition(() => {
+        setAuthError(describeApiFailure(error, "Invite could not be redeemed."));
+      });
+    }
+  });
+
   return {
     bros,
     voiceSession,
     activeShellSessionId,
+    defaultPersonaId,
+    authRequired,
+    authError,
     hasLoadedShellSnapshot,
     runtimePersonas,
     executorNodes,
@@ -409,6 +487,7 @@ function useNewbroShellState() {
     toggleVoiceMute: toggleMute,
     sendMessage,
     submitDraftAsrTurn,
+    redeemInviteCode,
     draftSession,
     latestDraftOutputEvent,
     chatMessages,
@@ -421,6 +500,9 @@ const NewbroShellContext = createContext<NewbroShellState | null>(null);
 
 export function NewbroShellProvider({ children }: { children: ReactNode }) {
   const value = useNewbroShellState();
+  if (value.authRequired) {
+    return <InviteLoginPanel error={value.authError} onRedeem={value.redeemInviteCode} />;
+  }
   return (
     <NewbroShellContext.Provider value={value}>
       {children}
@@ -511,6 +593,9 @@ export function HomeShellPage({
   onBroNavigate?: BroNavigator;
 }) {
   const shell = useNewbroShell();
+  if (shell.hasLoadedShellSnapshot && shell.defaultPersonaId) {
+    return <BroDetailShellPage broId={shell.defaultPersonaId} onNavigate={onNavigate} />;
+  }
 
   return (
     <ShellFrame

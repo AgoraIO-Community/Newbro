@@ -2,15 +2,24 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from newbro.api.app import create_app
+from newbro.api.public_auth import PublicAuthStore
+
+
+async def _redeem(client: AsyncClient, app, code: str = "invite-test"):
+    await app.state.public_auth_store.create_invite(code)
+    response = await client.post("/api/auth/invites/redeem", json={"code": code})
+    assert response.status_code == 200
 
 
 @pytest.mark.anyio
-async def test_sessions_v2_create_and_get_snapshot():
+async def test_sessions_v2_create_and_get_snapshot(tmp_path):
     app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver",
     ) as client:
+        await _redeem(client, app)
         response = await client.post("/api/sessions")
         assert response.status_code == 200
         session_id = response.json()["session_id"]

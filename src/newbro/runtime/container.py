@@ -120,3 +120,31 @@ class RuntimeContainer:
                     continue
                 await session.blackboard.delete_persona(persona_id)
         await self.publish_session_snapshots()
+
+    async def sync_user_personas(self, *, session_id: str, personas: list[Persona]) -> None:
+        session = self.get_session(session_id)
+        persisted_by_id = {persona.persona_id: persona for persona in personas}
+        current_personas = {
+            persona.persona_id: persona
+            for persona in await session.blackboard.list_personas()
+        }
+        for persona_id, persisted in persisted_by_id.items():
+            current = current_personas.get(persona_id)
+            if current is None:
+                await session.blackboard.put_persona(persisted)
+                continue
+            await session.blackboard.put_persona(
+                persisted.model_copy(
+                    update={
+                        "status": current.status,
+                        "current_task_id": current.current_task_id,
+                    }
+                )
+            )
+        for persona_id, current in current_personas.items():
+            if persona_id in persisted_by_id:
+                continue
+            if current.status == "busy" or current.current_task_id is not None:
+                continue
+            await session.blackboard.delete_persona(persona_id)
+        await session.publish_snapshot()

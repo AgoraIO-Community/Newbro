@@ -65,6 +65,7 @@ class Settings:
     live_interaction_classifier_interval_seconds: float = 1.0
     cors_allowed_origins: tuple[str, ...] = ()
     git_sha: str | None = None
+    connector_internal_token: str | None = None
 
 
 def _load_shared_config() -> dict[str, Any]:
@@ -186,6 +187,7 @@ def load_settings() -> Settings:
         ),
         cors_allowed_origins=_get_csv("SYNAPSE_CORS_ALLOWED_ORIGINS"),
         git_sha=os.getenv("SYNAPSE_GIT_SHA") or None,
+        connector_internal_token=os.getenv("SYNAPSE_CONNECTOR_INTERNAL_TOKEN") or None,
     )
 
 

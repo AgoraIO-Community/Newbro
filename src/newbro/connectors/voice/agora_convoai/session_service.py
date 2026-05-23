@@ -99,6 +99,13 @@ class AgoraConnectorSessionService:
             missing_requirements=missing,
         )
 
+    def prepared_synapse_session_id(self, prepared_session_id: str) -> str | None:
+        return self._prepared_synapse_session_ids.get(prepared_session_id)
+
+    def bound_synapse_session_id(self, binding_id: str) -> str | None:
+        handle = self._sessions.get(binding_id)
+        return handle.synapse_session_id if handle is not None else None
+
     async def prepare_session(
         self,
         request_payload: ConnectorSessionPrepareRequest,

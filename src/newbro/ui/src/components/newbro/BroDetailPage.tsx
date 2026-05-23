@@ -7,7 +7,16 @@ import {
   type SttSessionPrepareResponse,
   type SttSessionStartResponse,
 } from "../../lib/connector-client";
-import { clearDraft, sendDraft, submitAgoraVoiceEvent, submitTaskCommand } from "../../lib/session-client";
+import {
+  buildExecutorRunCommand,
+  clearDraft,
+  createExecutorNode,
+  revealExecutorNodeConnectCommand,
+  sendDraft,
+  submitAgoraVoiceEvent,
+  submitTaskCommand,
+  updatePersona,
+} from "../../lib/session-client";
 import { loadAgoraBrowserStack } from "../../lib/voice-runtime";
 import { describeProtobufTranscriptPayload, describeTranscriptPayload, extractTranscriptText, type ExtractedSttTranscript } from "./stt-transcript";
 import { BroDetailHeader, DraftBrainPanel, LiveTranscriptPanel, RunnerBrainPanel, VoicePad } from "./visual";
@@ -342,6 +351,10 @@ export function BroDetailPage({
   const [draftActionError, setDraftActionError] = useState<string | null>(null);
   const [stoppingTask, setStoppingTask] = useState(false);
   const [taskActionError, setTaskActionError] = useState<string | null>(null);
+  const [localNodeCommand, setLocalNodeCommand] = useState<string | null>(null);
+  const [localNodeBusy, setLocalNodeBusy] = useState(false);
+  const [localNodeCopied, setLocalNodeCopied] = useState(false);
+  const [localNodeError, setLocalNodeError] = useState<string | null>(null);
   const [mobileDetailPage, setMobileDetailPage] = useState<MobileDetailPage>("draft");
   const resourcesRef = useRef<SttResources | null>(null);
   const submittedRef = useRef<Set<string>>(new Set());
@@ -849,6 +862,43 @@ export function BroDetailPage({
     }
   }
 
+  async function handlePrepareLocalNodeCommand() {
+    if (!sessionId || bro.source !== "runtime" || localNodeBusy) return;
+    setLocalNodeBusy(true);
+    setLocalNodeError(null);
+    onGlobalError?.(null);
+    try {
+      const issue = bro.executorNodeId
+        ? await revealExecutorNodeConnectCommand(sessionId, bro.executorNodeId)
+        : await createExecutorNode(sessionId, {
+            name: `${bro.name} local node`,
+            enabled_executors: ["codex"],
+          });
+      if (!bro.executorNodeId) {
+        await updatePersona(sessionId, bro.id, { executor_node_id: issue.node.node_id });
+      }
+      const command = buildExecutorRunCommand(issue.node.node_id, issue.token, {
+        enabledExecutors: issue.node.enabled_executors,
+        acpxAgent: issue.node.acpx_agent,
+      });
+      setLocalNodeCommand(command);
+      const clipboard = navigator.clipboard;
+      if (clipboard?.writeText) {
+        await clipboard.writeText(command);
+        setLocalNodeCopied(true);
+        window.setTimeout(() => setLocalNodeCopied(false), 1600);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to prepare local node command.";
+      setLocalNodeError(message);
+      onGlobalError?.(message);
+    } finally {
+      if (mountedRef.current) {
+        setLocalNodeBusy(false);
+      }
+    }
+  }
+
   const readyForMic = sttPhase === "ready_mic_off" || sttPhase === "draft_updating";
   const capturing = micActive;
   const transcriptText = acceptedTranscript;
@@ -856,6 +906,8 @@ export function BroDetailPage({
   const draftActionPending = sendingDraft || clearingDraft;
   const canSendDraft = bro.source === "runtime";
   const draftText = streamingDraftText || draftSession?.current_draft?.text || "";
+  const waitingForExecutor = taskRecords?.some((record) => record.status === "waiting_executor")
+    || (Boolean(activeTaskId) && bro.liveState !== "live");
   const mobileTabClass = (page: MobileDetailPage) => (
     `min-h-[40px] flex-1 rounded-lg px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.12em] transition ${
       mobileDetailPage === page
@@ -873,6 +925,14 @@ export function BroDetailPage({
       activeTaskId={activeTaskId}
       stoppingTask={stoppingTask}
       stopTaskError={taskActionError}
+      waitingForExecutor={waitingForExecutor}
+      localNodeCommand={localNodeCommand}
+      localNodeBusy={localNodeBusy}
+      localNodeCopied={localNodeCopied}
+      localNodeError={localNodeError}
+      onPrepareLocalNodeCommand={() => {
+        void handlePrepareLocalNodeCommand();
+      }}
       onStopTask={() => {
         void handleStopTask();
       }}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urlparse, urlunparse
@@ -73,7 +74,9 @@ class HttpNewbroConnectorTransport:
             base_url=self._base_url,
             timeout=request_timeout_seconds,
             trust_env=False,
+            headers=_internal_connector_headers(),
         )
+        self._websocket_headers = _internal_connector_headers()
 
     async def create_session(self) -> str:
         response = await self._request("POST", f"{API_PREFIX}/sessions")
@@ -141,6 +144,7 @@ class HttpNewbroConnectorTransport:
             async with websockets.connect(
                 ws_url,
                 proxy=None,
+                additional_headers=self._websocket_headers or None,
                 open_timeout=self._request_timeout_seconds,
                 close_timeout=self._request_timeout_seconds,
             ) as websocket:
@@ -189,6 +193,7 @@ class HttpNewbroConnectorTransport:
             async with websockets.connect(
                 ws_url,
                 proxy=None,
+                additional_headers=self._websocket_headers or None,
                 open_timeout=self._request_timeout_seconds,
                 close_timeout=self._request_timeout_seconds,
             ) as websocket:
@@ -249,3 +254,8 @@ class HttpNewbroConnectorTransport:
         scheme = "wss" if parsed.scheme == "https" else "ws"
         path = parsed.path.rstrip("/") + f"{API_PREFIX}/sessions/{session_id}/stream"
         return urlunparse((scheme, parsed.netloc, path, "", "", ""))
+
+
+def _internal_connector_headers() -> dict[str, str]:
+    token = os.getenv("SYNAPSE_CONNECTOR_INTERNAL_TOKEN")
+    return {"X-Newbro-Connector-Token": token} if token else {}

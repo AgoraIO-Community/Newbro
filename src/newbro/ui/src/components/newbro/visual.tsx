@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, CheckCircle2, Clock, FileText, Mic, PencilLine, Play, SendHorizontal, Trash2 } from "lucide-react";
+import { ArrowLeft, Bot, CheckCircle2, Clock, Copy, FileText, Mic, PencilLine, Play, SendHorizontal, Trash2 } from "lucide-react";
 import type { CSSProperties, KeyboardEventHandler, PointerEventHandler, ReactNode } from "react";
 import type { AgentEvent, TaskSummary } from "../../types";
 import { MarkdownText } from "../ui/markdown-text";
@@ -239,6 +239,12 @@ export function RunnerBrainPanel({
   activeTaskId,
   stoppingTask,
   stopTaskError,
+  waitingForExecutor,
+  localNodeCommand,
+  localNodeBusy,
+  localNodeCopied,
+  localNodeError,
+  onPrepareLocalNodeCommand,
   onStopTask,
 }: {
   bro: BroCardModel;
@@ -248,6 +254,12 @@ export function RunnerBrainPanel({
   activeTaskId: string | null;
   stoppingTask: boolean;
   stopTaskError?: string | null;
+  waitingForExecutor?: boolean;
+  localNodeCommand?: string | null;
+  localNodeBusy?: boolean;
+  localNodeCopied?: boolean;
+  localNodeError?: string | null;
+  onPrepareLocalNodeCommand?: () => void;
   onStopTask: () => void;
 }) {
   const isBusy = bro.status === "busy";
@@ -298,6 +310,37 @@ export function RunnerBrainPanel({
       {stopTaskError ? (
         <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-600" role="status">
           {stopTaskError}
+        </div>
+      ) : null}
+
+      {waitingForExecutor ? (
+        <div className="nb-card px-4 py-4">
+          <div className="nb-card-label text-[#9ca3af]">Local node</div>
+          <div className="mt-2 text-[16px] font-semibold tracking-[-0.02em] text-[#111827]">
+            Connect Codex to run this task
+          </div>
+          <p className="mt-2 text-[13px] leading-6 text-[#6b7280]">
+            Start a local executor node and this waiting task can continue when the node checks in.
+          </p>
+          <button
+            type="button"
+            className="nb-page-primary-action mt-4 w-full"
+            disabled={localNodeBusy}
+            onClick={onPrepareLocalNodeCommand}
+          >
+            <Copy className="h-3.5 w-3.5" strokeWidth={1.8} />
+            {localNodeBusy ? "Preparing" : localNodeCopied ? "Copied" : "Copy local node command"}
+          </button>
+          {localNodeCommand ? (
+            <div className="nb-mono-field subtle-scrollbar mt-3 overflow-x-auto px-3 py-3 text-[12px] leading-6">
+              {localNodeCommand}
+            </div>
+          ) : null}
+          {localNodeError ? (
+            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-600" role="status">
+              {localNodeError}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

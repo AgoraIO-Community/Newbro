@@ -3,6 +3,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Request
 
 from newbro.api.models import CommandRequest, CommandResponse
+from newbro.api.public_auth import require_session_owner
 from newbro.communication.resolver import TaskResolver, describe_candidates
 from newbro.observability.context import bind_diagnostic_context
 from newbro.protocol import TaskCommand
@@ -16,6 +17,7 @@ async def submit_command(
     request: CommandRequest,
     http_request: Request,
 ) -> CommandResponse:
+    await require_session_owner(http_request, session_id)
     container = http_request.app.state.runtime_container
     try:
         session = container.get_session(session_id)

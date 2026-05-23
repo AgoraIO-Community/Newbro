@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from newbro.api.logging import install_access_log_filters
 from newbro.api.paths import API_PREFIX, api_path
+from newbro.api.public_auth import PublicAuthStore
+from newbro.api.routes.auth import router as auth_router
 from newbro.api.routes.commands import router as commands_router
 from newbro.api.routes.drafts import router as drafts_router
 from newbro.api.routes.executor_nodes import router as executor_nodes_router
@@ -28,6 +30,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
         redoc_url=api_path("/redoc"),
     )
     app.state.runtime_container = container
+    app.state.public_auth_store = PublicAuthStore()
 
     install_access_log_filters(container.settings)
     if container.settings.cors_allowed_origins:
@@ -38,6 +41,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
             allow_headers=["*"],
         )
     app.include_router(health_router, prefix=API_PREFIX)
+    app.include_router(auth_router, prefix=API_PREFIX)
     app.include_router(sessions_router, prefix=API_PREFIX)
     app.include_router(messages_router, prefix=API_PREFIX)
     app.include_router(commands_router, prefix=API_PREFIX)

@@ -13,6 +13,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from newbro.api.paths import API_PREFIX, api_path
+from newbro.api.public_auth import require_session_owner
 from newbro.connectors.base import (
     ActiveConnectorBinding,
     BaseConnectorModule,
@@ -118,7 +119,10 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/sessions/prepare", response_model=ConnectorSessionPrepareResponse)
         async def prepare_session(
             payload: ConnectorSessionPrepareRequest,
+            request: Request,
         ) -> ConnectorSessionPrepareResponse:
+            if payload.synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, payload.synapse_session_id)
             try:
                 return await session_service.prepare_session(payload)
             except ConvoAIConfigurationError as exc:
@@ -129,7 +133,11 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/sessions/activate", response_model=ConnectorSessionActivateResponse)
         async def activate_session(
             payload: ConnectorSessionActivateRequest,
+            request: Request,
         ) -> ConnectorSessionActivateResponse:
+            synapse_session_id = session_service.prepared_synapse_session_id(payload.prepared_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return await session_service.activate_session(payload)
             except KeyError as exc:
@@ -146,7 +154,11 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/sessions/stop", response_model=ConnectorSessionStopResponse)
         async def stop_session(
             payload: ConnectorSessionStopRequest,
+            request: Request,
         ) -> ConnectorSessionStopResponse:
+            synapse_session_id = session_service.bound_synapse_session_id(payload.binding_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 await chat_completion_turns.flush_now(payload.binding_id)
                 return await session_service.stop_session(payload)
@@ -159,7 +171,9 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/stt/sessions/prepare", response_model=SttSessionPrepareResponse)
         async def prepare_stt_session(
             payload: SttSessionPrepareRequest,
+            request: Request,
         ) -> SttSessionPrepareResponse:
+            await _require_public_session_owner_if_enabled(request, payload.synapse_session_id)
             try:
                 return stt_service.prepare_session(payload)
             except ConvoAIConfigurationError as exc:
@@ -168,7 +182,11 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/stt/sessions/start", response_model=SttSessionStartResponse)
         async def start_stt_session(
             payload: SttSessionStartRequest,
+            request: Request,
         ) -> SttSessionStartResponse:
+            synapse_session_id = stt_service.prepared_synapse_session_id(payload.prepared_stt_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return await stt_service.start_session(payload)
             except KeyError as exc:
@@ -181,7 +199,11 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/stt/sessions/heartbeat", response_model=SttSessionHeartbeatResponse)
         async def heartbeat_stt_session(
             payload: SttSessionHeartbeatRequest,
+            request: Request,
         ) -> SttSessionHeartbeatResponse:
+            synapse_session_id = stt_service.active_synapse_session_id(payload.stt_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return stt_service.heartbeat_session(payload)
             except KeyError as exc:
@@ -190,7 +212,15 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/stt/sessions/leave", response_model=SttSessionStopResponse)
         async def leave_stt_session(
             payload: SttSessionLeaveRequest,
+            request: Request,
         ) -> SttSessionStopResponse:
+            synapse_session_id = None
+            if payload.stt_session_id:
+                synapse_session_id = stt_service.active_synapse_session_id(payload.stt_session_id)
+            if payload.prepared_stt_session_id:
+                synapse_session_id = stt_service.prepared_synapse_session_id(payload.prepared_stt_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return await stt_service.leave_session(payload)
             except KeyError as exc:
@@ -199,7 +229,10 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         @router.get("/stt/sessions/{stt_session_id}", response_model=SttSessionQueryResponse)
-        async def query_stt_session(stt_session_id: str) -> SttSessionQueryResponse:
+        async def query_stt_session(stt_session_id: str, request: Request) -> SttSessionQueryResponse:
+            synapse_session_id = stt_service.active_synapse_session_id(stt_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return await stt_service.query_session(stt_session_id)
             except KeyError as exc:
@@ -210,7 +243,11 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/stt/sessions/stop", response_model=SttSessionStopResponse)
         async def stop_stt_session(
             payload: SttSessionStopRequest,
+            request: Request,
         ) -> SttSessionStopResponse:
+            synapse_session_id = stt_service.active_synapse_session_id(payload.stt_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return await stt_service.stop_session(payload.stt_session_id)
             except KeyError as exc:
@@ -316,6 +353,12 @@ def create_headless_app(settings: AgoraConvoAIConnectorSettings | None = None) -
     )
     app.include_router(AgoraConvoAIConnectorModule(settings=settings).build_router())
     return app
+
+
+async def _require_public_session_owner_if_enabled(request: Request, session_id: str) -> None:
+    if not hasattr(request.app.state, "public_auth_store"):
+        return
+    await require_session_owner(request, session_id)
 
 
 @dataclass(slots=True)

@@ -6,6 +6,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from newbro.api.public_auth import require_public_user, require_session_owner
 from newbro.protocol import AgentEvent, AgentEventDelivery, AgentEventImportance, DraftSession, RuntimeDecision
 from newbro.runtime.drafts import (
     DraftRewriteInvalidOutput,
@@ -71,7 +72,7 @@ class AgentEventRequest(BaseModel):
 
 @router.get("/sessions/{session_id}/draft", response_model=DraftSession | None)
 async def get_draft(session_id: str, http_request: Request) -> DraftSession | None:
-    session = _get_session(http_request, session_id)
+    session = await _get_session(http_request, session_id)
     return session.draft_manager.active_session
 
 
@@ -81,7 +82,7 @@ async def submit_asr_turn(
     request: AsrTurnRequest,
     http_request: Request,
 ) -> DraftSession:
-    session = _get_session(http_request, session_id)
+    session = await _get_session(http_request, session_id)
     try:
         draft_session = await session.append_asr_turn_to_draft(
             raw_text=request.raw_text,
@@ -109,7 +110,7 @@ async def send_draft(
     request: SendDraftRequest,
     http_request: Request,
 ) -> SendDraftResponse:
-    session = _get_session(http_request, session_id)
+    session = await _get_session(http_request, session_id)
     try:
         active = session.draft_manager.active_session
         if request.draft_session_id is not None and active is not None and active.id != request.draft_session_id:
@@ -138,9 +139,13 @@ async def send_draft(
 
 @router.post("/dispatch-plans/{plan_id}/confirm", response_model=RuntimeDecision)
 async def confirm_dispatch_plan(plan_id: str, http_request: Request) -> RuntimeDecision:
+    user = await require_public_user(http_request)
     container = http_request.app.state.runtime_container
     session = container.find_session_by_dispatch_plan(plan_id)
     if session is None:
+        raise HTTPException(status_code=404, detail="Dispatch plan not found.")
+    store = http_request.app.state.public_auth_store
+    if not await store.user_owns_session(user_id=user.user_id, session_id=session.session_id):
         raise HTTPException(status_code=404, detail="Dispatch plan not found.")
     try:
         return await session.confirm_active_dispatch(plan_id=plan_id)
@@ -150,9 +155,13 @@ async def confirm_dispatch_plan(plan_id: str, http_request: Request) -> RuntimeD
 
 @router.get("/tasks/{task_id}/status", response_model=TaskStatusResponse)
 async def get_task_status(task_id: str, http_request: Request) -> TaskStatusResponse:
+    user = await require_public_user(http_request)
     container = http_request.app.state.runtime_container
     session = await container.find_session_by_task(task_id)
     if session is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    store = http_request.app.state.public_auth_store
+    if not await store.user_owns_session(user_id=user.user_id, session_id=session.session_id):
         raise HTTPException(status_code=404, detail="Task not found.")
     task = await session.blackboard.get_task(task_id)
     if task is None:
@@ -168,9 +177,13 @@ async def get_task_status(task_id: str, http_request: Request) -> TaskStatusResp
 
 @router.post("/tasks/{task_id}/stop", response_model=StopTaskResponse)
 async def stop_task(task_id: str, http_request: Request) -> StopTaskResponse:
+    user = await require_public_user(http_request)
     container = http_request.app.state.runtime_container
     session = await container.find_session_by_task(task_id)
     if session is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    store = http_request.app.state.public_auth_store
+    if not await store.user_owns_session(user_id=user.user_id, session_id=session.session_id):
         raise HTTPException(status_code=404, detail="Task not found.")
     decision = await session.stop_active_task_decision(task_id=task_id)
     task = await session.blackboard.get_task(task_id)
@@ -188,9 +201,13 @@ async def ingest_agent_event(
     request: AgentEventRequest,
     http_request: Request,
 ) -> RuntimeDecision:
+    user = await require_public_user(http_request)
     container = http_request.app.state.runtime_container
     session = await container.find_session_by_task(task_id)
     if session is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    store = http_request.app.state.public_auth_store
+    if not await store.user_owns_session(user_id=user.user_id, session_id=session.session_id):
         raise HTTPException(status_code=404, detail="Task not found.")
     event = AgentEvent(
         event_id=f"agent-event-{uuid4().hex[:8]}",
@@ -212,7 +229,7 @@ async def clear_draft(
     request: ClearDraftRequest,
     http_request: Request,
 ) -> ClearDraftResponse:
-    session = _get_session(http_request, session_id)
+    session = await _get_session(http_request, session_id)
     active = session.draft_manager.active_session
     if request.draft_session_id is not None and active is not None and active.id != request.draft_session_id:
         raise HTTPException(status_code=409, detail="Draft session does not match the active draft.")
@@ -221,7 +238,8 @@ async def clear_draft(
     return ClearDraftResponse()
 
 
-def _get_session(http_request: Request, session_id: str):
+async def _get_session(http_request: Request, session_id: str):
+    await require_session_owner(http_request, session_id)
     container = http_request.app.state.runtime_container
     try:
         return container.get_session(session_id)

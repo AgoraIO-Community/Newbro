@@ -3,6 +3,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Request
 
 from newbro.api.models import AgoraVoiceEvent, MessageRequest, MessageResponse, ToolInvocationSummary
+from newbro.api.public_auth import require_session_owner_or_internal
 from newbro.protocol import RuntimeDecision
 
 router = APIRouter()
@@ -14,6 +15,7 @@ async def submit_agora_event(
     event: AgoraVoiceEvent,
     http_request: Request,
 ) -> RuntimeDecision:
+    await require_session_owner_or_internal(http_request, session_id)
     if event.session_id != session_id:
         raise HTTPException(status_code=400, detail="Agora voice event session_id does not match path.")
     container = http_request.app.state.runtime_container
@@ -34,6 +36,7 @@ async def submit_message(
     request: MessageRequest,
     http_request: Request,
 ) -> MessageResponse:
+    await require_session_owner_or_internal(http_request, session_id)
     container = http_request.app.state.runtime_container
     try:
         session = container.get_session(session_id)

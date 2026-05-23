@@ -218,3 +218,5 @@ Short log of important design decisions and changes for Newbro.
 - Made confirmation with no active Draft a silent no-op and required successful voice sends to publish a cleared Draft snapshot.
 - Clarified that active-draft utterances changing destination, date, budget, target, recipient, constraints, requirements, or deliverable content classify as Draft corrections rather than confirmations.
 - Allowed a meaningful active-Draft correction to reopen one send-confirmation prompt for the corrected revision, while keeping duplicate finals and non-correction refinements silent.
+- Added an invite-gated public onboarding path with user-owned sessions, personas, and executor nodes, plus a Cloudflare-fronted Ubuntu VPS deployment path driven by GitHub Actions SSH/rsync.
+- Added `newbro invite create` for hosted operators and a Bro Detail waiting-executor path that creates or reveals a copyable local Codex node command for the current user-owned Bro.

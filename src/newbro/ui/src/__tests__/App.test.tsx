@@ -84,6 +84,10 @@ const socketHarness = vi.hoisted(() => {
 
 const clientMock = vi.hoisted(() => ({
   createSession: vi.fn(),
+  bootstrapPublicUser: vi.fn(),
+  redeemInvite: vi.fn(),
+  getCurrentUser: vi.fn(),
+  logoutPublicUser: vi.fn(),
   getSessionSnapshot: vi.fn(),
   getConversationSnapshot: vi.fn(async (sessionId: string) => ({
     session_id: sessionId,
@@ -372,6 +376,15 @@ describe("Newbro voice shell", () => {
     socketHarness.reset();
     window.history.replaceState({}, "", "/");
     clientMock.createSession.mockResolvedValue({ session_id: "session-1" });
+    clientMock.bootstrapPublicUser.mockResolvedValue({
+      user: { user_id: "user-1" },
+      session_id: "session-1",
+      default_persona_id: null,
+      default_bro_detail_session_id: null,
+    });
+    clientMock.redeemInvite.mockResolvedValue({ user: { user_id: "user-1" } });
+    clientMock.getCurrentUser.mockResolvedValue({ user: { user_id: "user-1" } });
+    clientMock.logoutPublicUser.mockResolvedValue({ ok: true });
     clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => ({
       session_id: sessionId,
       tasks: [],
@@ -391,6 +404,35 @@ describe("Newbro voice shell", () => {
       session_id: sessionId,
       conversation_history: [],
     }));
+    clientMock.createExecutorNode.mockResolvedValue({
+      node: {
+        node_id: "node-1",
+        name: "Local node",
+        enabled_executors: ["codex"],
+        connected_executors: [],
+        connection_status: "disconnected",
+        token_hint: "tok...0001",
+        last_connected_at: null,
+        last_seen_at: null,
+        acpx_agent: null,
+      },
+      token: "token-1",
+    });
+    clientMock.revealExecutorNodeConnectCommand.mockResolvedValue({
+      node: {
+        node_id: "node-1",
+        name: "Local node",
+        enabled_executors: ["codex"],
+        connected_executors: [],
+        connection_status: "disconnected",
+        token_hint: "tok...0001",
+        last_connected_at: null,
+        last_seen_at: null,
+        acpx_agent: null,
+      },
+      token: "token-1",
+    });
+    clientMock.updatePersona.mockResolvedValue({});
   });
 
   it("boots into an explicit empty interaction-memory state", async () => {
@@ -411,9 +453,23 @@ describe("Newbro voice shell", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText("Atlas")).toBeInTheDocument();
 
-    await waitFor(() => expect(clientMock.createSession).toHaveBeenCalled());
+    await waitFor(() => expect(clientMock.bootstrapPublicUser).toHaveBeenCalled());
     await waitFor(() => expect(clientMock.getSessionSnapshot).toHaveBeenCalledWith("session-1"));
     expect(window.location.search).toBe("?sid=session-1");
+  });
+
+  it("boots invited users directly into their default Bro detail", async () => {
+    clientMock.bootstrapPublicUser.mockResolvedValueOnce({
+      user: { user_id: "user-1" },
+      session_id: "session-1",
+      default_persona_id: "atlas",
+      default_bro_detail_session_id: "bro-detail-atlas",
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Bro detail")).toBeInTheDocument();
+    await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-1", "atlas"));
   });
 
   it("starts the shell voice control through the Conversational AI connector path", async () => {
@@ -1786,7 +1842,7 @@ describe("Newbro voice shell", () => {
     render(<App />);
 
     await waitFor(() => expect(clientMock.getSessionSnapshot).toHaveBeenCalledWith("session-existing"));
-    expect(clientMock.createSession).not.toHaveBeenCalled();
+    expect(clientMock.bootstrapPublicUser).not.toHaveBeenCalled();
     expect(await screen.findByTestId("bros-panel")).toBeInTheDocument();
     expect(screen.queryByText("Session session-existing")).not.toBeInTheDocument();
     expect(window.location.search).toBe("?sid=session-existing");
@@ -1794,7 +1850,12 @@ describe("Newbro voice shell", () => {
 
   it("shows resume fallback in a floating global message that auto-dismisses", async () => {
     vi.useFakeTimers();
-    clientMock.createSession.mockResolvedValueOnce({ session_id: "session-2" });
+    clientMock.bootstrapPublicUser.mockResolvedValueOnce({
+      user: { user_id: "user-1" },
+      session_id: "session-2",
+      default_persona_id: null,
+      default_bro_detail_session_id: null,
+    });
     clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
       if (sessionId === "session-missing") {
         throw new Error("Request failed with status 404");
@@ -1841,7 +1902,7 @@ describe("Newbro voice shell", () => {
       vi.advanceTimersByTime(1);
     });
     expect(screen.queryByTestId("global-message")).not.toBeInTheDocument();
-    expect(clientMock.createSession).toHaveBeenCalledTimes(1);
+    expect(clientMock.bootstrapPublicUser).toHaveBeenCalledTimes(1);
     expect(clientMock.getSessionSnapshot).toHaveBeenNthCalledWith(1, "session-missing");
     expect(clientMock.getSessionSnapshot).toHaveBeenNthCalledWith(2, "session-2");
     expect(window.location.search).toBe("?sid=session-2");
@@ -1980,7 +2041,7 @@ describe("Newbro voice shell", () => {
     expect(await screen.findByText("Worker Bros")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/bros");
     expect(window.location.search).toBe("?sid=session-1");
-    expect(clientMock.createSession).not.toHaveBeenCalled();
+    expect(clientMock.bootstrapPublicUser).not.toHaveBeenCalled();
     expect(clientMock.getSessionSnapshot).toHaveBeenCalledWith("session-1");
   });
 
@@ -1998,7 +2059,7 @@ describe("Newbro voice shell", () => {
   });
 
   it("shows a shell-level API error instead of blank data when bootstrap fails", async () => {
-    clientMock.createSession.mockRejectedValueOnce(new Error("Request failed with status 404"));
+    clientMock.bootstrapPublicUser.mockRejectedValueOnce(new Error("Request failed with status 404"));
 
     const router = getRouter();
     render(<RouterProvider router={router} />);
@@ -2373,6 +2434,66 @@ describe("Newbro voice shell", () => {
     expect(statusIcon).not.toHaveClass("nb-bot-orb-active");
     expect(statusIcon.querySelector(".nb-live-dot")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop Task" })).toBeDisabled();
+  });
+
+  it("shows a copyable local node command when a Bro task is waiting for an executor", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce({
+      session_id: "session-existing",
+      tasks: [
+        {
+          task_id: "task-waiting",
+          root_task_id: "task-waiting",
+          parent_task_id: null,
+          title: "Run generated draft",
+          goal: "Run the generated draft.",
+          status: "waiting_executor",
+          priority: 5,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: "workspace-task-waiting",
+          task_revision: 0,
+          latest_instruction: "Run the generated draft.",
+          metadata: { persona_id: "persona-rook" },
+        },
+      ],
+      execution_sessions: [],
+      execution_runs: [],
+      execution_modes: [],
+      bindings: [],
+      summaries: [],
+      notification_candidates: [],
+      personas: [
+        {
+          persona_id: "persona-rook",
+          name: "Rook",
+          avatar: "bro",
+          base_prompt: "",
+          executor_node_id: null,
+          status: "busy",
+          current_task_id: "task-waiting",
+        },
+      ],
+      interaction_requests: [],
+      attention_items: [],
+      executor_capabilities: [],
+      executor_nodes: [],
+    });
+    window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const copyButton = await screen.findByRole("button", { name: "Copy local node command" });
+    fireEvent.click(copyButton);
+
+    await waitFor(() => expect(clientMock.createExecutorNode).toHaveBeenCalledWith("session-existing", {
+      name: "Rook local node",
+      enabled_executors: ["codex"],
+    }));
+    expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "persona-rook", {
+      executor_node_id: "node-1",
+    });
+    expect(await screen.findByText(/newbro executor run/)).toBeInTheDocument();
   });
 
   it("submits a cancel command from the Bro detail Stop Task button", async () => {

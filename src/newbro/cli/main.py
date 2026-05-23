@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from dataclasses import dataclass
 import getpass
 import os
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import secrets
 from uuid import uuid4
 
 from newbro.config_home import (
@@ -185,6 +187,12 @@ def build_parser() -> argparse.ArgumentParser:
     service_subparsers.add_parser("stop", help="Stop the installed systemd service.")
     service_subparsers.add_parser("restart", help="Restart the installed systemd service.")
 
+    invite_parser = subparsers.add_parser("invite", help="Manage public invite access.")
+    invite_subparsers = invite_parser.add_subparsers(dest="invite_command", required=True)
+    invite_create_parser = invite_subparsers.add_parser("create", help="Create or replace an invite code.")
+    invite_create_parser.add_argument("code", nargs="?", help="Invite code to create. Generated when omitted.")
+    invite_create_parser.add_argument("--email", help="Optional email label for the invite.")
+
     return parser
 
 
@@ -219,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
             "connector": cmd_connector,
             "executor": cmd_executor,
             "service": cmd_service,
+            "invite": cmd_invite,
         }
         return handlers[args.command](args)
     except CliError as exc:
@@ -375,6 +384,24 @@ def cmd_service(args: argparse.Namespace) -> int:
     if args.service_command in {"start", "stop", "restart"}:
         return cmd_service_lifecycle(args.service_command)
     raise CliError(f"Unknown service command: {args.service_command}")
+
+
+def cmd_invite(args: argparse.Namespace) -> int:
+    if args.invite_command == "create":
+        return cmd_invite_create(args)
+    raise CliError(f"Unknown invite command: {args.invite_command}")
+
+
+def cmd_invite_create(args: argparse.Namespace) -> int:
+    from newbro.api.public_auth import PublicAuthStore
+
+    code = args.code.strip() if args.code else secrets.token_urlsafe(12)
+    if not code:
+        raise CliError("Invite code cannot be empty.")
+    store = PublicAuthStore()
+    asyncio.run(store.create_invite(code, email=args.email))
+    print(code)
+    return 0
 
 
 def cmd_connector_setup(_args: argparse.Namespace) -> int:

@@ -5,20 +5,19 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Request
 
 from newbro.api.models import PersonaCreateRequest, PersonaUpdateRequest
-from newbro.communication.persona_pool import load_personas_from_file, save_personas_to_file
-from newbro.protocol import Persona
+from newbro.api.public_auth import PublicAuthError, require_session_owner
 
 router = APIRouter()
 
 
 @router.get("/sessions/{session_id}/personas")
 async def list_personas(session_id: str, request: Request):
+    user = await require_session_owner(request, session_id)
     container = request.app.state.runtime_container
-    try:
-        container.get_session(session_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return load_personas_from_file()
+    store = request.app.state.public_auth_store
+    personas = await store.list_personas(user_id=user.user_id)
+    await container.sync_user_personas(session_id=session_id, personas=personas)
+    return personas
 
 
 @router.post("/sessions/{session_id}/personas", status_code=201)
@@ -27,28 +26,30 @@ async def create_persona(
     body: PersonaCreateRequest,
     request: Request,
 ):
+    user = await require_session_owner(request, session_id)
     container = request.app.state.runtime_container
-    try:
-        container.get_session(session_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    store = request.app.state.public_auth_store
     if not body.name.strip():
         raise HTTPException(status_code=400, detail="Persona name is required.")
-    if body.executor_node_id is not None and not await container.executor_node_manager.node_exists(body.executor_node_id):
+    if body.executor_node_id is not None and not await store.user_owns_executor_node(
+        user_id=user.user_id,
+        node_id=body.executor_node_id,
+    ):
         raise HTTPException(status_code=400, detail=f"Executor node '{body.executor_node_id}' not found.")
-    normalized_name = body.name.strip()
-    persona_id = _generated_persona_id(normalized_name)
-    personas = load_personas_from_file()
-    persona = Persona(
-        persona_id=persona_id,
-        name=normalized_name,
-        avatar=body.avatar,
-        base_prompt=body.base_prompt,
-        executor_node_id=body.executor_node_id,
+    try:
+        persona = await store.create_persona(
+            user_id=user.user_id,
+            name=body.name.strip(),
+            avatar=body.avatar,
+            base_prompt=body.base_prompt,
+            executor_node_id=body.executor_node_id,
+        )
+    except PublicAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await container.sync_user_personas(
+        session_id=session_id,
+        personas=await store.list_personas(user_id=user.user_id),
     )
-    updated_personas = [*personas, persona]
-    save_personas_to_file(updated_personas)
-    await container.sync_persisted_personas(updated_personas)
     return persona
 
 
@@ -59,12 +60,10 @@ async def update_persona(
     body: PersonaUpdateRequest,
     request: Request,
 ):
+    user = await require_session_owner(request, session_id)
     container = request.app.state.runtime_container
-    try:
-        container.get_session(session_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    personas = load_personas_from_file()
+    store = request.app.state.public_auth_store
+    personas = await store.list_personas(user_id=user.user_id)
     persona = next((item for item in personas if item.persona_id == persona_id), None)
     if persona is None:
         raise HTTPException(status_code=404, detail=f"Persona '{persona_id}' not found.")
@@ -82,19 +81,27 @@ async def update_persona(
             raise HTTPException(status_code=400, detail="Persona base prompt is required.")
         updates["base_prompt"] = body.base_prompt
     if "executor_node_id" in body.model_fields_set:
-        if body.executor_node_id is not None and not await container.executor_node_manager.node_exists(body.executor_node_id):
+        if body.executor_node_id is not None and not await store.user_owns_executor_node(
+            user_id=user.user_id,
+            node_id=body.executor_node_id,
+        ):
             raise HTTPException(status_code=400, detail=f"Executor node '{body.executor_node_id}' not found.")
         updates["executor_node_id"] = body.executor_node_id
         if body.executor_node_id != persona.executor_node_id:
-            updates["bro_detail_session_id"] = _generated_bro_detail_session_id()
-    updated = persona.model_copy(update=updates) if updates else persona
+            updates["bro_detail_session_id"] = f"bro-detail-{uuid4().hex[:8]}"
+    if not updates:
+        return persona
+    try:
+        updated = await store.update_persona(user_id=user.user_id, persona_id=persona_id, updates=updates)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Persona '{persona_id}' not found.") from exc
+    except PublicAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if updates:
-        updated_personas = [
-            updated if item.persona_id == persona_id else item
-            for item in personas
-        ]
-        save_personas_to_file(updated_personas)
-        await container.sync_persisted_personas(updated_personas)
+        await container.sync_user_personas(
+            session_id=session_id,
+            personas=await store.list_personas(user_id=user.user_id),
+        )
     return updated
 
 
@@ -104,27 +111,18 @@ async def delete_persona(
     persona_id: str,
     request: Request,
 ):
+    user = await require_session_owner(request, session_id)
     container = request.app.state.runtime_container
-    try:
-        container.get_session(session_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    personas = load_personas_from_file()
+    store = request.app.state.public_auth_store
+    personas = await store.list_personas(user_id=user.user_id)
     persona = next((item for item in personas if item.persona_id == persona_id), None)
     if persona is None:
         raise HTTPException(status_code=404, detail=f"Persona '{persona_id}' not found.")
     if await container.persona_is_busy(persona_id):
         raise HTTPException(status_code=409, detail=f"Persona '{persona_id}' is busy and cannot be deleted.")
-    updated_personas = [item for item in personas if item.persona_id != persona_id]
-    save_personas_to_file(updated_personas)
-    await container.sync_persisted_personas(updated_personas)
+    await store.delete_persona(user_id=user.user_id, persona_id=persona_id)
+    await container.sync_user_personas(
+        session_id=session_id,
+        personas=await store.list_personas(user_id=user.user_id),
+    )
     return {"deleted": persona_id}
-
-
-def _generated_persona_id(name: str) -> str:
-    slug = "-".join(name.strip().lower().split())
-    return f"persona-{slug or 'bro'}-{uuid4().hex[:8]}"
-
-
-def _generated_bro_detail_session_id() -> str:
-    return f"bro-detail-{uuid4().hex[:8]}"

@@ -105,6 +105,48 @@ export async function createSession(): Promise<SessionResponse> {
   return (await ensureOk(response)).json();
 }
 
+export interface PublicUser {
+  user_id: string;
+  email: string | null;
+}
+
+export interface AuthMeResponse {
+  user: PublicUser;
+}
+
+export interface PublicBootstrapResponse {
+  user: PublicUser;
+  session_id: string;
+  default_persona_id: string;
+  default_bro_detail_session_id: string;
+}
+
+export async function redeemInvite(code: string): Promise<AuthMeResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/auth/invites/redeem`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  return (await ensureOk(response)).json();
+}
+
+export async function getCurrentUser(): Promise<AuthMeResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/auth/me`));
+  return (await ensureOk(response)).json();
+}
+
+export async function logoutPublicUser(): Promise<void> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/auth/logout`), {
+    method: "POST",
+  });
+  await ensureOk(response);
+}
+
+export async function bootstrapPublicUser(): Promise<PublicBootstrapResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/me/bootstrap`));
+  return (await ensureOk(response)).json();
+}
+
 export async function getSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
   const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}`));
   return (await ensureOk(response)).json();
