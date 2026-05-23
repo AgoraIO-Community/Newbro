@@ -23,12 +23,17 @@ Core communication policy:
 - the dispatch gate is deterministic and is the final authority for starting execution
 - the default execution mode for draft-created work is read-only/proposal-first; code modification and side effects require explicit confirmation
 - free-form utterance meaning is produced by the Communication Brain interaction-classifier boundary, not by runtime transcript keyword checks
+- live ConvoAI transcript snapshots may run the interaction classifier at the configured cadence, defaulting to about 1 second, so the current Draft can update before callback finality
+- live partial classification should treat concrete task-shaped context as draft-worthy once the likely work product is clear enough to draft, even before the user finishes the final request phrase
+- repeated live delegation/correction classifications refine the same active Draft revision stream instead of creating one durable ASR turn per partial transcript
+- final or coalesced transcript callbacks stabilize/checkpoint the live Draft when newer, but they are not the responsiveness source of truth; matching finals reuse the existing live draft revision instead of re-running classifier and draft rewrite
 - production runtime builds a model-backed interaction classifier from the configured OpenAI-compatible provider when available; without that classifier the quiet runtime fails closed to `uncertain`/clarification for final free-form turns
 - the quiet runtime returns `RuntimeDecision` objects with `should_speak`, `response_text`, UI updates, state updates, and task/plan identifiers
 - draft micro-updates and low-importance progress are UI/blackboard-first and silent by default
 - spoken responses are reserved for confirmation, clarification, blocked state, completion, explicit status queries, permission/risk, and urgent events
 - ConvoAI voice input is Bro-detail scoped; the active Bro detail page supplies the target persona, so the communication path must not ask which Bro should handle that utterance
 - Agora ConvoAI transcript and lifecycle callbacks enter through typed runtime events, and only the resulting `RuntimeDecision.should_speak` controls whether the connector returns TTS content
+- Send freezes the current Draft revision id and dispatches only when that revision is still current; stale revision sends are rejected before task creation
 - in `newbro v0`, ASR turns update a mutable Draft and only Send creates an immutable Task contract
 - tool success is an internal fact
 - user-facing replies should express action commitment

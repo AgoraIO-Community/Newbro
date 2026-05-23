@@ -7,7 +7,7 @@ import {
   type SttSessionPrepareResponse,
   type SttSessionStartResponse,
 } from "../../lib/connector-client";
-import { clearDraft, sendDraft, submitDraftAsrTurn, submitTaskCommand } from "../../lib/session-client";
+import { clearDraft, sendDraft, submitAgoraVoiceEvent, submitTaskCommand } from "../../lib/session-client";
 import { loadAgoraBrowserStack } from "../../lib/voice-runtime";
 import { describeProtobufTranscriptPayload, describeTranscriptPayload, extractTranscriptText, type ExtractedSttTranscript } from "./stt-transcript";
 import { BroDetailHeader, DraftBrainPanel, LiveTranscriptPanel, RunnerBrainPanel, VoicePad } from "./visual";
@@ -21,10 +21,12 @@ type MicCaptureState = "muted" | "held" | "tail";
 type Draft = {
   text: string;
   last_update_summary?: string;
+  revision_id?: string | null;
 };
 
 type DraftSession = {
   id: string;
+  current_revision_id?: string | null;
   current_draft: Draft | null;
   current_dispatch_plan?: {
     plan_id: string;
@@ -354,6 +356,7 @@ export function BroDetailPage({
   const mountedRef = useRef(false);
   const generationRef = useRef(0);
   const pendingDraftRequestIdRef = useRef<string | null>(null);
+  const lastSubmittedPartialRef = useRef<string>("");
 
   const clearSilenceCommitTimer = useCallback(() => {
     if (silenceCommitTimerRef.current === null) return;
@@ -371,6 +374,7 @@ export function BroDetailPage({
     clearSilenceCommitTimer();
     sentenceSegmentsRef.current = new Map();
     submittedRef.current = new Set();
+    lastSubmittedPartialRef.current = "";
     acceptedTranscriptRef.current = "";
     transcriptArrivalIndexRef.current = 0;
     releasedForDraftUpdateRef.current = false;
@@ -390,7 +394,8 @@ export function BroDetailPage({
 
   useEffect(() => {
     if (latestDraftOutputEvent === null) return;
-    if (latestDraftOutputEvent.request_id !== pendingDraftRequestIdRef.current) return;
+    const isLiveDraftOutput = latestDraftOutputEvent.request_id.startsWith("live-draft-");
+    if (!isLiveDraftOutput && latestDraftOutputEvent.request_id !== pendingDraftRequestIdRef.current) return;
 
     if (latestDraftOutputEvent.type === "draft_output_started") {
       setStreamingDraftText("");
@@ -420,6 +425,60 @@ export function BroDetailPage({
     setSttPhase("error");
   }, [latestDraftOutputEvent, onGlobalError]);
 
+  const sendLiveSttEvent = useCallback(async (
+    type: "stt.partial" | "stt.final",
+    text: string,
+    metadata?: {
+      language?: string;
+      timestampMs?: number;
+      source?: string;
+      reason?: string;
+    },
+  ) => {
+    if (!sessionId) return;
+    await submitAgoraVoiceEvent(sessionId, {
+      event_id: `${type.replace(".", "-")}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      session_id: sessionId,
+      type,
+      text,
+      language: metadata?.language ?? null,
+      timestamp_ms: metadata?.timestampMs ?? Date.now(),
+      target_persona_id: bro.id,
+      metadata: {
+        source: metadata?.source ?? "bro_detail_stt",
+        ...(metadata?.reason ? { reason: metadata.reason } : {}),
+      },
+    });
+  }, [bro.id, sessionId]);
+
+  const submitLivePartialCandidate = useCallback((
+    parsed: ExtractedSttTranscript,
+    arrivalIndex: number,
+    metadata?: {
+      acceptedAction?: SentenceUpdateResult["action"];
+      text?: string;
+    },
+  ) => {
+    if (!sessionId) return;
+    const text = normalizeTranscriptSegmentForDisplay(metadata?.text ?? parsed.text);
+    if (!text || text === lastSubmittedPartialRef.current) return;
+    lastSubmittedPartialRef.current = text;
+    console.debug("[BroDetail][STT] submit live partial", {
+      text,
+      source: parsed.source,
+      final: parsed.final,
+      acceptedAction: metadata?.acceptedAction,
+    });
+    void sendLiveSttEvent("stt.partial", text, {
+      language: parsed.language ?? parsed.culture,
+      timestampMs: transcriptRevision(parsed, arrivalIndex),
+      source: parsed.source,
+      reason: metadata?.acceptedAction ?? "candidate",
+    }).catch((error: unknown) => {
+      onGlobalError?.(error instanceof Error ? error.message : "Failed to update live transcript.");
+    });
+  }, [onGlobalError, sendLiveSttEvent, sessionId]);
+
   const commitCurrentTranscript = useCallback(async (reason: "silence") => {
     clearSilenceCommitTimer();
     if (!releasedForDraftUpdateRef.current) return;
@@ -436,21 +495,8 @@ export function BroDetailPage({
     submittedRef.current.add(draftRawText);
 
     if (sessionId) {
-      const requestId = onSubmitDraftAsrTurn?.({
-        raw_text: draftRawText,
-        assigned_bro_id: bro.id,
-      }) ?? null;
-      if (requestId !== null) {
-        pendingDraftRequestIdRef.current = requestId;
-        setStreamingDraftText("");
-        return;
-      }
       try {
-        const nextDraftSession = await submitDraftAsrTurn(sessionId, {
-          raw_text: draftRawText,
-          assigned_bro_id: bro.id,
-        });
-        setDraftSession(nextDraftSession as DraftSession);
+        await sendLiveSttEvent("stt.final", draftRawText, { reason });
         setStreamingDraftText("");
         setSttPhase("ready_mic_off");
       } catch (error) {
@@ -460,7 +506,7 @@ export function BroDetailPage({
     } else {
       setSttPhase("ready_mic_off");
     }
-  }, [bro.id, clearSilenceCommitTimer, onGlobalError, onSubmitDraftAsrTurn, sessionId]);
+  }, [clearSilenceCommitTimer, onGlobalError, sendLiveSttEvent, sessionId]);
 
   const scheduleSilenceCommit = useCallback(() => {
     if (!releasedForDraftUpdateRef.current) return;
@@ -574,12 +620,14 @@ export function BroDetailPage({
       if (update.text !== acceptedTranscriptRef.current) {
         acceptedTranscriptRef.current = update.text;
         setAcceptedTranscript(update.text);
+        submitLivePartialCandidate(parsed, arrivalIndex, { acceptedAction: update.action, text: update.text });
       }
     } else {
+      submitLivePartialCandidate(parsed, arrivalIndex, { acceptedAction: update.action });
       return;
     }
     scheduleSilenceCommit();
-  }, [scheduleSilenceCommit]);
+  }, [scheduleSilenceCommit, submitLivePartialCandidate]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -726,7 +774,11 @@ export function BroDetailPage({
     setDraftActionError(null);
     onGlobalError?.(null);
     try {
-      await sendDraft(sessionId, { draft_session_id: draftSession.id });
+      const revisionId = draftSession.current_revision_id ?? draftSession.current_draft.revision_id ?? undefined;
+      await sendDraft(sessionId, {
+        draft_session_id: draftSession.id,
+        ...(revisionId ? { draft_revision_id: revisionId } : {}),
+      });
       resetDraftWorkspace();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send draft to Bro.";

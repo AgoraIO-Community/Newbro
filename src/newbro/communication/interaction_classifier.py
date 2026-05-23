@@ -104,6 +104,19 @@ class OpenAIInteractionClassifier:
                         "clarification_response, uncertain. Valid importance values: "
                         "low, medium, high, urgent. Valid task_mode values when known: "
                         "read_only_first, proposal_only, modify_allowed, submit_allowed. "
+                        "Classify as delegation when the utterance asks the bro/agent/system "
+                        "to do work, prepare something, find information, plan, draft, compare, "
+                        "or otherwise produce an outcome. This remains delegation even if the "
+                        "request is phrased conversationally or includes context before the ask. "
+                        "For partial live speech, use the accumulated utterance and classify as "
+                        "delegation as soon as the likely work product is clear enough to draft, "
+                        "even if the user has not finished the final request phrase. Concrete "
+                        "task context is draft-worthy when it contains a domain/object to work on "
+                        "and an implied preparation, search, planning, purchasing, comparison, "
+                        "or production goal. Do not wait for explicit words like please, help, "
+                        "find, create, or can you. Classify as communication only for social "
+                        "talk, preferences, or background context that lacks enough concrete "
+                        "task material to form a useful draft. "
                         "Use session state. Do not decide dispatch permission."
                     ),
                 },
@@ -155,9 +168,29 @@ def _parse_completion(completion: Any) -> InteractionClassification:
     if not isinstance(raw, dict):
         return _uncertain("classifier_non_object_json")
     try:
-        return InteractionClassification.model_validate(raw)
+        return InteractionClassification.model_validate(_normalize_raw_classification(raw))
     except ValidationError:
         return _uncertain("classifier_invalid_schema")
+
+
+def _normalize_raw_classification(raw: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(raw)
+    task_mode = normalized.get("task_mode")
+    if isinstance(task_mode, str) and task_mode.strip().lower() in {"", "none", "null", "n/a", "unknown"}:
+        normalized["task_mode"] = None
+    control_action = normalized.get("control_action")
+    if isinstance(control_action, str) and control_action.strip().lower() in {"", "none", "null", "n/a", "unknown"}:
+        normalized["control_action"] = None
+    importance = normalized.get("importance")
+    if not isinstance(importance, str) or not importance.strip():
+        normalized["importance"] = "low"
+    confidence = normalized.get("confidence")
+    if isinstance(confidence, str):
+        try:
+            normalized["confidence"] = float(confidence)
+        except ValueError:
+            normalized["confidence"] = 0.0
+    return normalized
 
 
 def _strip_json_fence(content: str) -> str:

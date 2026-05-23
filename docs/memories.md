@@ -209,3 +209,6 @@ Short log of important design decisions and changes for Newbro.
 - Changed Agora ConvoAI ingestion to use typed `AgoraVoiceEvent` runtime events, with `/chat/completions` only translating explicit compatibility metadata and `RuntimeDecision.should_speak` as the sole TTS gate.
 - Replaced the quiet-runtime semantic transcript classifier with a Communication Brain interaction-classifier boundary; model-backed classification is wired when an OpenAI-compatible provider is configured, while unconfigured final turns fail closed to uncertain clarification.
 - Kept browser ConvoAI toolkit transcripts display-only because live toolkit finals can be growing fragments, while the connector coalesces repeated no-metadata custom LLM callbacks into one stable `stt.final` without text heuristics.
+- Added live ConvoAI draft revisioning: `stt.partial` can run the interaction classifier on the configured cadence, voice draft updates refine one active draft silently, and Send validates the current draft revision before dispatch.
+- Changed matching `stt.final` checkpoints to reuse the latest live draft revision, recording final boundary state without re-running classification or draft rewriting.
+- Changed the live interaction-classifier contract so concrete task-shaped partial context can become draft-worthy before the final request phrase, without runtime keyword rules.

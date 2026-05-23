@@ -106,6 +106,7 @@ class SendDraftSocketAction(BaseModel):
     type: Literal["send_draft"] = "send_draft"
     request_id: str
     draft_session_id: str | None = None
+    draft_revision_id: str | None = None
 
 
 class ClearDraftSocketAction(BaseModel):

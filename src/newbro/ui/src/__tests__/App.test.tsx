@@ -94,7 +94,51 @@ const clientMock = vi.hoisted(() => ({
     return socketHarness.socket as any;
   }),
   sendSocketMessage: vi.fn(),
-  submitAgoraVoiceEvent: vi.fn(async () => undefined),
+  submitAgoraVoiceEvent: vi.fn(async (_sessionId: string, event: any) => {
+    if (event?.type !== "stt.final") return;
+    Promise.resolve().then(() => {
+      socketHarness.emitMessage({
+        type: "snapshot",
+        sequence: 20,
+        snapshot: {
+          session_id: _sessionId,
+          tasks: [],
+          execution_sessions: [],
+          execution_runs: [],
+          execution_modes: [],
+          bindings: [],
+          summaries: [],
+          notification_candidates: [],
+          personas: [
+            {
+              persona_id: event.target_persona_id ?? "forge",
+              name: "Forge",
+              avatar: "rocket",
+              base_prompt: "",
+              executor_node_id: null,
+              bro_detail_session_id: "bro-detail-forge",
+              status: "idle",
+              current_task_id: null,
+            },
+          ],
+          interaction_requests: [],
+          attention_items: [],
+          executor_capabilities: [],
+          executor_nodes: [],
+          draft_session: {
+            id: "draft-session-1",
+            current_revision_id: "draft-rev-1",
+            status: "ready",
+            current_draft: {
+              text: "Design a polished landing page with a calm hero section.",
+              revision_id: "draft-rev-1",
+              last_update_summary: "Created a first draft from voice input.",
+            },
+          },
+        },
+      });
+    });
+  }),
   sendSocketDraftAsrTurn: vi.fn((_socket: WebSocket, requestId: string) => {
     Promise.resolve().then(() => {
       socketHarness.emitMessage({
@@ -303,6 +347,23 @@ const runtimeMock = vi.hoisted(() => ({
 vi.mock("../lib/session-client", () => clientMock);
 vi.mock("../lib/connector-client", () => connectorMock);
 vi.mock("../lib/voice-runtime", () => runtimeMock);
+
+function submittedSttFinalEvents() {
+  return clientMock.submitAgoraVoiceEvent.mock.calls.filter(([, event]: any[]) => event?.type === "stt.final");
+}
+
+function submittedSttPartialEvents() {
+  return clientMock.submitAgoraVoiceEvent.mock.calls.filter(([, event]: any[]) => event?.type === "stt.partial");
+}
+
+function expectLastSttFinal(text: string, targetPersonaId = "forge") {
+  expect(clientMock.submitAgoraVoiceEvent).toHaveBeenLastCalledWith("session-existing", expect.objectContaining({
+    session_id: "session-existing",
+    type: "stt.final",
+    text,
+    target_persona_id: targetPersonaId,
+  }));
+}
 
 describe("Newbro voice shell", () => {
   beforeEach(() => {
@@ -840,13 +901,13 @@ describe("Newbro voice shell", () => {
         await Promise.resolve();
       });
 
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         fireEvent.pointerUp(micButton, { pointerId: 11 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -862,10 +923,65 @@ describe("Newbro voice shell", () => {
     expect(screen.queryByText("Completed turns appear here when ASR marks a segment final.")).not.toBeInTheDocument();
     expect(await screen.findByText("Design a polished landing page with a calm hero section.")).toBeInTheDocument();
     expect(screen.getByText("Design a polished landing page with a calm hero section.")).toBeInTheDocument();
-    expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-      raw_text: "Build a calm landing page with soft motion",
-      assigned_bro_id: "forge",
+    expect(submittedSttPartialEvents().map(([, event]: any[]) => event.text)).toEqual([
+      "Build a calm landing page",
+      "Build a calm landing page with soft motion",
+    ]);
+    expectLastSttFinal("Build a calm landing page with soft motion");
+  });
+
+  it("renders live Bro detail draft cleaner stream previews", async () => {
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    await screen.findByRole("button", { name: "Hold to Talk" });
+    await waitFor(() => expect(clientMock.openSessionStream).toHaveBeenCalledWith(
+      "session-existing",
+      expect.any(Object),
+    ));
+
+    await act(async () => {
+      socketHarness.emitMessage({
+        type: "draft_output_started",
+        sequence: 31,
+        request_id: "live-draft-3",
+      });
+      await Promise.resolve();
     });
+    await act(async () => {
+      socketHarness.emitMessage({
+        type: "draft_output_delta",
+        sequence: 32,
+        request_id: "live-draft-3",
+        delta: "Preview ",
+      });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      socketHarness.emitMessage({
+        type: "draft_output_delta",
+        sequence: 33,
+        request_id: "live-draft-3",
+        delta: "draft",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Preview draft")).toBeInTheDocument();
+
+    await act(async () => {
+      socketHarness.emitMessage({
+        type: "draft_output_completed",
+        sequence: 34,
+        request_id: "live-draft-3",
+        draft_session_id: "draft-live-1",
+        draft_text: "Preview draft complete.",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Preview draft complete.")).toBeInTheDocument();
   });
 
   it("sends the current Bro detail draft to execution and resets the draft workspace", async () => {
@@ -932,7 +1048,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 21 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -954,6 +1070,7 @@ describe("Newbro voice shell", () => {
 
     await waitFor(() => expect(clientMock.sendDraft).toHaveBeenCalledWith("session-existing", {
       draft_session_id: "draft-session-1",
+      draft_revision_id: "draft-rev-1",
     }));
     expect(screen.queryByText("Design a polished landing page with a calm hero section.")).not.toBeInTheDocument();
     expect(screen.getByText("No draft yet. Hold the mic to start shaping one.")).toBeInTheDocument();
@@ -1016,7 +1133,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 22 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -1036,6 +1153,7 @@ describe("Newbro voice shell", () => {
 
     await waitFor(() => expect(clientMock.sendDraft).toHaveBeenCalledWith("session-existing", {
       draft_session_id: "draft-session-1",
+      draft_revision_id: "draft-rev-1",
     }));
     expect(await screen.findAllByText("send failed")).not.toHaveLength(0);
     expect(screen.getByText("Design a polished landing page with a calm hero section.")).toBeInTheDocument();
@@ -1095,7 +1213,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 23 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -1200,7 +1318,7 @@ describe("Newbro voice shell", () => {
         vi.advanceTimersByTime(1_200);
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         fireEvent.pointerUp(micButton, { pointerId: 15 });
@@ -1216,13 +1334,10 @@ describe("Newbro voice shell", () => {
     expect(await screen.findByText("型音乐演唱会上面碗上面音乐")).toBeInTheDocument();
     expect(screen.queryByText(/好像在一场大/)).not.toBeInTheDocument();
     expect(screen.queryByText(/美人在美国超级/)).not.toBeInTheDocument();
-    expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenLastCalledWith(socketHarness.socket, expect.any(String), {
-      raw_text: "型音乐演唱会上面碗上面音乐",
-      assigned_bro_id: "forge",
-    });
+    expectLastSttFinal("型音乐演唱会上面碗上面音乐");
   });
 
-  it("ignores untimed Bro detail transcript payloads", async () => {
+  it("submits untimed Bro detail transcript candidates as live partials without accepting them for final commit", async () => {
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
@@ -1245,7 +1360,16 @@ describe("Newbro voice shell", () => {
     expect(screen.queryByText("Still listening to this sentence")).not.toBeInTheDocument();
     expect(screen.queryByText("Listening live")).not.toBeInTheDocument();
     expect(screen.queryByText("Completed turns appear here when ASR marks a segment final.")).not.toBeInTheDocument();
-    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+    expect(submittedSttPartialEvents()).toHaveLength(1);
+    expect(submittedSttPartialEvents()[0]?.[1]).toEqual(expect.objectContaining({
+      type: "stt.partial",
+      text: "Still listening to this sentence",
+      timestamp_ms: 1,
+      metadata: expect.objectContaining({
+        reason: "drop-missing-time-metadata",
+      }),
+    }));
+    expect(submittedSttFinalEvents()).toHaveLength(0);
   });
 
   it("renders official provisional transcript wrappers and commits after release plus silence", async () => {
@@ -1279,29 +1403,26 @@ describe("Newbro voice shell", () => {
       });
 
       expect(screen.getByText("先展示临时转写")).toBeInTheDocument();
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         fireEvent.pointerUp(micButton, { pointerId: 12 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-        raw_text: "先展示临时转写",
-        assigned_bro_id: "forge",
-      });
+      expectLastSttFinal("先展示临时转写");
     } finally {
       vi.useRealTimers();
     }
@@ -1325,7 +1446,7 @@ describe("Newbro voice shell", () => {
 
     expect(screen.getByText("第二个片段")).toBeInTheDocument();
     expect(screen.queryByText("第一个片段第二个片段")).not.toBeInTheDocument();
-    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+    expect(submittedSttFinalEvents()).toHaveLength(0);
 
     vi.useFakeTimers();
     try {
@@ -1335,7 +1456,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 1 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -1346,11 +1467,8 @@ describe("Newbro voice shell", () => {
       vi.useRealTimers();
     }
 
-    await waitFor(() => expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledTimes(1));
-    expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-      raw_text: "第二个片段",
-      assigned_bro_id: "forge",
-    });
+    await waitFor(() => expect(submittedSttFinalEvents()).toHaveLength(1));
+    expectLastSttFinal("第二个片段");
   });
 
   it("drops stale Bro detail ASR candidates for the same sentence", async () => {
@@ -1372,7 +1490,7 @@ describe("Newbro voice shell", () => {
 
     expect(screen.getByText("OK，第一个问题")).toBeInTheDocument();
     expect(screen.queryByText("OK")).not.toBeInTheDocument();
-    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+    expect(submittedSttFinalEvents()).toHaveLength(0);
   });
 
   it("holds final fragments until the next non-final for the same sentence", async () => {
@@ -1402,7 +1520,7 @@ describe("Newbro voice shell", () => {
         await Promise.resolve();
       });
       expect(screen.getByText("ABCDEFG")).toBeInTheDocument();
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         fireEvent.pointerUp(micButton, { pointerId: 13 });
@@ -1411,10 +1529,7 @@ describe("Newbro voice shell", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenLastCalledWith(socketHarness.socket, expect.any(String), {
-        raw_text: "ABCDEFG",
-        assigned_bro_id: "forge",
-      });
+      expectLastSttFinal("ABCDEFG");
 
       await act(async () => {
         transcriptHandler(200101, { uid: 101, text: "DEFG", isFinal: false, time: 100, textTs: 320 });
@@ -1455,7 +1570,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 3 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -1466,10 +1581,8 @@ describe("Newbro voice shell", () => {
       vi.useRealTimers();
     }
 
-    await waitFor(() => expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenLastCalledWith(socketHarness.socket, expect.any(String), {
-      raw_text: expectedTranscript,
-      assigned_bro_id: "forge",
-    }));
+    await waitFor(() => expect(submittedSttFinalEvents()).toHaveLength(1));
+    expectLastSttFinal(expectedTranscript);
   });
 
   it("submits Bro detail ASR once after release plus silence", async () => {
@@ -1493,24 +1606,21 @@ describe("Newbro voice shell", () => {
         await Promise.resolve();
       });
 
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         fireEvent.pointerUp(micButton, { pointerId: 2 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledTimes(1);
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-        raw_text: "好像在一场大 型音乐",
-        assigned_bro_id: "forge",
-      });
+      expect(submittedSttFinalEvents()).toHaveLength(1);
+      expectLastSttFinal("好像在一场大 型音乐");
     } finally {
       vi.useRealTimers();
     }
@@ -1535,7 +1645,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 24 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(400);
@@ -1543,18 +1653,15 @@ describe("Newbro voice shell", () => {
         await Promise.resolve();
       });
       expect(screen.getByText("Final only draft")).toBeInTheDocument();
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledTimes(1);
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-        raw_text: "Final only draft",
-        assigned_bro_id: "forge",
-      });
+      expect(submittedSttFinalEvents()).toHaveLength(1);
+      expectLastSttFinal("Final only draft");
     } finally {
       vi.useRealTimers();
     }
@@ -1586,24 +1693,21 @@ describe("Newbro voice shell", () => {
         transcriptHandler(200101, { uid: 101, text: "with delayed transcript", isFinal: false, time: 200, textTs: 210 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_199);
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1);
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledTimes(1);
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-        raw_text: "Build the draft with delayed transcript",
-        assigned_bro_id: "forge",
-      });
+      expect(submittedSttFinalEvents()).toHaveLength(1);
+      expectLastSttFinal("Build the draft with delayed transcript");
     } finally {
       vi.useRealTimers();
     }
@@ -1650,7 +1754,7 @@ describe("Newbro voice shell", () => {
         trueCallsAfterFirstRelease,
       );
       expect(voiceHarness.micTrack.setMuted).toHaveBeenLastCalledWith(false);
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
       expect(screen.getByRole("button", { name: "Release to finish" })).toBeInTheDocument();
     } finally {
       vi.useRealTimers();

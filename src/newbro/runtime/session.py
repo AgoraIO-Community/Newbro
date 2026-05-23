@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import time
 from dataclasses import replace
 from dataclasses import dataclass, field
 from typing import Literal
@@ -87,6 +89,10 @@ from .models import (
     ConversationAppendedStreamEvent,
     ConversationHistoryEntryModel,
     ConversationSnapshot,
+    DraftOutputCompletedStreamEvent,
+    DraftOutputDeltaStreamEvent,
+    DraftOutputFailedStreamEvent,
+    DraftOutputStartedStreamEvent,
     SessionSnapshot,
     SessionStreamEventBase,
     SnapshotStreamEvent,
@@ -183,6 +189,17 @@ class PendingMessageRequest:
 
 
 @dataclass(slots=True)
+class LiveTranscriptWork:
+    generation: int
+    text: str
+    language: str | None
+    timestamp_ms: int | None
+    assigned_bro_id: str | None
+    source_boundary: Literal["stt.partial", "stt.final"]
+    scheduled_at: float
+
+
+@dataclass(slots=True)
 class SessionRuntime:
     session_id: str
     blackboard: InMemoryBlackboard
@@ -195,6 +212,7 @@ class SessionRuntime:
     observability: SessionObservability
     executor_node_manager: ExecutorNodeManager
     interaction_classifier: InteractionClassifier = field(default_factory=UnavailableInteractionClassifier)
+    live_interaction_classifier_interval_seconds: float = 1.0
     default_executor_type: str = "mock"
     draft_manager: DraftSessionManager = field(default_factory=DraftSessionManager)
     subscribers: list[asyncio.Queue[SessionStreamEventBase]] = field(default_factory=list)
@@ -212,6 +230,12 @@ class SessionRuntime:
     _active_assistant_turns: int = field(default=0, init=False, repr=False)
     _diagnostic_seen_entities: set[tuple[str, str | None]] = field(default_factory=set, init=False, repr=False)
     _voice_target_persona_id: str | None = field(default=None, init=False, repr=False)
+    _last_live_classifier_ms: int | None = field(default=None, init=False, repr=False)
+    _latest_live_transcript: str = field(default="", init=False, repr=False)
+    _live_generation: int = field(default=0, init=False, repr=False)
+    _latest_published_live_text: str = field(default="", init=False, repr=False)
+    _live_partial_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
+    _live_partial_work: LiveTranscriptWork | None = field(default=None, init=False, repr=False)
 
     async def snapshot(self) -> SessionSnapshot:
         tasks = await self.blackboard.list_tasks()
@@ -420,6 +444,432 @@ class SessionRuntime:
             on_text_delta=on_text_delta,
         )
 
+    async def update_live_transcript_draft(
+        self,
+        *,
+        raw_text: str,
+        normalized_text: str | None = None,
+        confidence: float | None = None,
+        started_at: str | None = None,
+        ended_at: str | None = None,
+        assigned_bro_id: str | None = None,
+        source_boundary: str,
+        transcript_timestamp_ms: int | None = None,
+        classification: InteractionClassification | None = None,
+        on_text_delta=None,
+    ):
+        return await self.draft_manager.update_live_draft(
+            raw_text=raw_text,
+            normalized_text=normalized_text,
+            confidence=confidence,
+            started_at=started_at,
+            ended_at=ended_at,
+            assigned_bro_id=assigned_bro_id,
+            source_boundary=source_boundary,
+            transcript_timestamp_ms=transcript_timestamp_ms,
+            classification=classification.model_dump(mode="json") if classification is not None else None,
+            on_text_delta=on_text_delta,
+        )
+
+    def _live_classifier_due(self, *, text: str, timestamp_ms: int | None) -> bool:
+        normalized = " ".join(text.strip().split())
+        if not normalized:
+            return False
+        if normalized == self._latest_live_transcript and self._last_live_classifier_ms is not None:
+            return False
+        if self._last_live_classifier_ms is None:
+            return True
+        if timestamp_ms is None:
+            return True
+        interval_ms = max(0, int(self.live_interaction_classifier_interval_seconds * 1000))
+        return timestamp_ms - self._last_live_classifier_ms >= interval_ms
+
+    def _mark_live_classifier_ran(self, *, text: str, timestamp_ms: int | None) -> None:
+        self._latest_live_transcript = " ".join(text.strip().split())
+        if timestamp_ms is not None:
+            self._last_live_classifier_ms = timestamp_ms
+
+    def _live_text_hash(self, text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+    def _emit_live_stage(
+        self,
+        *,
+        work: LiveTranscriptWork,
+        stage: str,
+        started_at: float | None = None,
+        outcome: str | None = None,
+        stale: bool = False,
+    ) -> None:
+        self.observability.communication.live_draft_stage(
+            conversation_id=self.session_id,
+            stage=stage,
+            source_boundary=work.source_boundary,
+            generation=work.generation,
+            transcript_timestamp_ms=work.timestamp_ms,
+            text_length=len(work.text),
+            text_hash=self._live_text_hash(work.text),
+            latency_ms=int((time.perf_counter() - started_at) * 1000) if started_at is not None else None,
+            outcome=outcome,
+            stale=stale,
+        )
+
+    def _next_live_work(
+        self,
+        *,
+        text: str,
+        language: str | None,
+        timestamp_ms: int | None,
+        assigned_bro_id: str | None,
+        source_boundary: Literal["stt.partial", "stt.final"],
+    ) -> LiveTranscriptWork:
+        self._live_generation += 1
+        return LiveTranscriptWork(
+            generation=self._live_generation,
+            text=text,
+            language=language,
+            timestamp_ms=timestamp_ms,
+            assigned_bro_id=assigned_bro_id,
+            source_boundary=source_boundary,
+            scheduled_at=time.perf_counter(),
+        )
+
+    def _live_draft_request_id(self, work: LiveTranscriptWork) -> str:
+        return f"live-draft-{work.generation}"
+
+    async def _broadcast_live_draft_started(self, work: LiveTranscriptWork) -> None:
+        if not self.subscribers:
+            return
+        await self._broadcast_event(
+            DraftOutputStartedStreamEvent(
+                sequence=self._next_event_sequence(),
+                request_id=self._live_draft_request_id(work),
+            )
+        )
+
+    async def _broadcast_live_draft_delta(self, work: LiveTranscriptWork, delta: str) -> None:
+        if not self.subscribers:
+            return
+        await self._broadcast_event(
+            DraftOutputDeltaStreamEvent(
+                sequence=self._next_event_sequence(),
+                request_id=self._live_draft_request_id(work),
+                delta=delta,
+            )
+        )
+
+    async def _broadcast_live_draft_completed(self, work: LiveTranscriptWork, *, draft_session_id: str, draft_text: str) -> None:
+        if not self.subscribers:
+            return
+        await self._broadcast_event(
+            DraftOutputCompletedStreamEvent(
+                sequence=self._next_event_sequence(),
+                request_id=self._live_draft_request_id(work),
+                draft_session_id=draft_session_id,
+                draft_text=draft_text,
+            )
+        )
+
+    async def _broadcast_live_draft_failed(self, work: LiveTranscriptWork, message: str) -> None:
+        if not self.subscribers:
+            return
+        await self._broadcast_event(
+            DraftOutputFailedStreamEvent(
+                sequence=self._next_event_sequence(),
+                request_id=self._live_draft_request_id(work),
+                message=message,
+            )
+        )
+
+    def _cancel_live_partial_task(self) -> None:
+        if self._live_partial_task is not None and not self._live_partial_task.done():
+            if self._live_partial_work is not None:
+                self._emit_live_stage(work=self._live_partial_work, stage="cancelled", stale=True)
+            self._live_partial_task.cancel()
+
+    def _schedule_live_partial_work(
+        self,
+        *,
+        text: str,
+        language: str | None,
+        timestamp_ms: int | None,
+        assigned_bro_id: str | None,
+    ) -> LiveTranscriptWork:
+        work = self._next_live_work(
+            text=text,
+            language=language,
+            timestamp_ms=timestamp_ms,
+            assigned_bro_id=assigned_bro_id,
+            source_boundary="stt.partial",
+        )
+        self._mark_live_classifier_ran(text=text, timestamp_ms=timestamp_ms)
+        self._cancel_live_partial_task()
+        self._emit_live_stage(work=work, stage="scheduled")
+        self._live_partial_work = work
+        self._live_partial_task = asyncio.create_task(self._run_live_partial_work(work))
+        return work
+
+    async def _run_live_partial_work(self, work: LiveTranscriptWork) -> None:
+        try:
+            await self._process_live_transcript_work(work)
+        except asyncio.CancelledError:
+            self._emit_live_stage(work=work, stage="cancelled", stale=True)
+            raise
+        except Exception as exc:
+            LOGGER.exception("Live partial draft update failed for %s", self.session_id)
+            self.observability.communication.reply_failed(
+                conversation_id=self.session_id,
+                request_id=None,
+                reason_code=COMMUNICATION_MODEL_FAILURE,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+        finally:
+            if asyncio.current_task() is self._live_partial_task:
+                self._live_partial_task = None
+                self._live_partial_work = None
+
+    async def _process_live_transcript_work(self, work: LiveTranscriptWork) -> RuntimeDecision:
+        active_tasks = [
+            task for task in await self.blackboard.list_tasks()
+            if task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.WAITING_USER_INPUT, TaskStatus.PAUSED}
+        ]
+        has_draft = self.draft_manager.active_session is not None
+        started_at = time.perf_counter()
+        self._emit_live_stage(work=work, stage="classifier_started", started_at=work.scheduled_at)
+        classification = await self.interaction_classifier.classify(
+            text=work.text,
+            state=InteractionClassifierState(
+                has_draft=has_draft,
+                active_task_count=len(active_tasks),
+                target_persona_id=work.assigned_bro_id,
+                voice_target_persona_id=self._voice_target_persona_id,
+                language=work.language,
+            ),
+        )
+        stale = work.generation != self._live_generation
+        self._emit_live_stage(
+            work=work,
+            stage="classifier_completed",
+            started_at=started_at,
+            outcome=classification.interaction_type.value,
+            stale=stale,
+        )
+        self.observability.communication.interaction_classified(
+            conversation_id=self.session_id,
+            interaction_type=classification.interaction_type.value,
+            confidence=classification.confidence,
+            requires_user_decision=classification.requires_user_decision,
+            importance=classification.importance,
+            reason=classification.reason,
+            control_action=classification.control_action,
+            task_mode=classification.task_mode.value if classification.task_mode is not None else None,
+        )
+        if stale:
+            return RuntimeDecision(
+                should_speak=False,
+                response_text="",
+                interaction_type=classification.interaction_type,
+                session_state=_runtime_state(has_draft=has_draft, active_tasks=active_tasks),
+            )
+
+        interaction = classification.interaction_type
+        if work.source_boundary == "stt.partial" and interaction not in {InteractionType.DELEGATION, InteractionType.DRAFT_CORRECTION}:
+            return RuntimeDecision(
+                should_speak=False,
+                response_text="",
+                interaction_type=interaction,
+                session_state=_runtime_state(has_draft=has_draft, active_tasks=active_tasks),
+                ui_updates=[
+                    UiUpdate(
+                        type="transcript.partial",
+                        payload={
+                            "text": work.text,
+                            "classifier_ran": True,
+                            "interaction_type": interaction.value,
+                            **({"language": work.language} if work.language else {}),
+                        },
+                    )
+                ],
+            )
+        if interaction == InteractionType.CONFIRMATION:
+            return await self.confirm_active_dispatch()
+        if classification.control_action == "clear_draft":
+            cleared = self.clear_draft()
+            return RuntimeDecision(
+                should_speak=False,
+                response_text="",
+                interaction_type=interaction,
+                session_state=RuntimeSessionState.IDLE,
+                ui_updates=[UiUpdate(type="draft.cleared", payload={"draft_session_id": cleared.id if cleared else ""})],
+            )
+        if interaction == InteractionType.STATUS_QUERY:
+            return await self.runtime_status_decision()
+        if interaction == InteractionType.TASK_CONTROL:
+            return await self.stop_active_task_decision(reason=work.text)
+        if interaction in {InteractionType.DELEGATION, InteractionType.DRAFT_CORRECTION}:
+            normalized = " ".join(work.text.strip().split())
+            if work.source_boundary == "stt.partial" and normalized == self._latest_published_live_text:
+                return RuntimeDecision(
+                    should_speak=False,
+                    response_text="",
+                    interaction_type=interaction,
+                    session_state=_runtime_state(has_draft=has_draft, active_tasks=active_tasks),
+                )
+            rewrite_started = time.perf_counter()
+            self._emit_live_stage(work=work, stage="draft_rewrite_started", started_at=rewrite_started, outcome=interaction.value)
+            await self._broadcast_live_draft_started(work)
+            try:
+                draft_session = await self.update_live_transcript_draft(
+                    raw_text=work.text,
+                    normalized_text=work.text,
+                    assigned_bro_id=work.assigned_bro_id,
+                    source_boundary=work.source_boundary,
+                    transcript_timestamp_ms=work.timestamp_ms,
+                    classification=classification,
+                    on_text_delta=(
+                        (lambda delta: self._broadcast_live_draft_delta(work, delta))
+                        if self.subscribers
+                        else None
+                    ),
+                )
+            except Exception as exc:
+                await self._broadcast_live_draft_failed(work, str(exc))
+                raise
+            self._latest_published_live_text = normalized
+            draft = draft_session.current_draft
+            if draft is None:
+                raise ValueError("Draft manager did not produce a draft.")
+            if classification.task_mode is not None and draft.task_spec is not None:
+                draft.task_spec.mode = classification.task_mode
+            plan = build_dispatch_plan(
+                runtime_session_id=self.session_id,
+                draft_session=draft_session,
+                draft=draft,
+            )
+            draft_session.current_dispatch_plan = plan
+            draft.missing_context = list(plan.missing_context)
+            self._emit_live_stage(work=work, stage="draft_rewrite_completed", started_at=rewrite_started, outcome=interaction.value)
+            await self._broadcast_live_draft_completed(
+                work,
+                draft_session_id=draft_session.id,
+                draft_text=draft.text,
+            )
+            self.observability.communication.live_draft_updated(
+                conversation_id=self.session_id,
+                draft_session_id=draft_session.id,
+                draft_revision_id=draft_session.current_revision_id,
+                draft_revision_number=draft_session.current_revision_number,
+                source_boundary=draft_session.live_source_boundary,
+                transcript_timestamp_ms=draft_session.live_transcript_timestamp_ms,
+                interaction_type=interaction.value,
+            )
+            gate = dispatch_gate(plan)
+            await self.publish_snapshot()
+            should_speak = _should_speak_for_draft_decision(
+                interaction=interaction,
+                classification=classification,
+                gate=gate,
+            )
+            if work.source_boundary in {"stt.partial", "stt.final"} and gate.outcome == DispatchGateOutcome.ASK_CONFIRMATION:
+                should_speak = False
+            return RuntimeDecision(
+                should_speak=should_speak,
+                response_text=(gate.question or "") if should_speak else "",
+                interaction_type=interaction,
+                session_state=RuntimeSessionState.WAITING_FOR_CONFIRMATION,
+                ui_updates=[
+                    *(
+                        [
+                            UiUpdate(
+                                type="transcript.partial",
+                                payload={
+                                    "text": work.text,
+                                    "classifier_ran": True,
+                                    "interaction_type": interaction.value,
+                                    **({"language": work.language} if work.language else {}),
+                                },
+                            )
+                        ]
+                        if work.source_boundary == "stt.partial"
+                        else []
+                    ),
+                    UiUpdate(type="draft_card.updated", payload={"draft_session_id": draft_session.id, "draft_revision_id": draft_session.current_revision_id}),
+                    UiUpdate(type="dispatch_plan.updated", payload={"plan_id": plan.plan_id, "draft_revision_id": draft_session.current_revision_id}),
+                ],
+            draft_session_id=draft_session.id,
+            draft_revision_id=draft_session.current_revision_id,
+            dispatch_plan_id=plan.plan_id,
+        )
+        return RuntimeDecision(
+            should_speak=_should_speak_for_classification(classification),
+            response_text=_classification_response_text(classification),
+            interaction_type=interaction,
+            session_state=_runtime_state(has_draft=has_draft, active_tasks=active_tasks),
+        )
+
+    async def _reuse_matching_live_draft_for_final(self, work: LiveTranscriptWork) -> RuntimeDecision | None:
+        if work.source_boundary != "stt.final":
+            return None
+        normalized = " ".join(work.text.strip().split())
+        if not normalized or normalized != self._latest_published_live_text:
+            return None
+        draft_session = self.draft_manager.active_session
+        if draft_session is None or draft_session.current_draft is None or draft_session.current_revision_id is None:
+            return None
+
+        classification = (
+            InteractionClassification.model_validate(draft_session.live_classification)
+            if draft_session.live_classification is not None
+            else None
+        )
+        draft_session = self.draft_manager.mark_live_checkpoint(
+            source_boundary="stt.final",
+            transcript_timestamp_ms=work.timestamp_ms,
+            classification=draft_session.live_classification,
+        )
+        if draft_session is None or draft_session.current_draft is None:
+            return None
+        plan = draft_session.current_dispatch_plan or build_dispatch_plan(
+            runtime_session_id=self.session_id,
+            draft_session=draft_session,
+            draft=draft_session.current_draft,
+        )
+        draft_session.current_dispatch_plan = plan
+        self._emit_live_stage(
+            work=work,
+            stage="final_checkpoint_reused",
+            started_at=work.scheduled_at,
+            outcome=(classification.interaction_type.value if classification is not None else InteractionType.DELEGATION.value),
+        )
+        self.observability.communication.live_draft_updated(
+            conversation_id=self.session_id,
+            draft_session_id=draft_session.id,
+            draft_revision_id=draft_session.current_revision_id,
+            draft_revision_number=draft_session.current_revision_number,
+            source_boundary=draft_session.live_source_boundary,
+            transcript_timestamp_ms=draft_session.live_transcript_timestamp_ms,
+            interaction_type=(classification.interaction_type.value if classification is not None else InteractionType.DELEGATION.value),
+        )
+        await self.publish_snapshot()
+        active_tasks = [
+            task for task in await self.blackboard.list_tasks()
+            if task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.WAITING_USER_INPUT, TaskStatus.PAUSED}
+        ]
+        return RuntimeDecision(
+            should_speak=False,
+            response_text="",
+            interaction_type=classification.interaction_type if classification is not None else InteractionType.DELEGATION,
+            session_state=RuntimeSessionState.WAITING_FOR_CONFIRMATION,
+            ui_updates=[
+                UiUpdate(type="draft_card.updated", payload={"draft_session_id": draft_session.id, "draft_revision_id": draft_session.current_revision_id}),
+                UiUpdate(type="dispatch_plan.updated", payload={"plan_id": plan.plan_id, "draft_revision_id": draft_session.current_revision_id}),
+            ],
+            draft_session_id=draft_session.id,
+            draft_revision_id=draft_session.current_revision_id,
+            dispatch_plan_id=plan.plan_id,
+        )
+
     async def handle_runtime_message(
         self,
         *,
@@ -435,13 +885,51 @@ class SessionRuntime:
         ]
         has_draft = self.draft_manager.active_session is not None
         if message_type == "stt_partial":
+            if not self._live_classifier_due(text=text, timestamp_ms=timestamp_ms):
+                return RuntimeDecision(
+                    should_speak=False,
+                    response_text="",
+                    interaction_type=InteractionType.COMMUNICATION,
+                    session_state=_runtime_state(has_draft=has_draft, active_tasks=active_tasks),
+                    ui_updates=[UiUpdate(type="transcript.partial", payload={"text": text, **({"language": language} if language else {})})],
+                )
+            work = self._schedule_live_partial_work(
+                text=text,
+                language=language,
+                timestamp_ms=timestamp_ms,
+                assigned_bro_id=assigned_bro_id,
+            )
             return RuntimeDecision(
                 should_speak=False,
                 response_text="",
                 interaction_type=InteractionType.COMMUNICATION,
                 session_state=_runtime_state(has_draft=has_draft, active_tasks=active_tasks),
-                ui_updates=[UiUpdate(type="transcript.partial", payload={"text": text, **({"language": language} if language else {})})],
+                ui_updates=[
+                    UiUpdate(
+                        type="transcript.partial",
+                        payload={
+                            "text": text,
+                            "classifier_scheduled": True,
+                            "generation": work.generation,
+                            **({"language": language} if language else {}),
+                        },
+                    )
+                ],
             )
+        if message_type == "stt_final":
+            self._cancel_live_partial_task()
+            work = self._next_live_work(
+                text=text,
+                language=language,
+                timestamp_ms=timestamp_ms,
+                assigned_bro_id=assigned_bro_id,
+                source_boundary="stt.final",
+            )
+            self._emit_live_stage(work=work, stage="scheduled")
+            reused = await self._reuse_matching_live_draft_for_final(work)
+            if reused is not None:
+                return reused
+            return await self._process_live_transcript_work(work)
         classification = await self.interaction_classifier.classify(
             text=text,
             state=InteractionClassifierState(
@@ -496,6 +984,15 @@ class SessionRuntime:
             )
             draft_session.current_dispatch_plan = plan
             draft.missing_context = list(plan.missing_context)
+            self.observability.communication.live_draft_updated(
+                conversation_id=self.session_id,
+                draft_session_id=draft_session.id,
+                draft_revision_id=draft_session.current_revision_id,
+                draft_revision_number=draft_session.current_revision_number,
+                source_boundary=draft_session.live_source_boundary,
+                transcript_timestamp_ms=draft_session.live_transcript_timestamp_ms,
+                interaction_type=interaction.value,
+            )
             gate = dispatch_gate(plan)
             await self.publish_snapshot()
             should_speak = _should_speak_for_draft_decision(
@@ -509,10 +1006,11 @@ class SessionRuntime:
                 interaction_type=interaction,
                 session_state=RuntimeSessionState.WAITING_FOR_CONFIRMATION,
                 ui_updates=[
-                    UiUpdate(type="draft_card.updated", payload={"draft_session_id": draft_session.id}),
-                    UiUpdate(type="dispatch_plan.updated", payload={"plan_id": plan.plan_id}),
+                    UiUpdate(type="draft_card.updated", payload={"draft_session_id": draft_session.id, "draft_revision_id": draft_session.current_revision_id}),
+                    UiUpdate(type="dispatch_plan.updated", payload={"plan_id": plan.plan_id, "draft_revision_id": draft_session.current_revision_id}),
                 ],
                 draft_session_id=draft_session.id,
+                draft_revision_id=draft_session.current_revision_id,
                 dispatch_plan_id=plan.plan_id,
             )
         return RuntimeDecision(
@@ -574,7 +1072,12 @@ class SessionRuntime:
     def clear_draft(self):
         return self.draft_manager.clear()
 
-    async def confirm_active_dispatch(self, *, plan_id: str | None = None) -> RuntimeDecision:
+    async def confirm_active_dispatch(
+        self,
+        *,
+        plan_id: str | None = None,
+        draft_revision_id: str | None = None,
+    ) -> RuntimeDecision:
         draft_session = self.draft_manager.active_session
         if draft_session is None or draft_session.current_draft is None:
             return RuntimeDecision(
@@ -586,6 +1089,8 @@ class SessionRuntime:
         plan = draft_session.current_dispatch_plan
         if plan_id is not None and (plan is None or plan.plan_id != plan_id):
             raise ValueError("Dispatch plan does not match the active draft.")
+        if draft_revision_id is not None and draft_session.current_revision_id != draft_revision_id:
+            raise ValueError("Draft revision does not match the active draft.")
         if plan is None:
             plan = build_dispatch_plan(
                 runtime_session_id=self.session_id,
@@ -604,7 +1109,10 @@ class SessionRuntime:
                 dispatch_plan_id=confirmed.plan_id,
             )
         draft_session.current_dispatch_plan = confirmed
-        task = await self.send_draft(draft_session_id=draft_session.id)
+        task = await self.send_draft(
+            draft_session_id=draft_session.id,
+            draft_revision_id=draft_session.current_revision_id,
+        )
         await self.publish_snapshot()
         self.schedule_execution()
         return RuntimeDecision(
@@ -614,6 +1122,7 @@ class SessionRuntime:
             session_state=RuntimeSessionState.TASK_RUNNING,
             ui_updates=[UiUpdate(type="task.started", payload={"task_id": task.task_id})],
             draft_session_id=draft_session.id,
+            draft_revision_id=draft_session.current_revision_id,
             dispatch_plan_id=confirmed.plan_id,
             task_id=task.task_id,
         )
@@ -721,12 +1230,19 @@ class SessionRuntime:
             task_id=event.task_id,
         )
 
-    async def send_draft(self, *, draft_session_id: str | None = None) -> Task:
+    async def send_draft(
+        self,
+        *,
+        draft_session_id: str | None = None,
+        draft_revision_id: str | None = None,
+    ) -> Task:
         draft_session = self.draft_manager.active_session
         if draft_session is None or draft_session.current_draft is None or not draft_session.snapshots:
             raise ValueError("No draft is ready to send.")
         if draft_session_id is not None and draft_session.id != draft_session_id:
             raise ValueError("Draft session does not match the active draft.")
+        if draft_revision_id is not None and draft_session.current_revision_id != draft_revision_id:
+            raise ValueError("Draft revision does not match the active draft.")
 
         draft = draft_session.current_draft
         snapshot = draft_session.snapshots[-1]
@@ -754,6 +1270,8 @@ class SessionRuntime:
             "source_kind": "draft_session",
             "draft_session_id": draft_session.id,
             "draft_snapshot_id": snapshot.id,
+            "draft_revision_id": draft_session.current_revision_id,
+            "draft_revision_number": draft_session.current_revision_number,
             "asr_turn_ids": [turn.id for turn in draft_session.asr_turns],
             "assigned_bro_id": assigned_bro_id,
             "draft_text": draft.text,
@@ -788,7 +1306,7 @@ class SessionRuntime:
             await self.blackboard.put_persona(
                 persona.model_copy(update={"status": "busy", "current_task_id": task_id})
             )
-        self.draft_manager.mark_sent(draft_session_id)
+        self.draft_manager.mark_sent(draft_session_id, draft_revision_id=draft_revision_id)
         await self.blackboard.put_task(task)
         await self.blackboard.put_execution_mode(
             TaskExecutionMode(task_id=task_id, mode=ExecutionMode.UNDECIDED)
@@ -807,6 +1325,7 @@ class SessionRuntime:
                     "source_kind": "draft_session",
                     "draft_session_id": draft_session.id,
                     "draft_snapshot_id": snapshot.id,
+                    "draft_revision_id": draft_session.current_revision_id,
                 },
                 created_by="draft_brain",
             )
@@ -1732,6 +2251,7 @@ def create_session_runtime(
         observability=observability,
         executor_node_manager=executor_node_manager,
         interaction_classifier=interaction_classifier or UnavailableInteractionClassifier(),
+        live_interaction_classifier_interval_seconds=settings.live_interaction_classifier_interval_seconds,
         default_executor_type=default_executor_type,
         draft_manager=(
             DraftSessionManager(rewriter=draft_rewriter)

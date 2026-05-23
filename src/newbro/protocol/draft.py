@@ -37,6 +37,9 @@ class Draft(BaseModel):
     last_update_summary: str = ""
     task_spec: "TaskSpec | None" = None
     missing_context: list[str] = Field(default_factory=list)
+    revision_id: str | None = None
+    revision_number: int = 0
+    updated_at: str | None = None
 
 
 class DraftSnapshot(BaseModel):
@@ -44,6 +47,10 @@ class DraftSnapshot(BaseModel):
     draft: Draft
     source_asr_turn_ids: list[str] = Field(default_factory=list)
     created_at: str
+    draft_revision_id: str | None = None
+    draft_revision_number: int = 0
+    source_boundary: str = "asr_turn"
+    transcript_timestamp_ms: int | None = None
 
 
 class DraftSession(BaseModel):
@@ -55,6 +62,11 @@ class DraftSession(BaseModel):
     runtime_state: RuntimeSessionState = RuntimeSessionState.IDLE
     snapshots: list[DraftSnapshot] = Field(default_factory=list)
     status: DraftSessionStatus = DraftSessionStatus.EMPTY
+    current_revision_id: str | None = None
+    current_revision_number: int = 0
+    live_classification: dict[str, object] | None = None
+    live_source_boundary: str | None = None
+    live_transcript_timestamp_ms: int | None = None
     created_at: str
     updated_at: str
 
@@ -80,6 +92,8 @@ class DispatchPlan(BaseModel):
     plan_id: str
     session_id: str
     draft_session_id: str
+    draft_revision_id: str | None = None
+    draft_revision_number: int = 0
     intent: str = "repo_investigation"
     target_agent: str
     task_title: str
@@ -116,6 +130,7 @@ class RuntimeDecision(BaseModel):
     state_updates: list[dict[str, object]] = Field(default_factory=list)
     async_actions: list[dict[str, object]] = Field(default_factory=list)
     draft_session_id: str | None = None
+    draft_revision_id: str | None = None
     dispatch_plan_id: str | None = None
     task_id: str | None = None
 

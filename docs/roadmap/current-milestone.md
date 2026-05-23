@@ -11,7 +11,7 @@ This page should stay short and current.
 
 - harden the v1 quiet runtime path against real executor adapters
 - expand typed message coverage for running-task correction and replacement flows
-- validate live Agora ConvoAI silence-first behavior with a public connector host
+- validate the 1s live ConvoAI classifier loop, draft revision stream, and silence-first behavior with a public connector host
 - add richer artifact review after normalized agent-event ingestion
 
 ## Explicitly Out of Scope Right Now
@@ -24,6 +24,6 @@ This page should stay short and current.
 
 Move into the next phase when:
 
-- typed runtime tests cover delegation, correction, confirmation, status, stop, event ingest, and multilingual examples
-- Agora connector live testing proves draft updates stay silent and confirmation/block/done responses are short
+- typed runtime tests cover live classifier cadence, delegation, correction, confirmation, stale send revisions, status, stop, event ingest, and multilingual examples
+- Agora connector live testing proves draft revisions update silently and confirmation/block/done responses are short
 - example UI manual checks cover transcript, draft, dispatch plan, active task, timeline, summary, artifacts, send, stop, and cancel

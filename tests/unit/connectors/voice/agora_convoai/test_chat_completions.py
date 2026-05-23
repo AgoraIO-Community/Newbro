@@ -177,14 +177,19 @@ async def test_chat_completion_turn_coalescer_flushes_only_latest_callback_and_s
     assert first is not None
     assert second is not None
 
-    coalescer.submit(binding=binding, event=first)
-    coalescer.submit(binding=binding, event=second)
+    await coalescer.submit(binding=binding, event=first)
+    await coalescer.submit(binding=binding, event=second)
     decision = await coalescer.flush_now("binding-1")
 
     assert decision is not None
     submitted = [call for call in transport.calls if "event" in call]
-    assert len(submitted) == 1
-    assert submitted[0]["event"].text == "Plan the trip"  # type: ignore[index, union-attr]
+    assert len(submitted) == 3
+    assert submitted[0]["event"].type == AgoraVoiceEventType.STT_PARTIAL  # type: ignore[index, union-attr]
+    assert submitted[0]["event"].text == "Plan"  # type: ignore[index, union-attr]
+    assert submitted[1]["event"].type == AgoraVoiceEventType.STT_PARTIAL  # type: ignore[index, union-attr]
+    assert submitted[1]["event"].text == "Plan the trip"  # type: ignore[index, union-attr]
+    assert submitted[2]["event"].type == AgoraVoiceEventType.STT_FINAL  # type: ignore[index, union-attr]
+    assert submitted[2]["event"].text == "Plan the trip"  # type: ignore[index, union-attr]
     assert speaker.calls == [{"runtime_session_id": "runtime-1", "text": "Runtime reply"}]
 
 

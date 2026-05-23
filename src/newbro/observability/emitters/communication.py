@@ -54,6 +54,67 @@ class CommunicationDiagnosticEmitter:
             },
         )
 
+    def live_draft_updated(
+        self,
+        *,
+        conversation_id: str,
+        draft_session_id: str,
+        draft_revision_id: str | None,
+        draft_revision_number: int,
+        source_boundary: str | None,
+        transcript_timestamp_ms: int | None,
+        interaction_type: str,
+    ) -> None:
+        self.logger.emit_event(
+            level="INFO",
+            event_name="comm.live_draft.updated",
+            component="communication.live_draft",
+            summary="Live draft revision updated",
+            conversation_id=conversation_id,
+            outcome=interaction_type,
+            details={
+                "draft_session_id": draft_session_id,
+                "draft_revision_id": draft_revision_id,
+                "draft_revision_number": draft_revision_number,
+                "source_boundary": source_boundary,
+                "transcript_timestamp_ms": transcript_timestamp_ms,
+                "interaction_type": interaction_type,
+            },
+        )
+
+    def live_draft_stage(
+        self,
+        *,
+        conversation_id: str,
+        stage: str,
+        source_boundary: str,
+        generation: int,
+        transcript_timestamp_ms: int | None,
+        text_length: int,
+        text_hash: str,
+        latency_ms: int | None = None,
+        outcome: str | None = None,
+        stale: bool = False,
+    ) -> None:
+        self.logger.emit_event(
+            level="INFO",
+            event_name="comm.live_draft.stage",
+            component="communication.live_draft",
+            summary="Live draft pipeline stage",
+            conversation_id=conversation_id,
+            outcome=outcome or stage,
+            details={
+                "stage": stage,
+                "source_boundary": source_boundary,
+                "generation": generation,
+                "transcript_timestamp_ms": transcript_timestamp_ms,
+                "text_length": text_length,
+                "text_hash": text_hash,
+                "latency_ms": latency_ms,
+                "stale": stale,
+            },
+        )
+
     def tool_called(
         self,
         *,

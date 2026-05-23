@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from newbro.protocol import (
@@ -42,6 +44,55 @@ def _classifier_for(interaction_type: InteractionType, **kwargs) -> ScriptedInte
             **kwargs,
         ),
     )
+
+
+class CountingClassifier:
+    def __init__(self, classification: InteractionClassification) -> None:
+        self.classification = classification
+        self.calls: list[str] = []
+
+    async def classify(self, *, text: str, state):
+        self.calls.append(text)
+        return self.classification
+
+
+class DelayedCountingClassifier(CountingClassifier):
+    def __init__(self, classification: InteractionClassification, *, delay_seconds: float = 0.05) -> None:
+        super().__init__(classification)
+        self.delay_seconds = delay_seconds
+
+    async def classify(self, *, text: str, state):
+        self.calls.append(text)
+        await asyncio.sleep(self.delay_seconds)
+        return self.classification
+
+
+class CountingDraftRewriter(DeterministicDraftRewriter):
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def rewrite(self, payload, *, on_text_delta=None):
+        self.calls.append(payload.new_turn.raw_text)
+        return await super().rewrite(payload, on_text_delta=on_text_delta)
+
+
+class StreamingDraftRewriter(DeterministicDraftRewriter):
+    async def rewrite(self, payload, *, on_text_delta=None):
+        if on_text_delta is not None:
+            maybe_awaitable = on_text_delta("Preview ")
+            if maybe_awaitable is not None:
+                await maybe_awaitable
+            maybe_awaitable = on_text_delta("draft")
+            if maybe_awaitable is not None:
+                await maybe_awaitable
+        return await super().rewrite(payload, on_text_delta=None)
+
+
+async def _drain_live_partial(session) -> None:
+    await asyncio.sleep(0)
+    task = session._live_partial_task
+    if task is not None:
+        await task
 
 
 def test_formulate_task_spec_uses_target_context_and_safe_default_mode():
@@ -129,14 +180,16 @@ async def test_runtime_message_stages_and_confirms_structured_task():
         language="zh-CN",
     )
 
-    assert decision.should_speak is True
+    assert decision.should_speak is False
     assert decision.dispatch_plan_id
-    assert "发送吗" in decision.response_text
+    assert decision.response_text == ""
     draft = session.draft_manager.active_session
     assert draft is not None
     assert draft.current_draft is not None
     assert draft.current_draft.task_spec is not None
     assert draft.current_draft.task_spec.mode == TaskMode.READ_ONLY_FIRST
+    assert draft.current_revision_id == decision.draft_revision_id
+    assert len(draft.asr_turns) == 0
 
     session.interaction_classifier = _classifier_for(InteractionType.CONFIRMATION)
 
@@ -148,6 +201,7 @@ async def test_runtime_message_stages_and_confirms_structured_task():
     assert task is not None
     assert task.metadata["source_kind"] == "draft_session"
     assert task.metadata["mode"] == "read_only_first"
+    assert task.metadata["draft_revision_id"] == decision.draft_revision_id
     assert task.metadata["task_spec"]["target_agent"] == "codex"
     assert task.goal != "confirm action"
     assert "raw_transcript" in task.metadata["task_spec"]
@@ -200,6 +254,201 @@ async def test_runtime_message_handles_partial_communication_correction_and_canc
 
 
 @pytest.mark.anyio
+async def test_live_classifier_cadence_refines_one_draft_without_durable_asr_turns():
+    classifier = CountingClassifier(
+        InteractionClassification(
+            interaction_type=InteractionType.DELEGATION,
+            confidence=0.95,
+            requires_user_decision=True,
+            reason="test_live_delegation",
+        )
+    )
+    rewriter = CountingDraftRewriter()
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel({}),
+        settings=Settings(live_interaction_classifier_interval_seconds=1.0),
+        executor_node_manager=ExecutorNodeManager(detached_executor_types=[]),
+        draft_rewriter=rewriter,
+        interaction_classifier=classifier,
+    )
+
+    first = await session.handle_runtime_message(
+        text="Plan a trip to the US",
+        message_type="stt_partial",
+        timestamp_ms=0,
+    )
+    await _drain_live_partial(session)
+    skipped = await session.handle_runtime_message(
+        text="Plan a trip to the US actually",
+        message_type="stt_partial",
+        timestamp_ms=500,
+    )
+    corrected = await session.handle_runtime_message(
+        text="Plan a trip to the US actually make it UK",
+        message_type="stt_partial",
+        timestamp_ms=1000,
+    )
+    await _drain_live_partial(session)
+    final = await session.handle_runtime_message(
+        text="Plan a trip to the US actually make it UK",
+        message_type="stt_final",
+        timestamp_ms=1100,
+    )
+
+    assert [first.should_speak, skipped.should_speak, corrected.should_speak, final.should_speak] == [False, False, False, False]
+    assert [first.response_text, skipped.response_text, corrected.response_text, final.response_text] == ["", "", "", ""]
+    assert classifier.calls == [
+        "Plan a trip to the US",
+        "Plan a trip to the US actually make it UK",
+    ]
+    assert rewriter.calls == [
+        "Plan a trip to the US",
+        "Plan a trip to the US actually make it UK",
+    ]
+    draft = session.draft_manager.active_session
+    assert draft is not None
+    assert draft.current_draft is not None
+    assert draft.current_draft.text == "Plan a trip to the US actually make it UK."
+    assert len(draft.asr_turns) == 0
+    assert len(draft.snapshots) == 3
+    assert draft.current_revision_id == final.draft_revision_id
+    assert draft.live_source_boundary == "stt.final"
+    assert draft.live_classification is not None
+    assert draft.live_classification["interaction_type"] == "delegation"
+    live_events = [
+        event for event in session.observability.store.all()
+        if event.event_name == "comm.live_draft.updated"
+    ]
+    assert live_events[-1].details["draft_revision_id"] == final.draft_revision_id
+    assert live_events[-1].details["source_boundary"] == "stt.final"
+    assert live_events[-1].details["draft_revision_number"] == 2
+    stages = [
+        event for event in session.observability.store.all()
+        if event.event_name == "comm.live_draft.stage"
+    ]
+    assert any(event.details["stage"] == "final_checkpoint_reused" for event in stages)
+
+
+@pytest.mark.anyio
+async def test_live_draft_rewrite_streams_preview_to_subscribers():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel({}),
+        settings=Settings(live_interaction_classifier_interval_seconds=1.0),
+        executor_node_manager=ExecutorNodeManager(detached_executor_types=[]),
+        draft_rewriter=StreamingDraftRewriter(),
+        interaction_classifier=_classifier_for(InteractionType.DELEGATION),
+    )
+    queue = session.subscribe()
+    try:
+        await session.handle_runtime_message(
+            text="Plan a trip to the US with flights and hotels",
+            message_type="stt_partial",
+            timestamp_ms=0,
+        )
+        await _drain_live_partial(session)
+
+        events = []
+        while not queue.empty():
+            events.append(await queue.get())
+        draft_events = [event for event in events if event.type.startswith("draft_output_")]
+
+        assert [event.type for event in draft_events[:4]] == [
+            "draft_output_started",
+            "draft_output_delta",
+            "draft_output_delta",
+            "draft_output_completed",
+        ]
+        assert all(event.request_id == "live-draft-1" for event in draft_events)
+        assert [draft_events[1].delta, draft_events[2].delta] == ["Preview ", "draft"]
+        assert draft_events[3].draft_text == "Plan a trip to the US with flights and hotels."
+    finally:
+        session.unsubscribe(queue)
+
+
+@pytest.mark.anyio
+async def test_live_partial_worker_discards_cancelled_stale_work():
+    classifier = DelayedCountingClassifier(
+        InteractionClassification(
+            interaction_type=InteractionType.DELEGATION,
+            confidence=0.95,
+            requires_user_decision=True,
+            reason="test_latest_wins",
+        )
+    )
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel({}),
+        settings=Settings(live_interaction_classifier_interval_seconds=1.0),
+        executor_node_manager=ExecutorNodeManager(detached_executor_types=[]),
+        draft_rewriter=DeterministicDraftRewriter(),
+        interaction_classifier=classifier,
+    )
+
+    first = await session.handle_runtime_message(
+        text="Plan a trip",
+        message_type="stt_partial",
+        timestamp_ms=0,
+    )
+    second = await session.handle_runtime_message(
+        text="Plan a trip to California with flights and hotels",
+        message_type="stt_partial",
+        timestamp_ms=1000,
+    )
+    await _drain_live_partial(session)
+
+    assert [first.should_speak, second.should_speak] == [False, False]
+    draft = session.draft_manager.active_session
+    assert draft is not None
+    assert draft.current_draft is not None
+    assert draft.current_draft.text == "Plan a trip to California with flights and hotels."
+    assert len(draft.snapshots) == 1
+    assert draft.live_source_boundary == "stt.partial"
+    cancelled = [
+        event for event in session.observability.store.all()
+        if event.event_name == "comm.live_draft.stage"
+        and event.details["stage"] == "cancelled"
+    ]
+    assert cancelled
+
+
+@pytest.mark.anyio
+async def test_send_rejects_stale_draft_revision():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel({}),
+        settings=Settings(),
+        executor_node_manager=ExecutorNodeManager(detached_executor_types=[]),
+        draft_rewriter=DeterministicDraftRewriter(),
+        interaction_classifier=_classifier_for(InteractionType.DELEGATION),
+    )
+
+    first = await session.handle_runtime_message(
+        text="Ask Codex to inspect alpha.",
+        message_type="stt_final",
+        timestamp_ms=0,
+    )
+    stale_revision = first.draft_revision_id
+    second = await session.handle_runtime_message(
+        text="Ask Codex to inspect beta.",
+        message_type="stt_final",
+        timestamp_ms=1000,
+    )
+
+    assert stale_revision is not None
+    assert second.draft_revision_id != stale_revision
+    with pytest.raises(ValueError, match="Draft revision"):
+        await session.confirm_active_dispatch(draft_revision_id=stale_revision)
+
+    sent = await session.confirm_active_dispatch(draft_revision_id=second.draft_revision_id)
+    assert sent.task_id is not None
+    task = await session.blackboard.get_task(sent.task_id)
+    assert task is not None
+    assert task.metadata["draft_revision_id"] == second.draft_revision_id
+
+
+@pytest.mark.anyio
 async def test_agora_voice_event_path_uses_typed_finality_and_runtime_decision():
     session = create_session_runtime(
         "session-1",
@@ -222,7 +471,8 @@ async def test_agora_voice_event_path_uses_typed_finality_and_runtime_decision()
 
     assert partial.should_speak is False
     assert partial.ui_updates[0].type == "transcript.partial"
-    assert session.draft_manager.active_session is None
+    await _drain_live_partial(session)
+    assert session.draft_manager.active_session is not None
     assert session.voice_target_persona_id == "codex"
 
     final = await session.handle_agora_event(
@@ -235,7 +485,7 @@ async def test_agora_voice_event_path_uses_typed_finality_and_runtime_decision()
         )
     )
 
-    assert final.should_speak is True
+    assert final.should_speak is False
     assert final.dispatch_plan_id
     assert session.draft_manager.active_session is not None
     classified_events = [

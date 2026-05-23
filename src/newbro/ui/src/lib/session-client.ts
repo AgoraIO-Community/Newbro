@@ -511,6 +511,7 @@ export async function sendDraft(
   sessionId: string,
   payload: {
     draft_session_id?: string;
+    draft_revision_id?: string;
   } = {},
 ) {
   const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/draft/send`), {

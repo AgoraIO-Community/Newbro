@@ -214,15 +214,138 @@ class DraftSessionManager:
             draft = await self.rewriter.rewrite(rewrite_input)
         else:
             draft = await self.rewriter.rewrite(rewrite_input, on_text_delta=on_text_delta)
-        session.status = DraftSessionStatus.DRAFTING
         session.asr_turns.append(turn)
+        return self._apply_draft_revision(
+            session,
+            draft=draft,
+            source_asr_turn_ids=[item.id for item in session.asr_turns],
+            source_boundary="asr_turn",
+            transcript_timestamp_ms=None,
+        )
+
+    async def update_live_draft(
+        self,
+        *,
+        raw_text: str,
+        normalized_text: str | None = None,
+        confidence: float | None = None,
+        started_at: str | None = None,
+        ended_at: str | None = None,
+        assigned_bro_id: str | None = None,
+        source_boundary: str = "stt.partial",
+        transcript_timestamp_ms: int | None = None,
+        classification: dict[str, object] | None = None,
+        on_text_delta: TextDeltaCallback | None = None,
+    ) -> DraftSession:
+        text = raw_text.strip()
+        if not text:
+            raise ValueError("Live transcript text must not be empty.")
+        now = utc_now_iso()
+        session = self._active_session
+        if session is None or session.status in {DraftSessionStatus.SENT, DraftSessionStatus.CLEARED}:
+            session = DraftSession(
+                id=f"draft-{uuid4().hex[:8]}",
+                assigned_bro_id=assigned_bro_id or DEFAULT_BRO_ID,
+                status=DraftSessionStatus.EMPTY,
+                created_at=now,
+                updated_at=now,
+            )
+        elif assigned_bro_id:
+            session.assigned_bro_id = assigned_bro_id
+
+        if (
+            transcript_timestamp_ms is not None
+            and session.live_transcript_timestamp_ms is not None
+            and transcript_timestamp_ms < session.live_transcript_timestamp_ms
+        ):
+            return session
+
+        turn = AsrTurn(
+            id=f"live-{uuid4().hex[:8]}",
+            raw_text=text,
+            normalized_text=normalized_text.strip() if normalized_text and normalized_text.strip() else None,
+            confidence=confidence,
+            started_at=started_at or now,
+            ended_at=ended_at or now,
+        )
+        rewrite_input = DraftRewriteInput(
+            previous_draft=session.current_draft,
+            asr_turns=[*session.asr_turns, turn],
+            new_turn=turn,
+            assigned_bro_id=session.assigned_bro_id,
+        )
+        if on_text_delta is None:
+            draft = await self.rewriter.rewrite(rewrite_input)
+        else:
+            draft = await self.rewriter.rewrite(rewrite_input, on_text_delta=on_text_delta)
+        session.live_classification = classification
+        return self._apply_draft_revision(
+            session,
+            draft=draft,
+            source_asr_turn_ids=[item.id for item in session.asr_turns],
+            source_boundary=source_boundary,
+            transcript_timestamp_ms=transcript_timestamp_ms,
+        )
+
+    def mark_live_checkpoint(
+        self,
+        *,
+        source_boundary: str,
+        transcript_timestamp_ms: int | None = None,
+        classification: dict[str, object] | None = None,
+    ) -> DraftSession | None:
+        session = self._active_session
+        if session is None or session.current_draft is None or session.current_revision_id is None:
+            return session
+        session.live_classification = classification if classification is not None else session.live_classification
+        session.live_source_boundary = source_boundary
+        if transcript_timestamp_ms is not None:
+            session.live_transcript_timestamp_ms = transcript_timestamp_ms
+        session.updated_at = utc_now_iso()
+        session.snapshots.append(
+            DraftSnapshot(
+                id=f"draft-snap-{uuid4().hex[:8]}",
+                draft=session.current_draft.model_copy(deep=True),
+                source_asr_turn_ids=[item.id for item in session.asr_turns],
+                created_at=session.updated_at,
+                draft_revision_id=session.current_revision_id,
+                draft_revision_number=session.current_revision_number,
+                source_boundary=source_boundary,
+                transcript_timestamp_ms=transcript_timestamp_ms,
+            )
+        )
+        self._active_session = session
+        return session
+
+    def _apply_draft_revision(
+        self,
+        session: DraftSession,
+        *,
+        draft: Draft,
+        source_asr_turn_ids: list[str],
+        source_boundary: str,
+        transcript_timestamp_ms: int | None,
+    ) -> DraftSession:
+        session.status = DraftSessionStatus.DRAFTING
+        revision_number = session.current_revision_number + 1
+        revision_id = f"draft-rev-{uuid4().hex[:8]}"
+        created_at = utc_now_iso()
+        draft.revision_id = revision_id
+        draft.revision_number = revision_number
+        draft.updated_at = created_at
         snapshot = DraftSnapshot(
             id=f"draft-snap-{uuid4().hex[:8]}",
             draft=draft,
-            source_asr_turn_ids=[item.id for item in session.asr_turns],
-            created_at=utc_now_iso(),
+            source_asr_turn_ids=source_asr_turn_ids,
+            created_at=created_at,
+            draft_revision_id=revision_id,
+            draft_revision_number=revision_number,
+            source_boundary=source_boundary,
+            transcript_timestamp_ms=transcript_timestamp_ms,
         )
         session.current_draft = draft
+        session.current_revision_id = revision_id
+        session.current_revision_number = revision_number
         session.current_dispatch_plan = build_dispatch_plan(
             session_id=session.id,
             runtime_session_id="",
@@ -232,6 +355,9 @@ class DraftSessionManager:
         session.runtime_state = RuntimeSessionState.WAITING_FOR_CONFIRMATION
         session.snapshots.append(snapshot)
         session.status = DraftSessionStatus.READY
+        session.live_source_boundary = source_boundary
+        if transcript_timestamp_ms is not None:
+            session.live_transcript_timestamp_ms = transcript_timestamp_ms
         session.updated_at = snapshot.created_at
         self._active_session = session
         return session
@@ -246,12 +372,19 @@ class DraftSessionManager:
         self._active_session = None
         return session
 
-    def mark_sent(self, draft_session_id: str | None = None) -> DraftSession:
+    def mark_sent(
+        self,
+        draft_session_id: str | None = None,
+        *,
+        draft_revision_id: str | None = None,
+    ) -> DraftSession:
         session = self._active_session
         if session is None or session.current_draft is None or not session.snapshots:
             raise ValueError("No draft is ready to send.")
         if draft_session_id is not None and session.id != draft_session_id:
             raise ValueError("Draft session does not match the active draft.")
+        if draft_revision_id is not None and session.current_revision_id != draft_revision_id:
+            raise ValueError("Draft revision does not match the active draft.")
         session.status = DraftSessionStatus.SENT
         session.runtime_state = RuntimeSessionState.TASK_RUNNING
         session.updated_at = utc_now_iso()
@@ -302,6 +435,8 @@ def build_dispatch_plan(
         plan_id=f"plan-{uuid4().hex[:8]}",
         session_id=runtime_session_id or session_id or "",
         draft_session_id=draft_session.id,
+        draft_revision_id=draft_session.current_revision_id,
+        draft_revision_number=draft_session.current_revision_number,
         intent=_intent(task_spec),
         target_agent=task_spec.target_agent,
         task_title=task_spec.title,

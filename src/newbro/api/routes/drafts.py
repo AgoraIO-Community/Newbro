@@ -27,12 +27,14 @@ class AsrTurnRequest(BaseModel):
 
 class SendDraftRequest(BaseModel):
     draft_session_id: str | None = None
+    draft_revision_id: str | None = None
 
 
 class SendDraftResponse(BaseModel):
     task_id: str
     draft_session_id: str
     draft_snapshot_id: str
+    draft_revision_id: str | None = None
 
 
 class ClearDraftRequest(BaseModel):
@@ -110,10 +112,13 @@ async def send_draft(
     session = _get_session(http_request, session_id)
     try:
         active = session.draft_manager.active_session
+        if request.draft_session_id is not None and active is not None and active.id != request.draft_session_id:
+            raise ValueError("Draft session does not match the active draft.")
         decision = await session.confirm_active_dispatch(
             plan_id=active.current_dispatch_plan.plan_id
             if active is not None and active.current_dispatch_plan is not None
-            else None
+            else None,
+            draft_revision_id=request.draft_revision_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -127,6 +132,7 @@ async def send_draft(
         task_id=task.task_id,
         draft_session_id=str(task.metadata["draft_session_id"]),
         draft_snapshot_id=str(task.metadata["draft_snapshot_id"]),
+        draft_revision_id=task.metadata.get("draft_revision_id"),
     )
 
 

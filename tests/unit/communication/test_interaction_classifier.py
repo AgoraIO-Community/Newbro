@@ -103,3 +103,82 @@ async def test_openai_classifier_uses_provider_json_output():
     assert classification.interaction_type == InteractionType.TASK_CONTROL
     assert classification.requires_user_decision is True
     assert client.last_request["model"] == "classifier-model"
+
+
+@pytest.mark.anyio
+async def test_openai_classifier_prompt_allows_early_draft_worthy_task_context():
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.last_request = None
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        async def create(self, **kwargs):
+            self.last_request = kwargs
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"interaction_type":"delegation","confidence":0.83,'
+                                '"requires_user_decision":false,"importance":"medium",'
+                                '"reason":"concrete_task_context"}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    client = _FakeClient()
+    classifier = OpenAIInteractionClassifier(
+        OpenAIProvider(Settings(openai_api_key="test-key"), client=client),
+        model="classifier-model",
+    )
+
+    classification = await classifier.classify(
+        text="I'm traveling next month and preparing tickets, flights, and hotels.",
+        state=InteractionClassifierState(has_draft=False, active_task_count=0),
+    )
+
+    system_prompt = client.last_request["messages"][0]["content"]
+    assert classification.interaction_type == InteractionType.DELEGATION
+    assert "likely work product is clear enough to draft" in system_prompt
+    assert "Do not wait for explicit words like please, help" in system_prompt
+    assert "lacks enough concrete task material" in system_prompt
+
+
+@pytest.mark.anyio
+async def test_openai_classifier_tolerates_empty_optional_enum_fields():
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        async def create(self, **kwargs):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"interaction_type":"delegation","confidence":"0.88",'
+                                '"requires_user_decision":true,"importance":"high",'
+                                '"reason":"model_output","control_action":"none",'
+                                '"task_mode":"none"}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    classifier = OpenAIInteractionClassifier(
+        OpenAIProvider(Settings(openai_api_key="test-key"), client=_FakeClient()),
+        model="classifier-model",
+    )
+
+    classification = await classifier.classify(
+        text="Please help me plan the trip.",
+        state=InteractionClassifierState(has_draft=False, active_task_count=0),
+    )
+
+    assert classification.interaction_type == InteractionType.DELEGATION
+    assert classification.confidence == 0.88
+    assert classification.control_action is None
+    assert classification.task_mode is None

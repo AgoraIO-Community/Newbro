@@ -264,7 +264,7 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
                 )
 
             if not _has_explicit_event_type(payload):
-                chat_completion_turns.submit(binding=binding, event=event)
+                await chat_completion_turns.submit(binding=binding, event=event)
                 if payload.stream:
                     return StreamingResponse(
                         _stream_silent_completion(model_name=payload.model or AGORA_BRIDGE_MODEL),
@@ -338,12 +338,13 @@ class ChatCompletionTurnCoalescer:
         self._delay_seconds = delay_seconds
         self._pending: dict[str, _PendingChatCompletionTurn] = {}
 
-    def submit(
+    async def submit(
         self,
         *,
         binding: ActiveConnectorBinding,
         event: AgoraVoiceEvent,
     ) -> None:
+        await self._submit_live_partial(binding=binding, event=event)
         self.cancel(binding.binding_id)
         task = asyncio.create_task(self._flush_after_delay(binding.binding_id))
         self._pending[binding.binding_id] = _PendingChatCompletionTurn(
@@ -389,6 +390,17 @@ class ChatCompletionTurnCoalescer:
         if decision.should_speak and decision.response_text and pending.binding.runtime_session_id:
             await self._speaker.speak(pending.binding.runtime_session_id, decision.response_text)
         return decision
+
+    async def _submit_live_partial(
+        self,
+        *,
+        binding: ActiveConnectorBinding,
+        event: AgoraVoiceEvent,
+    ) -> RuntimeDecision:
+        return await self._transport.submit_agora_event(
+            binding.synapse_session_id,
+            _compat_live_partial_event(event),
+        )
 
 
 async def _stream_runtime_decision(
@@ -452,6 +464,18 @@ def _compat_event_from_chat_completion(
         text=text,
         target_persona_id=target_persona_id,
         metadata=metadata,
+    )
+
+
+def _compat_live_partial_event(event: AgoraVoiceEvent) -> AgoraVoiceEvent:
+    metadata = dict(event.metadata)
+    metadata["turn_boundary_source"] = "agora_custom_llm_live_callback"
+    return event.model_copy(
+        update={
+            "event_id": f"{event.event_id}-partial",
+            "type": AgoraVoiceEventType.STT_PARTIAL,
+            "metadata": metadata,
+        }
     )
 
 

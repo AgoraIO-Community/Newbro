@@ -42,9 +42,12 @@ The `agora-convoai` module exposes headless routes:
 - Agora voice input is represented as typed Newbro runtime events
 - Newbro owns `RuntimeDecision.should_speak`; the connector does not decide
   whether a transcript should produce TTS
-- final transcript meaning is interpreted by the Communication Brain
-  interaction classifier; runtime code applies deterministic speech policy to
-  that structured classifier output and current state
+- live transcript meaning is interpreted by the Communication Brain interaction
+  classifier on the configured cadence, defaulting to about 1 second; runtime
+  code applies deterministic speech policy to that structured classifier output
+  and current state
+- final/coalesced transcript callbacks are stabilization checkpoints for the
+  live draft state, not the source of truth for responsiveness
 - the connector module owns Agora auth and calls Agora APIs on behalf of the integration
 - browser ConvoAI voice sessions are Bro-detail scoped; the UI binds
   `/api/sessions/{session_id}/voice-target` to the current Bro before Start is
@@ -82,18 +85,19 @@ When Agora calls that URL:
 5. if no explicit event metadata is present, the compatibility adapter treats
    the custom LLM callback as a compatibility turn candidate, coalesces repeated
    callback updates for the same binding, then submits only the latest stable
-   candidate as `stt.final`
+   candidate as a checkpoint-style `stt.final`
 6. Newbro returns a `RuntimeDecision`
 7. the connector speaks the decision text through the active Agora runtime only
    when `RuntimeDecision.should_speak` is true
 
-For the quiet runtime path, partial transcript updates, lifecycle events, draft
+For the quiet runtime path, live transcript updates, lifecycle events, draft
 micro-updates, and other `should_speak=false` decisions return an empty response
-to the compatibility caller. Short TTS responses are reserved for meaningful
-communication, confirmation, clarification, blocked state, completion, status,
-stop/cancel acknowledgement, permission/risk, and urgent events. This is not a
-one-reply cap; multiple replies are valid when the user produces multiple
-meaningful turns.
+to the compatibility caller. Ordinary draft refinements are silent even when
+they update the draft card. Short TTS responses are reserved for meaningful
+communication, clarification, blocked state, completion, status, stop/cancel
+acknowledgement, permission/risk, urgent events, and explicit confirmations.
+This is not a one-reply cap; multiple replies are valid when the user produces
+multiple meaningful turns.
 
 The stable backend event endpoint is:
 
@@ -102,21 +106,30 @@ POST /api/sessions/{session_id}/agora-events
 ```
 
 It accepts `stt.partial`, `stt.final`, speech lifecycle, interruption, and
-session lifecycle events. `stt.final` is the transcript event that can stage or
-update work after interaction classification. The runtime does not use phrase
-lists, transcript length, language-ending checks, duplicate-text rules, or
-semantic transcript keywords to decide whether to speak.
+session lifecycle events. `stt.partial` can run the live classifier at the
+configured cadence and update the current draft revision. `stt.final` is a
+checkpoint that may stabilize newer live state; it is not required before the
+draft can update. If the final transcript matches the latest published live
+draft transcript, the runtime records a final checkpoint on the existing
+revision without re-running classification or draft rewriting. The runtime does not use phrase lists, transcript length,
+language-ending checks, duplicate-text rules, or semantic transcript keywords to
+decide whether to speak.
+
+Live partial classification is intentionally allowed to become draft-worthy
+before the final request phrase when the accumulated transcript already contains
+enough concrete task material for a useful draft.
 
 The browser ConvoAI toolkit transcript stream is display-only in the current
 integration. Live testing showed toolkit `user.transcription` items can mark
 growing fragments as `metadata.final=true`, so the browser must not submit those
 items directly as backend `stt.final` events.
 
-The connector's custom LLM callback is the compatibility final-turn source and
-is debounced because live ConvoAI can call the OpenAI-compatible endpoint
-repeatedly with growing transcript text. The runtime still owns classification
-and `should_speak`; the connector must not use transcript text length,
-punctuation, language, duplicate text, or keywords to decide quietness.
+The connector's custom LLM callback is a compatibility checkpoint source and is
+debounced because live ConvoAI can call the OpenAI-compatible endpoint
+repeatedly with growing transcript text. The runtime still owns classification,
+draft revisioning, and `should_speak`; the connector must not use transcript
+text length, punctuation, language, duplicate text, or keywords to decide
+quietness.
 The fallback silence window is configured by
 `connectors.agora-convoai.chat_completion_turn_silence_seconds` and defaults to
 `6.0` seconds; explicit SDK-style finality events bypass this compatibility
