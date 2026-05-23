@@ -220,3 +220,4 @@ Short log of important design decisions and changes for Newbro.
 - Allowed a meaningful active-Draft correction to reopen one send-confirmation prompt for the corrected revision, while keeping duplicate finals and non-correction refinements silent.
 - Added an invite-gated public onboarding path with user-owned sessions, personas, and executor nodes, plus a Cloudflare-fronted Ubuntu VPS deployment path driven by GitHub Actions SSH/rsync.
 - Added `newbro invite create` for hosted operators and a Bro Detail waiting-executor path that creates or reveals a copyable local Codex node command for the current user-owned Bro.
+- Changed the public deployment workflow from host Python/systemd/rsync to a GHCR Docker image deployed on the VPS with Docker Compose, while keeping runtime secrets mounted from `/root/.newbro`.

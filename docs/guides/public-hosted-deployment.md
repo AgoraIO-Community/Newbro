@@ -1,6 +1,6 @@
 # Public Hosted Deployment
 
-Newbro's first public-user deployment path is a single service-hosted app on a
+Newbro's first public-user deployment path is a single Dockerized service on a
 long-running Ubuntu VPS with Cloudflare in front of it.
 
 Cloudflare is the public edge for this path. It owns DNS, HTTPS, proxying, and
@@ -8,10 +8,10 @@ optionally Cloudflare Tunnel. Cloudflare is not the Newbro runtime host.
 
 ## Runtime Shape
 
-The VPS runs one `newbro.service` process:
+The VPS runs one `newbro` container through Docker Compose:
 
 ```text
-newbro.service
+newbro container
   -> newbro start --host 0.0.0.0 --port 8000
 ```
 
@@ -30,7 +30,7 @@ connector routes, and websocket upgrades on one public origin.
 
 ## Operator Setup
 
-The VPS owns runtime config and secrets:
+The VPS owns runtime config and secrets, mounted into the container:
 
 ```text
 ~/.newbro/.env
@@ -49,11 +49,21 @@ Configure at least:
 
 Users do not provide OpenAI or Agora keys for the first public path.
 
-Create invite codes on the VPS:
+Install Docker on the VPS, or let the deployment workflow install the default
+Ubuntu Docker packages:
 
 ```bash
-newbro invite create
-newbro invite create friend-code --email user@example.com
+apt-get update
+apt-get install -y docker.io docker-compose-v2
+systemctl enable --now docker
+```
+
+Create invite codes through the running container:
+
+```bash
+cd /opt/newbro
+docker compose exec newbro newbro invite create
+docker compose exec newbro newbro invite create friend-code --email user@example.com
 ```
 
 The command prints the invite code. The public auth database lives under
@@ -82,14 +92,17 @@ newbro executor run --base-url https://newbro.example.com --node-id node-1234 --
 
 ## GitHub Actions Deployment
 
-The production workflow deploys with SSH and rsync:
+The production workflow deploys with Docker and SSH:
 
 ```text
 GitHub Actions
   -> run tests
-  -> build frontend
-  -> rsync repo or release artifact to VPS
-  -> ./newbro service install
+  -> build Docker image, including the frontend
+  -> push image to GHCR
+  -> SSH to VPS
+  -> write docker-compose.yml
+  -> docker compose pull
+  -> docker compose up -d
   -> verify https://newbro.example.com/api/health
 ```
 
@@ -104,6 +117,16 @@ Required GitHub secrets:
 
 Do not put OpenAI or Agora secrets into GitHub Actions build variables. They
 belong in the VPS runtime config.
+
+The workflow publishes images to:
+
+```text
+ghcr.io/agoraio-community/newbro
+```
+
+The generated Compose file mounts `/root/.newbro` into the container. If the
+deployment later moves away from the `root` SSH user, update the Compose mount
+and runtime config path together.
 
 ## Health Checks
 
@@ -121,6 +144,14 @@ Then verify from a browser:
 - voice starts from Bro Detail
 - session websocket connects
 - a local executor node can connect through `/api/executors/control`
+
+For container state and logs:
+
+```bash
+cd /opt/newbro
+docker compose ps
+docker compose logs --tail=200 newbro
+```
 
 ## Non-Default Paths
 

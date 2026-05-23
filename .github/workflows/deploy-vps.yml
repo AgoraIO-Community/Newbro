@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: newbro-vps-production
@@ -26,6 +27,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
+      IMAGE_NAME: ghcr.io/agoraio-community/newbro
       DEPLOY_HOST: ${{ secrets.NEWBRO_DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.NEWBRO_DEPLOY_USER }}
       DEPLOY_PATH: ${{ secrets.NEWBRO_DEPLOY_PATH }}
@@ -70,13 +72,24 @@ jobs:
       - name: Run backend tests
         run: .venv/bin/python -m pytest
 
-      - name: Install frontend dependencies
-        working-directory: src/newbro/ui
-        run: npm install
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Build frontend
-        working-directory: src/newbro/ui
-        run: npm run build
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:main
 
       - name: Configure SSH
         run: |
@@ -88,20 +101,76 @@ jobs:
           ssh-keyscan -v -T 20 -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
           ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "echo ssh-ok"
 
-      - name: Rsync release to VPS
+      - name: Deploy container on VPS
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          IMAGE_REF: ${{ env.IMAGE_NAME }}:${{ github.sha }}
         run: |
-          rsync -az --delete \
-            --exclude '.git' \
-            --exclude '.venv' \
-            --exclude 'node_modules' \
-            --exclude 'src/newbro/ui/node_modules' \
-            -e "ssh -i ~/.ssh/newbro_deploy -p $DEPLOY_PORT" \
-            ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
-
-      - name: Install and restart service
-        run: |
-          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd '$DEPLOY_PATH' && ./newbro service install"
+          set -euxo pipefail
+          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" '
+            set -euxo pipefail
+            SUDO=""
+            if [ "$(id -u)" -ne 0 ]; then
+              SUDO="sudo"
+            fi
+            if ! command -v docker >/dev/null 2>&1; then
+              $SUDO apt-get update
+              DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y ca-certificates curl docker.io
+            fi
+            if ! docker compose version >/dev/null 2>&1; then
+              $SUDO apt-get update
+              DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y ca-certificates curl
+              DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y docker-compose-v2 || \
+                DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y docker-compose-plugin || true
+            fi
+            if ! docker compose version >/dev/null 2>&1; then
+              ARCH="$(uname -m)"
+              case "$ARCH" in
+                x86_64|amd64) COMPOSE_ARCH="x86_64" ;;
+                aarch64|arm64) COMPOSE_ARCH="aarch64" ;;
+                *) echo "Unsupported Docker Compose architecture: $ARCH" >&2; exit 1 ;;
+              esac
+              $SUDO mkdir -p /usr/local/lib/docker/cli-plugins
+              $SUDO curl -fsSL \
+                "https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-$COMPOSE_ARCH" \
+                -o /usr/local/lib/docker/cli-plugins/docker-compose
+              $SUDO chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+            fi
+            $SUDO systemctl enable --now docker || true
+            docker --version
+            docker compose version
+            $SUDO mkdir -p /root/.newbro
+          '
+          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cat > '$DEPLOY_PATH/docker-compose.yml'" <<EOF
+          services:
+            newbro:
+              image: $IMAGE_REF
+              restart: unless-stopped
+              ports:
+                - "8000:8000"
+              env_file:
+                - /root/.newbro/.env
+              environment:
+                HOME: /root
+                SYNAPSE_PUBLIC_COOKIE_SECURE: "true"
+              volumes:
+                - /root/.newbro:/root/.newbro
+              healthcheck:
+                test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()"]
+                interval: 30s
+                timeout: 5s
+                retries: 3
+                start_period: 20s
+          EOF
+          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && docker compose pull && docker compose up -d && docker compose ps"
 
       - name: Verify public health
         run: curl --fail --show-error --silent "$PUBLIC_BASE_URL/api/health"
+
+      - name: Show container logs on failure
+        if: failure()
+        run: |
+          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && docker compose logs --tail=200 newbro || true"

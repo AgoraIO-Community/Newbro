@@ -47,15 +47,16 @@ What each command does:
 - `./newbro doctor` checks local prerequisites.
 - `./newbro dev` starts the backend on `8000` and the frontend on `5173`.
 
-For server-side deployment from a repo checkout:
+For public hosted deployment, use the Docker-based GitHub Actions path:
 
-```bash
-./newbro service install
+```text
+GitHub Actions -> GHCR image -> Docker Compose on VPS -> Cloudflare edge
 ```
 
-This installs or updates `newbro.service`, builds the production UI, and runs
-the combined Newbro service through systemd. See
-[Ubuntu systemd deployment](./docs/guides/ubuntu-systemd.md) for details.
+See [Public Hosted Deployment](./docs/guides/public-hosted-deployment.md) for
+the production path. The older
+[Ubuntu systemd deployment](./docs/guides/ubuntu-systemd.md) guide remains for
+repo-checkout hosts.
 
 ## Docs
 
@@ -64,6 +65,7 @@ the combined Newbro service through systemd. See
 - [Architecture overview](./ARCHITECTURE.md)
 - [Docs index](./docs/README.md)
 - [Vercel UI deployment](./docs/guides/vercel-ui-deployment.md)
+- [Public hosted deployment](./docs/guides/public-hosted-deployment.md)
 - [Ubuntu systemd deployment](./docs/guides/ubuntu-systemd.md)
 
 ## Test
