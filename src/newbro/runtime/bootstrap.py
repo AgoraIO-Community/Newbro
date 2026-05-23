@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from newbro.communication.models import OpenAICommunicationModel, ScriptedCommunicationModel
 from newbro.communication.models.scripted import ScriptedPlan
+from newbro.communication.interaction_classifier import OpenAIInteractionClassifier
 from newbro.infrastructure.llm import OpenAIProvider
 
 from .config import Settings, load_settings
@@ -22,6 +23,10 @@ def build_runtime_container(
             communication_model=model,
             settings=settings,
             draft_rewriter=OpenAIDraftRewriter(llm_provider, model=settings.openai_model),
+            interaction_classifier=OpenAIInteractionClassifier(
+                llm_provider,
+                model=settings.openai_model,
+            ),
         )
 
     default_model = ScriptedCommunicationModel(

@@ -6,6 +6,7 @@ import {
   BroDetailShellPage,
   BrosShellPage,
   HomeShellPage,
+  MobileWalkieShellPage,
   NodesShellPage,
   SettingsShellPage,
 } from "./NewbroShell";
@@ -63,6 +64,10 @@ function SettingsRouteComponent() {
   return <SettingsShellPage onNavigate={usePageNavigate()} />;
 }
 
+function MobileRouteComponent() {
+  return <MobileWalkieShellPage />;
+}
+
 const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
@@ -93,12 +98,19 @@ const settingsRoute = createRoute({
   component: SettingsRouteComponent,
 });
 
+const mobileRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/mobile",
+  component: MobileRouteComponent,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   brosRoute,
   broDetailRoute,
   nodesRoute,
   settingsRoute,
+  mobileRoute,
 ]);
 
 export function getRouter() {

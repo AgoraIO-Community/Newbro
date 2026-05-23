@@ -3,9 +3,11 @@
 This directory contains contributor-oriented operational guides.
 
 - [Local Development](./local-dev.md)
+- [Development Best Practices](./development-best-practices.md)
 - [CLI, Setup, And Publishing](./cli.md)
 - [Vercel UI Deployment](./vercel-ui-deployment.md)
 - [Ubuntu Systemd](./ubuntu-systemd.md)
+- [Public Hosted Deployment](./public-hosted-deployment.md)
 - [Add Executor Adapter](./add-executor-adapter.md)
 - [Add Blackboard Backend](./add-blackboard-backend.md)
 - [Frontend Contracts](./frontend-contracts.md)

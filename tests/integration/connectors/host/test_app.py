@@ -376,6 +376,9 @@ async def test_agora_connector_activate_ignores_proxy_env_for_synapse_upstream(m
         async def send_message(self, session_id: str, text: str):
             raise AssertionError("send_message should not be called during activate")
 
+        async def submit_agora_event(self, session_id: str, event):
+            return None
+
         async def stream_message(self, session_id: str, text: str, *, request_id: str):
             if False:
                 yield None
@@ -514,6 +517,9 @@ async def test_agora_connector_activate_reuses_existing_synapse_session_binding(
 
         async def send_message(self, session_id: str, text: str):
             raise AssertionError("send_message should not be called during activate")
+
+        async def submit_agora_event(self, session_id: str, event):
+            return None
 
         async def stream_message(self, session_id: str, text: str, *, request_id: str):
             if False:

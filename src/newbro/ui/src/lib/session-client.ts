@@ -105,6 +105,48 @@ export async function createSession(): Promise<SessionResponse> {
   return (await ensureOk(response)).json();
 }
 
+export interface PublicUser {
+  user_id: string;
+  email: string | null;
+}
+
+export interface AuthMeResponse {
+  user: PublicUser;
+}
+
+export interface PublicBootstrapResponse {
+  user: PublicUser;
+  session_id: string;
+  default_persona_id: string;
+  default_bro_detail_session_id: string;
+}
+
+export async function redeemInvite(code: string): Promise<AuthMeResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/auth/invites/redeem`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  return (await ensureOk(response)).json();
+}
+
+export async function getCurrentUser(): Promise<AuthMeResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/auth/me`));
+  return (await ensureOk(response)).json();
+}
+
+export async function logoutPublicUser(): Promise<void> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/auth/logout`), {
+    method: "POST",
+  });
+  await ensureOk(response);
+}
+
+export async function bootstrapPublicUser(): Promise<PublicBootstrapResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/me/bootstrap`));
+  return (await ensureOk(response)).json();
+}
+
 export async function getSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
   const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}`));
   return (await ensureOk(response)).json();
@@ -124,6 +166,29 @@ export async function sendSessionMessage(sessionId: string, text: string): Promi
     body: JSON.stringify({ text }),
   });
   return (await ensureOk(response)).json();
+}
+
+export interface AgoraVoiceEventRequest {
+  event_id: string;
+  session_id: string;
+  type: "stt.partial" | "stt.final" | "user.speech_started" | "user.speech_ended" | "assistant.speech_started" | "assistant.speech_ended" | "interaction.interrupted" | "session.started" | "session.ended";
+  text?: string;
+  language?: string | null;
+  timestamp_ms?: number | null;
+  target_persona_id?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export async function submitAgoraVoiceEvent(
+  sessionId: string,
+  event: AgoraVoiceEventRequest,
+): Promise<void> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/agora-events`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(event),
+  });
+  await ensureOk(response);
 }
 
 export async function getConversationSnapshot(sessionId: string): Promise<ConversationSnapshot> {
@@ -459,6 +524,14 @@ export async function setVoiceTarget(sessionId: string, targetPersonaId: string)
   );
 }
 
+export async function clearVoiceTarget(sessionId: string): Promise<void> {
+  await ensureOk(
+    await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/voice-target`), {
+      method: "DELETE",
+    }),
+  );
+}
+
 export async function submitDraftAsrTurn(
   sessionId: string,
   payload: {
@@ -480,6 +553,7 @@ export async function sendDraft(
   sessionId: string,
   payload: {
     draft_session_id?: string;
+    draft_revision_id?: string;
   } = {},
 ) {
   const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/draft/send`), {

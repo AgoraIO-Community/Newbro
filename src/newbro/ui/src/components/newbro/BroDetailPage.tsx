@@ -7,12 +7,21 @@ import {
   type SttSessionPrepareResponse,
   type SttSessionStartResponse,
 } from "../../lib/connector-client";
-import { clearDraft, sendDraft, submitDraftAsrTurn, submitTaskCommand } from "../../lib/session-client";
+import {
+  buildExecutorRunCommand,
+  clearDraft,
+  createExecutorNode,
+  revealExecutorNodeConnectCommand,
+  sendDraft,
+  submitAgoraVoiceEvent,
+  submitTaskCommand,
+  updatePersona,
+} from "../../lib/session-client";
 import { loadAgoraBrowserStack } from "../../lib/voice-runtime";
 import { describeProtobufTranscriptPayload, describeTranscriptPayload, extractTranscriptText, type ExtractedSttTranscript } from "./stt-transcript";
 import { BroDetailHeader, DraftBrainPanel, LiveTranscriptPanel, RunnerBrainPanel, VoicePad } from "./visual";
 import type { BroCardModel, BroTaskRecord } from "./types";
-import type { DraftOutputCompletedStreamEvent, DraftOutputDeltaStreamEvent, DraftOutputFailedStreamEvent, DraftOutputStartedStreamEvent, TaskSummary } from "../../types";
+import type { AgentEvent, DraftOutputCompletedStreamEvent, DraftOutputDeltaStreamEvent, DraftOutputFailedStreamEvent, DraftOutputStartedStreamEvent, TaskSummary } from "../../types";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const STT_SILENCE_COMMIT_MS = 1_200;
@@ -21,11 +30,22 @@ type MicCaptureState = "muted" | "held" | "tail";
 type Draft = {
   text: string;
   last_update_summary?: string;
+  revision_id?: string | null;
 };
 
 type DraftSession = {
   id: string;
+  current_revision_id?: string | null;
   current_draft: Draft | null;
+  current_dispatch_plan?: {
+    plan_id: string;
+    target_agent: string;
+    mode: string;
+    task_title: string;
+    task_goal: string;
+    missing_context: string[];
+    output_language: string;
+  } | null;
   status: string;
 };
 
@@ -295,6 +315,7 @@ export function BroDetailPage({
   activeTaskId,
   summary,
   taskRecords,
+  agentEvents,
   snapshotDraftSession,
   latestDraftOutputEvent,
   onSubmitDraftAsrTurn,
@@ -306,6 +327,7 @@ export function BroDetailPage({
   activeTaskId: string | null;
   summary: TaskSummary | null;
   taskRecords?: BroTaskRecord[];
+  agentEvents?: AgentEvent[];
   snapshotDraftSession: DraftSession | null;
   latestDraftOutputEvent: DraftOutputEvent | null;
   onSubmitDraftAsrTurn?: (
@@ -329,6 +351,10 @@ export function BroDetailPage({
   const [draftActionError, setDraftActionError] = useState<string | null>(null);
   const [stoppingTask, setStoppingTask] = useState(false);
   const [taskActionError, setTaskActionError] = useState<string | null>(null);
+  const [localNodeCommand, setLocalNodeCommand] = useState<string | null>(null);
+  const [localNodeBusy, setLocalNodeBusy] = useState(false);
+  const [localNodeCopied, setLocalNodeCopied] = useState(false);
+  const [localNodeError, setLocalNodeError] = useState<string | null>(null);
   const [mobileDetailPage, setMobileDetailPage] = useState<MobileDetailPage>("draft");
   const resourcesRef = useRef<SttResources | null>(null);
   const submittedRef = useRef<Set<string>>(new Set());
@@ -343,6 +369,9 @@ export function BroDetailPage({
   const mountedRef = useRef(false);
   const generationRef = useRef(0);
   const pendingDraftRequestIdRef = useRef<string | null>(null);
+  const activeDraftSessionIdRef = useRef<string | null>(null);
+  const retiredDraftSessionIdsRef = useRef<Set<string>>(new Set());
+  const lastSubmittedPartialRef = useRef<string>("");
 
   const clearSilenceCommitTimer = useCallback(() => {
     if (silenceCommitTimerRef.current === null) return;
@@ -360,10 +389,15 @@ export function BroDetailPage({
     clearSilenceCommitTimer();
     sentenceSegmentsRef.current = new Map();
     submittedRef.current = new Set();
+    lastSubmittedPartialRef.current = "";
     acceptedTranscriptRef.current = "";
     transcriptArrivalIndexRef.current = 0;
     releasedForDraftUpdateRef.current = false;
     pendingDraftRequestIdRef.current = null;
+    if (activeDraftSessionIdRef.current !== null) {
+      retiredDraftSessionIdsRef.current.add(activeDraftSessionIdRef.current);
+    }
+    activeDraftSessionIdRef.current = null;
     setAcceptedTranscript("");
     setDraftSession(null);
     setStreamingDraftText("");
@@ -371,15 +405,23 @@ export function BroDetailPage({
 
   useEffect(() => {
     if (snapshotDraftSession === null) {
+      if (activeDraftSessionIdRef.current !== null) {
+        retiredDraftSessionIdsRef.current.add(activeDraftSessionIdRef.current);
+      }
+      activeDraftSessionIdRef.current = null;
       setDraftSession(null);
+      setStreamingDraftText("");
       return;
     }
+    activeDraftSessionIdRef.current = snapshotDraftSession.id;
+    retiredDraftSessionIdsRef.current.delete(snapshotDraftSession.id);
     setDraftSession(snapshotDraftSession);
   }, [snapshotDraftSession]);
 
   useEffect(() => {
     if (latestDraftOutputEvent === null) return;
-    if (latestDraftOutputEvent.request_id !== pendingDraftRequestIdRef.current) return;
+    const isLiveDraftOutput = latestDraftOutputEvent.request_id.startsWith("live-draft-");
+    if (!isLiveDraftOutput && latestDraftOutputEvent.request_id !== pendingDraftRequestIdRef.current) return;
 
     if (latestDraftOutputEvent.type === "draft_output_started") {
       setStreamingDraftText("");
@@ -391,8 +433,12 @@ export function BroDetailPage({
       return;
     }
     if (latestDraftOutputEvent.type === "draft_output_completed") {
+      if (retiredDraftSessionIdsRef.current.has(latestDraftOutputEvent.draft_session_id)) {
+        return;
+      }
       const draftText = latestDraftOutputEvent.draft_text;
       setStreamingDraftText(draftText);
+      activeDraftSessionIdRef.current = latestDraftOutputEvent.draft_session_id;
       setDraftSession({
         id: latestDraftOutputEvent.draft_session_id,
         current_draft: {
@@ -408,6 +454,60 @@ export function BroDetailPage({
     pendingDraftRequestIdRef.current = null;
     setSttPhase("error");
   }, [latestDraftOutputEvent, onGlobalError]);
+
+  const sendLiveSttEvent = useCallback(async (
+    type: "stt.partial" | "stt.final",
+    text: string,
+    metadata?: {
+      language?: string;
+      timestampMs?: number;
+      source?: string;
+      reason?: string;
+    },
+  ) => {
+    if (!sessionId) return;
+    await submitAgoraVoiceEvent(sessionId, {
+      event_id: `${type.replace(".", "-")}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      session_id: sessionId,
+      type,
+      text,
+      language: metadata?.language ?? null,
+      timestamp_ms: metadata?.timestampMs ?? Date.now(),
+      target_persona_id: bro.id,
+      metadata: {
+        source: metadata?.source ?? "bro_detail_stt",
+        ...(metadata?.reason ? { reason: metadata.reason } : {}),
+      },
+    });
+  }, [bro.id, sessionId]);
+
+  const submitLivePartialCandidate = useCallback((
+    parsed: ExtractedSttTranscript,
+    arrivalIndex: number,
+    metadata?: {
+      acceptedAction?: SentenceUpdateResult["action"];
+      text?: string;
+    },
+  ) => {
+    if (!sessionId) return;
+    const text = normalizeTranscriptSegmentForDisplay(metadata?.text ?? parsed.text);
+    if (!text || text === lastSubmittedPartialRef.current) return;
+    lastSubmittedPartialRef.current = text;
+    console.debug("[BroDetail][STT] submit live partial", {
+      text,
+      source: parsed.source,
+      final: parsed.final,
+      acceptedAction: metadata?.acceptedAction,
+    });
+    void sendLiveSttEvent("stt.partial", text, {
+      language: parsed.language ?? parsed.culture,
+      timestampMs: transcriptRevision(parsed, arrivalIndex),
+      source: parsed.source,
+      reason: metadata?.acceptedAction ?? "candidate",
+    }).catch((error: unknown) => {
+      onGlobalError?.(error instanceof Error ? error.message : "Failed to update live transcript.");
+    });
+  }, [onGlobalError, sendLiveSttEvent, sessionId]);
 
   const commitCurrentTranscript = useCallback(async (reason: "silence") => {
     clearSilenceCommitTimer();
@@ -425,21 +525,8 @@ export function BroDetailPage({
     submittedRef.current.add(draftRawText);
 
     if (sessionId) {
-      const requestId = onSubmitDraftAsrTurn?.({
-        raw_text: draftRawText,
-        assigned_bro_id: bro.id,
-      }) ?? null;
-      if (requestId !== null) {
-        pendingDraftRequestIdRef.current = requestId;
-        setStreamingDraftText("");
-        return;
-      }
       try {
-        const nextDraftSession = await submitDraftAsrTurn(sessionId, {
-          raw_text: draftRawText,
-          assigned_bro_id: bro.id,
-        });
-        setDraftSession(nextDraftSession as DraftSession);
+        await sendLiveSttEvent("stt.final", draftRawText, { reason });
         setStreamingDraftText("");
         setSttPhase("ready_mic_off");
       } catch (error) {
@@ -449,7 +536,7 @@ export function BroDetailPage({
     } else {
       setSttPhase("ready_mic_off");
     }
-  }, [bro.id, clearSilenceCommitTimer, onGlobalError, onSubmitDraftAsrTurn, sessionId]);
+  }, [clearSilenceCommitTimer, onGlobalError, sendLiveSttEvent, sessionId]);
 
   const scheduleSilenceCommit = useCallback(() => {
     if (!releasedForDraftUpdateRef.current) return;
@@ -517,6 +604,28 @@ export function BroDetailPage({
     }
   }, [clearPostReleaseMuteTimer, onGlobalError]);
 
+  const resetStaleSttResources = useCallback(async (message: string) => {
+    const resources = resourcesRef.current;
+    resourcesRef.current = null;
+    clearSilenceCommitTimer();
+    clearPostReleaseMuteTimer();
+    micCaptureStateRef.current = "muted";
+    setMicActive(false);
+    setSttPhase("error");
+    onGlobalError?.(message);
+    if (!resources) return;
+    try {
+      await resources.micTrack?.setMuted?.(true);
+    } catch {}
+    try {
+      resources.micTrack?.stop?.();
+      resources.micTrack?.close?.();
+    } catch {}
+    try {
+      await resources.rtcClient?.leave?.();
+    } catch {}
+  }, [clearPostReleaseMuteTimer, clearSilenceCommitTimer, onGlobalError]);
+
   const handleTranscript = useCallback(async (payload: unknown) => {
     const parsed = extractTranscriptText(payload);
     if (!parsed) {
@@ -541,12 +650,14 @@ export function BroDetailPage({
       if (update.text !== acceptedTranscriptRef.current) {
         acceptedTranscriptRef.current = update.text;
         setAcceptedTranscript(update.text);
+        submitLivePartialCandidate(parsed, arrivalIndex, { acceptedAction: update.action, text: update.text });
       }
     } else {
+      submitLivePartialCandidate(parsed, arrivalIndex, { acceptedAction: update.action });
       return;
     }
     scheduleSilenceCommit();
-  }, [scheduleSilenceCommit]);
+  }, [scheduleSilenceCommit, submitLivePartialCandidate]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -618,13 +729,18 @@ export function BroDetailPage({
       if (sttSessionId) {
         void heartbeatSttSession(sttSessionId).catch((error) => {
           if (mountedRef.current) {
-            onGlobalError?.(error instanceof Error ? error.message : "Failed to heartbeat STT session.");
+            const message = error instanceof Error ? error.message : "Failed to heartbeat STT session.";
+            if (message.includes("Unknown STT session")) {
+              void resetStaleSttResources("STT session expired. Start voice again to create a fresh session.");
+              return;
+            }
+            onGlobalError?.(message);
           }
         });
       }
     }, HEARTBEAT_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [onGlobalError, resetStaleSttResources]);
 
   async function setMicEnabled(enabled: boolean) {
     const micTrack = resourcesRef.current?.micTrack;
@@ -688,7 +804,11 @@ export function BroDetailPage({
     setDraftActionError(null);
     onGlobalError?.(null);
     try {
-      await sendDraft(sessionId, { draft_session_id: draftSession.id });
+      const revisionId = draftSession.current_revision_id ?? draftSession.current_draft.revision_id ?? undefined;
+      await sendDraft(sessionId, {
+        draft_session_id: draftSession.id,
+        ...(revisionId ? { draft_revision_id: revisionId } : {}),
+      });
       resetDraftWorkspace();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send draft to Bro.";
@@ -742,6 +862,43 @@ export function BroDetailPage({
     }
   }
 
+  async function handlePrepareLocalNodeCommand() {
+    if (!sessionId || bro.source !== "runtime" || localNodeBusy) return;
+    setLocalNodeBusy(true);
+    setLocalNodeError(null);
+    onGlobalError?.(null);
+    try {
+      const issue = bro.executorNodeId
+        ? await revealExecutorNodeConnectCommand(sessionId, bro.executorNodeId)
+        : await createExecutorNode(sessionId, {
+            name: `${bro.name} local node`,
+            enabled_executors: ["codex"],
+          });
+      if (!bro.executorNodeId) {
+        await updatePersona(sessionId, bro.id, { executor_node_id: issue.node.node_id });
+      }
+      const command = buildExecutorRunCommand(issue.node.node_id, issue.token, {
+        enabledExecutors: issue.node.enabled_executors,
+        acpxAgent: issue.node.acpx_agent,
+      });
+      setLocalNodeCommand(command);
+      const clipboard = navigator.clipboard;
+      if (clipboard?.writeText) {
+        await clipboard.writeText(command);
+        setLocalNodeCopied(true);
+        window.setTimeout(() => setLocalNodeCopied(false), 1600);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to prepare local node command.";
+      setLocalNodeError(message);
+      onGlobalError?.(message);
+    } finally {
+      if (mountedRef.current) {
+        setLocalNodeBusy(false);
+      }
+    }
+  }
+
   const readyForMic = sttPhase === "ready_mic_off" || sttPhase === "draft_updating";
   const capturing = micActive;
   const transcriptText = acceptedTranscript;
@@ -749,6 +906,8 @@ export function BroDetailPage({
   const draftActionPending = sendingDraft || clearingDraft;
   const canSendDraft = bro.source === "runtime";
   const draftText = streamingDraftText || draftSession?.current_draft?.text || "";
+  const waitingForExecutor = taskRecords?.some((record) => record.status === "waiting_executor")
+    || (Boolean(activeTaskId) && bro.liveState !== "live");
   const mobileTabClass = (page: MobileDetailPage) => (
     `min-h-[40px] flex-1 rounded-lg px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.12em] transition ${
       mobileDetailPage === page
@@ -762,9 +921,18 @@ export function BroDetailPage({
       bro={bro}
       summary={summary}
       taskRecords={taskRecords}
+      agentEvents={agentEvents}
       activeTaskId={activeTaskId}
       stoppingTask={stoppingTask}
       stopTaskError={taskActionError}
+      waitingForExecutor={waitingForExecutor}
+      localNodeCommand={localNodeCommand}
+      localNodeBusy={localNodeBusy}
+      localNodeCopied={localNodeCopied}
+      localNodeError={localNodeError}
+      onPrepareLocalNodeCommand={() => {
+        void handlePrepareLocalNodeCommand();
+      }}
       onStopTask={() => {
         void handleStopTask();
       }}
@@ -804,6 +972,7 @@ export function BroDetailPage({
         <div className={`${mobileDetailPage === "draft" ? "flex" : "hidden"} mt-4 nb-detail-scroll nb-draft-tab-content lg:mt-0 lg:block`}>
             <DraftBrainPanel
               draftText={draftText}
+              dispatchPlan={draftSession?.current_dispatch_plan ?? null}
               summary={draftSession?.current_draft?.last_update_summary}
               canSend={canSendDraft}
               sendDisabled={!sessionId || !draftReady || draftActionPending}

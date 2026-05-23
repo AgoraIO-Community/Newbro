@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from newbro.api.models import ResolveInteractionRequest, ResolveInteractionRequestResponse
+from newbro.api.public_auth import require_session_owner
 from newbro.observability.context import bind_diagnostic_context
 
 router = APIRouter()
@@ -21,6 +22,7 @@ async def resolve_interaction_request(
     request: ResolveInteractionRequest,
     http_request: Request,
 ) -> ResolveInteractionRequestResponse:
+    await require_session_owner(http_request, session_id)
     container = http_request.app.state.runtime_container
     try:
         session = container.get_session(session_id)

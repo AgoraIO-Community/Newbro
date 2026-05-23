@@ -9,10 +9,10 @@ This page should stay short and current.
 
 ## Immediate Next Milestone
 
-- implement session-scoped draft sessions
-- route Agora voice transcripts into Draft Brain
-- send drafts as immutable task contracts
-- expose the newbro detail-page workflow in the example UI
+- harden the v1 quiet runtime path against real executor adapters
+- expand typed message coverage for running-task correction and replacement flows
+- validate the 1s live ConvoAI classifier loop, draft revision stream, and silence-first behavior with a public connector host
+- add richer artifact review after normalized agent-event ingestion
 
 ## Explicitly Out of Scope Right Now
 
@@ -24,6 +24,6 @@ This page should stay short and current.
 
 Move into the next phase when:
 
-- draft API tests cover ASR turn, clear, send, and freeze behavior
-- Agora connector submits transcript text to draft APIs
-- example UI supports draft, send, and stop task moments
+- typed runtime tests cover live classifier cadence, delegation, correction, confirmation, stale send revisions, status, stop, event ingest, and multilingual examples
+- Agora connector live testing proves draft revisions update silently and confirmation/block/done responses are short
+- example UI manual checks cover transcript, draft, dispatch plan, active task, timeline, summary, artifacts, send, stop, and cancel

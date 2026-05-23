@@ -11,19 +11,24 @@ import {
   type ReactNode,
 } from "react";
 import {
-  createSession,
+  bootstrapPublicUser,
+  clearVoiceTarget,
   getConversationSnapshot,
   getSessionSnapshot,
+  redeemInvite,
   openSessionStream,
   sendSocketDraftAsrTurn,
   sendSocketMessage,
+  setVoiceTarget,
 } from "./lib/session-client";
 import { readSessionIdFromUrl, replaceSessionIdInUrl } from "./lib/session-url";
 import { BroDetailPage } from "./components/newbro/BroDetailPage";
 import { BrosPage } from "./components/newbro/BrosPage";
 import { BrosPanel } from "./components/newbro/BrosPanel";
+import { MobileWalkie } from "./components/newbro/mobile/MobileWalkie";
 import { NodesPage } from "./components/newbro/NodesPage";
 import { Sidebar, type PageId } from "./components/newbro/Sidebar";
+import { TopVoiceBar } from "./components/newbro/TopVoiceBar";
 import { buildBroCardModels, buildBroTaskRecords } from "./components/newbro/adapters";
 import { useVoiceSession } from "./components/newbro/useVoiceSession";
 import { WindowDots } from "./components/newbro/visual";
@@ -35,6 +40,7 @@ import type {
   DraftSession,
   ExecutionRun,
   ExecutorNodeRecord,
+  AgentEvent,
   Persona,
   SessionSnapshot,
   Task,
@@ -55,6 +61,7 @@ const SHELL_API_ERROR_HINT =
   "This deployment must proxy /api/* requests to the backend before the shell can load live data.";
 const RESUME_FALLBACK_WARNING_PREFIX = "Could not resume the requested session.";
 const GLOBAL_MESSAGE_AUTO_DISMISS_MS = 6_000;
+const AUTH_REQUIRED_STATUS = "Request failed with status 401";
 
 function describeApiFailure(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) {
@@ -97,6 +104,46 @@ function ShellLoadingPanel() {
       className="glass-panel mx-4 my-4 rounded-[30px] border border-white/80 px-6 py-6 text-[14px] text-muted-foreground md:mx-6 md:my-6 xl:mx-8 xl:my-8"
     >
       Connecting to session…
+    </div>
+  );
+}
+
+function InviteLoginPanel({
+  error,
+  onRedeem,
+}: {
+  error: string | null;
+  onRedeem: (code: string) => Promise<void>;
+}) {
+  const [code, setCode] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  return (
+    <div className="page-wash flex min-h-dvh items-center justify-center bg-[#f5f6f8] px-4 text-[#111827]">
+      <div className="paper-panel w-full max-w-[420px] rounded-[30px] border border-white/80 px-6 py-6 shadow-[0_24px_54px_-40px_rgba(15,23,42,0.22)]">
+        <div className="text-[11px] uppercase tracking-[0.24em] text-[#8d5a62]">Invite access</div>
+        <div className="serif-flow mt-3 text-[32px] tracking-[-0.05em] text-foreground">Newbro</div>
+        <form
+          className="mt-5 space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!code.trim() || submitting) return;
+            setSubmitting(true);
+            void onRedeem(code.trim()).finally(() => setSubmitting(false));
+          }}
+        >
+          <input
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            placeholder="Invite code"
+            className="command-field w-full px-4 py-3 text-[14px] outline-none"
+            autoComplete="one-time-code"
+          />
+          <button disabled={!code.trim() || submitting} className="nb-page-primary-action w-full" type="submit">
+            {submitting ? "Opening..." : "Enter"}
+          </button>
+          {error ? <div className="text-[13px] leading-6 text-red-600">{error}</div> : null}
+        </form>
+      </div>
     </div>
   );
 }
@@ -155,7 +202,11 @@ function useNewbroShellState() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
+  const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [activeShellSessionId, setActiveShellSessionId] = useState<string | null>(null);
+  const [defaultPersonaId, setDefaultPersonaId] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [hasLoadedShellSnapshot, setHasLoadedShellSnapshot] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
   const [shellWarning, setShellWarning] = useState<string | null>(null);
@@ -172,6 +223,7 @@ function useNewbroShellState() {
     setTasks(snapshot.tasks ?? []);
     setExecutionRuns(snapshot.execution_runs ?? []);
     setTaskSummaries(snapshot.summaries ?? []);
+    setAgentEvents(snapshot.agent_events ?? []);
     setDraftSession(snapshot.draft_session ?? null);
     setHasLoadedShellSnapshot(true);
     setShellError(null);
@@ -201,6 +253,13 @@ function useNewbroShellState() {
 
   const { state: voiceSession, start, stop, toggleMute } = useVoiceSession();
 
+  const bootstrapHostedUser = useEffectEvent(async () => {
+    const bootstrap = await bootstrapPublicUser();
+    setDefaultPersonaId(bootstrap.default_persona_id);
+    replaceSessionIdInUrl(bootstrap.session_id);
+    await loadShellSession(bootstrap.session_id);
+  });
+
   useEffect(() => {
     mountedRef.current = true;
 
@@ -216,11 +275,7 @@ function useNewbroShellState() {
           return;
         } catch {
           try {
-            const session = await createSession();
-            if (!mountedRef.current) {
-              return;
-            }
-            await loadShellSession(session.session_id);
+            await bootstrapHostedUser();
             if (!mountedRef.current) {
               return;
             }
@@ -246,17 +301,24 @@ function useNewbroShellState() {
       }
 
       try {
-        const session = await createSession();
-        if (!mountedRef.current) {
-          return;
-        }
-        await loadShellSession(session.session_id);
+        await bootstrapHostedUser();
         if (!mountedRef.current) {
           return;
         }
         startTransition(() => setShellWarning(null));
       } catch (error: unknown) {
         if (!mountedRef.current) {
+          return;
+        }
+        if (error instanceof Error && error.message.includes(AUTH_REQUIRED_STATUS)) {
+          startTransition(() => {
+            setAuthRequired(true);
+            setAuthError(null);
+            setActiveShellSessionId(null);
+            setHasLoadedShellSnapshot(false);
+            setShellWarning(null);
+            setShellError(null);
+          });
           return;
         }
         startTransition(() => {
@@ -382,22 +444,50 @@ function useNewbroShellState() {
     return requestId;
   }, []);
 
+  const redeemInviteCode = useEffectEvent(async (code: string) => {
+    setAuthError(null);
+    try {
+      await redeemInvite(code);
+      if (!mountedRef.current) return;
+      await bootstrapHostedUser();
+      if (!mountedRef.current) return;
+      startTransition(() => {
+        setAuthRequired(false);
+        setAuthError(null);
+        setShellWarning(null);
+      });
+    } catch (error: unknown) {
+      if (!mountedRef.current) return;
+      startTransition(() => {
+        setAuthError(describeApiFailure(error, "Invite could not be redeemed."));
+      });
+    }
+  });
+
   return {
     bros,
     voiceSession,
     activeShellSessionId,
+    defaultPersonaId,
+    authRequired,
+    authError,
     hasLoadedShellSnapshot,
     runtimePersonas,
     executorNodes,
     tasks,
     executionRuns,
     taskSummaries,
+    agentEvents,
     shellError,
     shellWarning,
     setShellError,
     clearGlobalMessage,
+    startVoiceSession: start,
+    stopVoiceSession: stop,
+    toggleVoiceMute: toggleMute,
     sendMessage,
     submitDraftAsrTurn,
+    redeemInviteCode,
     draftSession,
     latestDraftOutputEvent,
     chatMessages,
@@ -410,6 +500,9 @@ const NewbroShellContext = createContext<NewbroShellState | null>(null);
 
 export function NewbroShellProvider({ children }: { children: ReactNode }) {
   const value = useNewbroShellState();
+  if (value.authRequired) {
+    return <InviteLoginPanel error={value.authError} onRedeem={value.redeemInviteCode} />;
+  }
   return (
     <NewbroShellContext.Provider value={value}>
       {children}
@@ -423,6 +516,35 @@ function useNewbroShell() {
     throw new Error("Newbro shell state is unavailable outside NewbroShellProvider.");
   }
   return value;
+}
+
+function ShellVoiceBar() {
+  const shell = useNewbroShell();
+  if (!shell.hasLoadedShellSnapshot || !shell.activeShellSessionId) {
+    return null;
+  }
+
+  return (
+    <div className="px-4 pt-4 md:px-6 xl:px-8">
+      <TopVoiceBar
+        bros={shell.bros}
+        voicePhase={shell.voiceSession.phase}
+        error={shell.voiceSession.error}
+        isMicMuted={shell.voiceSession.isMicMuted}
+        messageCount={shell.voiceSession.transcript.length}
+        sessionId={shell.activeShellSessionId}
+        onStart={() => {
+          void shell.startVoiceSession(shell.activeShellSessionId);
+        }}
+        onStop={() => {
+          void shell.stopVoiceSession();
+        }}
+        onToggleMute={() => {
+          void shell.toggleVoiceMute();
+        }}
+      />
+    </div>
+  );
 }
 
 function ShellFrame({
@@ -471,6 +593,9 @@ export function HomeShellPage({
   onBroNavigate?: BroNavigator;
 }) {
   const shell = useNewbroShell();
+  if (shell.hasLoadedShellSnapshot && shell.defaultPersonaId) {
+    return <BroDetailShellPage broId={shell.defaultPersonaId} onNavigate={onNavigate} />;
+  }
 
   return (
     <ShellFrame
@@ -529,6 +654,36 @@ export function HomeShellPage({
   );
 }
 
+export function MobileWalkieShellPage() {
+  const shell = useNewbroShell();
+  const globalMessage = globalMessageFor(shell);
+
+  if (shell.hasLoadedShellSnapshot) {
+    return (
+      <>
+        <MobileWalkie bros={shell.bros} onSubmitMessage={shell.sendMessage} />
+        {globalMessage ? (
+          <GlobalMessageBanner message={globalMessage} onDismiss={shell.clearGlobalMessage} />
+        ) : null}
+      </>
+    );
+  }
+
+  if (shell.shellError) {
+    return (
+      <div className="nb-mobile-stage">
+        <ShellApiErrorPanel detail={shell.shellError} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="nb-mobile-stage">
+      <ShellLoadingPanel />
+    </div>
+  );
+}
+
 
 export function BroDetailShellPage({
   broId,
@@ -555,6 +710,19 @@ export function BroDetailShellPage({
       })
     : [];
 
+  useEffect(() => {
+    if (!shell.hasLoadedShellSnapshot || !shell.activeShellSessionId || !bro) {
+      return undefined;
+    }
+    const sessionId = shell.activeShellSessionId;
+    void setVoiceTarget(sessionId, bro.id).catch((error: unknown) => {
+      shell.setShellError(describeApiFailure(error, "Could not bind voice to this Bro."));
+    });
+    return () => {
+      void clearVoiceTarget(sessionId).catch(() => {});
+    };
+  }, [shell.hasLoadedShellSnapshot, shell.activeShellSessionId, bro?.id]);
+
   return (
     <ShellFrame
       activePage="Home"
@@ -566,18 +734,22 @@ export function BroDetailShellPage({
     >
       {shell.hasLoadedShellSnapshot ? (
         bro ? (
-          <BroDetailPage
-            bro={bro}
-            sessionId={shell.activeShellSessionId}
-            activeTaskId={activePersona?.current_task_id ?? null}
-            summary={activeSummary}
-            taskRecords={taskRecords}
-            snapshotDraftSession={shell.draftSession}
-            latestDraftOutputEvent={shell.latestDraftOutputEvent}
-            onSubmitDraftAsrTurn={shell.submitDraftAsrTurn}
-            onBack={() => onNavigate("Home")}
-            onGlobalError={shell.setShellError}
-          />
+          <>
+            <ShellVoiceBar />
+            <BroDetailPage
+              bro={bro}
+              sessionId={shell.activeShellSessionId}
+              activeTaskId={activePersona?.current_task_id ?? null}
+              summary={activeSummary}
+              taskRecords={taskRecords}
+              agentEvents={shell.agentEvents.filter((event) => event.task_id === activePersona?.current_task_id)}
+              snapshotDraftSession={shell.draftSession}
+              latestDraftOutputEvent={shell.latestDraftOutputEvent}
+              onSubmitDraftAsrTurn={shell.submitDraftAsrTurn}
+              onBack={() => onNavigate("Home")}
+              onGlobalError={shell.setShellError}
+            />
+          </>
         ) : (
           <div className="flex flex-1 items-center justify-center p-6">
             <div className="glass-panel max-w-[520px] rounded-[30px] border border-white/75 px-6 py-6 text-center">

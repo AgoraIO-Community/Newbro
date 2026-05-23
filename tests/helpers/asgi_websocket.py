@@ -6,14 +6,19 @@ from typing import Any
 
 
 class ASGIWebSocketSession:
-    def __init__(self, app, path: str) -> None:
+    def __init__(self, app, path: str, *, headers: list[tuple[bytes, bytes]] | None = None) -> None:
         self._app = app
         self._path = path
+        self._headers = headers or []
         self._incoming: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._outgoing: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
 
     async def __aenter__(self) -> "ASGIWebSocketSession":
+        headers: list[tuple[bytes, bytes]] = list(self._headers)
+        cookie_header = getattr(getattr(self._app, "state", None), "_newbro_test_cookie_header", None)
+        if isinstance(cookie_header, str) and cookie_header:
+            headers.append((b"cookie", cookie_header.encode()))
         scope = {
             "type": "websocket",
             "asgi": {"version": "3.0", "spec_version": "2.4"},
@@ -22,7 +27,7 @@ class ASGIWebSocketSession:
             "path": self._path,
             "raw_path": self._path.encode(),
             "query_string": b"",
-            "headers": [],
+            "headers": headers,
             "client": ("testclient", 50000),
             "server": ("testserver", 80),
             "subprotocols": [],

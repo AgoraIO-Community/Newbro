@@ -119,6 +119,14 @@ class AgoraSttService:
             uid=uid,
         )
 
+    def prepared_synapse_session_id(self, prepared_stt_session_id: str) -> str | None:
+        prepared = self._prepared_sessions.get(prepared_stt_session_id)
+        return prepared.synapse_session_id if prepared is not None else None
+
+    def active_synapse_session_id(self, stt_session_id: str) -> str | None:
+        handle = self._sessions.get(stt_session_id)
+        return handle.synapse_session_id if handle is not None else None
+
     async def start_session(self, request: SttSessionStartRequest) -> SttSessionStartResponse:
         if not self._settings.stt.enabled:
             raise ConvoAIConfigurationError("Agora STT is disabled in connector config.")

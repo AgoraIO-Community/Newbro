@@ -5,6 +5,7 @@ from typing import Protocol
 
 from newbro.protocol import (
     AttentionItem,
+    AgentEvent,
     ExecutionRun,
     ExecutionSession,
     InteractionRequest,
@@ -149,6 +150,15 @@ class BlackboardStore(Protocol):
 
     async def list_attention_items(self) -> list[AttentionItem]:
         """List attention items across the session."""
+
+    async def put_agent_event(self, event: AgentEvent) -> None:
+        """Store an execution-agent event normalized for communication policy."""
+
+    async def get_agent_event(self, event_id: str) -> AgentEvent | None:
+        """Fetch one normalized agent event."""
+
+    async def list_agent_events(self, task_id: str | None = None) -> list[AgentEvent]:
+        """List normalized agent events, optionally scoped to a task."""
 
     async def list_recent_writes(self, limit: int = 50) -> list[BlackboardWriteEvent]:
         """List recent blackboard write events for debugging."""

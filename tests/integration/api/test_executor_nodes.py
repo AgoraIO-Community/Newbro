@@ -4,6 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from newbro.api.app import create_app
+from newbro.api.public_auth import PublicAuthStore
 from newbro.communication import persona_pool
 from newbro.executors.node import registry as node_registry
 from newbro.executors.node.registry import _hash_token
@@ -13,7 +14,7 @@ from newbro.runtime import Settings
 from newbro.runtime.container import RuntimeContainer
 
 
-def _build_app():
+def _build_app(tmp_path):
     app = create_app()
     app.state.runtime_container = RuntimeContainer(
         communication_model=ScriptedCommunicationModel(
@@ -21,16 +22,25 @@ def _build_app():
         ),
         settings=Settings(detached_executor_enabled=True),
     )
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
     return app
+
+
+async def _redeem(client: AsyncClient, app, code: str = "invite-test"):
+    await app.state.public_auth_store.create_invite(code)
+    response = await client.post("/api/auth/invites/redeem", json={"code": code})
+    assert response.status_code == 200
+    return response.json()["user"]["user_id"]
 
 
 @pytest.mark.anyio
 async def test_executor_node_crud_and_rotation(monkeypatch, tmp_path):
     monkeypatch.setattr(node_registry, "EXECUTOR_NODES_FILE", tmp_path / "executor_nodes.yaml")
     monkeypatch.setattr(persona_pool, "PERSONAS_FILE", tmp_path / "personas.yaml")
-    app = _build_app()
+    app = _build_app(tmp_path)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app)
         session_id = (await client.post("/api/sessions")).json()["session_id"]
 
         create_response = await client.post(
@@ -93,9 +103,10 @@ async def test_executor_node_crud_and_rotation(monkeypatch, tmp_path):
 async def test_delete_executor_node_rejects_bound_bros_until_unbound(monkeypatch, tmp_path):
     monkeypatch.setattr(node_registry, "EXECUTOR_NODES_FILE", tmp_path / "executor_nodes.yaml")
     monkeypatch.setattr(persona_pool, "PERSONAS_FILE", tmp_path / "personas.yaml")
-    app = _build_app()
+    app = _build_app(tmp_path)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app)
         session_id = (await client.post("/api/sessions")).json()["session_id"]
         create_response = await client.post(
             f"/api/sessions/{session_id}/executor-nodes",
@@ -152,9 +163,10 @@ async def test_delete_executor_node_rejects_bound_bros_until_unbound(monkeypatch
 async def test_executor_node_rejects_multiple_executor_families(monkeypatch, tmp_path):
     monkeypatch.setattr(node_registry, "EXECUTOR_NODES_FILE", tmp_path / "executor_nodes.yaml")
     monkeypatch.setattr(persona_pool, "PERSONAS_FILE", tmp_path / "personas.yaml")
-    app = _build_app()
+    app = _build_app(tmp_path)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app)
         session_id = (await client.post("/api/sessions")).json()["session_id"]
         response = await client.post(
             f"/api/sessions/{session_id}/executor-nodes",
@@ -192,9 +204,11 @@ async def test_reveal_connect_command_requires_rotation_for_legacy_hash_only_nod
         + "\n",
         encoding="utf-8",
     )
-    app = _build_app()
+    app = _build_app(tmp_path)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        user_id = await _redeem(client, app)
+        await app.state.public_auth_store.claim_executor_node(user_id=user_id, node_id="node-legacy")
         session_id = (await client.post("/api/sessions")).json()["session_id"]
         reveal_response = await client.post(
             f"/api/sessions/{session_id}/executor-nodes/node-legacy/connect-command",

@@ -14,6 +14,7 @@ Use this section when you want to understand the system by subsystem.
 - [Notifications and Interruptions](./notifications-and-interruptions.md)
 - [Observability](./observability.md)
 - [Executors](./executors.md)
+- [Public Onboarding and Ownership](./public-onboarding-and-ownership.md)
 - [Repository Structure](./repository-structure.md)
 
 Relationship to other docs:

@@ -12,6 +12,7 @@ from newbro.api.models import (
     SendMessageSocketAction,
     SubmitAsrTurnSocketAction,
 )
+from newbro.api.public_auth import user_for_websocket
 from newbro.communication.resolver import TaskResolver, describe_candidates
 from newbro.observability.context import bind_diagnostic_context
 from newbro.protocol import TaskCommand
@@ -33,6 +34,18 @@ router = APIRouter()
 @router.websocket("/sessions/{session_id}/stream")
 async def session_stream(websocket: WebSocket, session_id: str):
     container = websocket.app.state.runtime_container
+    store = websocket.app.state.public_auth_store
+    expected = getattr(container.settings, "connector_internal_token", None)
+    supplied = websocket.headers.get("X-Newbro-Connector-Token")
+    internal = expected and supplied == expected
+    if not internal:
+        user = await user_for_websocket(websocket)
+        if user is None:
+            await websocket.close(code=4401)
+            return
+        if not await store.user_owns_session(user_id=user.user_id, session_id=session_id):
+            await websocket.close(code=4404)
+            return
     try:
         session = container.get_session(session_id)
     except KeyError:
@@ -519,7 +532,17 @@ async def _handle_send_draft(session, queue: asyncio.Queue, payload: dict[str, o
         )
         return
     try:
-        await session.send_draft(draft_session_id=action.draft_session_id)
+        active = session.draft_manager.active_session
+        if action.draft_session_id is not None and active is not None and active.id != action.draft_session_id:
+            raise ValueError("Draft session does not match the active draft.")
+        decision = await session.confirm_active_dispatch(
+            plan_id=active.current_dispatch_plan.plan_id
+            if active is not None and active.current_dispatch_plan is not None
+            else None,
+            draft_revision_id=action.draft_revision_id,
+        )
+        if decision.task_id is None:
+            raise ValueError(decision.response_text or "Draft cannot be sent yet.")
     except ValueError as exc:
         await session.publish_private_event(
             queue,

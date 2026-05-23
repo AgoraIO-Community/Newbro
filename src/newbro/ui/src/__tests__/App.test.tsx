@@ -84,6 +84,10 @@ const socketHarness = vi.hoisted(() => {
 
 const clientMock = vi.hoisted(() => ({
   createSession: vi.fn(),
+  bootstrapPublicUser: vi.fn(),
+  redeemInvite: vi.fn(),
+  getCurrentUser: vi.fn(),
+  logoutPublicUser: vi.fn(),
   getSessionSnapshot: vi.fn(),
   getConversationSnapshot: vi.fn(async (sessionId: string) => ({
     session_id: sessionId,
@@ -94,6 +98,51 @@ const clientMock = vi.hoisted(() => ({
     return socketHarness.socket as any;
   }),
   sendSocketMessage: vi.fn(),
+  submitAgoraVoiceEvent: vi.fn(async (_sessionId: string, event: any) => {
+    if (event?.type !== "stt.final") return;
+    Promise.resolve().then(() => {
+      socketHarness.emitMessage({
+        type: "snapshot",
+        sequence: 20,
+        snapshot: {
+          session_id: _sessionId,
+          tasks: [],
+          execution_sessions: [],
+          execution_runs: [],
+          execution_modes: [],
+          bindings: [],
+          summaries: [],
+          notification_candidates: [],
+          personas: [
+            {
+              persona_id: event.target_persona_id ?? "forge",
+              name: "Forge",
+              avatar: "rocket",
+              base_prompt: "",
+              executor_node_id: null,
+              bro_detail_session_id: "bro-detail-forge",
+              status: "idle",
+              current_task_id: null,
+            },
+          ],
+          interaction_requests: [],
+          attention_items: [],
+          executor_capabilities: [],
+          executor_nodes: [],
+          draft_session: {
+            id: "draft-session-1",
+            current_revision_id: "draft-rev-1",
+            status: "ready",
+            current_draft: {
+              text: "Design a polished landing page with a calm hero section.",
+              revision_id: "draft-rev-1",
+              last_update_summary: "Created a first draft from voice input.",
+            },
+          },
+        },
+      });
+    });
+  }),
   sendSocketDraftAsrTurn: vi.fn((_socket: WebSocket, requestId: string) => {
     Promise.resolve().then(() => {
       socketHarness.emitMessage({
@@ -139,6 +188,8 @@ const clientMock = vi.hoisted(() => ({
     draft_snapshot_id: "draft-snap-1",
   })),
   clearDraft: vi.fn(async () => ({ status: "cleared" })),
+  setVoiceTarget: vi.fn(async () => undefined),
+  clearVoiceTarget: vi.fn(async () => undefined),
   submitTaskCommand: vi.fn(async () => ({
     command_id: "cmd-1",
     status: "accepted",
@@ -301,6 +352,23 @@ vi.mock("../lib/session-client", () => clientMock);
 vi.mock("../lib/connector-client", () => connectorMock);
 vi.mock("../lib/voice-runtime", () => runtimeMock);
 
+function submittedSttFinalEvents() {
+  return clientMock.submitAgoraVoiceEvent.mock.calls.filter(([, event]: any[]) => event?.type === "stt.final");
+}
+
+function submittedSttPartialEvents() {
+  return clientMock.submitAgoraVoiceEvent.mock.calls.filter(([, event]: any[]) => event?.type === "stt.partial");
+}
+
+function expectLastSttFinal(text: string, targetPersonaId = "forge") {
+  expect(clientMock.submitAgoraVoiceEvent).toHaveBeenLastCalledWith("session-existing", expect.objectContaining({
+    session_id: "session-existing",
+    type: "stt.final",
+    text,
+    target_persona_id: targetPersonaId,
+  }));
+}
+
 describe("Newbro voice shell", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -308,6 +376,15 @@ describe("Newbro voice shell", () => {
     socketHarness.reset();
     window.history.replaceState({}, "", "/");
     clientMock.createSession.mockResolvedValue({ session_id: "session-1" });
+    clientMock.bootstrapPublicUser.mockResolvedValue({
+      user: { user_id: "user-1" },
+      session_id: "session-1",
+      default_persona_id: null,
+      default_bro_detail_session_id: null,
+    });
+    clientMock.redeemInvite.mockResolvedValue({ user: { user_id: "user-1" } });
+    clientMock.getCurrentUser.mockResolvedValue({ user: { user_id: "user-1" } });
+    clientMock.logoutPublicUser.mockResolvedValue({ ok: true });
     clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => ({
       session_id: sessionId,
       tasks: [],
@@ -327,6 +404,35 @@ describe("Newbro voice shell", () => {
       session_id: sessionId,
       conversation_history: [],
     }));
+    clientMock.createExecutorNode.mockResolvedValue({
+      node: {
+        node_id: "node-1",
+        name: "Local node",
+        enabled_executors: ["codex"],
+        connected_executors: [],
+        connection_status: "disconnected",
+        token_hint: "tok...0001",
+        last_connected_at: null,
+        last_seen_at: null,
+        acpx_agent: null,
+      },
+      token: "token-1",
+    });
+    clientMock.revealExecutorNodeConnectCommand.mockResolvedValue({
+      node: {
+        node_id: "node-1",
+        name: "Local node",
+        enabled_executors: ["codex"],
+        connected_executors: [],
+        connection_status: "disconnected",
+        token_hint: "tok...0001",
+        last_connected_at: null,
+        last_seen_at: null,
+        acpx_agent: null,
+      },
+      token: "token-1",
+    });
+    clientMock.updatePersona.mockResolvedValue({});
   });
 
   it("boots into an explicit empty interaction-memory state", async () => {
@@ -347,9 +453,109 @@ describe("Newbro voice shell", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText("Atlas")).toBeInTheDocument();
 
-    await waitFor(() => expect(clientMock.createSession).toHaveBeenCalled());
+    await waitFor(() => expect(clientMock.bootstrapPublicUser).toHaveBeenCalled());
     await waitFor(() => expect(clientMock.getSessionSnapshot).toHaveBeenCalledWith("session-1"));
     expect(window.location.search).toBe("?sid=session-1");
+  });
+
+  it("boots invited users directly into their default Bro detail", async () => {
+    clientMock.bootstrapPublicUser.mockResolvedValueOnce({
+      user: { user_id: "user-1" },
+      session_id: "session-1",
+      default_persona_id: "atlas",
+      default_bro_detail_session_id: "bro-detail-atlas",
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Bro detail")).toBeInTheDocument();
+    await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-1", "atlas"));
+  });
+
+  it("starts the shell voice control through the Conversational AI connector path", async () => {
+    window.history.replaceState({}, "", "/bros/atlas?sid=session-1");
+    render(<RouterProvider router={getRouter()} />);
+
+    await screen.findByText("Bro detail");
+    await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-1", "atlas"));
+    connectorMock.prepareSttSession.mockClear();
+    connectorMock.startSttSession.mockClear();
+    fireEvent.click(screen.getByTestId("voice-session-start"));
+
+    await waitFor(() => expect(connectorMock.prepareConnectorSession).toHaveBeenCalledWith({
+      synapse_session_id: "session-1",
+    }));
+    expect(connectorMock.activateConnectorSession).toHaveBeenCalledWith({
+      prepared_session_id: "prepared-1",
+    });
+    expect(connectorMock.prepareSttSession).not.toHaveBeenCalled();
+    expect(connectorMock.startSttSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps ConvoAI toolkit transcript updates display-only", async () => {
+    window.history.replaceState({}, "", "/bros/atlas?sid=session-1");
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByTestId("voice-session-start"));
+    await waitFor(() => expect(connectorMock.activateConnectorSession).toHaveBeenCalled());
+
+    await act(async () => {
+      voiceHarness.voiceEvents.TRANSCRIPT_UPDATED?.([
+        {
+          uid: "101-voice-room",
+          turn_id: 7,
+          text: "Please inspect the settings page.",
+          status: 1,
+          metadata: {
+            object: "user.transcription",
+            final: true,
+            language: "en-US",
+            start_ms: 1234,
+          },
+        },
+      ]);
+      await Promise.resolve();
+    });
+
+    expect(clientMock.submitAgoraVoiceEvent).not.toHaveBeenCalled();
+
+    await act(async () => {
+      voiceHarness.voiceEvents.TRANSCRIPT_UPDATED?.([
+        {
+          uid: "101-voice-room",
+          turn_id: 7,
+          text: "Please inspect the settings page.",
+          status: 1,
+          metadata: {
+            object: "user.transcription",
+            final: true,
+          },
+        },
+        {
+          uid: "9001-voice-room",
+          turn_id: 8,
+          text: "I can help with that.",
+          status: 1,
+          metadata: {
+            object: "assistant.transcription",
+            final: true,
+          },
+        },
+        {
+          uid: "101-voice-room",
+          turn_id: 9,
+          text: "Actually",
+          status: 0,
+          metadata: {
+            object: "user.transcription",
+            final: false,
+          },
+        },
+      ]);
+      await Promise.resolve();
+    });
+
+    expect(clientMock.submitAgoraVoiceEvent).not.toHaveBeenCalled();
   });
 
   it("renders sidebar Bro and Node counts from the shell snapshot", async () => {
@@ -424,7 +630,7 @@ describe("Newbro voice shell", () => {
   it("renders a Bro detail route directly with the active shell session", async () => {
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
-    render(<RouterProvider router={getRouter()} />);
+    const rendered = render(<RouterProvider router={getRouter()} />);
 
     await waitFor(() => expect(clientMock.getSessionSnapshot).toHaveBeenCalledWith("session-existing"));
     expect(await screen.findByText("Bro detail")).toBeInTheDocument();
@@ -432,6 +638,145 @@ describe("Newbro voice shell", () => {
     expect(screen.getByText("No draft yet. Hold the mic to start shaping one.")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Hold to Talk" })).toBeInTheDocument();
     expect(screen.queryByText("Ready · mic off")).not.toBeInTheDocument();
+    await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "forge"));
+
+    rendered.unmount();
+
+    await waitFor(() => expect(clientMock.clearVoiceTarget).toHaveBeenCalledWith("session-existing"));
+  });
+
+  it("renders the dedicated mobile walkie route with live runtime channels", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce({
+      session_id: "session-existing",
+      tasks: [
+        {
+          task_id: "task-mobile",
+          root_task_id: "task-mobile",
+          parent_task_id: null,
+          title: "Sketch mobile handoff",
+          goal: "Sketch mobile handoff details.",
+          status: "running",
+          priority: 5,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: "workspace-task-mobile",
+          task_revision: 0,
+          latest_instruction: "Sketch mobile handoff details.",
+          metadata: { persona_id: "persona-atlas" },
+        },
+      ],
+      execution_sessions: [],
+      execution_runs: [
+        {
+          run_id: "run-mobile",
+          task_id: "task-mobile",
+          execution_session_id: "exec-session-mobile",
+          executor_type: "codex",
+          status: "running",
+          claimed_by: "worker-1",
+          run_revision: 0,
+          latest_progress_message: "Inspecting the mobile UI export.",
+          output_summary: null,
+          block_reason: null,
+          failure_reason: null,
+          metadata: {},
+        },
+      ],
+      execution_modes: [],
+      bindings: [],
+      summaries: [],
+      notification_candidates: [],
+      personas: [
+        {
+          persona_id: "persona-atlas",
+          name: "Atlas",
+          avatar: "fox",
+          base_prompt: "",
+          executor_node_id: "node-1",
+          status: "busy",
+          current_task_id: "task-mobile",
+        },
+        {
+          persona_id: "persona-forge",
+          name: "Forge",
+          avatar: "bro",
+          base_prompt: "",
+          executor_node_id: null,
+          status: "idle",
+          current_task_id: null,
+        },
+      ],
+      interaction_requests: [],
+      attention_items: [],
+      executor_capabilities: [],
+      executor_nodes: [
+        {
+          node_id: "node-1",
+          name: "Studio Mac",
+          enabled_executors: ["codex"],
+          connected_executors: ["codex"],
+          connection_status: "connected",
+          token_hint: "tok...1111",
+          last_connected_at: null,
+          last_seen_at: null,
+        },
+      ],
+    });
+    window.history.replaceState({}, "", "/mobile?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByTestId("mobile-walkie")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Walkie" })).toBeInTheDocument();
+    expect(screen.getByText("1 live · 0 queued · 1 idle")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-bro-row-persona-atlas")).toHaveTextContent("Sketch mobile handoff");
+    expect(window.location.pathname).toBe("/mobile");
+    expect(window.location.search).toBe("?sid=session-existing");
+  });
+
+  it("selects a mobile bro channel and submits text through the shell socket", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce({
+      session_id: "session-existing",
+      tasks: [],
+      execution_sessions: [],
+      execution_runs: [],
+      execution_modes: [],
+      bindings: [],
+      summaries: [],
+      notification_candidates: [],
+      personas: [
+        {
+          persona_id: "persona-forge",
+          name: "Forge",
+          avatar: "bro",
+          base_prompt: "",
+          executor_node_id: null,
+          status: "idle",
+          current_task_id: null,
+        },
+      ],
+      interaction_requests: [],
+      attention_items: [],
+      executor_capabilities: [],
+      executor_nodes: [],
+    });
+    window.history.replaceState({}, "", "/mobile?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const forgeChannel = await screen.findByTestId("mobile-channel-persona-forge");
+    fireEvent.click(forgeChannel);
+
+    expect(await screen.findByTestId("mobile-bro-focus-persona-forge")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Please draft the launch note" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(clientMock.sendSocketMessage).toHaveBeenCalled());
+    expect(clientMock.sendSocketMessage.mock.calls.at(-1)?.[2]).toBe("Please draft the launch note");
   });
 
   it("publishes the Bro detail mic before muting it", async () => {
@@ -541,6 +886,39 @@ describe("Newbro voice shell", () => {
     expect(connectorMock.leaveSttSession).not.toHaveBeenCalled();
   });
 
+  it("clears stale Bro detail STT resources when heartbeat reports an unknown session", async () => {
+    vi.useFakeTimers();
+    try {
+      connectorMock.heartbeatSttSession.mockRejectedValueOnce(new Error("Unknown STT session."));
+      window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+      render(<RouterProvider router={getRouter()} />);
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(connectorMock.startSttSession).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(connectorMock.heartbeatSttSession).toHaveBeenCalledWith("stt-1");
+      expect(voiceHarness.micTrack.stop).toHaveBeenCalled();
+      expect(voiceHarness.micTrack.close).toHaveBeenCalled();
+      expect(voiceHarness.rtcClient.leave).toHaveBeenCalled();
+      expect(connectorMock.leaveSttSession).not.toHaveBeenCalled();
+      expect(screen.getByText("STT session expired. Start voice again to create a fresh session.")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("renders final Bro detail transcript and returned draft content", async () => {
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
@@ -579,13 +957,13 @@ describe("Newbro voice shell", () => {
         await Promise.resolve();
       });
 
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         fireEvent.pointerUp(micButton, { pointerId: 11 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -601,10 +979,65 @@ describe("Newbro voice shell", () => {
     expect(screen.queryByText("Completed turns appear here when ASR marks a segment final.")).not.toBeInTheDocument();
     expect(await screen.findByText("Design a polished landing page with a calm hero section.")).toBeInTheDocument();
     expect(screen.getByText("Design a polished landing page with a calm hero section.")).toBeInTheDocument();
-    expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-      raw_text: "Build a calm landing page with soft motion",
-      assigned_bro_id: "forge",
+    expect(submittedSttPartialEvents().map(([, event]: any[]) => event.text)).toEqual([
+      "Build a calm landing page",
+      "Build a calm landing page with soft motion",
+    ]);
+    expectLastSttFinal("Build a calm landing page with soft motion");
+  });
+
+  it("renders live Bro detail draft cleaner stream previews", async () => {
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    await screen.findByRole("button", { name: "Hold to Talk" });
+    await waitFor(() => expect(clientMock.openSessionStream).toHaveBeenCalledWith(
+      "session-existing",
+      expect.any(Object),
+    ));
+
+    await act(async () => {
+      socketHarness.emitMessage({
+        type: "draft_output_started",
+        sequence: 31,
+        request_id: "live-draft-3",
+      });
+      await Promise.resolve();
     });
+    await act(async () => {
+      socketHarness.emitMessage({
+        type: "draft_output_delta",
+        sequence: 32,
+        request_id: "live-draft-3",
+        delta: "Preview ",
+      });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      socketHarness.emitMessage({
+        type: "draft_output_delta",
+        sequence: 33,
+        request_id: "live-draft-3",
+        delta: "draft",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Preview draft")).toBeInTheDocument();
+
+    await act(async () => {
+      socketHarness.emitMessage({
+        type: "draft_output_completed",
+        sequence: 34,
+        request_id: "live-draft-3",
+        draft_session_id: "draft-live-1",
+        draft_text: "Preview draft complete.",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Preview draft complete.")).toBeInTheDocument();
   });
 
   it("sends the current Bro detail draft to execution and resets the draft workspace", async () => {
@@ -671,7 +1104,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 21 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -693,6 +1126,7 @@ describe("Newbro voice shell", () => {
 
     await waitFor(() => expect(clientMock.sendDraft).toHaveBeenCalledWith("session-existing", {
       draft_session_id: "draft-session-1",
+      draft_revision_id: "draft-rev-1",
     }));
     expect(screen.queryByText("Design a polished landing page with a calm hero section.")).not.toBeInTheDocument();
     expect(screen.getByText("No draft yet. Hold the mic to start shaping one.")).toBeInTheDocument();
@@ -755,7 +1189,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 22 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -775,6 +1209,7 @@ describe("Newbro voice shell", () => {
 
     await waitFor(() => expect(clientMock.sendDraft).toHaveBeenCalledWith("session-existing", {
       draft_session_id: "draft-session-1",
+      draft_revision_id: "draft-rev-1",
     }));
     expect(await screen.findAllByText("send failed")).not.toHaveLength(0);
     expect(screen.getByText("Design a polished landing page with a calm hero section.")).toBeInTheDocument();
@@ -834,7 +1269,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 23 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -939,7 +1374,7 @@ describe("Newbro voice shell", () => {
         vi.advanceTimersByTime(1_200);
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         fireEvent.pointerUp(micButton, { pointerId: 15 });
@@ -955,13 +1390,10 @@ describe("Newbro voice shell", () => {
     expect(await screen.findByText("型音乐演唱会上面碗上面音乐")).toBeInTheDocument();
     expect(screen.queryByText(/好像在一场大/)).not.toBeInTheDocument();
     expect(screen.queryByText(/美人在美国超级/)).not.toBeInTheDocument();
-    expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenLastCalledWith(socketHarness.socket, expect.any(String), {
-      raw_text: "型音乐演唱会上面碗上面音乐",
-      assigned_bro_id: "forge",
-    });
+    expectLastSttFinal("型音乐演唱会上面碗上面音乐");
   });
 
-  it("ignores untimed Bro detail transcript payloads", async () => {
+  it("submits untimed Bro detail transcript candidates as live partials without accepting them for final commit", async () => {
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
@@ -984,7 +1416,16 @@ describe("Newbro voice shell", () => {
     expect(screen.queryByText("Still listening to this sentence")).not.toBeInTheDocument();
     expect(screen.queryByText("Listening live")).not.toBeInTheDocument();
     expect(screen.queryByText("Completed turns appear here when ASR marks a segment final.")).not.toBeInTheDocument();
-    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+    expect(submittedSttPartialEvents()).toHaveLength(1);
+    expect(submittedSttPartialEvents()[0]?.[1]).toEqual(expect.objectContaining({
+      type: "stt.partial",
+      text: "Still listening to this sentence",
+      timestamp_ms: 1,
+      metadata: expect.objectContaining({
+        reason: "drop-missing-time-metadata",
+      }),
+    }));
+    expect(submittedSttFinalEvents()).toHaveLength(0);
   });
 
   it("renders official provisional transcript wrappers and commits after release plus silence", async () => {
@@ -1018,29 +1459,26 @@ describe("Newbro voice shell", () => {
       });
 
       expect(screen.getByText("先展示临时转写")).toBeInTheDocument();
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         fireEvent.pointerUp(micButton, { pointerId: 12 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-        raw_text: "先展示临时转写",
-        assigned_bro_id: "forge",
-      });
+      expectLastSttFinal("先展示临时转写");
     } finally {
       vi.useRealTimers();
     }
@@ -1064,7 +1502,7 @@ describe("Newbro voice shell", () => {
 
     expect(screen.getByText("第二个片段")).toBeInTheDocument();
     expect(screen.queryByText("第一个片段第二个片段")).not.toBeInTheDocument();
-    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+    expect(submittedSttFinalEvents()).toHaveLength(0);
 
     vi.useFakeTimers();
     try {
@@ -1074,7 +1512,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 1 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -1085,11 +1523,8 @@ describe("Newbro voice shell", () => {
       vi.useRealTimers();
     }
 
-    await waitFor(() => expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledTimes(1));
-    expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-      raw_text: "第二个片段",
-      assigned_bro_id: "forge",
-    });
+    await waitFor(() => expect(submittedSttFinalEvents()).toHaveLength(1));
+    expectLastSttFinal("第二个片段");
   });
 
   it("drops stale Bro detail ASR candidates for the same sentence", async () => {
@@ -1111,7 +1546,7 @@ describe("Newbro voice shell", () => {
 
     expect(screen.getByText("OK，第一个问题")).toBeInTheDocument();
     expect(screen.queryByText("OK")).not.toBeInTheDocument();
-    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+    expect(submittedSttFinalEvents()).toHaveLength(0);
   });
 
   it("holds final fragments until the next non-final for the same sentence", async () => {
@@ -1141,7 +1576,7 @@ describe("Newbro voice shell", () => {
         await Promise.resolve();
       });
       expect(screen.getByText("ABCDEFG")).toBeInTheDocument();
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         fireEvent.pointerUp(micButton, { pointerId: 13 });
@@ -1150,10 +1585,7 @@ describe("Newbro voice shell", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenLastCalledWith(socketHarness.socket, expect.any(String), {
-        raw_text: "ABCDEFG",
-        assigned_bro_id: "forge",
-      });
+      expectLastSttFinal("ABCDEFG");
 
       await act(async () => {
         transcriptHandler(200101, { uid: 101, text: "DEFG", isFinal: false, time: 100, textTs: 320 });
@@ -1194,7 +1626,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 3 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
@@ -1205,10 +1637,8 @@ describe("Newbro voice shell", () => {
       vi.useRealTimers();
     }
 
-    await waitFor(() => expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenLastCalledWith(socketHarness.socket, expect.any(String), {
-      raw_text: expectedTranscript,
-      assigned_bro_id: "forge",
-    }));
+    await waitFor(() => expect(submittedSttFinalEvents()).toHaveLength(1));
+    expectLastSttFinal(expectedTranscript);
   });
 
   it("submits Bro detail ASR once after release plus silence", async () => {
@@ -1232,24 +1662,21 @@ describe("Newbro voice shell", () => {
         await Promise.resolve();
       });
 
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         fireEvent.pointerUp(micButton, { pointerId: 2 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledTimes(1);
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-        raw_text: "好像在一场大 型音乐",
-        assigned_bro_id: "forge",
-      });
+      expect(submittedSttFinalEvents()).toHaveLength(1);
+      expectLastSttFinal("好像在一场大 型音乐");
     } finally {
       vi.useRealTimers();
     }
@@ -1274,7 +1701,7 @@ describe("Newbro voice shell", () => {
         fireEvent.pointerUp(micButton, { pointerId: 24 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(400);
@@ -1282,18 +1709,15 @@ describe("Newbro voice shell", () => {
         await Promise.resolve();
       });
       expect(screen.getByText("Final only draft")).toBeInTheDocument();
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_200);
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledTimes(1);
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-        raw_text: "Final only draft",
-        assigned_bro_id: "forge",
-      });
+      expect(submittedSttFinalEvents()).toHaveLength(1);
+      expectLastSttFinal("Final only draft");
     } finally {
       vi.useRealTimers();
     }
@@ -1325,24 +1749,21 @@ describe("Newbro voice shell", () => {
         transcriptHandler(200101, { uid: 101, text: "with delayed transcript", isFinal: false, time: 200, textTs: 210 });
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1_199);
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
 
       await act(async () => {
         vi.advanceTimersByTime(1);
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledTimes(1);
-      expect(clientMock.sendSocketDraftAsrTurn).toHaveBeenCalledWith(socketHarness.socket, expect.any(String), {
-        raw_text: "Build the draft with delayed transcript",
-        assigned_bro_id: "forge",
-      });
+      expect(submittedSttFinalEvents()).toHaveLength(1);
+      expectLastSttFinal("Build the draft with delayed transcript");
     } finally {
       vi.useRealTimers();
     }
@@ -1389,7 +1810,7 @@ describe("Newbro voice shell", () => {
         trueCallsAfterFirstRelease,
       );
       expect(voiceHarness.micTrack.setMuted).toHaveBeenLastCalledWith(false);
-      expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+      expect(submittedSttFinalEvents()).toHaveLength(0);
       expect(screen.getByRole("button", { name: "Release to finish" })).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -1421,7 +1842,7 @@ describe("Newbro voice shell", () => {
     render(<App />);
 
     await waitFor(() => expect(clientMock.getSessionSnapshot).toHaveBeenCalledWith("session-existing"));
-    expect(clientMock.createSession).not.toHaveBeenCalled();
+    expect(clientMock.bootstrapPublicUser).not.toHaveBeenCalled();
     expect(await screen.findByTestId("bros-panel")).toBeInTheDocument();
     expect(screen.queryByText("Session session-existing")).not.toBeInTheDocument();
     expect(window.location.search).toBe("?sid=session-existing");
@@ -1429,7 +1850,12 @@ describe("Newbro voice shell", () => {
 
   it("shows resume fallback in a floating global message that auto-dismisses", async () => {
     vi.useFakeTimers();
-    clientMock.createSession.mockResolvedValueOnce({ session_id: "session-2" });
+    clientMock.bootstrapPublicUser.mockResolvedValueOnce({
+      user: { user_id: "user-1" },
+      session_id: "session-2",
+      default_persona_id: null,
+      default_bro_detail_session_id: null,
+    });
     clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
       if (sessionId === "session-missing") {
         throw new Error("Request failed with status 404");
@@ -1476,7 +1902,7 @@ describe("Newbro voice shell", () => {
       vi.advanceTimersByTime(1);
     });
     expect(screen.queryByTestId("global-message")).not.toBeInTheDocument();
-    expect(clientMock.createSession).toHaveBeenCalledTimes(1);
+    expect(clientMock.bootstrapPublicUser).toHaveBeenCalledTimes(1);
     expect(clientMock.getSessionSnapshot).toHaveBeenNthCalledWith(1, "session-missing");
     expect(clientMock.getSessionSnapshot).toHaveBeenNthCalledWith(2, "session-2");
     expect(window.location.search).toBe("?sid=session-2");
@@ -1615,7 +2041,7 @@ describe("Newbro voice shell", () => {
     expect(await screen.findByText("Worker Bros")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/bros");
     expect(window.location.search).toBe("?sid=session-1");
-    expect(clientMock.createSession).not.toHaveBeenCalled();
+    expect(clientMock.bootstrapPublicUser).not.toHaveBeenCalled();
     expect(clientMock.getSessionSnapshot).toHaveBeenCalledWith("session-1");
   });
 
@@ -1633,7 +2059,7 @@ describe("Newbro voice shell", () => {
   });
 
   it("shows a shell-level API error instead of blank data when bootstrap fails", async () => {
-    clientMock.createSession.mockRejectedValueOnce(new Error("Request failed with status 404"));
+    clientMock.bootstrapPublicUser.mockRejectedValueOnce(new Error("Request failed with status 404"));
 
     const router = getRouter();
     render(<RouterProvider router={router} />);
@@ -2008,6 +2434,66 @@ describe("Newbro voice shell", () => {
     expect(statusIcon).not.toHaveClass("nb-bot-orb-active");
     expect(statusIcon.querySelector(".nb-live-dot")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop Task" })).toBeDisabled();
+  });
+
+  it("shows a copyable local node command when a Bro task is waiting for an executor", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce({
+      session_id: "session-existing",
+      tasks: [
+        {
+          task_id: "task-waiting",
+          root_task_id: "task-waiting",
+          parent_task_id: null,
+          title: "Run generated draft",
+          goal: "Run the generated draft.",
+          status: "waiting_executor",
+          priority: 5,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: "workspace-task-waiting",
+          task_revision: 0,
+          latest_instruction: "Run the generated draft.",
+          metadata: { persona_id: "persona-rook" },
+        },
+      ],
+      execution_sessions: [],
+      execution_runs: [],
+      execution_modes: [],
+      bindings: [],
+      summaries: [],
+      notification_candidates: [],
+      personas: [
+        {
+          persona_id: "persona-rook",
+          name: "Rook",
+          avatar: "bro",
+          base_prompt: "",
+          executor_node_id: null,
+          status: "busy",
+          current_task_id: "task-waiting",
+        },
+      ],
+      interaction_requests: [],
+      attention_items: [],
+      executor_capabilities: [],
+      executor_nodes: [],
+    });
+    window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const copyButton = await screen.findByRole("button", { name: "Copy local node command" });
+    fireEvent.click(copyButton);
+
+    await waitFor(() => expect(clientMock.createExecutorNode).toHaveBeenCalledWith("session-existing", {
+      name: "Rook local node",
+      enabled_executors: ["codex"],
+    }));
+    expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "persona-rook", {
+      executor_node_id: "node-1",
+    });
+    expect(await screen.findByText(/newbro executor run/)).toBeInTheDocument();
   });
 
   it("submits a cancel command from the Bro detail Stop Task button", async () => {

@@ -120,6 +120,24 @@ def test_main_prints_non_fatal_newbro_home_migration_warning(
     assert "[warn] Migrated config to ~/.newbro but could not remove ~/.newbro." in capsys.readouterr().err
 
 
+def test_invite_create_writes_public_auth_store(monkeypatch, tmp_path: Path, capsys):
+    from newbro.api import public_auth
+
+    configure_repo_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cli_main,
+        "ensure_newbro_home",
+        lambda **_kwargs: ConfigHomeMigrationResult(migrated=False),
+    )
+    monkeypatch.setattr(public_auth, "PUBLIC_AUTH_DB", tmp_path / ".newbro" / "public_auth.sqlite3")
+
+    assert cli_main.main(["invite", "create", "friend-code", "--email", "User@Example.com"]) == 0
+    assert capsys.readouterr().out.strip() == "friend-code"
+
+    redeemed = cli_main.asyncio.run(public_auth.PublicAuthStore().redeem_invite("friend-code"))
+    assert redeemed.user.email == "user@example.com"
+
+
 def test_setup_interactive_updates_env_file(monkeypatch, tmp_path: Path):
     root = tmp_path
     (root / "src" / "newbro" / "ui").mkdir(parents=True)

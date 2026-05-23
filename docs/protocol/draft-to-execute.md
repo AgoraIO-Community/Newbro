@@ -1,12 +1,15 @@
 # Draft-to-Execute Protocol
 
-`newbro v0` uses a voice-driven draft-to-execute workflow.
+`newbro v1` uses a quiet, voice/text-driven draft-to-execute workflow.
 
 The stable contract is:
 
 ```text
-ASR turns = append-only evidence
-Draft = current mutable intent
+User utterance / ASR turn = append-only evidence
+Draft = current mutable structured intent
+Draft Revision = latest pre-send checkpoint for that mutable intent
+Dispatch Plan = staged execution packet preview
+Dispatch Gate = deterministic safety decision
 Task = immutable execution contract after Send
 ```
 
@@ -89,7 +92,7 @@ does not merge translated transcript text into this original transcript stream.
 ## Draft Session
 
 A `DraftSession` is the mutable pre-send workspace for one potential task.
-The v0 runtime keeps one active draft session per Newbro session.
+The runtime keeps one active draft session per Newbro session.
 
 Fields:
 
@@ -97,8 +100,15 @@ Fields:
 - `assigned_bro_id`
 - `asr_turns`
 - `current_draft`
+- `current_dispatch_plan`
+- `runtime_state`
 - `snapshots`
 - `status`
+- `current_revision_id`
+- `current_revision_number`
+- `live_classification`
+- `live_source_boundary`
+- `live_transcript_timestamp_ms`
 - `created_at`
 - `updated_at`
 
@@ -110,18 +120,98 @@ Fields:
 
 - `text`
 - `last_update_summary`
+- `task_spec`
+- `missing_context`
+- `revision_id`
+- `revision_number`
+- `updated_at`
 
-Draft Brain rewrites the Draft after each ASR turn through the LLM-backed Draft
-Cleaner. The cleaner receives ordered ASR turns, the latest turn, the assigned
-Bro id, and the previous draft. It emits only plain clean sendable task text, not
-JSON or labeled sections. The runtime stores that text directly in `Draft.text`.
-It must keep only the current final execution intent, not the whole revision
-history. If the LLM draft cleaner is not configured, draft generation fails
-instead of falling back to deterministic rewriting.
+`task_spec` is the structured grounding used for dispatch. It includes:
+
+- `title`
+- `goal`
+- `target_agent`
+- `mode`: `read_only_first`, `proposal_only`, `modify_allowed`, or `submit_allowed`
+- `expected_output`
+- `constraints`
+- `success_criteria`
+- `stop_conditions`
+- `context`
+- `input_language`
+- `output_language`
+- `raw_transcript`
+- `normalized_task_language`
+- `code_switched`
+
+Draft Brain rewrites the Draft after each durable ASR turn or live transcript
+checkpoint through the LLM-backed Draft Cleaner. The cleaner receives ordered ASR
+turn evidence, the latest live or durable turn, the assigned Bro id, and the
+previous draft. It emits only plain clean sendable task text, not JSON or labeled
+sections. The runtime stores that text directly in `Draft.text`.
+
+Live ConvoAI updates do not append one durable `AsrTurn` per partial fragment.
+The runtime classifies the latest transcript snapshot at the configured cadence,
+defaulting to about 1 second, and `delegation` or `draft_correction`
+classifications refine the same active Draft session. Each refinement creates a
+new `revision_id` / `revision_number` and snapshot. Final or coalesced callback
+events can stabilize the live Draft when newer, but they are not required before
+the UI can show the corrected Draft. When a final callback has the same
+normalized transcript as the latest published live Draft, the runtime records a
+final checkpoint for the existing revision instead of running the classifier and
+Draft Cleaner again.
+
+For live partials, the classifier should not wait for an explicit final request
+phrase when the utterance already contains enough concrete task material to form
+a useful draft. Pure greeting, preference, or background context remains
+communication.
+
+The Draft must keep only the current final execution intent, not the whole
+revision history. Typed runtime message ingestion may use deterministic rewriting
+for the quiet v1 path, while the legacy Draft Cleaner path still fails when no
+LLM draft rewriter is configured.
+
+## Dispatch Plan And Gate
+
+Draft updates stage a `DispatchPlan` before execution. The plan records:
+
+- `plan_id`
+- `session_id`
+- `draft_session_id`
+- `draft_revision_id`
+- `draft_revision_number`
+- `intent`
+- `target_agent`
+- `task_title`
+- `task_goal`
+- `required_context`
+- `missing_context`
+- `mode`
+- `risk_level`
+- `confidence`
+- `requires_user_confirmation`
+- `user_confirmed`
+- `output_language`
+- `task_spec`
+
+The deterministic dispatch gate returns one of:
+
+- `ask_clarification`
+- `ask_confirmation`
+- `dispatch`
+- `reject`
+
+The gate blocks low-confidence drafts, missing context, unavailable target
+agents, unsafe modes, unconfirmed medium/high-risk work, and side-effecting
+plans. Models may propose task specs, but the gate decides whether execution can
+start.
 
 ## Send Boundary
 
-`Send` freezes the current Draft into a queued `Task`.
+`Send` confirms the staged dispatch plan and freezes the current Draft revision
+into a queued `Task`. The request may carry `draft_revision_id`; when present it
+must match the active `DraftSession.current_revision_id`. If a newer live draft
+revision exists, the stale Send is rejected before dispatch and no older draft is
+converted into a task.
 
 When `assigned_bro_id` matches a runtime `Persona`, Send assigns the created
 task to that Bro by setting the task's persona metadata and marking the persona
@@ -144,9 +234,18 @@ For v0, draft-created tasks store the draft contract in `Task.metadata`:
 - `source_kind: draft_session`
 - `draft_session_id`
 - `draft_snapshot_id`
+- `draft_revision_id`
+- `draft_revision_number`
 - `asr_turn_ids`
 - `assigned_bro_id`
 - `draft_text`
+- `task_spec`
+- `dispatch_plan`
+- `mode`
+- `expected_output`
+- `constraints`
+- `success_criteria`
+- `stop_conditions`
 - `persona_id`, `persona_name`, `bro_detail_session_id`, and
   `executor_node_id` when Send targets a configured runtime Bro
 
@@ -155,6 +254,113 @@ must not mutate the sent task contract.
 
 ## Stop Boundary
 
-`Stop Task` maps to the existing `cancel_task` command in v0. The product labels
+`Stop Task` maps to the existing `cancel_task` command. The product labels
 this terminal state as `Stopped`, while backend compatibility keeps the existing
 `cancelled` task status.
+
+## Runtime Decision
+
+Typed `POST /api/sessions/{session_id}/messages` requests with `type` set to
+`text`, `stt_partial`, or `stt_final` return a `RuntimeDecision`:
+
+- `should_speak`
+- `response_text`
+- `interaction_type`
+- `session_state`
+- `ui_updates`
+- `state_updates`
+- `async_actions`
+- `draft_session_id`
+- `draft_revision_id`
+- `dispatch_plan_id`
+- `task_id`
+
+Partial transcripts update UI state silently and, when the classifier cadence is
+due, may also update the active live Draft revision. Delegation and correction
+updates from partial voice stay silent. A final voice turn speaks one short
+send-confirmation prompt when the dispatch gate is `ask_confirmation`, once when
+the Draft first becomes ready and again only when a meaningful
+`draft_correction` creates a new revision. Duplicate finals and non-correction
+refinements continue to update the UI silently instead of repeating "draft
+ready" prompts. Matching final checkpoints reuse the live revision without
+repeating the prompt. The gate still records mode/risk reasons such as
+unsafe mode or medium/high risk internally, but the user-facing send prompt stays
+the same because downstream executors such as Codex own their own edit and
+permission checkpoints. Clarification, permission, status, urgent, blocked, and
+completed decisions may also speak. Confirmation turns dispatch only after the
+gate passes. Confirmation turns with no active Draft are silent no-ops. A
+successful send clears the active Draft before publishing the next session
+snapshot. Status and stop turns resolve against the current blackboard task state.
+
+Final free-form turns are interpreted through the Communication Brain
+interaction-classifier boundary. The classifier returns structured fields such
+as `interaction_type`, `confidence`, `requires_user_decision`, `importance`, and
+`reason`. When a Draft exists, short final acceptance turns should classify as
+`confirmation` unless they add correction or new task content. Utterances that
+change destination, date, budget, target, recipient, constraints, requirements,
+or deliverable content are `draft_correction`, not `confirmation`. Ordinary
+research, planning, search, comparison, travel-help, review, and proposal turns
+should not request `modify_allowed` unless the user explicitly asks for file
+edits, external sends/bookings/purchases, account updates, or other side
+effects. The runtime speech policy consumes classifier fields plus dispatch-gate
+and blackboard state; it does not inspect transcript words to decide whether a
+turn should speak. If no model-backed classifier is configured, the runtime
+returns a safe `uncertain` clarification decision instead of falling back to
+semantic runtime rules.
+
+## Agora Voice Events
+
+Agora Conversational AI voice input enters the runtime as typed voice events on
+`POST /api/sessions/{session_id}/agora-events`. The event model is:
+
+- `event_id`
+- `session_id`
+- `type`
+- `text`
+- `language`
+- `timestamp_ms`
+- `target_persona_id`
+- `metadata`
+
+Supported event types are:
+
+- `stt.partial`
+- `stt.final`
+- `user.speech_started`
+- `user.speech_ended`
+- `assistant.speech_started`
+- `assistant.speech_ended`
+- `interaction.interrupted`
+- `session.started`
+- `session.ended`
+
+`stt.partial` maps to the live transcript path. On the configured classifier
+cadence, defaulting to about 1 second, it can classify the latest transcript
+snapshot and refine the active Draft revision. `stt.final` stabilizes or
+checkpoints that live state when newer; it is not the sole event allowed to
+update the Draft. Whether any event speaks is determined by the returned
+`RuntimeDecision.should_speak`. Speech lifecycle, interruption, and session
+lifecycle events are silent UI/runtime state events unless later runtime policy
+explicitly produces a spoken decision. The runtime does not infer finality,
+quietness, meaning, or Bro routing from transcript text.
+
+## Agent Events
+
+Execution adapters and test harnesses can ingest normalized agent events through
+`POST /api/tasks/{task_id}/events`.
+
+Agent events store:
+
+- `event_id`
+- `task_id`
+- `agent_id`
+- `type`
+- `message`
+- `importance`: `low`, `medium`, `high`, or `urgent`
+- `delivery`: `silent`, `silent_ui`, `badge`, `short_voice`, or
+  `voice_interrupt`
+- `artifact_id`
+- `created_at`
+
+Low-importance progress defaults to silent UI. Blocked, completed, urgent, and
+short-voice events can produce short spoken responses through `RuntimeDecision`.

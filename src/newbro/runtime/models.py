@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from newbro.protocol import (
+    AgentEvent,
     AttentionItem,
     DraftSession,
     TaskExecutionMode,
@@ -28,6 +29,7 @@ class ConversationHistoryEntryModel(BaseModel):
 
 class SessionSnapshot(BaseModel):
     session_id: str
+    voice_target_persona_id: str | None = None
     tasks: list[Task] = Field(default_factory=list)
     execution_sessions: list[ExecutionSession] = Field(default_factory=list)
     execution_runs: list[ExecutionRun] = Field(default_factory=list)
@@ -38,6 +40,7 @@ class SessionSnapshot(BaseModel):
     personas: list[Persona] = Field(default_factory=list)
     interaction_requests: list[InteractionRequest] = Field(default_factory=list)
     attention_items: list[AttentionItem] = Field(default_factory=list)
+    agent_events: list[AgentEvent] = Field(default_factory=list)
     executor_capabilities: list[dict[str, object]] = Field(default_factory=list)
     executor_nodes: list[ExecutorNodeRecord] = Field(default_factory=list)
     draft_session: DraftSession | None = None

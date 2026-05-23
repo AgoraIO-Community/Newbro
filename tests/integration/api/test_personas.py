@@ -4,6 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from newbro.api.app import create_app
+from newbro.api.public_auth import PublicAuthStore
 from newbro.communication import persona_pool
 from newbro.communication.models import ScriptedCommunicationModel
 from newbro.communication.models.scripted import ScriptedPlan
@@ -11,7 +12,7 @@ from newbro.runtime import Settings
 from newbro.runtime.container import RuntimeContainer
 
 
-def _build_app():
+def _build_app(tmp_path):
     app = create_app()
     app.state.runtime_container = RuntimeContainer(
         communication_model=ScriptedCommunicationModel(
@@ -19,15 +20,23 @@ def _build_app():
         ),
         settings=Settings(),
     )
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
     return app
+
+
+async def _redeem(client: AsyncClient, app, code: str = "invite-test"):
+    await app.state.public_auth_store.create_invite(code)
+    response = await client.post("/api/auth/invites/redeem", json={"code": code})
+    assert response.status_code == 200
 
 
 @pytest.mark.anyio
 async def test_persona_changes_sync_into_active_sessions(monkeypatch, tmp_path):
     monkeypatch.setattr(persona_pool, "PERSONAS_FILE", tmp_path / "personas.yaml")
-    app = _build_app()
+    app = _build_app(tmp_path)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app)
         first_session_id = (await client.post("/api/sessions")).json()["session_id"]
 
         create_response = await client.post(
@@ -58,9 +67,10 @@ async def test_persona_changes_sync_into_active_sessions(monkeypatch, tmp_path):
 @pytest.mark.anyio
 async def test_persona_ids_do_not_collide_for_similar_names(monkeypatch, tmp_path):
     monkeypatch.setattr(persona_pool, "PERSONAS_FILE", tmp_path / "personas.yaml")
-    app = _build_app()
+    app = _build_app(tmp_path)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app)
         session_id = (await client.post("/api/sessions")).json()["session_id"]
 
         first = await client.post(

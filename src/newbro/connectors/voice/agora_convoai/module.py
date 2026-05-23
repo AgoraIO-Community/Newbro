@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 import json
+import logging
 import time
 from typing import Any, AsyncIterator
 from uuid import uuid4
@@ -10,12 +13,17 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from newbro.api.paths import API_PREFIX, api_path
+from newbro.api.public_auth import require_session_owner
 from newbro.connectors.base import (
+    ActiveConnectorBinding,
     BaseConnectorModule,
     ConnectorBindingRegistry,
     HttpNewbroConnectorTransport,
     NewbroConnectorError,
+    NewbroConnectorTransport,
 )
+from newbro.connectors.base.bindings import ConnectorSpeaker
+from newbro.protocol import AgoraVoiceEvent, AgoraVoiceEventType, RuntimeDecision
 
 from .models import (
     ChatCompletionRequest,
@@ -49,6 +57,9 @@ from .stt_service import AgoraSttService
 from .settings import AGORA_BRIDGE_MODEL, AgoraConvoAIConnectorSettings, load_agora_connector_settings
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 class AgoraConvoAIConnectorModule(BaseConnectorModule):
     slug = "agora-convoai"
 
@@ -64,6 +75,11 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         service = AgoraSDKConvoAIService(settings)
         stt_service = AgoraSttService(settings)
         binding_registry = ConnectorBindingRegistry(transport, speaker=service)
+        chat_completion_turns = ChatCompletionTurnCoalescer(
+            transport=transport,
+            speaker=service,
+            delay_seconds=settings.chat_completion_turn_silence_seconds,
+        )
         session_service = AgoraConnectorSessionService(
             binding_registry,
             settings,
@@ -75,6 +91,7 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
             try:
                 yield
             finally:
+                await chat_completion_turns.close()
                 await binding_registry.close()
                 await stt_service.close()
                 await transport.close()
@@ -102,7 +119,10 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/sessions/prepare", response_model=ConnectorSessionPrepareResponse)
         async def prepare_session(
             payload: ConnectorSessionPrepareRequest,
+            request: Request,
         ) -> ConnectorSessionPrepareResponse:
+            if payload.synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, payload.synapse_session_id)
             try:
                 return await session_service.prepare_session(payload)
             except ConvoAIConfigurationError as exc:
@@ -113,7 +133,11 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/sessions/activate", response_model=ConnectorSessionActivateResponse)
         async def activate_session(
             payload: ConnectorSessionActivateRequest,
+            request: Request,
         ) -> ConnectorSessionActivateResponse:
+            synapse_session_id = session_service.prepared_synapse_session_id(payload.prepared_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return await session_service.activate_session(payload)
             except KeyError as exc:
@@ -130,8 +154,13 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/sessions/stop", response_model=ConnectorSessionStopResponse)
         async def stop_session(
             payload: ConnectorSessionStopRequest,
+            request: Request,
         ) -> ConnectorSessionStopResponse:
+            synapse_session_id = session_service.bound_synapse_session_id(payload.binding_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
+                await chat_completion_turns.flush_now(payload.binding_id)
                 return await session_service.stop_session(payload)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -142,7 +171,9 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/stt/sessions/prepare", response_model=SttSessionPrepareResponse)
         async def prepare_stt_session(
             payload: SttSessionPrepareRequest,
+            request: Request,
         ) -> SttSessionPrepareResponse:
+            await _require_public_session_owner_if_enabled(request, payload.synapse_session_id)
             try:
                 return stt_service.prepare_session(payload)
             except ConvoAIConfigurationError as exc:
@@ -151,7 +182,11 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/stt/sessions/start", response_model=SttSessionStartResponse)
         async def start_stt_session(
             payload: SttSessionStartRequest,
+            request: Request,
         ) -> SttSessionStartResponse:
+            synapse_session_id = stt_service.prepared_synapse_session_id(payload.prepared_stt_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return await stt_service.start_session(payload)
             except KeyError as exc:
@@ -164,7 +199,11 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/stt/sessions/heartbeat", response_model=SttSessionHeartbeatResponse)
         async def heartbeat_stt_session(
             payload: SttSessionHeartbeatRequest,
+            request: Request,
         ) -> SttSessionHeartbeatResponse:
+            synapse_session_id = stt_service.active_synapse_session_id(payload.stt_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return stt_service.heartbeat_session(payload)
             except KeyError as exc:
@@ -173,7 +212,15 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/stt/sessions/leave", response_model=SttSessionStopResponse)
         async def leave_stt_session(
             payload: SttSessionLeaveRequest,
+            request: Request,
         ) -> SttSessionStopResponse:
+            synapse_session_id = None
+            if payload.stt_session_id:
+                synapse_session_id = stt_service.active_synapse_session_id(payload.stt_session_id)
+            if payload.prepared_stt_session_id:
+                synapse_session_id = stt_service.prepared_synapse_session_id(payload.prepared_stt_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return await stt_service.leave_session(payload)
             except KeyError as exc:
@@ -182,7 +229,10 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         @router.get("/stt/sessions/{stt_session_id}", response_model=SttSessionQueryResponse)
-        async def query_stt_session(stt_session_id: str) -> SttSessionQueryResponse:
+        async def query_stt_session(stt_session_id: str, request: Request) -> SttSessionQueryResponse:
+            synapse_session_id = stt_service.active_synapse_session_id(stt_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return await stt_service.query_session(stt_session_id)
             except KeyError as exc:
@@ -193,7 +243,11 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
         @router.post("/stt/sessions/stop", response_model=SttSessionStopResponse)
         async def stop_stt_session(
             payload: SttSessionStopRequest,
+            request: Request,
         ) -> SttSessionStopResponse:
+            synapse_session_id = stt_service.active_synapse_session_id(payload.stt_session_id)
+            if synapse_session_id is not None:
+                await _require_public_session_owner_if_enabled(request, synapse_session_id)
             try:
                 return await stt_service.stop_session(payload.stt_session_id)
             except KeyError as exc:
@@ -215,41 +269,77 @@ class AgoraConvoAIConnectorModule(BaseConnectorModule):
             if user_text is None:
                 raise HTTPException(status_code=400, detail="No user message found in messages.")
 
-            # Read voice target persona from the live session if available.
-            target_persona_id: str | None = None
-            container = getattr(request.app.state, "runtime_container", None)
-            if container is not None:
-                try:
-                    live_session = container.get_session(binding.synapse_session_id)
-                    target_persona_id = live_session.voice_target_persona_id
-                except (KeyError, AttributeError):
-                    pass
-
-            if payload.stream:
-                return StreamingResponse(
-                    _stream_completion(
-                        transport=transport,
-                        synapse_session_id=binding.synapse_session_id,
-                        user_text=user_text,
-                        model_name=payload.model or AGORA_BRIDGE_MODEL,
-                        target_persona_id=target_persona_id,
-                    ),
-                    media_type="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-                )
-
-            try:
-                await transport.submit_asr_turn(binding.synapse_session_id, user_text)
+            _log_chat_completion_diagnostics(
+                binding_id=binding_id,
+                payload=payload,
+                user_text=user_text,
+            )
+            target_persona_id = await _resolve_voice_target_persona_id(
+                transport=transport,
+                synapse_session_id=binding.synapse_session_id,
+            )
+            event = _compat_event_from_chat_completion(
+                payload=payload,
+                session_id=binding.synapse_session_id,
+                text=user_text,
+                target_persona_id=target_persona_id,
+            )
+            if event is None:
+                if payload.stream:
+                    return StreamingResponse(
+                        _stream_silent_completion(model_name=payload.model or AGORA_BRIDGE_MODEL),
+                        media_type="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                    )
                 return JSONResponse(
                     _build_completion_response(
                         completion_id=f"chatcmpl-{uuid4().hex[:8]}",
                         created=int(time.time()),
                         model_name=payload.model or AGORA_BRIDGE_MODEL,
-                        reply_text="Draft updated.",
+                        reply_text="",
                     )
                 )
+
+            if not _has_explicit_event_type(payload):
+                await chat_completion_turns.submit(binding=binding, event=event)
+                if payload.stream:
+                    return StreamingResponse(
+                        _stream_silent_completion(model_name=payload.model or AGORA_BRIDGE_MODEL),
+                        media_type="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                    )
+                return JSONResponse(
+                    _build_completion_response(
+                        completion_id=f"chatcmpl-{uuid4().hex[:8]}",
+                        created=int(time.time()),
+                        model_name=payload.model or AGORA_BRIDGE_MODEL,
+                        reply_text="",
+                    )
+                )
+
+            try:
+                decision = await transport.submit_agora_event(binding.synapse_session_id, event)
             except NewbroConnectorError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+            if payload.stream:
+                return StreamingResponse(
+                    _stream_runtime_decision(
+                        decision=decision,
+                        model_name=payload.model or AGORA_BRIDGE_MODEL,
+                    ),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
+
+            return JSONResponse(
+                _build_completion_response(
+                    completion_id=f"chatcmpl-{uuid4().hex[:8]}",
+                    created=int(time.time()),
+                    model_name=payload.model or AGORA_BRIDGE_MODEL,
+                    reply_text=decision.response_text if decision.should_speak else "",
+                )
+            )
 
         return router
 
@@ -265,38 +355,260 @@ def create_headless_app(settings: AgoraConvoAIConnectorSettings | None = None) -
     return app
 
 
-async def _stream_completion(
+async def _require_public_session_owner_if_enabled(request: Request, session_id: str) -> None:
+    if not hasattr(request.app.state, "public_auth_store"):
+        return
+    await require_session_owner(request, session_id)
+
+
+@dataclass(slots=True)
+class _PendingChatCompletionTurn:
+    binding: ActiveConnectorBinding
+    event: AgoraVoiceEvent
+    task: asyncio.Task[None]
+
+
+class ChatCompletionTurnCoalescer:
+    def __init__(
+        self,
+        *,
+        transport: NewbroConnectorTransport,
+        speaker: ConnectorSpeaker,
+        delay_seconds: float = 1.2,
+    ) -> None:
+        self._transport = transport
+        self._speaker = speaker
+        self._delay_seconds = delay_seconds
+        self._pending: dict[str, _PendingChatCompletionTurn] = {}
+
+    async def submit(
+        self,
+        *,
+        binding: ActiveConnectorBinding,
+        event: AgoraVoiceEvent,
+    ) -> None:
+        await self._submit_live_partial(binding=binding, event=event)
+        self.cancel(binding.binding_id)
+        task = asyncio.create_task(self._flush_after_delay(binding.binding_id))
+        self._pending[binding.binding_id] = _PendingChatCompletionTurn(
+            binding=binding,
+            event=event,
+            task=task,
+        )
+
+    def cancel(self, binding_id: str) -> None:
+        pending = self._pending.pop(binding_id, None)
+        if pending is not None:
+            pending.task.cancel()
+
+    async def close(self) -> None:
+        pending = list(self._pending)
+        for binding_id in pending:
+            self.cancel(binding_id)
+
+    async def flush_now(self, binding_id: str) -> RuntimeDecision | None:
+        pending = self._pending.pop(binding_id, None)
+        if pending is None:
+            return None
+        pending.task.cancel()
+        return await self._submit_pending(pending)
+
+    async def _flush_after_delay(self, binding_id: str) -> None:
+        try:
+            await asyncio.sleep(self._delay_seconds)
+            pending = self._pending.pop(binding_id, None)
+            if pending is None:
+                return
+            await self._submit_pending(pending)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception("Failed to flush coalesced Agora chat completion turn.")
+
+    async def _submit_pending(self, pending: _PendingChatCompletionTurn) -> RuntimeDecision:
+        decision = await self._transport.submit_agora_event(
+            pending.binding.synapse_session_id,
+            pending.event,
+        )
+        if decision.should_speak and decision.response_text and pending.binding.runtime_session_id:
+            await self._speaker.speak(pending.binding.runtime_session_id, decision.response_text)
+        return decision
+
+    async def _submit_live_partial(
+        self,
+        *,
+        binding: ActiveConnectorBinding,
+        event: AgoraVoiceEvent,
+    ) -> RuntimeDecision:
+        return await self._transport.submit_agora_event(
+            binding.synapse_session_id,
+            _compat_live_partial_event(event),
+        )
+
+
+async def _stream_runtime_decision(
     *,
-    transport: HttpNewbroConnectorTransport,
-    synapse_session_id: str,
-    user_text: str,
+    decision: RuntimeDecision,
     model_name: str,
-    target_persona_id: str | None = None,
 ) -> AsyncIterator[str]:
     completion_id = f"chatcmpl-{uuid4().hex[:8]}"
     created = int(time.time())
+    yield _sse_payload(
+        _build_stream_chunk(
+            completion_id=completion_id,
+            created=created,
+            model_name=model_name,
+            delta={
+                "role": "assistant",
+                "content": decision.response_text if decision.should_speak else "",
+            },
+        )
+    )
+    yield _sse_payload(
+        _build_stream_chunk(
+            completion_id=completion_id,
+            created=created,
+            model_name=model_name,
+            delta={},
+            finish_reason="stop",
+        )
+    )
+    yield "data: [DONE]\n\n"
+
+
+async def _resolve_voice_target_persona_id(
+    *,
+    transport: HttpNewbroConnectorTransport,
+    synapse_session_id: str,
+) -> str | None:
     try:
-        await transport.submit_asr_turn(synapse_session_id, user_text)
-        yield _sse_payload(
-            _build_stream_chunk(
-                completion_id=completion_id,
-                created=created,
-                model_name=model_name,
-                delta={"role": "assistant", "content": "Draft updated."},
-            )
+        return await transport.get_voice_target_persona_id(synapse_session_id)
+    except NewbroConnectorError:
+        return None
+
+
+def _compat_event_from_chat_completion(
+    *,
+    payload: ChatCompletionRequest,
+    session_id: str,
+    text: str,
+    target_persona_id: str | None,
+) -> AgoraVoiceEvent | None:
+    event_type = _compat_event_type(payload)
+    if event_type is None:
+        return None
+    metadata = _compat_metadata(payload)
+    metadata["compatibility_endpoint"] = "/chat/completions"
+    metadata.setdefault("turn_boundary_source", "agora_custom_llm_callback")
+    return AgoraVoiceEvent(
+        event_id=f"agora-compat-{uuid4().hex[:8]}",
+        session_id=session_id,
+        type=event_type,
+        text=text,
+        target_persona_id=target_persona_id,
+        metadata=metadata,
+    )
+
+
+def _compat_live_partial_event(event: AgoraVoiceEvent) -> AgoraVoiceEvent:
+    metadata = dict(event.metadata)
+    metadata["turn_boundary_source"] = "agora_custom_llm_live_callback"
+    return event.model_copy(
+        update={
+            "event_id": f"{event.event_id}-partial",
+            "type": AgoraVoiceEventType.STT_PARTIAL,
+            "metadata": metadata,
+        }
+    )
+
+
+def _compat_event_type(payload: ChatCompletionRequest) -> AgoraVoiceEventType | None:
+    extras = payload.model_extra or {}
+    raw = extras.get("newbro_event_type") or extras.get("event_type")
+    if isinstance(raw, str):
+        try:
+            return AgoraVoiceEventType(raw)
+        except ValueError:
+            pass
+    return AgoraVoiceEventType.STT_FINAL
+
+
+def _has_explicit_event_type(payload: ChatCompletionRequest) -> bool:
+    extras = payload.model_extra or {}
+    raw = extras.get("newbro_event_type") or extras.get("event_type")
+    if not isinstance(raw, str):
+        return False
+    try:
+        AgoraVoiceEventType(raw)
+    except ValueError:
+        return False
+    return True
+
+
+def _compat_metadata(payload: ChatCompletionRequest) -> dict[str, object]:
+    extras = payload.model_extra or {}
+    raw = extras.get("metadata")
+    if isinstance(raw, dict):
+        return {str(key): value for key, value in raw.items() if isinstance(key, str)}
+    return {}
+
+
+def _log_chat_completion_diagnostics(
+    *,
+    binding_id: str,
+    payload: ChatCompletionRequest,
+    user_text: str,
+) -> None:
+    extras = payload.model_extra or {}
+    message_roles = [
+        message.get("role")
+        for message in payload.messages
+        if isinstance(message, dict)
+    ]
+    LOGGER.info(
+        "Agora ConvoAI chat completion callback: %s",
+        {
+            "binding_id": binding_id,
+            "model": payload.model,
+            "stream": payload.stream,
+            "extra_keys": sorted(str(key) for key in extras.keys()),
+            "message_roles": message_roles,
+            "has_event_type": isinstance(extras.get("newbro_event_type") or extras.get("event_type"), str),
+            "has_metadata": isinstance(extras.get("metadata"), dict),
+            "user_text_preview": _preview_text(user_text),
+        },
+    )
+
+
+def _preview_text(text: str, limit: int = 80) -> str:
+    normalized = " ".join(text.split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3].rstrip() + "..."
+
+
+async def _stream_silent_completion(*, model_name: str) -> AsyncIterator[str]:
+    completion_id = f"chatcmpl-{uuid4().hex[:8]}"
+    created = int(time.time())
+    yield _sse_payload(
+        _build_stream_chunk(
+            completion_id=completion_id,
+            created=created,
+            model_name=model_name,
+            delta={"role": "assistant", "content": ""},
         )
-        yield _sse_payload(
-            _build_stream_chunk(
-                completion_id=completion_id,
-                created=created,
-                model_name=model_name,
-                delta={},
-                finish_reason="stop",
-            )
+    )
+    yield _sse_payload(
+        _build_stream_chunk(
+            completion_id=completion_id,
+            created=created,
+            model_name=model_name,
+            delta={},
+            finish_reason="stop",
         )
-        yield "data: [DONE]\n\n"
-    except NewbroConnectorError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    )
+    yield "data: [DONE]\n\n"
+
 
 def _resolve_binding_id(request: Request) -> str:
     binding_id = request.query_params.get("binding_id")

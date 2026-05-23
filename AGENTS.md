@@ -36,6 +36,20 @@ Core concepts:
 - Treat protocol models as the source of truth.
 - Runtime V1 is single-executor, but schemas must stay multi-executor compatible.
 
+## Project Skills
+When developing Newbro, apply these project skills before changing code:
+
+- **Read the contract first.** Check stable docs under `docs/architecture/`, `docs/protocol/`, and `docs/guides/` before RFCs. RFCs are design background unless merged into stable docs.
+- **Preserve brain boundaries.** Put utterance meaning, classification, and user-facing speech policy in the Communication Brain path. Keep execution scheduling, executor sessions, and task state in Execution Brain / blackboard paths.
+- **Avoid fake semantic rules.** Do not patch behavior with transcript keyword heuristics that pretend to understand the user. Prefer structured model-backed classifier contracts, protocol fields, and tests that prove the contract.
+- **Keep transport thin.** Agora ConvoAI, browser UI, and compatibility endpoints should translate typed events and return `RuntimeDecision`; they should not own business policy.
+- **Diagnose from real state.** Before claiming a fix works, inspect the active session snapshot, diagnostics timeline, task list, draft session, dispatch plan, and running process/reload state.
+- **Design quiet voice behavior explicitly.** Partial live updates should be UI-first and silent. Speech should be gated by `RuntimeDecision.should_speak`, with prompts only for meaningful confirmation, clarification, blocked/completed/urgent status, or explicit user status requests.
+- **Protect dispatch.** Never send raw speech directly to an executor. Dispatch only from a current Draft revision, through a Dispatch Plan and gate, and reject stale revisions.
+- **Test the failure mode.** Add focused tests for the exact regression, including classifier prompt contract, runtime decision output, UI state cleanup, and API behavior when those boundaries are involved.
+- **Verify activation.** After changes, confirm tests pass and the running backend/frontend picked up the code before judging a manual run.
+- **Update memory deliberately.** For adopted runtime behavior changes, update stable docs and add a short factual note to `docs/memories.md`; do not update memories for tiny refactors or test-only changes.
+
 ## Project Memory
 Treat `docs/` as the project documentation and memory root.
 

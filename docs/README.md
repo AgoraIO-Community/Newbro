@@ -17,6 +17,7 @@
 - [Notifications and Interruptions](./architecture/notifications-and-interruptions.md)
 - [Observability](./architecture/observability.md)
 - [Executors](./architecture/executors.md)
+- [Public Onboarding and Ownership](./architecture/public-onboarding-and-ownership.md)
 - [Repository Structure](./architecture/repository-structure.md)
 
 ## Protocol
@@ -36,9 +37,11 @@
 
 - [Guides Index](./guides/index.md)
 - [Local Development](./guides/local-dev.md)
+- [Development Best Practices](./guides/development-best-practices.md)
 - [CLI, Setup, And Publishing](./guides/cli.md)
 - [Vercel UI Deployment](./guides/vercel-ui-deployment.md)
 - [Ubuntu Systemd](./guides/ubuntu-systemd.md)
+- [Public Hosted Deployment](./guides/public-hosted-deployment.md)
 - [Add Executor Adapter](./guides/add-executor-adapter.md)
 - [Add Blackboard Backend](./guides/add-blackboard-backend.md)
 - [Frontend Contracts](./guides/frontend-contracts.md)
@@ -77,3 +80,5 @@
 - [0010 Interaction Harness and Mode Profiles](./rfcs/00010-interaction-harness-and-mode-profiles.md)
 - [0011 Detached Executor Node and Executor-Only CLI](./rfcs/00011-detached-executor-node-and-executor-only-cli.md)
 - [0012 newbro v0 Draft-to-Execute Workflow](./rfcs/0012-newbro-v0-draft-to-execute.md)
+- [0013 Quiet Communication Layer for Long-Running Agents](./rfcs/0013-newbro-v1.md)
+- [0014 Minimal Public Onboarding for Hosted Newbro](./rfcs/0014-minimal-public-onboarding.md)

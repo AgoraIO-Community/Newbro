@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from newbro.api.models import DiagnosticTimelineResponse, SessionResponse
+from newbro.api.public_auth import require_public_user, require_session_owner, require_session_owner_or_internal
 from newbro.observability.schema import LEVEL_PRIORITY
 
 router = APIRouter()
@@ -11,8 +12,13 @@ router = APIRouter()
 async def create_session(
     request: Request,
 ) -> SessionResponse:
+    user = await require_public_user(request)
     container = request.app.state.runtime_container
+    store = request.app.state.public_auth_store
     session = container.create_session()
+    await store.claim_session(user_id=user.user_id, session_id=session.session_id)
+    personas = await store.list_personas(user_id=user.user_id)
+    await container.sync_user_personas(session_id=session.session_id, personas=personas)
     session.observability.api.session_created(conversation_id=session.session_id)
     return SessionResponse(session_id=session.session_id)
 
@@ -22,6 +28,7 @@ async def get_session(
     session_id: str,
     request: Request,
 ):
+    await require_session_owner_or_internal(request, session_id)
     container = request.app.state.runtime_container
     try:
         session = container.get_session(session_id)
@@ -35,6 +42,7 @@ async def get_session_conversation(
     session_id: str,
     request: Request,
 ):
+    await require_session_owner(request, session_id)
     container = request.app.state.runtime_container
     try:
         session = container.get_session(session_id)
@@ -48,6 +56,7 @@ async def list_tasks(
     session_id: str,
     request: Request,
 ):
+    await require_session_owner(request, session_id)
     container = request.app.state.runtime_container
     try:
         session = container.get_session(session_id)
@@ -73,6 +82,7 @@ async def get_session_diagnostic_timeline(
     min_level: str | None = None,
     limit: int = 200,
 ) -> DiagnosticTimelineResponse:
+    await require_session_owner(request, session_id)
     container = request.app.state.runtime_container
     try:
         session = container.get_session(session_id)
@@ -106,6 +116,7 @@ async def set_voice_target(
     body: VoiceTargetRequest,
     request: Request,
 ):
+    await require_session_owner(request, session_id)
     container = request.app.state.runtime_container
     try:
         session = container.get_session(session_id)
@@ -120,6 +131,7 @@ async def clear_voice_target(
     session_id: str,
     request: Request,
 ):
+    await require_session_owner(request, session_id)
     container = request.app.state.runtime_container
     try:
         session = container.get_session(session_id)

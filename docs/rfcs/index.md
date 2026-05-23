@@ -16,3 +16,5 @@ These files are useful for design history and rationale, but they are not the de
 - [0010 Interaction Harness and Mode Profiles](./00010-interaction-harness-and-mode-profiles.md)
 - [0011 Detached Executor Host and Executor-Only CLI](./00011-detached-executor-host-and-executor-only-cli.md)
 - [0012 newbro v0 Draft-to-Execute Workflow](./0012-newbro-v0-draft-to-execute.md)
+- [0013 Quiet Communication Layer for Long-Running Agents](./0013-newbro-v1.md)
+- [0014 Minimal Public Onboarding for Hosted Newbro](./0014-minimal-public-onboarding.md)
