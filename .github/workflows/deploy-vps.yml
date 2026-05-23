@@ -80,10 +80,13 @@ jobs:
 
       - name: Configure SSH
         run: |
+          set -euxo pipefail
           install -m 700 -d ~/.ssh
+          test -n "$DEPLOY_SSH_KEY"
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/newbro_deploy
           chmod 600 ~/.ssh/newbro_deploy
-          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          ssh-keyscan -v -T 20 -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "echo ssh-ok"
 
       - name: Rsync release to VPS
         run: |
