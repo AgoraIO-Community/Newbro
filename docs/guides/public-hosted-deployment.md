@@ -128,6 +128,16 @@ The generated Compose file mounts `/root/.newbro` into the container. If the
 deployment later moves away from the `root` SSH user, update the Compose mount
 and runtime config path together.
 
+Manual workflow runs can also create an invite after a successful deploy. In
+the GitHub Actions UI, run `Deploy Newbro VPS` with:
+
+- `create_invite`: enabled
+- `invite_code`: optional; leave blank to generate one
+- `invite_email`: optional email label
+
+The invite command output is written to the workflow log and step summary, so
+use this only from a trusted private repo or with the expected operator access.
+
 ## Health Checks
 
 After deployment:
