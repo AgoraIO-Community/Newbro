@@ -356,6 +356,8 @@ export function BroDetailPage({
   const mountedRef = useRef(false);
   const generationRef = useRef(0);
   const pendingDraftRequestIdRef = useRef<string | null>(null);
+  const activeDraftSessionIdRef = useRef<string | null>(null);
+  const retiredDraftSessionIdsRef = useRef<Set<string>>(new Set());
   const lastSubmittedPartialRef = useRef<string>("");
 
   const clearSilenceCommitTimer = useCallback(() => {
@@ -379,6 +381,10 @@ export function BroDetailPage({
     transcriptArrivalIndexRef.current = 0;
     releasedForDraftUpdateRef.current = false;
     pendingDraftRequestIdRef.current = null;
+    if (activeDraftSessionIdRef.current !== null) {
+      retiredDraftSessionIdsRef.current.add(activeDraftSessionIdRef.current);
+    }
+    activeDraftSessionIdRef.current = null;
     setAcceptedTranscript("");
     setDraftSession(null);
     setStreamingDraftText("");
@@ -386,9 +392,16 @@ export function BroDetailPage({
 
   useEffect(() => {
     if (snapshotDraftSession === null) {
+      if (activeDraftSessionIdRef.current !== null) {
+        retiredDraftSessionIdsRef.current.add(activeDraftSessionIdRef.current);
+      }
+      activeDraftSessionIdRef.current = null;
       setDraftSession(null);
+      setStreamingDraftText("");
       return;
     }
+    activeDraftSessionIdRef.current = snapshotDraftSession.id;
+    retiredDraftSessionIdsRef.current.delete(snapshotDraftSession.id);
     setDraftSession(snapshotDraftSession);
   }, [snapshotDraftSession]);
 
@@ -407,8 +420,12 @@ export function BroDetailPage({
       return;
     }
     if (latestDraftOutputEvent.type === "draft_output_completed") {
+      if (retiredDraftSessionIdsRef.current.has(latestDraftOutputEvent.draft_session_id)) {
+        return;
+      }
       const draftText = latestDraftOutputEvent.draft_text;
       setStreamingDraftText(draftText);
+      activeDraftSessionIdRef.current = latestDraftOutputEvent.draft_session_id;
       setDraftSession({
         id: latestDraftOutputEvent.draft_session_id,
         current_draft: {

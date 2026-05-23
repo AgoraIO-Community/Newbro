@@ -25,8 +25,12 @@ Core communication policy:
 - free-form utterance meaning is produced by the Communication Brain interaction-classifier boundary, not by runtime transcript keyword checks
 - live ConvoAI transcript snapshots may run the interaction classifier at the configured cadence, defaulting to about 1 second, so the current Draft can update before callback finality
 - live partial classification should treat concrete task-shaped context as draft-worthy once the likely work product is clear enough to draft, even before the user finishes the final request phrase
+- with an active Draft, short final acceptance turns classify as confirmation unless they add correction/new task content; destination, date, budget, target, recipient, constraint, requirement, or deliverable changes are Draft corrections, not confirmations
+- ordinary research, planning, search, comparison, travel-help, review, and proposal requests default to read-only/proposal modes unless the user explicitly asks for side effects
 - repeated live delegation/correction classifications refine the same active Draft revision stream instead of creating one durable ASR turn per partial transcript
 - final or coalesced transcript callbacks stabilize/checkpoint the live Draft when newer, but they are not the responsiveness source of truth; matching finals reuse the existing live draft revision instead of re-running classifier and draft rewrite
+- final voice turns speak one short send-confirmation prompt when a Draft first becomes ready, and one more prompt after a meaningful `draft_correction` creates a new revision; duplicate finals and non-correction refinements stay UI-first and silent
+- confirmation turns with no active Draft are silent no-ops, and successful sends clear the active Draft before publishing the next session snapshot
 - production runtime builds a model-backed interaction classifier from the configured OpenAI-compatible provider when available; without that classifier the quiet runtime fails closed to `uncertain`/clarification for final free-form turns
 - the quiet runtime returns `RuntimeDecision` objects with `should_speak`, `response_text`, UI updates, state updates, and task/plan identifiers
 - draft micro-updates and low-importance progress are UI/blackboard-first and silent by default

@@ -236,6 +236,8 @@ class SessionRuntime:
     _latest_published_live_text: str = field(default="", init=False, repr=False)
     _live_partial_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _live_partial_work: LiveTranscriptWork | None = field(default=None, init=False, repr=False)
+    _last_spoken_confirmation_draft_session_id: str | None = field(default=None, init=False, repr=False)
+    _last_spoken_confirmation_revision_id: str | None = field(default=None, init=False, repr=False)
 
     async def snapshot(self) -> SessionSnapshot:
         tasks = await self.blackboard.list_tasks()
@@ -537,6 +539,51 @@ class SessionRuntime:
     def _live_draft_request_id(self, work: LiveTranscriptWork) -> str:
         return f"live-draft-{work.generation}"
 
+    def _should_speak_for_live_draft_decision(
+        self,
+        *,
+        work: LiveTranscriptWork,
+        interaction: InteractionType,
+        classification: InteractionClassification,
+        gate: DispatchGateResult,
+        draft_session_id: str | None,
+        draft_revision_id: str | None,
+    ) -> bool:
+        should_speak = _should_speak_for_draft_decision(
+            interaction=interaction,
+            classification=classification,
+            gate=gate,
+        )
+        if (
+            not should_speak
+            and interaction == InteractionType.DRAFT_CORRECTION
+            and gate.outcome == DispatchGateOutcome.ASK_CONFIRMATION
+        ):
+            should_speak = True
+        if not should_speak:
+            return False
+        if gate.outcome != DispatchGateOutcome.ASK_CONFIRMATION:
+            return True
+        if work.source_boundary == "stt.partial":
+            return False
+        if draft_session_id is not None:
+            if self._last_spoken_confirmation_draft_session_id != draft_session_id:
+                self._last_spoken_confirmation_draft_session_id = draft_session_id
+                self._last_spoken_confirmation_revision_id = draft_revision_id
+                return True
+            if (
+                interaction == InteractionType.DRAFT_CORRECTION
+                and draft_revision_id is not None
+                and self._last_spoken_confirmation_revision_id != draft_revision_id
+            ):
+                self._last_spoken_confirmation_revision_id = draft_revision_id
+                return True
+            if self._last_spoken_confirmation_draft_session_id == draft_session_id:
+                return False
+        if draft_revision_id is None:
+            return True
+        return True
+
     async def _broadcast_live_draft_started(self, work: LiveTranscriptWork) -> None:
         if not self.subscribers:
             return
@@ -766,13 +813,14 @@ class SessionRuntime:
             )
             gate = dispatch_gate(plan)
             await self.publish_snapshot()
-            should_speak = _should_speak_for_draft_decision(
+            should_speak = self._should_speak_for_live_draft_decision(
+                work=work,
                 interaction=interaction,
                 classification=classification,
                 gate=gate,
+                draft_session_id=draft_session.id,
+                draft_revision_id=draft_session.current_revision_id,
             )
-            if work.source_boundary in {"stt.partial", "stt.final"} and gate.outcome == DispatchGateOutcome.ASK_CONFIRMATION:
-                should_speak = False
             return RuntimeDecision(
                 should_speak=should_speak,
                 response_text=(gate.question or "") if should_speak else "",
@@ -856,10 +904,25 @@ class SessionRuntime:
             task for task in await self.blackboard.list_tasks()
             if task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.WAITING_USER_INPUT, TaskStatus.PAUSED}
         ]
+        gate = dispatch_gate(plan)
+        effective_classification = classification or InteractionClassification(
+            interaction_type=InteractionType.DELEGATION,
+            confidence=1.0,
+            reason="final_checkpoint_reused",
+        )
+        interaction = effective_classification.interaction_type
+        should_speak = self._should_speak_for_live_draft_decision(
+            work=work,
+            interaction=interaction,
+            classification=effective_classification,
+            gate=gate,
+            draft_session_id=draft_session.id,
+            draft_revision_id=draft_session.current_revision_id,
+        )
         return RuntimeDecision(
-            should_speak=False,
-            response_text="",
-            interaction_type=classification.interaction_type if classification is not None else InteractionType.DELEGATION,
+            should_speak=should_speak,
+            response_text=(gate.question or "") if should_speak else "",
+            interaction_type=interaction,
             session_state=RuntimeSessionState.WAITING_FOR_CONFIRMATION,
             ui_updates=[
                 UiUpdate(type="draft_card.updated", payload={"draft_session_id": draft_session.id, "draft_revision_id": draft_session.current_revision_id}),
@@ -1081,8 +1144,8 @@ class SessionRuntime:
         draft_session = self.draft_manager.active_session
         if draft_session is None or draft_session.current_draft is None:
             return RuntimeDecision(
-                should_speak=True,
-                response_text="No draft is ready.",
+                should_speak=False,
+                response_text="",
                 interaction_type=InteractionType.CONFIRMATION,
                 session_state=RuntimeSessionState.IDLE,
             )
@@ -1120,7 +1183,10 @@ class SessionRuntime:
             response_text=f"Sent to {confirmed.target_agent}.",
             interaction_type=InteractionType.CONFIRMATION,
             session_state=RuntimeSessionState.TASK_RUNNING,
-            ui_updates=[UiUpdate(type="task.started", payload={"task_id": task.task_id})],
+            ui_updates=[
+                UiUpdate(type="draft.cleared", payload={"draft_session_id": confirmed.draft_session_id}),
+                UiUpdate(type="task.started", payload={"task_id": task.task_id}),
+            ],
             draft_session_id=draft_session.id,
             draft_revision_id=draft_session.current_revision_id,
             dispatch_plan_id=confirmed.plan_id,

@@ -494,21 +494,21 @@ def dispatch_gate(plan: DispatchPlan) -> DispatchGateResult:
         return DispatchGateResult(
             outcome=DispatchGateOutcome.ASK_CONFIRMATION,
             reason="unsafe_mode_needs_confirmation",
-            question=_question(plan.output_language, "This may modify code. Send?"),
+            question=_send_confirmation_question(plan),
             plan_id=plan.plan_id,
         )
     if plan.risk_level in {"medium", "high"} and not plan.user_confirmed:
         return DispatchGateResult(
             outcome=DispatchGateOutcome.ASK_CONFIRMATION,
             reason="risk_needs_confirmation",
-            question=_question(plan.output_language, "This needs approval. Send?"),
+            question=_send_confirmation_question(plan),
             plan_id=plan.plan_id,
         )
     if not plan.user_confirmed:
         return DispatchGateResult(
             outcome=DispatchGateOutcome.ASK_CONFIRMATION,
             reason="needs_confirmation",
-            question=_question(plan.output_language, f"Drafted for {plan.target_agent}. Send?"),
+            question=_send_confirmation_question(plan),
             plan_id=plan.plan_id,
         )
     return DispatchGateResult(outcome=DispatchGateOutcome.DISPATCH, reason="ok", plan_id=plan.plan_id)
@@ -710,6 +710,10 @@ def _question(language: str, english: str) -> str:
     if english.startswith("Drafted for "):
         return english.replace("Drafted for", "已草拟给").replace(". Send?", "。发送吗？")
     return mapping.get(english, english)
+
+
+def _send_confirmation_question(plan: DispatchPlan) -> str:
+    return _question(plan.output_language, f"Drafted for {plan.target_agent}. Send?")
 
 
 def _draft_locale(text: str) -> str:

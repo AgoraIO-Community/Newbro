@@ -277,19 +277,36 @@ Typed `POST /api/sessions/{session_id}/messages` requests with `type` set to
 
 Partial transcripts update UI state silently and, when the classifier cadence is
 due, may also update the active live Draft revision. Delegation and correction
-updates from voice stay silent unless structured policy asks for clarification,
-permission/risk, status, urgent, blocked, completed, or explicit confirmation
-speech. Confirmation turns dispatch only after the gate passes. Status and stop
-turns resolve against the current blackboard task state.
+updates from partial voice stay silent. A final voice turn speaks one short
+send-confirmation prompt when the dispatch gate is `ask_confirmation`, once when
+the Draft first becomes ready and again only when a meaningful
+`draft_correction` creates a new revision. Duplicate finals and non-correction
+refinements continue to update the UI silently instead of repeating "draft
+ready" prompts. Matching final checkpoints reuse the live revision without
+repeating the prompt. The gate still records mode/risk reasons such as
+unsafe mode or medium/high risk internally, but the user-facing send prompt stays
+the same because downstream executors such as Codex own their own edit and
+permission checkpoints. Clarification, permission, status, urgent, blocked, and
+completed decisions may also speak. Confirmation turns dispatch only after the
+gate passes. Confirmation turns with no active Draft are silent no-ops. A
+successful send clears the active Draft before publishing the next session
+snapshot. Status and stop turns resolve against the current blackboard task state.
 
 Final free-form turns are interpreted through the Communication Brain
 interaction-classifier boundary. The classifier returns structured fields such
 as `interaction_type`, `confidence`, `requires_user_decision`, `importance`, and
-`reason`. The runtime speech policy consumes those fields plus dispatch-gate and
-blackboard state; it does not inspect transcript words to decide whether a turn
-should speak. If no model-backed classifier is configured, the runtime returns a
-safe `uncertain` clarification decision instead of falling back to semantic
-runtime rules.
+`reason`. When a Draft exists, short final acceptance turns should classify as
+`confirmation` unless they add correction or new task content. Utterances that
+change destination, date, budget, target, recipient, constraints, requirements,
+or deliverable content are `draft_correction`, not `confirmation`. Ordinary
+research, planning, search, comparison, travel-help, review, and proposal turns
+should not request `modify_allowed` unless the user explicitly asks for file
+edits, external sends/bookings/purchases, account updates, or other side
+effects. The runtime speech policy consumes classifier fields plus dispatch-gate
+and blackboard state; it does not inspect transcript words to decide whether a
+turn should speak. If no model-backed classifier is configured, the runtime
+returns a safe `uncertain` clarification decision instead of falling back to
+semantic runtime rules.
 
 ## Agora Voice Events
 

@@ -53,10 +53,10 @@ async def test_typed_message_dispatch_plan_confirm_status_stop_and_events(tmp_pa
         )
         assert staged.status_code == 200
         staged_payload = staged.json()
-        assert staged_payload["should_speak"] is False
+        assert staged_payload["should_speak"] is True
         assert staged_payload["dispatch_plan_id"]
         assert staged_payload["draft_revision_id"]
-        assert staged_payload["response_text"] == ""
+        assert "发送吗" in staged_payload["response_text"]
 
         confirmed = await client.post(f"/api/dispatch-plans/{staged_payload['dispatch_plan_id']}/confirm")
         assert confirmed.status_code == 200
@@ -145,7 +145,8 @@ async def test_agora_events_api_keeps_partial_silent_and_final_decision_runtime_
         )
         assert final.status_code == 200
         payload = final.json()
-        assert payload["should_speak"] is False
+        assert payload["should_speak"] is True
+        assert payload["response_text"] == "Drafted for codex. Send?"
         assert payload["dispatch_plan_id"]
         assert payload["draft_revision_id"]
 
@@ -222,7 +223,8 @@ async def test_agora_events_api_live_cadence_revision_stream_and_stale_send_guar
         assert skipped.status_code == 200
         assert corrected.status_code == 200
         assert final.status_code == 200
-        assert [first.json()["should_speak"], skipped.json()["should_speak"], corrected.json()["should_speak"], final.json()["should_speak"]] == [False, False, False, False]
+        assert [first.json()["should_speak"], skipped.json()["should_speak"], corrected.json()["should_speak"], final.json()["should_speak"]] == [False, False, False, True]
+        assert final.json()["response_text"] == "Drafted for codex. Send?"
         assert skipped.json()["ui_updates"][0]["type"] == "transcript.partial"
         first_revision = (await client.get(f"/api/sessions/{session_id}")).json()["draft_session"]["snapshots"][0]["draft_revision_id"]
         latest_revision = final.json()["draft_revision_id"]

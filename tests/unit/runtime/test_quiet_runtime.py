@@ -149,7 +149,10 @@ def test_dispatch_gate_covers_clarification_reject_and_risk_outcomes():
     assert dispatch_gate(base_plan.model_copy(update={"confidence": 0.2})).outcome == DispatchGateOutcome.ASK_CLARIFICATION
     assert dispatch_gate(base_plan.model_copy(update={"missing_context": ["target"]})).outcome == DispatchGateOutcome.ASK_CLARIFICATION
     assert dispatch_gate(base_plan.model_copy(update={"target_agent": ""})).outcome == DispatchGateOutcome.REJECT
-    assert dispatch_gate(base_plan.model_copy(update={"mode": TaskMode.MODIFY_ALLOWED, "risk_level": "medium"})).outcome == DispatchGateOutcome.ASK_CONFIRMATION
+    modify_gate = dispatch_gate(base_plan.model_copy(update={"mode": TaskMode.MODIFY_ALLOWED, "risk_level": "medium"}))
+    assert modify_gate.outcome == DispatchGateOutcome.ASK_CONFIRMATION
+    assert modify_gate.reason == "unsafe_mode_needs_confirmation"
+    assert modify_gate.question == "Drafted for codex. Send?"
 
 
 def test_task_linter_and_routing_table_are_deterministic():
@@ -180,9 +183,9 @@ async def test_runtime_message_stages_and_confirms_structured_task():
         language="zh-CN",
     )
 
-    assert decision.should_speak is False
+    assert decision.should_speak is True
     assert decision.dispatch_plan_id
-    assert decision.response_text == ""
+    assert "发送吗" in decision.response_text
     draft = session.draft_manager.active_session
     assert draft is not None
     assert draft.current_draft is not None
@@ -295,24 +298,54 @@ async def test_live_classifier_cadence_refines_one_draft_without_durable_asr_tur
         message_type="stt_final",
         timestamp_ms=1100,
     )
+    duplicate_final = await session.handle_runtime_message(
+        text="Plan a trip to the US actually make it UK",
+        message_type="stt_final",
+        timestamp_ms=1200,
+    )
+    revised_after_prompt = await session.handle_runtime_message(
+        text="Plan a trip to the US actually make it UK with hotels",
+        message_type="stt_partial",
+        timestamp_ms=2200,
+    )
+    await _drain_live_partial(session)
+    revised_final = await session.handle_runtime_message(
+        text="Plan a trip to the US actually make it UK with hotels",
+        message_type="stt_final",
+        timestamp_ms=2300,
+    )
 
-    assert [first.should_speak, skipped.should_speak, corrected.should_speak, final.should_speak] == [False, False, False, False]
-    assert [first.response_text, skipped.response_text, corrected.response_text, final.response_text] == ["", "", "", ""]
+    assert [
+        first.should_speak,
+        skipped.should_speak,
+        corrected.should_speak,
+        final.should_speak,
+        duplicate_final.should_speak,
+        revised_after_prompt.should_speak,
+        revised_final.should_speak,
+    ] == [False, False, False, True, False, False, False]
+    assert [first.response_text, skipped.response_text, corrected.response_text, revised_final.response_text] == ["", "", "", ""]
+    assert final.response_text == "Drafted for codex. Send?"
+    assert duplicate_final.response_text == ""
     assert classifier.calls == [
         "Plan a trip to the US",
         "Plan a trip to the US actually make it UK",
+        "Plan a trip to the US actually make it UK with hotels",
     ]
     assert rewriter.calls == [
         "Plan a trip to the US",
         "Plan a trip to the US actually make it UK",
+        "Plan a trip to the US actually make it UK with hotels",
     ]
     draft = session.draft_manager.active_session
     assert draft is not None
     assert draft.current_draft is not None
-    assert draft.current_draft.text == "Plan a trip to the US actually make it UK."
+    assert draft.current_draft.text == "Plan a trip to the US actually make it UK with hotels."
     assert len(draft.asr_turns) == 0
-    assert len(draft.snapshots) == 3
-    assert draft.current_revision_id == final.draft_revision_id
+    assert len(draft.snapshots) == 6
+    assert draft.current_revision_id == revised_final.draft_revision_id
+    assert duplicate_final.draft_revision_id == final.draft_revision_id
+    assert revised_final.draft_revision_id != final.draft_revision_id
     assert draft.live_source_boundary == "stt.final"
     assert draft.live_classification is not None
     assert draft.live_classification["interaction_type"] == "delegation"
@@ -320,14 +353,107 @@ async def test_live_classifier_cadence_refines_one_draft_without_durable_asr_tur
         event for event in session.observability.store.all()
         if event.event_name == "comm.live_draft.updated"
     ]
-    assert live_events[-1].details["draft_revision_id"] == final.draft_revision_id
+    assert live_events[-1].details["draft_revision_id"] == revised_final.draft_revision_id
     assert live_events[-1].details["source_boundary"] == "stt.final"
-    assert live_events[-1].details["draft_revision_number"] == 2
+    assert live_events[-1].details["draft_revision_number"] == 3
     stages = [
         event for event in session.observability.store.all()
         if event.event_name == "comm.live_draft.stage"
     ]
     assert any(event.details["stage"] == "final_checkpoint_reused" for event in stages)
+
+
+@pytest.mark.anyio
+async def test_confirmation_without_active_draft_is_silent_noop():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel({}),
+        settings=Settings(),
+        executor_node_manager=ExecutorNodeManager(detached_executor_types=[]),
+        draft_rewriter=DeterministicDraftRewriter(),
+        interaction_classifier=_classifier_for(InteractionType.CONFIRMATION),
+    )
+
+    decision = await session.handle_runtime_message(
+        text="ok",
+        message_type="stt_final",
+        timestamp_ms=0,
+    )
+
+    assert decision.should_speak is False
+    assert decision.response_text == ""
+    assert decision.interaction_type == InteractionType.CONFIRMATION
+    assert decision.session_state.value == "idle"
+
+
+@pytest.mark.anyio
+async def test_meaningful_live_draft_correction_reopens_one_confirmation_prompt():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel({}),
+        settings=Settings(live_interaction_classifier_interval_seconds=1.0),
+        executor_node_manager=ExecutorNodeManager(detached_executor_types=[]),
+        draft_rewriter=DeterministicDraftRewriter(),
+        interaction_classifier=ScriptedInteractionClassifier(
+            {
+                "Plan a trip to California": InteractionClassification(
+                    interaction_type=InteractionType.DELEGATION,
+                    confidence=0.95,
+                    requires_user_decision=True,
+                    reason="initial_trip_plan",
+                    task_mode=TaskMode.PROPOSAL_ONLY,
+                ),
+                "Change destination to London": InteractionClassification(
+                    interaction_type=InteractionType.DRAFT_CORRECTION,
+                    confidence=0.95,
+                    requires_user_decision=False,
+                    reason="destination_changed",
+                    task_mode=TaskMode.PROPOSAL_ONLY,
+                ),
+            }
+        ),
+    )
+
+    initial_partial = await session.handle_runtime_message(
+        text="Plan a trip to California",
+        message_type="stt_partial",
+        timestamp_ms=0,
+    )
+    await _drain_live_partial(session)
+    initial_final = await session.handle_runtime_message(
+        text="Plan a trip to California",
+        message_type="stt_final",
+        timestamp_ms=1000,
+    )
+    correction_partial = await session.handle_runtime_message(
+        text="Change destination to London",
+        message_type="stt_partial",
+        timestamp_ms=2200,
+    )
+    await _drain_live_partial(session)
+    correction_final = await session.handle_runtime_message(
+        text="Change destination to London",
+        message_type="stt_final",
+        timestamp_ms=2300,
+    )
+    duplicate_correction_final = await session.handle_runtime_message(
+        text="Change destination to London",
+        message_type="stt_final",
+        timestamp_ms=2400,
+    )
+
+    assert [
+        initial_partial.should_speak,
+        initial_final.should_speak,
+        correction_partial.should_speak,
+        correction_final.should_speak,
+        duplicate_correction_final.should_speak,
+    ] == [False, True, False, True, False]
+    assert initial_final.response_text == "Drafted for codex. Send?"
+    assert correction_final.response_text == "Drafted for codex. Send?"
+    assert duplicate_correction_final.response_text == ""
+    assert correction_final.draft_revision_id != initial_final.draft_revision_id
+    assert duplicate_correction_final.draft_revision_id == correction_final.draft_revision_id
 
 
 @pytest.mark.anyio
@@ -485,7 +611,8 @@ async def test_agora_voice_event_path_uses_typed_finality_and_runtime_decision()
         )
     )
 
-    assert final.should_speak is False
+    assert final.should_speak is True
+    assert final.response_text == "Drafted for codex. Send?"
     assert final.dispatch_plan_id
     assert session.draft_manager.active_session is not None
     classified_events = [

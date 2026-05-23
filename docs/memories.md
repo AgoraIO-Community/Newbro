@@ -212,3 +212,9 @@ Short log of important design decisions and changes for Newbro.
 - Added live ConvoAI draft revisioning: `stt.partial` can run the interaction classifier on the configured cadence, voice draft updates refine one active draft silently, and Send validates the current draft revision before dispatch.
 - Changed matching `stt.final` checkpoints to reuse the latest live draft revision, recording final boundary state without re-running classification or draft rewriting.
 - Changed the live interaction-classifier contract so concrete task-shaped partial context can become draft-worthy before the final request phrase, without runtime keyword rules.
+- Changed final voice draft decisions to speak one confirmation prompt per active Draft session when the dispatch gate asks for confirmation, while keeping partial and later revision updates silent.
+- Kept dispatch-gate mode/risk reasons internal for send confirmation wording, so Codex-routed voice drafts use the normal send prompt instead of separate code-modification warning language.
+- Tightened the model-backed interaction-classifier contract so active-draft short acceptances classify as confirmation, and ordinary research/planning/travel-help requests stay read-only/proposal unless side effects are explicit.
+- Made confirmation with no active Draft a silent no-op and required successful voice sends to publish a cleared Draft snapshot.
+- Clarified that active-draft utterances changing destination, date, budget, target, recipient, constraints, requirements, or deliverable content classify as Draft corrections rather than confirmations.
+- Allowed a meaningful active-Draft correction to reopen one send-confirmation prompt for the corrected revision, while keeping duplicate finals and non-correction refinements silent.
