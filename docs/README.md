@@ -36,6 +36,7 @@
 
 - [Guides Index](./guides/index.md)
 - [Local Development](./guides/local-dev.md)
+- [Development Best Practices](./guides/development-best-practices.md)
 - [CLI, Setup, And Publishing](./guides/cli.md)
 - [Vercel UI Deployment](./guides/vercel-ui-deployment.md)
 - [Ubuntu Systemd](./guides/ubuntu-systemd.md)
