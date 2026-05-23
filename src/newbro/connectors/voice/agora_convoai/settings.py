@@ -65,6 +65,7 @@ class AgoraConvoAIConnectorSettings:
     speak_priority: str = "APPEND"
     speak_interruptable: bool = True
     request_timeout_seconds: float = 10.0
+    chat_completion_turn_silence_seconds: float = 6.0
 
 
 DEFAULT_ENV_FILE = SYNAPSE_ENV_FILE
@@ -96,6 +97,7 @@ def load_agora_connector_settings(*, env_file: Path | None = None) -> AgoraConvo
             speak_priority="APPEND",
             speak_interruptable=True,
             request_timeout_seconds=10.0,
+            chat_completion_turn_silence_seconds=6.0,
         )
     return _load_agora_connector_settings_from_yaml(loaded_connector_config)
 
@@ -142,6 +144,9 @@ def _load_agora_connector_settings_from_yaml(loaded_connector_config) -> AgoraCo
             source_path=source_path,
         ),
         request_timeout_seconds=float(raw_connector.get("request_timeout_seconds", 10.0)),
+        chat_completion_turn_silence_seconds=float(
+            raw_connector.get("chat_completion_turn_silence_seconds", 6.0)
+        ),
     )
 
 

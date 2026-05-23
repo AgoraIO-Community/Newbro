@@ -60,3 +60,17 @@ def test_yaml_stt_languages_reject_invalid_scalar() -> None:
                 }
             )
         )
+
+
+def test_yaml_accepts_chat_completion_turn_silence_seconds() -> None:
+    settings = _load_agora_connector_settings_from_yaml(
+        _loaded_config(
+            {
+                "app_id": "app-id",
+                "app_certificate": "app-cert",
+                "chat_completion_turn_silence_seconds": 4.5,
+            }
+        )
+    )
+
+    assert settings.chat_completion_turn_silence_seconds == 4.5

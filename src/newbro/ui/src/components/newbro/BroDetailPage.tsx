@@ -12,7 +12,7 @@ import { loadAgoraBrowserStack } from "../../lib/voice-runtime";
 import { describeProtobufTranscriptPayload, describeTranscriptPayload, extractTranscriptText, type ExtractedSttTranscript } from "./stt-transcript";
 import { BroDetailHeader, DraftBrainPanel, LiveTranscriptPanel, RunnerBrainPanel, VoicePad } from "./visual";
 import type { BroCardModel, BroTaskRecord } from "./types";
-import type { DraftOutputCompletedStreamEvent, DraftOutputDeltaStreamEvent, DraftOutputFailedStreamEvent, DraftOutputStartedStreamEvent, TaskSummary } from "../../types";
+import type { AgentEvent, DraftOutputCompletedStreamEvent, DraftOutputDeltaStreamEvent, DraftOutputFailedStreamEvent, DraftOutputStartedStreamEvent, TaskSummary } from "../../types";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const STT_SILENCE_COMMIT_MS = 1_200;
@@ -26,6 +26,15 @@ type Draft = {
 type DraftSession = {
   id: string;
   current_draft: Draft | null;
+  current_dispatch_plan?: {
+    plan_id: string;
+    target_agent: string;
+    mode: string;
+    task_title: string;
+    task_goal: string;
+    missing_context: string[];
+    output_language: string;
+  } | null;
   status: string;
 };
 
@@ -295,6 +304,7 @@ export function BroDetailPage({
   activeTaskId,
   summary,
   taskRecords,
+  agentEvents,
   snapshotDraftSession,
   latestDraftOutputEvent,
   onSubmitDraftAsrTurn,
@@ -306,6 +316,7 @@ export function BroDetailPage({
   activeTaskId: string | null;
   summary: TaskSummary | null;
   taskRecords?: BroTaskRecord[];
+  agentEvents?: AgentEvent[];
   snapshotDraftSession: DraftSession | null;
   latestDraftOutputEvent: DraftOutputEvent | null;
   onSubmitDraftAsrTurn?: (
@@ -517,6 +528,28 @@ export function BroDetailPage({
     }
   }, [clearPostReleaseMuteTimer, onGlobalError]);
 
+  const resetStaleSttResources = useCallback(async (message: string) => {
+    const resources = resourcesRef.current;
+    resourcesRef.current = null;
+    clearSilenceCommitTimer();
+    clearPostReleaseMuteTimer();
+    micCaptureStateRef.current = "muted";
+    setMicActive(false);
+    setSttPhase("error");
+    onGlobalError?.(message);
+    if (!resources) return;
+    try {
+      await resources.micTrack?.setMuted?.(true);
+    } catch {}
+    try {
+      resources.micTrack?.stop?.();
+      resources.micTrack?.close?.();
+    } catch {}
+    try {
+      await resources.rtcClient?.leave?.();
+    } catch {}
+  }, [clearPostReleaseMuteTimer, clearSilenceCommitTimer, onGlobalError]);
+
   const handleTranscript = useCallback(async (payload: unknown) => {
     const parsed = extractTranscriptText(payload);
     if (!parsed) {
@@ -618,13 +651,18 @@ export function BroDetailPage({
       if (sttSessionId) {
         void heartbeatSttSession(sttSessionId).catch((error) => {
           if (mountedRef.current) {
-            onGlobalError?.(error instanceof Error ? error.message : "Failed to heartbeat STT session.");
+            const message = error instanceof Error ? error.message : "Failed to heartbeat STT session.";
+            if (message.includes("Unknown STT session")) {
+              void resetStaleSttResources("STT session expired. Start voice again to create a fresh session.");
+              return;
+            }
+            onGlobalError?.(message);
           }
         });
       }
     }, HEARTBEAT_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [onGlobalError, resetStaleSttResources]);
 
   async function setMicEnabled(enabled: boolean) {
     const micTrack = resourcesRef.current?.micTrack;
@@ -762,6 +800,7 @@ export function BroDetailPage({
       bro={bro}
       summary={summary}
       taskRecords={taskRecords}
+      agentEvents={agentEvents}
       activeTaskId={activeTaskId}
       stoppingTask={stoppingTask}
       stopTaskError={taskActionError}
@@ -804,6 +843,7 @@ export function BroDetailPage({
         <div className={`${mobileDetailPage === "draft" ? "flex" : "hidden"} mt-4 nb-detail-scroll nb-draft-tab-content lg:mt-0 lg:block`}>
             <DraftBrainPanel
               draftText={draftText}
+              dispatchPlan={draftSession?.current_dispatch_plan ?? null}
               summary={draftSession?.current_draft?.last_update_summary}
               canSend={canSendDraft}
               sendDisabled={!sessionId || !draftReady || draftActionPending}

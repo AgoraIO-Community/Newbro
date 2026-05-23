@@ -22,7 +22,8 @@ export type TaskStatus =
   | "paused"
   | "completed"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "stopped";
 
 export type RunStatus =
   | "created"
@@ -224,6 +225,8 @@ export interface AttentionItem {
 export interface Draft {
   text: string;
   last_update_summary: string;
+  task_spec?: Record<string, unknown> | null;
+  missing_context?: string[];
 }
 
 export interface DraftSession {
@@ -231,10 +234,43 @@ export interface DraftSession {
   assigned_bro_id: string;
   status: "empty" | "drafting" | "ready" | "sent" | "cleared";
   current_draft: Draft | null;
+  current_dispatch_plan?: DispatchPlan | null;
+  runtime_state?: string;
   asr_turns: Array<Record<string, unknown>>;
   snapshots: Array<Record<string, unknown>>;
   created_at: string;
   updated_at: string;
+}
+
+export interface DispatchPlan {
+  plan_id: string;
+  session_id: string;
+  draft_session_id: string;
+  intent: string;
+  target_agent: string;
+  task_title: string;
+  task_goal: string;
+  required_context: string[];
+  missing_context: string[];
+  mode: string;
+  risk_level: string;
+  confidence: number;
+  requires_user_confirmation: boolean;
+  user_confirmed: boolean;
+  output_language: string;
+  task_spec: Record<string, unknown>;
+}
+
+export interface AgentEvent {
+  event_id: string;
+  task_id: string;
+  agent_id: string;
+  type: string;
+  message: string;
+  importance: "low" | "medium" | "high" | "urgent";
+  delivery: "silent" | "silent_ui" | "badge" | "short_voice" | "voice_interrupt";
+  artifact_id: string | null;
+  created_at: string;
 }
 
 export interface ExecutorCapability {
@@ -273,6 +309,7 @@ export interface ConversationHistoryEntry {
 
 export interface SessionSnapshot {
   session_id: string;
+  voice_target_persona_id?: string | null;
   tasks: Task[];
   execution_sessions: ExecutionSession[];
   execution_runs: ExecutionRun[];
@@ -283,6 +320,7 @@ export interface SessionSnapshot {
   personas: Persona[];
   interaction_requests: InteractionRequest[];
   attention_items: AttentionItem[];
+  agent_events: AgentEvent[];
   executor_capabilities: ExecutorCapability[];
   executor_nodes: ExecutorNodeRecord[];
   draft_session: DraftSession | null;

@@ -24,6 +24,36 @@ class CommunicationDiagnosticEmitter:
             details={"user_text": user_text},
         )
 
+    def interaction_classified(
+        self,
+        *,
+        conversation_id: str,
+        interaction_type: str,
+        confidence: float,
+        requires_user_decision: bool,
+        importance: str,
+        reason: str,
+        control_action: str | None,
+        task_mode: str | None,
+    ) -> None:
+        self.logger.emit_event(
+            level="INFO",
+            event_name="comm.interaction.classified",
+            component="communication.interaction_classifier",
+            summary="Interaction classified",
+            conversation_id=conversation_id,
+            outcome=interaction_type,
+            details={
+                "interaction_type": interaction_type,
+                "confidence": confidence,
+                "requires_user_decision": requires_user_decision,
+                "importance": importance,
+                "reason": reason,
+                "control_action": control_action,
+                "task_mode": task_mode,
+            },
+        )
+
     def tool_called(
         self,
         *,

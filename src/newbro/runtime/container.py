@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from newbro.communication.model import CommunicationModel
+from newbro.communication.interaction_classifier import InteractionClassifier
 from newbro.protocol import Persona
 
 from .config import Settings
@@ -17,6 +18,7 @@ class RuntimeContainer:
     communication_model: CommunicationModel
     settings: Settings
     draft_rewriter: DraftRewriter | None = None
+    interaction_classifier: InteractionClassifier | None = None
     executor_node_manager: ExecutorNodeManager = field(init=False)
     _sessions: dict[str, SessionRuntime] = field(default_factory=dict, init=False)
 
@@ -33,6 +35,7 @@ class RuntimeContainer:
             settings=self.settings,
             executor_node_manager=self.executor_node_manager,
             draft_rewriter=self.draft_rewriter,
+            interaction_classifier=self.interaction_classifier,
         )
         self._sessions[session_id] = session
         return session
@@ -42,6 +45,20 @@ class RuntimeContainer:
             return self._sessions[session_id]
         except KeyError as exc:
             raise KeyError(f"Unknown session: {session_id}") from exc
+
+    def find_session_by_dispatch_plan(self, plan_id: str) -> SessionRuntime | None:
+        for session in self._sessions.values():
+            draft_session = session.draft_manager.active_session
+            plan = draft_session.current_dispatch_plan if draft_session is not None else None
+            if plan is not None and plan.plan_id == plan_id:
+                return session
+        return None
+
+    async def find_session_by_task(self, task_id: str) -> SessionRuntime | None:
+        for session in self._sessions.values():
+            if await session.blackboard.get_task(task_id) is not None:
+                return session
+        return None
 
     async def handle_executor_node_connected(self) -> list[str]:
         updated_task_ids: list[str] = []

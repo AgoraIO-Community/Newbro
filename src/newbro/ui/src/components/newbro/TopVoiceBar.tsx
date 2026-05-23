@@ -59,7 +59,7 @@ export function TopVoiceBar({
           <div className="rounded-full border border-white/85 bg-white/76 px-3 py-1.5">
             {messageCount} turns
           </div>
-          {sessionId ? (
+          {sessionId && voicePhase !== "idle" ? (
             <div className="rounded-full border border-white/85 bg-white/76 px-3 py-1.5">
               Session {sessionId}
             </div>

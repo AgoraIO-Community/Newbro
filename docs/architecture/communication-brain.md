@@ -19,6 +19,16 @@ It does not own:
 
 Core communication policy:
 
+- typed voice/text runtime input follows the v1 path: utterance -> structured Draft -> Dispatch Plan -> Dispatch Gate -> Task
+- the dispatch gate is deterministic and is the final authority for starting execution
+- the default execution mode for draft-created work is read-only/proposal-first; code modification and side effects require explicit confirmation
+- free-form utterance meaning is produced by the Communication Brain interaction-classifier boundary, not by runtime transcript keyword checks
+- production runtime builds a model-backed interaction classifier from the configured OpenAI-compatible provider when available; without that classifier the quiet runtime fails closed to `uncertain`/clarification for final free-form turns
+- the quiet runtime returns `RuntimeDecision` objects with `should_speak`, `response_text`, UI updates, state updates, and task/plan identifiers
+- draft micro-updates and low-importance progress are UI/blackboard-first and silent by default
+- spoken responses are reserved for confirmation, clarification, blocked state, completion, explicit status queries, permission/risk, and urgent events
+- ConvoAI voice input is Bro-detail scoped; the active Bro detail page supplies the target persona, so the communication path must not ask which Bro should handle that utterance
+- Agora ConvoAI transcript and lifecycle callbacks enter through typed runtime events, and only the resulting `RuntimeDecision.should_speak` controls whether the connector returns TTS content
 - in `newbro v0`, ASR turns update a mutable Draft and only Send creates an immutable Task contract
 - tool success is an internal fact
 - user-facing replies should express action commitment

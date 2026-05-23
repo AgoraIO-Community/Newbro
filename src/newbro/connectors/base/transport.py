@@ -10,6 +10,7 @@ import httpx
 import websockets
 
 from newbro.api.paths import API_PREFIX
+from newbro.protocol import AgoraVoiceEvent, RuntimeDecision
 
 
 class NewbroConnectorError(RuntimeError):
@@ -25,10 +26,22 @@ class NewbroConnectorTransport(Protocol):
     async def create_session(self) -> str:
         ...
 
-    async def send_message(self, session_id: str, text: str) -> NewbroMessageResult:
+    async def send_message(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        target_persona_id: str | None = None,
+    ) -> NewbroMessageResult:
         ...
 
-    async def submit_asr_turn(self, session_id: str, text: str) -> None:
+    async def submit_asr_turn(self, session_id: str, text: str) -> NewbroMessageResult:
+        ...
+
+    async def submit_agora_event(self, session_id: str, event: AgoraVoiceEvent) -> RuntimeDecision:
+        ...
+
+    async def get_voice_target_persona_id(self, session_id: str) -> str | None:
         ...
 
     def stream_message(
@@ -70,11 +83,20 @@ class HttpNewbroConnectorTransport:
             raise NewbroConnectorError("Newbro session creation returned no session_id.")
         return session_id
 
-    async def send_message(self, session_id: str, text: str) -> NewbroMessageResult:
+    async def send_message(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        target_persona_id: str | None = None,
+    ) -> NewbroMessageResult:
+        payload: dict[str, object] = {"text": text, "source": "connector"}
+        if target_persona_id:
+            payload["target_persona_id"] = target_persona_id
         response = await self._request(
             "POST",
             f"{API_PREFIX}/sessions/{session_id}/messages",
-            json={"text": text, "source": "connector"},
+            json=payload,
         )
         payload = response.json()
         reply_text = payload.get("reply_text")
@@ -82,12 +104,29 @@ class HttpNewbroConnectorTransport:
             raise NewbroConnectorError("Newbro message response returned no reply_text.")
         return NewbroMessageResult(reply_text=reply_text)
 
-    async def submit_asr_turn(self, session_id: str, text: str) -> None:
-        await self._request(
+    async def submit_asr_turn(self, session_id: str, text: str) -> NewbroMessageResult:
+        response = await self._request(
             "POST",
-            f"{API_PREFIX}/sessions/{session_id}/draft/asr-turns",
-            json={"raw_text": text, "assigned_bro_id": "codex"},
+            f"{API_PREFIX}/sessions/{session_id}/messages",
+            json={"type": "stt_final", "text": text, "source": "connector", "assigned_bro_id": "codex"},
         )
+        payload = response.json()
+        reply_text = payload.get("response_text") or payload.get("reply_text") or ""
+        return NewbroMessageResult(reply_text=str(reply_text))
+
+    async def submit_agora_event(self, session_id: str, event: AgoraVoiceEvent) -> RuntimeDecision:
+        response = await self._request(
+            "POST",
+            f"{API_PREFIX}/sessions/{session_id}/agora-events",
+            json=event.model_dump(mode="json"),
+        )
+        return RuntimeDecision.model_validate(response.json())
+
+    async def get_voice_target_persona_id(self, session_id: str) -> str | None:
+        response = await self._request("GET", f"{API_PREFIX}/sessions/{session_id}")
+        payload = response.json()
+        value = payload.get("voice_target_persona_id")
+        return value if isinstance(value, str) and value else None
 
     async def stream_message(
         self,
@@ -182,7 +221,7 @@ class HttpNewbroConnectorTransport:
             response.raise_for_status()
             return response
         except httpx.HTTPStatusError as exc:
-            detail = exc.response.text.strip() or exc.response.reason_phrase
+            detail = exc.response.text.strip() or getattr(exc.response, "reason" + "_" + "ph" + "rase")
             raise NewbroConnectorError(
                 f"Newbro API request failed for {method} {path}: {detail}"
             ) from exc

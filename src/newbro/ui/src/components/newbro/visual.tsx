@@ -1,6 +1,6 @@
-import { ArrowLeft, Bot, CheckCircle2, Clock, Mic, PencilLine, Play, SendHorizontal, Trash2 } from "lucide-react";
+import { ArrowLeft, Bot, CheckCircle2, Clock, FileText, Mic, PencilLine, Play, SendHorizontal, Trash2 } from "lucide-react";
 import type { CSSProperties, KeyboardEventHandler, PointerEventHandler, ReactNode } from "react";
-import type { TaskSummary } from "../../types";
+import type { AgentEvent, TaskSummary } from "../../types";
 import { MarkdownText } from "../ui/markdown-text";
 import { BroPortrait } from "./BroPortrait";
 import type { BroCardModel, BroTaskRecord } from "./types";
@@ -111,6 +111,7 @@ export function LiveTranscriptPanel({
 
 export function DraftBrainPanel({
   draftText,
+  dispatchPlan,
   summary,
   canSend,
   clearDisabled,
@@ -122,6 +123,12 @@ export function DraftBrainPanel({
   onClear,
 }: {
   draftText: string;
+  dispatchPlan?: {
+    target_agent: string;
+    mode: string;
+    task_title: string;
+    missing_context?: string[];
+  } | null;
   summary?: string;
   canSend: boolean;
   clearDisabled: boolean;
@@ -150,6 +157,19 @@ export function DraftBrainPanel({
           </span>
         )}
       </div>
+      {dispatchPlan ? (
+        <div className="mt-4 rounded-xl border border-[#e5e7eb] bg-white/70 px-4 py-3">
+          <div className="nb-card-label text-[#9ca3af]">Dispatch plan</div>
+          <div className="mt-3 grid gap-2 text-[12px] leading-5 text-[#4b5563]">
+            <div><span className="font-semibold text-[#111827]">To:</span> {dispatchPlan.target_agent}</div>
+            <div><span className="font-semibold text-[#111827]">Mode:</span> {dispatchPlan.mode}</div>
+            <div><span className="font-semibold text-[#111827]">Task:</span> {dispatchPlan.task_title}</div>
+            {(dispatchPlan.missing_context?.length ?? 0) > 0 ? (
+              <div><span className="font-semibold text-[#111827]">Missing:</span> {dispatchPlan.missing_context?.join(", ")}</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {error ? (
         <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-600" role="status">
           {error}
@@ -215,6 +235,7 @@ export function RunnerBrainPanel({
   bro,
   summary,
   taskRecords = [],
+  agentEvents = [],
   activeTaskId,
   stoppingTask,
   stopTaskError,
@@ -223,6 +244,7 @@ export function RunnerBrainPanel({
   bro: BroCardModel;
   summary: TaskSummary | null;
   taskRecords?: BroTaskRecord[];
+  agentEvents?: AgentEvent[];
   activeTaskId: string | null;
   stoppingTask: boolean;
   stopTaskError?: string | null;
@@ -287,6 +309,41 @@ export function RunnerBrainPanel({
           </MarkdownText>
         </div>
       ) : null}
+
+      <div className="nb-card px-4 py-3">
+        <div className="nb-card-label text-[#9ca3af]">Agent status timeline</div>
+        <div className="mt-3 space-y-2">
+          {agentEvents.length > 0 ? agentEvents.slice(-5).reverse().map((event) => (
+            <div key={event.event_id} className="rounded-lg border border-[#e5e7eb] bg-white/70 px-3 py-2">
+              <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.12em] text-[#9ca3af]">
+                <span>{event.type}</span>
+                <span>{event.delivery}</span>
+              </div>
+              <MarkdownText className="mt-1 text-[13px] leading-5 text-[#4b5563]">
+                {event.message}
+              </MarkdownText>
+            </div>
+          )) : (
+            <div className="text-[13px] leading-6 text-[#9ca3af]">Progress events will appear here.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="nb-card px-4 py-3">
+        <div className="nb-card-label text-[#9ca3af]">Artifacts</div>
+        <div className="mt-3 space-y-2">
+          {agentEvents.filter((event) => event.artifact_id).length > 0 ? (
+            agentEvents.filter((event) => event.artifact_id).slice(-5).reverse().map((event) => (
+              <div key={event.event_id} className="flex items-center gap-2 rounded-lg border border-[#e5e7eb] bg-white/70 px-3 py-2 text-[13px] text-[#4b5563]">
+                <FileText className="h-4 w-4 text-[#9ca3af]" />
+                <span>{event.artifact_id}</span>
+              </div>
+            ))
+          ) : (
+            <div className="text-[13px] leading-6 text-[#9ca3af]">No artifacts yet.</div>
+          )}
+        </div>
+      </div>
 
       <div className="nb-tasks-head">
         <div>

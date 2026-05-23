@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from newbro.connectors.base import DuplicateBindingError, ConnectorBindingRegistry, MissingRegistrationConfigError
+from newbro.protocol import AgoraVoiceEvent, AgoraVoiceEventType
 
 from .models import (
     ConnectorConfigResponse,
@@ -190,6 +191,15 @@ class AgoraConnectorSessionService:
             channel_name=activated.channel_name,
             profile=activated.profile,
         )
+        await self._binding_registry.submit_agora_event(
+            binding.synapse_session_id,
+            agora_lifecycle_event(
+                "started",
+                synapse_session_id=binding.synapse_session_id,
+                runtime_session_id=activated.runtime_session_id,
+                metadata={"channel_name": activated.channel_name},
+            ),
+        )
         return self._build_activate_response(
             binding.binding_id,
             binding.synapse_session_id,
@@ -212,6 +222,15 @@ class AgoraConnectorSessionService:
         except ConvoAIRuntimeError as exc:
             runtime_error = exc
 
+        await self._binding_registry.submit_agora_event(
+            handle.synapse_session_id,
+            agora_lifecycle_event(
+                "stopped",
+                synapse_session_id=handle.synapse_session_id,
+                runtime_session_id=handle.runtime_session_id,
+                metadata={"channel_name": handle.channel_name},
+            ),
+        )
         await self._binding_registry.unregister(request_payload.binding_id)
         if runtime_error is not None:
             raise runtime_error
@@ -284,3 +303,26 @@ class AgoraConnectorSessionService:
             return None
         normalized = session_id.strip()
         return normalized or None
+
+
+def agora_lifecycle_event(
+    sdk_event_name: str,
+    *,
+    synapse_session_id: str,
+    runtime_session_id: str | None = None,
+    metadata: dict[str, object] | None = None,
+) -> AgoraVoiceEvent:
+    event_type = {
+        "started": AgoraVoiceEventType.SESSION_STARTED,
+        "stopped": AgoraVoiceEventType.SESSION_ENDED,
+    }.get(sdk_event_name, AgoraVoiceEventType.INTERACTION_INTERRUPTED)
+    payload = dict(metadata or {})
+    if runtime_session_id:
+        payload["agora_runtime_session_id"] = runtime_session_id
+    payload["sdk_event_name"] = sdk_event_name
+    return AgoraVoiceEvent(
+        event_id=f"agora-sdk-{uuid4().hex[:8]}",
+        session_id=synapse_session_id,
+        type=event_type,
+        metadata=payload,
+    )

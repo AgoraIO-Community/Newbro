@@ -19,6 +19,7 @@ class BlackboardWriteKind(StrEnum):
     PERSONA = "persona"
     INTERACTION_REQUEST = "interaction_request"
     ATTENTION = "attention"
+    AGENT_EVENT = "agent_event"
 
 
 @dataclass(slots=True)

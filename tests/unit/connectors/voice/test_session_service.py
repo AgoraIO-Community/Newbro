@@ -9,19 +9,29 @@ from newbro.connectors.voice.agora_convoai.models import (
     ConnectorSessionActivateRequest,
     ConnectorSessionDiagnostics,
     ConnectorSessionPrepareRequest,
+    ConnectorSessionStopRequest,
 )
 from newbro.connectors.voice.agora_convoai.service import ActivatedConvoAISession, PreparedConvoAISession
 from newbro.connectors.voice.agora_convoai.session_service import AgoraConnectorSessionService
 from newbro.connectors.voice.agora_convoai.settings import AgoraConvoAIConnectorSettings
+from newbro.protocol import AgoraVoiceEvent, AgoraVoiceEventType, RuntimeDecision
 
 
 @dataclass
 class _FakeTransport:
     created: int = 0
+    agora_events: list[AgoraVoiceEvent] | None = None
 
     async def create_session(self) -> str:
         self.created += 1
         return "session-1"
+
+    async def submit_agora_event(self, session_id: str, event: AgoraVoiceEvent) -> RuntimeDecision:
+        if self.agora_events is None:
+            self.agora_events = []
+        self.agora_events.append(event)
+        assert event.session_id == session_id
+        return RuntimeDecision()
 
     async def watch_notification_texts(self, session_id: str):
         if False:
@@ -203,3 +213,30 @@ async def test_activate_session_reuses_prepared_synapse_session_id_without_creat
     assert activated.synapse_session_id == "session-existing"
     assert activated.channel_name == "session-existing"
     assert transport.created == 0
+
+
+@pytest.mark.anyio
+async def test_activate_and_stop_submit_typed_agora_lifecycle_events():
+    service = _CapturingConvoAIService()
+    transport = _FakeTransport()
+    session_service = AgoraConnectorSessionService(
+        ConnectorBindingRegistry(transport, _FakeSpeaker()),
+        AgoraConvoAIConnectorSettings(
+            app_id="agora-app",
+            app_certificate="cert",
+        ),
+        convoai_service=service,
+    )
+
+    prepared = await session_service.prepare_session(ConnectorSessionPrepareRequest())
+    activated = await session_service.activate_session(
+        ConnectorSessionActivateRequest(prepared_session_id=prepared.prepared_session_id)
+    )
+    await session_service.stop_session(ConnectorSessionStopRequest(binding_id=activated.binding_id))
+
+    assert transport.agora_events is not None
+    assert [event.type for event in transport.agora_events] == [
+        AgoraVoiceEventType.SESSION_STARTED,
+        AgoraVoiceEventType.SESSION_ENDED,
+    ]
+    assert transport.agora_events[0].metadata["agora_runtime_session_id"] == "runtime-1"

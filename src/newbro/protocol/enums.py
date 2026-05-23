@@ -13,6 +13,7 @@ class TaskStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    STOPPED = "stopped"
 
 
 class RunStatus(StrEnum):
@@ -128,6 +129,68 @@ class ConversationEffect(StrEnum):
     ACK_AND_LISTEN = "ack_and_listen"
     ASK_CLARIFICATION = "ask_clarification"
     ACK_AND_SWITCH = "ack_and_switch"
+
+
+class InteractionType(StrEnum):
+    COMMUNICATION = "communication"
+    DELEGATION = "delegation"
+    DRAFT_CORRECTION = "draft_correction"
+    TASK_CONTROL = "task_control"
+    STATUS_QUERY = "status_query"
+    CONFIRMATION = "confirmation"
+    CLARIFICATION_RESPONSE = "clarification_response"
+    UNCERTAIN = "uncertain"
+
+
+class AgoraVoiceEventType(StrEnum):
+    STT_PARTIAL = "stt.partial"
+    STT_FINAL = "stt.final"
+    USER_SPEECH_STARTED = "user.speech_started"
+    USER_SPEECH_ENDED = "user.speech_ended"
+    ASSISTANT_SPEECH_STARTED = "assistant.speech_started"
+    ASSISTANT_SPEECH_ENDED = "assistant.speech_ended"
+    INTERACTION_INTERRUPTED = "interaction.interrupted"
+    SESSION_STARTED = "session.started"
+    SESSION_ENDED = "session.ended"
+
+
+class RuntimeSessionState(StrEnum):
+    IDLE = "idle"
+    DRAFTING = "drafting"
+    WAITING_FOR_CONFIRMATION = "waiting_for_confirmation"
+    TASK_RUNNING = "task_running"
+    TASK_BLOCKED = "task_blocked"
+    TASK_COMPLETE = "task_complete"
+    USER_REVIEWING_ARTIFACT = "user_reviewing_artifact"
+
+
+class TaskMode(StrEnum):
+    READ_ONLY_FIRST = "read_only_first"
+    PROPOSAL_ONLY = "proposal_only"
+    MODIFY_ALLOWED = "modify_allowed"
+    SUBMIT_ALLOWED = "submit_allowed"
+
+
+class DispatchGateOutcome(StrEnum):
+    ASK_CLARIFICATION = "ask_clarification"
+    ASK_CONFIRMATION = "ask_confirmation"
+    DISPATCH = "dispatch"
+    REJECT = "reject"
+
+
+class AgentEventImportance(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    URGENT = "urgent"
+
+
+class AgentEventDelivery(StrEnum):
+    SILENT = "silent"
+    SILENT_UI = "silent_ui"
+    BADGE = "badge"
+    SHORT_VOICE = "short_voice"
+    VOICE_INTERRUPT = "voice_interrupt"
 
 
 class BindingStatus(StrEnum):

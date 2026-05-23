@@ -94,6 +94,7 @@ const clientMock = vi.hoisted(() => ({
     return socketHarness.socket as any;
   }),
   sendSocketMessage: vi.fn(),
+  submitAgoraVoiceEvent: vi.fn(async () => undefined),
   sendSocketDraftAsrTurn: vi.fn((_socket: WebSocket, requestId: string) => {
     Promise.resolve().then(() => {
       socketHarness.emitMessage({
@@ -139,6 +140,8 @@ const clientMock = vi.hoisted(() => ({
     draft_snapshot_id: "draft-snap-1",
   })),
   clearDraft: vi.fn(async () => ({ status: "cleared" })),
+  setVoiceTarget: vi.fn(async () => undefined),
+  clearVoiceTarget: vi.fn(async () => undefined),
   submitTaskCommand: vi.fn(async () => ({
     command_id: "cmd-1",
     status: "accepted",
@@ -352,6 +355,92 @@ describe("Newbro voice shell", () => {
     expect(window.location.search).toBe("?sid=session-1");
   });
 
+  it("starts the shell voice control through the Conversational AI connector path", async () => {
+    window.history.replaceState({}, "", "/bros/atlas?sid=session-1");
+    render(<RouterProvider router={getRouter()} />);
+
+    await screen.findByText("Bro detail");
+    await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-1", "atlas"));
+    connectorMock.prepareSttSession.mockClear();
+    connectorMock.startSttSession.mockClear();
+    fireEvent.click(screen.getByTestId("voice-session-start"));
+
+    await waitFor(() => expect(connectorMock.prepareConnectorSession).toHaveBeenCalledWith({
+      synapse_session_id: "session-1",
+    }));
+    expect(connectorMock.activateConnectorSession).toHaveBeenCalledWith({
+      prepared_session_id: "prepared-1",
+    });
+    expect(connectorMock.prepareSttSession).not.toHaveBeenCalled();
+    expect(connectorMock.startSttSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps ConvoAI toolkit transcript updates display-only", async () => {
+    window.history.replaceState({}, "", "/bros/atlas?sid=session-1");
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByTestId("voice-session-start"));
+    await waitFor(() => expect(connectorMock.activateConnectorSession).toHaveBeenCalled());
+
+    await act(async () => {
+      voiceHarness.voiceEvents.TRANSCRIPT_UPDATED?.([
+        {
+          uid: "101-voice-room",
+          turn_id: 7,
+          text: "Please inspect the settings page.",
+          status: 1,
+          metadata: {
+            object: "user.transcription",
+            final: true,
+            language: "en-US",
+            start_ms: 1234,
+          },
+        },
+      ]);
+      await Promise.resolve();
+    });
+
+    expect(clientMock.submitAgoraVoiceEvent).not.toHaveBeenCalled();
+
+    await act(async () => {
+      voiceHarness.voiceEvents.TRANSCRIPT_UPDATED?.([
+        {
+          uid: "101-voice-room",
+          turn_id: 7,
+          text: "Please inspect the settings page.",
+          status: 1,
+          metadata: {
+            object: "user.transcription",
+            final: true,
+          },
+        },
+        {
+          uid: "9001-voice-room",
+          turn_id: 8,
+          text: "I can help with that.",
+          status: 1,
+          metadata: {
+            object: "assistant.transcription",
+            final: true,
+          },
+        },
+        {
+          uid: "101-voice-room",
+          turn_id: 9,
+          text: "Actually",
+          status: 0,
+          metadata: {
+            object: "user.transcription",
+            final: false,
+          },
+        },
+      ]);
+      await Promise.resolve();
+    });
+
+    expect(clientMock.submitAgoraVoiceEvent).not.toHaveBeenCalled();
+  });
+
   it("renders sidebar Bro and Node counts from the shell snapshot", async () => {
     clientMock.getSessionSnapshot.mockResolvedValueOnce({
       session_id: "session-1",
@@ -424,7 +513,7 @@ describe("Newbro voice shell", () => {
   it("renders a Bro detail route directly with the active shell session", async () => {
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
-    render(<RouterProvider router={getRouter()} />);
+    const rendered = render(<RouterProvider router={getRouter()} />);
 
     await waitFor(() => expect(clientMock.getSessionSnapshot).toHaveBeenCalledWith("session-existing"));
     expect(await screen.findByText("Bro detail")).toBeInTheDocument();
@@ -432,6 +521,11 @@ describe("Newbro voice shell", () => {
     expect(screen.getByText("No draft yet. Hold the mic to start shaping one.")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Hold to Talk" })).toBeInTheDocument();
     expect(screen.queryByText("Ready · mic off")).not.toBeInTheDocument();
+    await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "forge"));
+
+    rendered.unmount();
+
+    await waitFor(() => expect(clientMock.clearVoiceTarget).toHaveBeenCalledWith("session-existing"));
   });
 
   it("renders the dedicated mobile walkie route with live runtime channels", async () => {
@@ -673,6 +767,39 @@ describe("Newbro voice shell", () => {
     expect(connectorMock.prepareSttSession).toHaveBeenCalledTimes(1);
     expect(connectorMock.startSttSession).toHaveBeenCalledTimes(1);
     expect(connectorMock.leaveSttSession).not.toHaveBeenCalled();
+  });
+
+  it("clears stale Bro detail STT resources when heartbeat reports an unknown session", async () => {
+    vi.useFakeTimers();
+    try {
+      connectorMock.heartbeatSttSession.mockRejectedValueOnce(new Error("Unknown STT session."));
+      window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+      render(<RouterProvider router={getRouter()} />);
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(connectorMock.startSttSession).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(connectorMock.heartbeatSttSession).toHaveBeenCalledWith("stt-1");
+      expect(voiceHarness.micTrack.stop).toHaveBeenCalled();
+      expect(voiceHarness.micTrack.close).toHaveBeenCalled();
+      expect(voiceHarness.rtcClient.leave).toHaveBeenCalled();
+      expect(connectorMock.leaveSttSession).not.toHaveBeenCalled();
+      expect(screen.getByText("STT session expired. Start voice again to create a fresh session.")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders final Bro detail transcript and returned draft content", async () => {

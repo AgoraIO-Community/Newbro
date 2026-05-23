@@ -12,11 +12,13 @@ import {
 } from "react";
 import {
   createSession,
+  clearVoiceTarget,
   getConversationSnapshot,
   getSessionSnapshot,
   openSessionStream,
   sendSocketDraftAsrTurn,
   sendSocketMessage,
+  setVoiceTarget,
 } from "./lib/session-client";
 import { readSessionIdFromUrl, replaceSessionIdInUrl } from "./lib/session-url";
 import { BroDetailPage } from "./components/newbro/BroDetailPage";
@@ -25,6 +27,7 @@ import { BrosPanel } from "./components/newbro/BrosPanel";
 import { MobileWalkie } from "./components/newbro/mobile/MobileWalkie";
 import { NodesPage } from "./components/newbro/NodesPage";
 import { Sidebar, type PageId } from "./components/newbro/Sidebar";
+import { TopVoiceBar } from "./components/newbro/TopVoiceBar";
 import { buildBroCardModels, buildBroTaskRecords } from "./components/newbro/adapters";
 import { useVoiceSession } from "./components/newbro/useVoiceSession";
 import { WindowDots } from "./components/newbro/visual";
@@ -36,6 +39,7 @@ import type {
   DraftSession,
   ExecutionRun,
   ExecutorNodeRecord,
+  AgentEvent,
   Persona,
   SessionSnapshot,
   Task,
@@ -156,6 +160,7 @@ function useNewbroShellState() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
+  const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [activeShellSessionId, setActiveShellSessionId] = useState<string | null>(null);
   const [hasLoadedShellSnapshot, setHasLoadedShellSnapshot] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
@@ -173,6 +178,7 @@ function useNewbroShellState() {
     setTasks(snapshot.tasks ?? []);
     setExecutionRuns(snapshot.execution_runs ?? []);
     setTaskSummaries(snapshot.summaries ?? []);
+    setAgentEvents(snapshot.agent_events ?? []);
     setDraftSession(snapshot.draft_session ?? null);
     setHasLoadedShellSnapshot(true);
     setShellError(null);
@@ -393,10 +399,14 @@ function useNewbroShellState() {
     tasks,
     executionRuns,
     taskSummaries,
+    agentEvents,
     shellError,
     shellWarning,
     setShellError,
     clearGlobalMessage,
+    startVoiceSession: start,
+    stopVoiceSession: stop,
+    toggleVoiceMute: toggleMute,
     sendMessage,
     submitDraftAsrTurn,
     draftSession,
@@ -424,6 +434,35 @@ function useNewbroShell() {
     throw new Error("Newbro shell state is unavailable outside NewbroShellProvider.");
   }
   return value;
+}
+
+function ShellVoiceBar() {
+  const shell = useNewbroShell();
+  if (!shell.hasLoadedShellSnapshot || !shell.activeShellSessionId) {
+    return null;
+  }
+
+  return (
+    <div className="px-4 pt-4 md:px-6 xl:px-8">
+      <TopVoiceBar
+        bros={shell.bros}
+        voicePhase={shell.voiceSession.phase}
+        error={shell.voiceSession.error}
+        isMicMuted={shell.voiceSession.isMicMuted}
+        messageCount={shell.voiceSession.transcript.length}
+        sessionId={shell.activeShellSessionId}
+        onStart={() => {
+          void shell.startVoiceSession(shell.activeShellSessionId);
+        }}
+        onStop={() => {
+          void shell.stopVoiceSession();
+        }}
+        onToggleMute={() => {
+          void shell.toggleVoiceMute();
+        }}
+      />
+    </div>
+  );
 }
 
 function ShellFrame({
@@ -586,6 +625,19 @@ export function BroDetailShellPage({
       })
     : [];
 
+  useEffect(() => {
+    if (!shell.hasLoadedShellSnapshot || !shell.activeShellSessionId || !bro) {
+      return undefined;
+    }
+    const sessionId = shell.activeShellSessionId;
+    void setVoiceTarget(sessionId, bro.id).catch((error: unknown) => {
+      shell.setShellError(describeApiFailure(error, "Could not bind voice to this Bro."));
+    });
+    return () => {
+      void clearVoiceTarget(sessionId).catch(() => {});
+    };
+  }, [shell.hasLoadedShellSnapshot, shell.activeShellSessionId, bro?.id]);
+
   return (
     <ShellFrame
       activePage="Home"
@@ -597,18 +649,22 @@ export function BroDetailShellPage({
     >
       {shell.hasLoadedShellSnapshot ? (
         bro ? (
-          <BroDetailPage
-            bro={bro}
-            sessionId={shell.activeShellSessionId}
-            activeTaskId={activePersona?.current_task_id ?? null}
-            summary={activeSummary}
-            taskRecords={taskRecords}
-            snapshotDraftSession={shell.draftSession}
-            latestDraftOutputEvent={shell.latestDraftOutputEvent}
-            onSubmitDraftAsrTurn={shell.submitDraftAsrTurn}
-            onBack={() => onNavigate("Home")}
-            onGlobalError={shell.setShellError}
-          />
+          <>
+            <ShellVoiceBar />
+            <BroDetailPage
+              bro={bro}
+              sessionId={shell.activeShellSessionId}
+              activeTaskId={activePersona?.current_task_id ?? null}
+              summary={activeSummary}
+              taskRecords={taskRecords}
+              agentEvents={shell.agentEvents.filter((event) => event.task_id === activePersona?.current_task_id)}
+              snapshotDraftSession={shell.draftSession}
+              latestDraftOutputEvent={shell.latestDraftOutputEvent}
+              onSubmitDraftAsrTurn={shell.submitDraftAsrTurn}
+              onBack={() => onNavigate("Home")}
+              onGlobalError={shell.setShellError}
+            />
+          </>
         ) : (
           <div className="flex flex-1 items-center justify-center p-6">
             <div className="glass-panel max-w-[520px] rounded-[30px] border border-white/75 px-6 py-6 text-center">

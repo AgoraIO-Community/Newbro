@@ -6,6 +6,7 @@ from collections import defaultdict
 from newbro.observability.context import get_diagnostic_context
 from newbro.protocol import (
     AttentionItem,
+    AgentEvent,
     ExecutionRun,
     ExecutionSession,
     InteractionRequest,
@@ -49,6 +50,8 @@ class InMemoryBlackboard(BlackboardStore):
         self._interaction_request_order: list[str] = []
         self._attention_items: dict[str, AttentionItem] = {}
         self._attention_item_order: list[str] = []
+        self._agent_events: dict[str, AgentEvent] = {}
+        self._agent_event_order: list[str] = []
         self._recent_writes: list[BlackboardWriteEvent] = []
         self._subscriptions = SubscriptionManager()
         # Writes are serialized under this lock; read accessors intentionally stay
@@ -380,6 +383,38 @@ class InMemoryBlackboard(BlackboardStore):
             for attention_id in self._attention_item_order
             if attention_id in self._attention_items
         ]
+
+    async def put_agent_event(self, event: AgentEvent) -> None:
+        async with self._lock:
+            if event.event_id not in self._agent_events:
+                self._agent_event_order.append(event.event_id)
+            self._agent_events[event.event_id] = event
+        await self._publish(
+            BlackboardWriteEvent(
+                kind=BlackboardWriteKind.AGENT_EVENT,
+                entity_id=event.event_id,
+                task_id=event.task_id,
+                payload={
+                    "agent_id": event.agent_id,
+                    "type": event.type,
+                    "importance": event.importance.value,
+                    "delivery": event.delivery.value,
+                },
+            )
+        )
+
+    async def get_agent_event(self, event_id: str) -> AgentEvent | None:
+        return self._agent_events.get(event_id)
+
+    async def list_agent_events(self, task_id: str | None = None) -> list[AgentEvent]:
+        events = [
+            self._agent_events[event_id]
+            for event_id in self._agent_event_order
+            if event_id in self._agent_events
+        ]
+        if task_id is None:
+            return events
+        return [event for event in events if event.task_id == task_id]
 
     async def list_recent_writes(self, limit: int = 50) -> list[BlackboardWriteEvent]:
         return list(self._recent_writes[-limit:])

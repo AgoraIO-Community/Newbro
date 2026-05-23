@@ -196,3 +196,16 @@ Short log of important design decisions and changes for Newbro.
 - Changed the Codex executor adapter to normalize `agentMessage` commentary deltas into progress events so `ExecutionRun.latest_progress_message` updates during a run rather than only after completed assistant items.
 - Removed the global Communication Persona prompt/config surface; worker Bro behavior is now configured through each persona's own `base_prompt`, and session snapshots no longer expose `communication_persona_prompt`.
 - Renamed the active Python package namespace and source tree from `synapse` / `src/synapse` to `newbro` / `src/newbro`; `import synapse` is no longer supported, while existing `SYNAPSE_*` environment variables remain unchanged.
+
+## 2026-05-22
+
+- Added the v1 quiet runtime path where typed voice/text messages stage structured drafts, dispatch plans, deterministic gate outcomes, and short `RuntimeDecision` responses before creating immutable tasks.
+- Added normalized agent-event storage with delivery policy so low-importance progress stays silent while blocked/completed/urgent events can produce short spoken responses.
+- Changed the Agora ConvoAI bridge to submit turns through typed `stt_final` runtime messages and return the runtime decision text instead of always saying "Draft updated."
+- Scoped browser ConvoAI Start to Bro detail pages, bound live ConvoAI turns to the current Bro voice target, and added bridge-side suppression for repeated cumulative ASR expansions.
+
+## 2026-05-23
+
+- Changed Agora ConvoAI ingestion to use typed `AgoraVoiceEvent` runtime events, with `/chat/completions` only translating explicit compatibility metadata and `RuntimeDecision.should_speak` as the sole TTS gate.
+- Replaced the quiet-runtime semantic transcript classifier with a Communication Brain interaction-classifier boundary; model-backed classification is wired when an OpenAI-compatible provider is configured, while unconfigured final turns fail closed to uncertain clarification.
+- Kept browser ConvoAI toolkit transcripts display-only because live toolkit finals can be growing fragments, while the connector coalesces repeated no-metadata custom LLM callbacks into one stable `stt.final` without text heuristics.

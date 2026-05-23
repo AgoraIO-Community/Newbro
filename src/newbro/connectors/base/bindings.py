@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import dataclass
 from uuid import uuid4
 
+from newbro.protocol import AgoraVoiceEvent, RuntimeDecision
+
 from .transport import NewbroConnectorTransport
 
 
@@ -123,6 +125,9 @@ class ConnectorBindingRegistry:
     def get(self, binding_id: str) -> ActiveConnectorBinding | None:
         return self._bindings.get(binding_id)
 
+    async def submit_agora_event(self, session_id: str, event: AgoraVoiceEvent) -> RuntimeDecision:
+        return await self._transport.submit_agora_event(session_id, event)
+
     async def _watch_notifications(
         self,
         *,
@@ -142,4 +147,3 @@ class ConnectorBindingRegistry:
                     continue
         except asyncio.CancelledError:
             raise
-

@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from newbro.observability.schema import DiagnosticEvent
-from newbro.protocol import ExecutorNodeCredentialIssue, ExecutorNodeRecord, TaskCommandType
+from newbro.protocol import AgoraVoiceEvent, ExecutorNodeCredentialIssue, ExecutorNodeRecord, RuntimeDecision, TaskCommandType
 from newbro.runtime.models import SessionSnapshot
 
 
@@ -16,6 +16,11 @@ class SessionResponse(BaseModel):
 class MessageRequest(BaseModel):
     text: str
     source: Literal["user", "connector"] = "user"
+    type: Literal["chat", "text", "stt_partial", "stt_final"] = "chat"
+    language: str | None = None
+    timestamp_ms: int | None = None
+    assigned_bro_id: str | None = None
+    target_persona_id: str | None = None
 
 
 class ToolInvocationSummary(BaseModel):
@@ -142,6 +147,7 @@ class ExecutorNodeUpdateRequest(BaseModel):
 __all__ = [
     "CommandRequest",
     "CommandResponse",
+    "AgoraVoiceEvent",
     "ClearDraftSocketAction",
     "DiagnosticTimelineResponse",
     "ExecutorNodeCreateRequest",
@@ -150,6 +156,7 @@ __all__ = [
     "ExecutorNodeUpdateRequest",
     "MessageRequest",
     "MessageResponse",
+    "RuntimeDecision",
     "ResolveInteractionRequest",
     "ResolveInteractionRequestResponse",
     "ResolveInteractionRequestSocketAction",

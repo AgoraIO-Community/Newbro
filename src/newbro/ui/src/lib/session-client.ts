@@ -126,6 +126,29 @@ export async function sendSessionMessage(sessionId: string, text: string): Promi
   return (await ensureOk(response)).json();
 }
 
+export interface AgoraVoiceEventRequest {
+  event_id: string;
+  session_id: string;
+  type: "stt.partial" | "stt.final" | "user.speech_started" | "user.speech_ended" | "assistant.speech_started" | "assistant.speech_ended" | "interaction.interrupted" | "session.started" | "session.ended";
+  text?: string;
+  language?: string | null;
+  timestamp_ms?: number | null;
+  target_persona_id?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export async function submitAgoraVoiceEvent(
+  sessionId: string,
+  event: AgoraVoiceEventRequest,
+): Promise<void> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/agora-events`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(event),
+  });
+  await ensureOk(response);
+}
+
 export async function getConversationSnapshot(sessionId: string): Promise<ConversationSnapshot> {
   const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/conversation`));
   return (await ensureOk(response)).json();
@@ -455,6 +478,14 @@ export async function setVoiceTarget(sessionId: string, targetPersonaId: string)
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ target_persona_id: targetPersonaId }),
+    }),
+  );
+}
+
+export async function clearVoiceTarget(sessionId: string): Promise<void> {
+  await ensureOk(
+    await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/voice-target`), {
+      method: "DELETE",
     }),
   );
 }
