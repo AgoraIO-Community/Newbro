@@ -221,3 +221,4 @@ Short log of important design decisions and changes for Newbro.
 - Added an invite-gated public onboarding path with user-owned sessions, personas, and executor nodes, plus a Cloudflare-fronted Ubuntu VPS deployment path driven by GitHub Actions SSH/rsync.
 - Added `newbro invite create` for hosted operators and a Bro Detail waiting-executor path that creates or reveals a copyable local Codex node command for the current user-owned Bro.
 - Changed the public deployment workflow from host Python/systemd/rsync to a GHCR Docker image deployed on the VPS with Docker Compose, while keeping runtime secrets mounted from `/root/.newbro`.
+- Added Caddy as a managed Docker Compose service for the public deployment path, terminating HTTPS on `80/443` and reverse-proxying to the Newbro container on `8000`.

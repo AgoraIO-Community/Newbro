@@ -1,6 +1,6 @@
 # Public Hosted Deployment
 
-Newbro's first public-user deployment path is a single Dockerized service on a
+Newbro's first public-user deployment path is a Docker Compose stack on a
 long-running Ubuntu VPS with Cloudflare in front of it.
 
 Cloudflare is the public edge for this path. It owns DNS, HTTPS, proxying, and
@@ -8,10 +8,12 @@ optionally Cloudflare Tunnel. Cloudflare is not the Newbro runtime host.
 
 ## Runtime Shape
 
-The VPS runs one `newbro` container through Docker Compose:
+The VPS runs Caddy plus Newbro through Docker Compose:
 
 ```text
-newbro container
+public :80/:443
+  -> caddy container
+  -> newbro container
   -> newbro start --host 0.0.0.0 --port 8000
 ```
 
@@ -27,6 +29,10 @@ wss://newbro.example.com/api/executors/control
 
 The same-origin shape is intentional. It keeps browser session APIs, voice
 connector routes, and websocket upgrades on one public origin.
+
+Caddy terminates HTTPS and reverse-proxies to the Newbro container on the
+private Compose network. The deployment workflow derives the Caddy hostname
+from `NEWBRO_PUBLIC_BASE_URL`.
 
 ## Operator Setup
 
@@ -128,6 +134,10 @@ The generated Compose file mounts `/root/.newbro` into the container. If the
 deployment later moves away from the `root` SSH user, update the Compose mount
 and runtime config path together.
 
+The generated Compose file also includes a `caddy:2-alpine` service with named
+volumes for Caddy data and config, so certificates survive container updates.
+Open or allow inbound `80/tcp` and `443/tcp` on the VPS when using this path.
+
 Manual workflow runs can also create an invite after a successful deploy. In
 the GitHub Actions UI, run `Deploy Newbro VPS` with:
 
@@ -161,6 +171,7 @@ For container state and logs:
 cd /opt/newbro
 docker compose ps
 docker compose logs --tail=200 newbro
+docker compose logs --tail=200 caddy
 ```
 
 ## Non-Default Paths

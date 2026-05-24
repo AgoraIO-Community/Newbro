@@ -123,6 +123,15 @@ jobs:
           IMAGE_REF: ${{ env.IMAGE_NAME }}:${{ github.sha }}
         run: |
           set -euxo pipefail
+          PUBLIC_HOST="$(python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          parsed = urlparse(os.environ["PUBLIC_BASE_URL"])
+          if parsed.scheme != "https" or not parsed.hostname:
+              raise SystemExit("NEWBRO_PUBLIC_BASE_URL must be an https:// URL with a host")
+          print(parsed.hostname)
+          PY
+          )"
           ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
           ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" '
             set -euxo pipefail
@@ -158,8 +167,27 @@ jobs:
             docker compose version
             $SUDO mkdir -p /root/.newbro
           '
+          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cat > '$DEPLOY_PATH/Caddyfile'" <<EOF
+          $PUBLIC_HOST {
+              encode gzip
+              reverse_proxy newbro:8000
+          }
+          EOF
           ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cat > '$DEPLOY_PATH/docker-compose.yml'" <<EOF
           services:
+            caddy:
+              image: caddy:2-alpine
+              restart: unless-stopped
+              depends_on:
+                - newbro
+              ports:
+                - "80:80"
+                - "443:443"
+              volumes:
+                - ./Caddyfile:/etc/caddy/Caddyfile:ro
+                - caddy_data:/data
+                - caddy_config:/config
+
             newbro:
               image: $IMAGE_REF
               restart: unless-stopped
@@ -178,6 +206,10 @@ jobs:
                 timeout: 5s
                 retries: 3
                 start_period: 20s
+
+          volumes:
+            caddy_data:
+            caddy_config:
           EOF
           printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
           ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && docker compose pull && docker compose up -d && docker compose ps"
