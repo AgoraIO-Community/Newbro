@@ -62,6 +62,14 @@ const SHELL_API_ERROR_HINT =
 const RESUME_FALLBACK_WARNING_PREFIX = "Could not resume the requested session.";
 const GLOBAL_MESSAGE_AUTO_DISMISS_MS = 6_000;
 const AUTH_REQUIRED_STATUS = "Request failed with status 401";
+const AUTH_REQUIRED_MESSAGE = "Authentication required";
+
+function isAuthRequiredError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message.includes(AUTH_REQUIRED_STATUS) || error.message.includes(AUTH_REQUIRED_MESSAGE);
+}
 
 function describeApiFailure(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) {
@@ -287,6 +295,17 @@ function useNewbroShellState() {
             if (!mountedRef.current) {
               return;
             }
+            if (isAuthRequiredError(error)) {
+              startTransition(() => {
+                setAuthRequired(true);
+                setAuthError(null);
+                setActiveShellSessionId(null);
+                setHasLoadedShellSnapshot(false);
+                setShellWarning(null);
+                setShellError(null);
+              });
+              return;
+            }
             startTransition(() => {
               setActiveShellSessionId(null);
               setHasLoadedShellSnapshot(false);
@@ -310,7 +329,7 @@ function useNewbroShellState() {
         if (!mountedRef.current) {
           return;
         }
-        if (error instanceof Error && error.message.includes(AUTH_REQUIRED_STATUS)) {
+        if (isAuthRequiredError(error)) {
           startTransition(() => {
             setAuthRequired(true);
             setAuthError(null);

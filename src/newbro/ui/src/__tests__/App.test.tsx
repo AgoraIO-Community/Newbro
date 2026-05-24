@@ -2076,6 +2076,22 @@ describe("Newbro voice shell", () => {
     expect(screen.queryByText("Atlas")).not.toBeInTheDocument();
   });
 
+  it("shows invite access instead of a shell API error when a requested session requires auth", async () => {
+    window.history.replaceState({}, "", "/?sid=session-private");
+    clientMock.getSessionSnapshot.mockRejectedValueOnce(new Error("Authentication required."));
+    clientMock.bootstrapPublicUser.mockRejectedValueOnce(new Error("Authentication required."));
+
+    const router = getRouter();
+    render(<RouterProvider router={router} />);
+    await act(async () => {
+      await router.load();
+    });
+
+    expect(await screen.findByText("Invite access")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Invite code")).toBeInTheDocument();
+    expect(screen.queryByText("Unable to reach the Newbro API")).not.toBeInTheDocument();
+  });
+
   it("keeps shell snapshot bros visible when the Bros page refresh fails", async () => {
     clientMock.getSessionSnapshot.mockResolvedValueOnce({
       session_id: "session-1",
