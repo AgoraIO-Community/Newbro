@@ -183,7 +183,15 @@ jobs:
           ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && docker compose pull && docker compose up -d && docker compose ps"
 
       - name: Verify public health
-        run: curl --fail --show-error --silent "$PUBLIC_BASE_URL/api/health"
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --retry 12 --retry-delay 5 "$PUBLIC_BASE_URL/api/health"
+
+      - name: Verify container health on failure
+        if: failure()
+        run: |
+          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && docker compose exec -T newbro python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read().decode())\""
 
       - name: Create invite
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.create_invite }}
