@@ -314,10 +314,10 @@ def cmd_backend(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
-    venv_python = require_venv_python()
+    runtime_python = service_runtime_python_path()
     ensure_frontend_build_ready()
     commands = [
-        ("service", service_command(venv_python, args.host, args.port, reload=False), ROOT),
+        ("service", service_command(runtime_python, args.host, args.port, reload=False), ROOT),
     ]
     return run_managed_processes(commands)
 
@@ -432,11 +432,11 @@ def cmd_connector_setup(_args: argparse.Namespace) -> int:
 
 
 def cmd_connector_run(args: argparse.Namespace) -> int:
-    venv_python = require_venv_python()
+    runtime_python = service_runtime_python_path()
     settings = load_connector_settings()
     host = args.host or settings.host
     port = args.port or settings.port
-    return run_checked(connector_command(venv_python, host, port, reload=args.reload), cwd=ROOT)
+    return run_checked(connector_command(runtime_python, host, port, reload=args.reload), cwd=ROOT)
 
 
 def cmd_executor_setup(_args: argparse.Namespace) -> int:
@@ -816,6 +816,15 @@ def require_venv_python(*, allow_missing: bool = False) -> Path:
     if allow_missing:
         return venv_python
     raise CliError("Repo virtualenv is not ready. Run ./install.sh first.")
+
+
+def service_runtime_python_path() -> Path:
+    venv_python = venv_python_path()
+    if venv_python.exists():
+        return venv_python
+    if sys.executable:
+        return Path(sys.executable)
+    raise CliError("Python interpreter is unavailable.")
 
 
 def venv_python_path() -> Path:

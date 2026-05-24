@@ -888,6 +888,43 @@ def test_start_runs_single_service_process(monkeypatch, tmp_path: Path):
     ]
 
 
+def test_start_uses_current_python_when_no_repo_venv(monkeypatch, tmp_path: Path):
+    dist_dir = tmp_path / "src" / "newbro" / "ui" / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    (dist_dir / "index.html").write_text("<html>ok</html>", encoding="utf-8")
+
+    configure_repo_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_main.sys, "executable", "/usr/local/bin/python")
+
+    captured: dict[str, object] = {}
+
+    def fake_run_managed_processes(commands):
+        captured["commands"] = commands
+        return 0
+
+    monkeypatch.setattr(cli_main, "run_managed_processes", fake_run_managed_processes)
+
+    assert cli_main.main(["start"]) == 0
+
+    commands = captured["commands"]
+    assert commands == [
+        (
+            "service",
+            [
+                "/usr/local/bin/python",
+                "-m",
+                "uvicorn",
+                "newbro.service.app:app",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8000",
+            ],
+            tmp_path,
+        )
+    ]
+
+
 def configure_service_environment(monkeypatch, tmp_path: Path) -> None:
     configure_repo_paths(monkeypatch, tmp_path)
     monkeypatch.setattr(cli_main.sys, "platform", "linux")
