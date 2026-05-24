@@ -1,13 +1,13 @@
-FROM node:24-bookworm-slim AS frontend
+FROM oven/bun:1.3.13-debian AS frontend
 
 WORKDIR /app/src/newbro/ui
 
-COPY src/newbro/ui/package.json src/newbro/ui/package-lock.json ./
+COPY src/newbro/ui/package.json src/newbro/ui/bun.lock ./
 COPY src/newbro/ui/vendor ./vendor
-RUN npm ci
+RUN bun install --frozen-lockfile
 
 COPY src/newbro/ui ./
-RUN npm run build
+RUN bun run build
 
 
 FROM python:3.12-slim AS runtime
