@@ -319,6 +319,8 @@ export function BroDetailPage({
   snapshotDraftSession,
   latestDraftOutputEvent,
   onSubmitDraftAsrTurn,
+  voiceInputDisabled = false,
+  voiceInputDisabledReason,
   onBack,
   onGlobalError,
 }: {
@@ -338,6 +340,8 @@ export function BroDetailPage({
       assigned_bro_id?: string;
     },
   ) => string | null;
+  voiceInputDisabled?: boolean;
+  voiceInputDisabledReason?: string | null;
   onBack: () => void;
   onGlobalError?: (message: string | null) => void;
 }) {
@@ -970,6 +974,14 @@ export function BroDetailPage({
         <h2 className="sr-only">Draft workspace for {bro.name}</h2>
 
         <div className={`${mobileDetailPage === "draft" ? "flex" : "hidden"} mt-4 nb-detail-scroll nb-draft-tab-content lg:mt-0 lg:block`}>
+            {voiceInputDisabled ? (
+              <div
+                data-testid="bro-detail-node-warning"
+                className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-6 text-amber-800"
+              >
+                {voiceInputDisabledReason ?? "Local node is not connected. Reconnect it before talking to this Bro."}
+              </div>
+            ) : null}
             <DraftBrainPanel
               draftText={draftText}
               dispatchPlan={draftSession?.current_dispatch_plan ?? null}
@@ -992,7 +1004,7 @@ export function BroDetailPage({
 
             <VoicePad
               active={capturing}
-              disabled={!sessionId || !readyForMic || sttPhase === "draft_updating" || draftActionPending}
+              disabled={voiceInputDisabled || !sessionId || !readyForMic || sttPhase === "draft_updating" || draftActionPending}
               onPointerDown={handleMicPointerDown}
               onPointerUp={handleMicPointerUp}
               onPointerCancel={(event) => handleMicPointerUp(event)}

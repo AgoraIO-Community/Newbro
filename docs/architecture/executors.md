@@ -45,8 +45,10 @@ Executor-node note:
 - local executor-family/tool config no longer uses an `executor_node.enabled`
   toggle; `newbro executor run` may trigger the same local setup flow when
   executor commands or enabled families are missing
-- each Bro may be bound to one executor node; a Bro is considered live only
-  when its bound node is currently connected back to Newbro
+- each Bro may be bound to one executor node; a Bro is considered usable for
+  Bro Detail only after the bound node has connected successfully at least once
+  and is considered live only while that usable node is currently connected
+  back to Newbro
 - detached executor nodes connect to the main Newbro service origin through
   `WS /api/executors/control`
 - foreground `newbro executor run` output should make connect, ready,

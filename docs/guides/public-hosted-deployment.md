@@ -92,9 +92,11 @@ After signup, Newbro bootstraps a user-owned session and default Bro, then opens
 Bro Detail directly. Signing up again with the same email creates a separate
 user because email is only a label in this first public path.
 
-Bro Detail requires a user-owned executor node before the normal voice,
-draft, and task controls appear. If the default Bro is not bound yet, the page
-shows an inline setup panel that creates the node, binds it to that Bro, and
+Bro Detail requires a usable user-owned executor node before the normal voice,
+draft, and task controls appear. A node becomes usable only after it has
+connected successfully at least once. If the default Bro is not bound yet, or
+the bound node has not connected once, the page shows an inline setup panel
+that creates or reveals the node command, binds it to that Bro when needed, and
 prints a copyable local command. The hosted app issues a user-owned node id and
 token, and the user runs:
 
@@ -103,9 +105,11 @@ python3 -m pip install --user --upgrade newbro-cli
 newbro executor run --base-url https://newbro.example.com --node-id node-1234 --token secret
 ```
 
-Already-bound Bros continue to open directly into the normal Bro Detail
-workspace. If a bound node is offline when a task is sent, the task waits in
-`waiting_executor` and Bro Detail can reveal the local command again.
+Already-bound Bros open into the normal Bro Detail workspace only after the
+bound node has connected at least once. If that usable node is currently
+offline, Bro Detail remains visible, voice/talk is blocked with a warning, and
+the page can reveal the local command again. If a task is already waiting for
+execution, it stays in `waiting_executor` until the node reconnects.
 
 ## GitHub Actions Deployment
 
@@ -163,9 +167,13 @@ Then verify from a browser:
 
 - signup with the shared invitation code works
 - bootstrap opens Bro Detail directly
-- unbound Bro Detail shows the inline node setup panel instead of voice controls
-- creating the local node command binds the Bro and unlocks Bro Detail after refresh
-- voice starts from Bro Detail
+- unbound or never-connected Bro Detail shows the inline node setup panel
+  instead of voice controls
+- creating the local node command binds the Bro but does not unlock Bro Detail
+  until the node connects successfully once
+- a usable but disconnected node leaves Bro Detail visible while blocking voice
+  and showing a reconnect warning
+- voice starts from Bro Detail only when the bound usable node is connected
 - the sidebar account area shows the current email or user id and Log out returns to signup
 - session websocket connects
 - a local executor node can connect through `/api/executors/control`

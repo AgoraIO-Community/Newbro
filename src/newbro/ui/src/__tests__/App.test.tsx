@@ -137,7 +137,7 @@ const clientMock = vi.hoisted(() => ({
               connected_executors: ["codex"],
               connection_status: "connected",
               token_hint: "tok...1111",
-              last_connected_at: null,
+              last_connected_at: "2026-05-23T20:00:00Z",
               last_seen_at: null,
               acpx_agent: null,
             },
@@ -382,6 +382,21 @@ function expectLastSttFinal(text: string, targetPersonaId = "forge") {
   }));
 }
 
+function usableExecutorNode(overrides: Record<string, unknown> = {}) {
+  return {
+    node_id: "node-1",
+    name: "Local node",
+    enabled_executors: ["codex"],
+    connected_executors: ["codex"],
+    connection_status: "connected",
+    token_hint: "tok...0001",
+    last_connected_at: "2026-05-23T20:00:00Z",
+    last_seen_at: "2026-05-23T20:00:00Z",
+    acpx_agent: null,
+    ...overrides,
+  };
+}
+
 describe("Newbro voice shell", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -613,7 +628,7 @@ describe("Newbro voice shell", () => {
           connected_executors: ["codex"],
           connection_status: "connected",
           token_hint: "tok...1111",
-          last_connected_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
           last_seen_at: null,
         },
       ],
@@ -672,7 +687,7 @@ describe("Newbro voice shell", () => {
       interaction_requests: [],
       attention_items: [],
       executor_capabilities: [],
-      executor_nodes: [],
+      executor_nodes: [usableExecutorNode({ node_id: "node-forge", name: "Workshop Mini" })],
     });
     window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
 
@@ -685,7 +700,56 @@ describe("Newbro voice shell", () => {
     expect(clientMock.setVoiceTarget).not.toHaveBeenCalled();
   });
 
-  it("creates a node, binds it to an unbound Bro, then unlocks Bro detail after refresh", async () => {
+  it("keeps a bound runtime Bro setup-gated until the node has connected once", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce({
+      session_id: "session-existing",
+      tasks: [],
+      execution_sessions: [],
+      execution_runs: [],
+      execution_modes: [],
+      bindings: [],
+      summaries: [],
+      notification_candidates: [],
+      personas: [
+        {
+          persona_id: "persona-rook",
+          name: "Rook",
+          avatar: "bro",
+          base_prompt: "",
+          executor_node_id: "node-1",
+          status: "idle",
+          current_task_id: null,
+        },
+      ],
+      interaction_requests: [],
+      attention_items: [],
+      executor_capabilities: [],
+      executor_nodes: [
+        {
+          node_id: "node-1",
+          name: "Local node",
+          enabled_executors: ["codex"],
+          connected_executors: ["codex"],
+          connection_status: "connected",
+          token_hint: "tok...0001",
+          last_connected_at: null,
+          last_seen_at: "2026-05-23T20:00:00Z",
+          acpx_agent: null,
+        },
+      ],
+    });
+    window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByTestId("bro-setup-gate")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Waiting for first node connection" })).toBeInTheDocument();
+    expect(screen.queryByText("Current draft")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("voice-session-start")).not.toBeInTheDocument();
+    expect(clientMock.setVoiceTarget).not.toHaveBeenCalled();
+  });
+
+  it("creates and binds a node but unlocks Bro detail only after the first connection snapshot", async () => {
     const unboundSnapshot = {
       session_id: "session-existing",
       tasks: [],
@@ -733,9 +797,22 @@ describe("Newbro voice shell", () => {
         },
       ],
     };
+    const connectedSnapshot = {
+      ...boundSnapshot,
+      executor_nodes: [
+        {
+          ...boundSnapshot.executor_nodes[0],
+          connected_executors: ["codex"],
+          connection_status: "connected",
+          last_connected_at: "2026-05-23T20:00:00Z",
+          last_seen_at: "2026-05-23T20:00:00Z",
+        },
+      ],
+    };
     clientMock.getSessionSnapshot
       .mockResolvedValueOnce(unboundSnapshot)
-      .mockResolvedValueOnce(boundSnapshot);
+      .mockResolvedValueOnce(boundSnapshot)
+      .mockResolvedValueOnce(connectedSnapshot);
     window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
@@ -750,12 +827,193 @@ describe("Newbro voice shell", () => {
       executor_node_id: "node-1",
     });
     expect(await screen.findByText(/newbro executor run/)).toBeInTheDocument();
+    expect(await screen.findByText(/Waiting for this node to connect successfully once/)).toBeInTheDocument();
+    expect(screen.queryByText("Current draft")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("bro-setup-open-detail"));
 
     expect(await screen.findByText("Current draft")).toBeInTheDocument();
     expect(screen.getByTestId("voice-session-start")).toBeInTheDocument();
     await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "persona-rook"));
+  });
+
+  it("keeps Bro Detail locked and shows an error when node setup fails", async () => {
+    clientMock.createExecutorNode.mockRejectedValueOnce(new Error("Node setup failed"));
+    clientMock.getSessionSnapshot.mockResolvedValueOnce({
+      session_id: "session-existing",
+      tasks: [],
+      execution_sessions: [],
+      execution_runs: [],
+      execution_modes: [],
+      bindings: [],
+      summaries: [],
+      notification_candidates: [],
+      personas: [
+        {
+          persona_id: "persona-rook",
+          name: "Rook",
+          avatar: "bro",
+          base_prompt: "",
+          executor_node_id: null,
+          status: "idle",
+          current_task_id: null,
+        },
+      ],
+      interaction_requests: [],
+      attention_items: [],
+      executor_capabilities: [],
+      executor_nodes: [],
+    });
+    window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByTestId("bro-setup-create-node"));
+
+    expect(await screen.findAllByText("Node setup failed")).toHaveLength(2);
+    expect(screen.getByTestId("bro-setup-gate")).toBeInTheDocument();
+    expect(screen.queryByText("Current draft")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("voice-session-start")).not.toBeInTheDocument();
+    expect(clientMock.updatePersona).not.toHaveBeenCalled();
+    expect(clientMock.setVoiceTarget).not.toHaveBeenCalled();
+  });
+
+  it("shows Bro detail but blocks talk when a usable node is disconnected", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce({
+      session_id: "session-existing",
+      tasks: [],
+      execution_sessions: [],
+      execution_runs: [],
+      execution_modes: [],
+      bindings: [],
+      summaries: [],
+      notification_candidates: [],
+      personas: [
+        {
+          persona_id: "persona-rook",
+          name: "Rook",
+          avatar: "bro",
+          base_prompt: "",
+          executor_node_id: "node-1",
+          status: "idle",
+          current_task_id: null,
+        },
+      ],
+      interaction_requests: [],
+      attention_items: [],
+      executor_capabilities: [],
+      executor_nodes: [
+        {
+          node_id: "node-1",
+          name: "Local node",
+          enabled_executors: ["codex"],
+          connected_executors: [],
+          connection_status: "disconnected",
+          token_hint: "tok...0001",
+          last_connected_at: "2026-05-23T20:00:00Z",
+          last_seen_at: "2026-05-23T20:00:00Z",
+          acpx_agent: null,
+        },
+      ],
+    });
+    window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Current draft")).toBeInTheDocument();
+    expect(await screen.findByTestId("bro-node-disconnected-warning")).toHaveTextContent("Local node is not connected");
+    expect(screen.getByTestId("voice-session-start")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Hold to Talk" })).toBeDisabled();
+    fireEvent.click(screen.getByTestId("bro-node-copy-command"));
+    await waitFor(() => expect(clientMock.revealExecutorNodeConnectCommand).toHaveBeenCalledWith("session-existing", "node-1"));
+    expect(await screen.findByText(/newbro executor run/)).toBeInTheDocument();
+    await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "persona-rook"));
+  });
+
+  it("keeps Bro detail visible and blocks talk when a usable node disconnects during an active session", async () => {
+    const connectedSnapshot = {
+      session_id: "session-existing",
+      tasks: [],
+      execution_sessions: [],
+      execution_runs: [],
+      execution_modes: [],
+      bindings: [],
+      summaries: [],
+      notification_candidates: [],
+      personas: [
+        {
+          persona_id: "persona-rook",
+          name: "Rook",
+          avatar: "bro",
+          base_prompt: "",
+          executor_node_id: "node-1",
+          status: "idle",
+          current_task_id: null,
+        },
+      ],
+      interaction_requests: [],
+      attention_items: [],
+      executor_capabilities: [],
+      executor_nodes: [
+        {
+          node_id: "node-1",
+          name: "Local node",
+          enabled_executors: ["codex"],
+          connected_executors: ["codex"],
+          connection_status: "connected",
+          token_hint: "tok...0001",
+          last_connected_at: "2026-05-23T20:00:00Z",
+          last_seen_at: "2026-05-23T20:00:00Z",
+          acpx_agent: null,
+        },
+      ],
+    };
+    const disconnectedSnapshot = {
+      ...connectedSnapshot,
+      executor_nodes: [
+        {
+          ...connectedSnapshot.executor_nodes[0],
+          connected_executors: [],
+          connection_status: "disconnected",
+        },
+      ],
+    };
+    window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(connectedSnapshot);
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const startButton = await screen.findByTestId("voice-session-start");
+    expect(startButton).not.toBeDisabled();
+    fireEvent.click(startButton);
+    await waitFor(() => expect(connectorMock.activateConnectorSession).toHaveBeenCalled());
+    expect(await screen.findByTestId("voice-session-stop")).toBeInTheDocument();
+
+    await act(async () => {
+      socketHarness.emitMessage({
+        type: "snapshot",
+        sequence: 31,
+        snapshot: disconnectedSnapshot,
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Current draft")).toBeInTheDocument();
+    expect(screen.getByTestId("bro-node-disconnected-warning")).toHaveTextContent("Local node is not connected");
+    expect(screen.getByTestId("voice-session-stop")).toBeInTheDocument();
+    expect(screen.getByTestId("voice-session-mic-toggle")).toBeDisabled();
+
+    await act(async () => {
+      socketHarness.emitMessage({
+        type: "snapshot",
+        sequence: 32,
+        snapshot: connectedSnapshot,
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId("bro-node-disconnected-warning")).not.toBeInTheDocument();
+    expect(screen.getByTestId("voice-session-mic-toggle")).not.toBeDisabled();
   });
 
 
@@ -864,7 +1122,7 @@ describe("Newbro voice shell", () => {
           connected_executors: ["codex"],
           connection_status: "connected",
           token_hint: "tok...1111",
-          last_connected_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
           last_seen_at: null,
         },
       ],
@@ -905,7 +1163,7 @@ describe("Newbro voice shell", () => {
       interaction_requests: [],
       attention_items: [],
       executor_capabilities: [],
-      executor_nodes: [],
+      executor_nodes: [usableExecutorNode({ node_id: "node-forge", name: "Workshop Mini" })],
     });
     window.history.replaceState({}, "", "/mobile?sid=session-existing");
 
@@ -1218,7 +1476,7 @@ describe("Newbro voice shell", () => {
           connected_executors: ["codex"],
           connection_status: "connected",
           token_hint: "tok...1111",
-          last_connected_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
           last_seen_at: null,
         },
       ],
@@ -1306,7 +1564,7 @@ describe("Newbro voice shell", () => {
       interaction_requests: [],
       attention_items: [],
       executor_capabilities: [],
-      executor_nodes: [],
+      executor_nodes: [usableExecutorNode({ node_id: "node-forge", name: "Workshop Mini" })],
     });
     window.history.replaceState({}, "", "/bros/persona-forge?sid=session-existing");
 
@@ -1386,7 +1644,7 @@ describe("Newbro voice shell", () => {
       interaction_requests: [],
       attention_items: [],
       executor_capabilities: [],
-      executor_nodes: [],
+      executor_nodes: [usableExecutorNode({ node_id: "node-forge", name: "Workshop Mini" })],
     });
     window.history.replaceState({}, "", "/bros/persona-forge?sid=session-existing");
 
@@ -2134,7 +2392,7 @@ describe("Newbro voice shell", () => {
           connected_executors: ["codex"],
           connection_status: "connected",
           token_hint: "tok...1111",
-          last_connected_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
           last_seen_at: null,
         },
         {
@@ -2144,7 +2402,7 @@ describe("Newbro voice shell", () => {
           connected_executors: ["codex"],
           connection_status: "connected",
           token_hint: "tok...2222",
-          last_connected_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
           last_seen_at: null,
         },
       ],
@@ -2286,7 +2544,7 @@ describe("Newbro voice shell", () => {
           connected_executors: ["codex"],
           connection_status: "connected",
           token_hint: "tok...1111",
-          last_connected_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
           last_seen_at: null,
         },
       ],
@@ -2340,7 +2598,7 @@ describe("Newbro voice shell", () => {
           connected_executors: ["codex"],
           connection_status: "connected",
           token_hint: "tok...1111",
-          last_connected_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
           last_seen_at: null,
         },
       ],
@@ -2411,7 +2669,7 @@ describe("Newbro voice shell", () => {
           connected_executors: ["codex"],
           connection_status: "connected",
           token_hint: "tok...1111",
-          last_connected_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
           last_seen_at: null,
         },
       ],
@@ -2529,7 +2787,7 @@ describe("Newbro voice shell", () => {
           connected_executors: ["codex"],
           connection_status: "connected",
           token_hint: "tok...1111",
-          last_connected_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
           last_seen_at: null,
         },
       ],
@@ -2591,7 +2849,7 @@ describe("Newbro voice shell", () => {
           connected_executors: ["codex"],
           connection_status: "connected",
           token_hint: "tok...1111",
-          last_connected_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
           last_seen_at: null,
         },
       ],
@@ -2663,8 +2921,8 @@ describe("Newbro voice shell", () => {
           connected_executors: [],
           connection_status: "disconnected",
           token_hint: "tok...0001",
-          last_connected_at: null,
-          last_seen_at: null,
+          last_connected_at: "2026-05-23T20:00:00Z",
+          last_seen_at: "2026-05-23T20:00:00Z",
           acpx_agent: null,
         },
       ],
@@ -2723,7 +2981,7 @@ describe("Newbro voice shell", () => {
       interaction_requests: [],
       attention_items: [],
       executor_capabilities: [],
-      executor_nodes: [],
+      executor_nodes: [usableExecutorNode()],
     });
     window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
 
@@ -2788,7 +3046,7 @@ describe("Newbro voice shell", () => {
       interaction_requests: [],
       attention_items: [],
       executor_capabilities: [],
-      executor_nodes: [],
+      executor_nodes: [usableExecutorNode()],
     });
     window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
 
@@ -2870,7 +3128,7 @@ describe("Newbro voice shell", () => {
       interaction_requests: [],
       attention_items: [],
       executor_capabilities: [],
-      executor_nodes: [],
+      executor_nodes: [usableExecutorNode()],
     });
     window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
 
@@ -2943,7 +3201,7 @@ describe("Newbro voice shell", () => {
       interaction_requests: [],
       attention_items: [],
       executor_capabilities: [],
-      executor_nodes: [],
+      executor_nodes: [usableExecutorNode()],
     });
     window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
 
@@ -3013,7 +3271,7 @@ describe("Newbro voice shell", () => {
       interaction_requests: [],
       attention_items: [],
       executor_capabilities: [],
-      executor_nodes: [],
+      executor_nodes: [usableExecutorNode({ node_id: "node-2" })],
     });
     window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
 

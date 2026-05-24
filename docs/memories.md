@@ -224,3 +224,4 @@ Short log of important design decisions and changes for Newbro.
 - Added Caddy as a managed Docker Compose service for the public deployment path, terminating HTTPS on `80/443` and reverse-proxying to the Newbro container on `8000`.
 - Changed public onboarding from per-user invite codes to open self-signup gated by `NEWBRO_SIGNUP_INVITE_CODE`, with email as a required label and each signup creating a separate user.
 - Added hosted UI logout and made runtime Bro Detail node-gated: unbound Bros show inline local-node setup and withhold voice/draft/task controls until a user-owned executor node binding is reflected.
+- Tightened runtime Bro Detail node gating so created or bound nodes unlock only after first successful connection, while usable but disconnected nodes keep Bro Detail visible and block talk with a reconnect warning.

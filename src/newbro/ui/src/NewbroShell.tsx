@@ -20,6 +20,7 @@ import {
   getSessionSnapshot,
   logoutPublicUser,
   openSessionStream,
+  revealExecutorNodeConnectCommand,
   sendSocketDraftAsrTurn,
   sendSocketMessage,
   setVoiceTarget,
@@ -178,6 +179,55 @@ type GlobalMessage = {
   detail: string;
   tone: "error" | "warning";
 };
+
+type BroNodeState =
+  | {
+      kind: "sample" | "no_bound_node" | "bound_node_missing";
+      node: null;
+    }
+  | {
+      kind: "never_connected" | "usable_disconnected" | "usable_connected";
+      node: ExecutorNodeRecord;
+    };
+
+function hasNodeEverConnected(node: ExecutorNodeRecord): boolean {
+  return Boolean(node.last_connected_at);
+}
+
+function deriveBroNodeState(
+  bro: BroCardModel | null,
+  nodes: ExecutorNodeRecord[],
+): BroNodeState {
+  if (!bro || bro.source !== "runtime") {
+    return { kind: "sample", node: null };
+  }
+  if (!bro.executorNodeId) {
+    return { kind: "no_bound_node", node: null };
+  }
+  const node = nodes.find((candidate) => candidate.node_id === bro.executorNodeId) ?? null;
+  if (!node) {
+    return { kind: "bound_node_missing", node: null };
+  }
+  if (!hasNodeEverConnected(node)) {
+    return { kind: "never_connected", node };
+  }
+  if (node.connection_status === "connected") {
+    return { kind: "usable_connected", node };
+  }
+  return { kind: "usable_disconnected", node };
+}
+
+function nodeStateRequiresSetup(state: BroNodeState): boolean {
+  return state.kind === "no_bound_node" || state.kind === "bound_node_missing" || state.kind === "never_connected";
+}
+
+function nodeStateAllowsVoice(state: BroNodeState): boolean {
+  return state.kind === "sample" || state.kind === "usable_connected";
+}
+
+function disconnectedNodeWarning(node: ExecutorNodeRecord): string {
+  return `${node.name} is not connected. Run or reconnect the local executor command before talking to this Bro.`;
+}
 
 function GlobalMessageBanner({ message, onDismiss }: { message: GlobalMessage; onDismiss: () => void }) {
   const toneClass = message.tone === "error"
@@ -619,7 +669,13 @@ function useNewbroShell() {
   return value;
 }
 
-function ShellVoiceBar() {
+function ShellVoiceBar({
+  startDisabled = false,
+  blockReason,
+}: {
+  startDisabled?: boolean;
+  blockReason?: string | null;
+}) {
   const shell = useNewbroShell();
   if (!shell.hasLoadedShellSnapshot || !shell.activeShellSessionId) {
     return null;
@@ -634,13 +690,17 @@ function ShellVoiceBar() {
         isMicMuted={shell.voiceSession.isMicMuted}
         messageCount={shell.voiceSession.transcript.length}
         sessionId={shell.activeShellSessionId}
+        startDisabled={startDisabled}
+        blockReason={blockReason}
         onStart={() => {
+          if (startDisabled) return;
           void shell.startVoiceSession(shell.activeShellSessionId);
         }}
         onStop={() => {
           void shell.stopVoiceSession();
         }}
         onToggleMute={() => {
+          if (startDisabled) return;
           void shell.toggleVoiceMute();
         }}
       />
@@ -804,12 +864,14 @@ export function MobileWalkieShellPage() {
 function BroSetupGate({
   bro,
   sessionId,
+  nodeState,
   onBack,
   onReady,
   onGlobalError,
 }: {
   bro: BroCardModel;
   sessionId: string | null;
+  nodeState: BroNodeState;
   onBack: () => void;
   onReady: () => Promise<void>;
   onGlobalError: (message: string | null) => void;
@@ -837,19 +899,24 @@ function BroSetupGate({
     setError(null);
     onGlobalError(null);
     try {
-      const issue = await createExecutorNode(sessionId, {
-        name: `${bro.name} local node`,
-        enabled_executors: ["codex"],
-      });
-      await updatePersona(sessionId, bro.id, {
-        executor_node_id: issue.node.node_id,
-      });
+      const issue = bro.executorNodeId
+        ? await revealExecutorNodeConnectCommand(sessionId, bro.executorNodeId)
+        : await createExecutorNode(sessionId, {
+            name: `${bro.name} local node`,
+            enabled_executors: ["codex"],
+          });
+      if (!bro.executorNodeId) {
+        await updatePersona(sessionId, bro.id, {
+          executor_node_id: issue.node.node_id,
+        });
+      }
       const nextCommand = buildExecutorRunCommand(issue.node.node_id, issue.token, {
         enabledExecutors: issue.node.enabled_executors,
         acpxAgent: issue.node.acpx_agent,
       });
       setCommand(nextCommand);
       await copyCommand(nextCommand);
+      await onReady();
     } catch (setupError: unknown) {
       const detail = describeApiFailure(setupError, "Could not create and bind a local node.");
       setError(detail);
@@ -886,21 +953,23 @@ function BroSetupGate({
               <div className="max-w-[700px]">
                 <div className="command-label text-[#9ca3af]">Local executor required</div>
                 <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.02em] text-[#111827]">
-                  Set up this Bro before talking
+                  {nodeState.kind === "never_connected" ? "Waiting for first node connection" : "Set up this Bro before talking"}
                 </h2>
                 <p className="mt-2 text-[14px] leading-7 text-[#6b7280]">
-                  Create a user-owned node, bind it to {bro.name}, then run the command locally so this Bro has a place to execute work.
+                  {nodeState.kind === "never_connected"
+                    ? `${nodeState.node.name} is bound to ${bro.name}, but it has not connected successfully yet. Run the local command and this page will unlock after the first connection appears in the session snapshot.`
+                    : `Create a user-owned node, bind it to ${bro.name}, then run the command locally so this Bro has a place to execute work.`}
                 </p>
               </div>
               <button
                 type="button"
                 data-testid="bro-setup-create-node"
-                disabled={busy || !sessionId || Boolean(command)}
+                disabled={busy || !sessionId}
                 onClick={() => { void setupLocalNode(); }}
                 className="nb-page-primary-action inline-flex min-h-[42px] shrink-0 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {busy ? <LoaderCircle className="h-4 w-4 animate-spin" strokeWidth={2} /> : <Copy className="h-4 w-4" strokeWidth={2} />}
-                {busy ? "Creating..." : command ? "Node bound" : "Create node"}
+                {busy ? "Preparing..." : bro.executorNodeId ? "Copy command" : "Create node"}
               </button>
             </div>
             {error ? (
@@ -932,14 +1001,96 @@ function BroSetupGate({
                     className="nb-page-primary-action inline-flex min-h-[38px] items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => { void openBroDetail(); }}
                   >
-                    {opening ? "Opening..." : "Open Bro Detail"}
+                    {opening ? "Checking..." : "Check connection"}
                   </button>
+                </div>
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-6 text-amber-800">
+                  Waiting for this node to connect successfully once. Normal Bro Detail stays locked until Newbro sees that first connection.
                 </div>
               </div>
             ) : null}
           </section>
         </div>
       </section>
+    </div>
+  );
+}
+
+function NodeDisconnectedWarning({
+  bro,
+  node,
+  sessionId,
+  onGlobalError,
+}: {
+  bro: BroCardModel;
+  node: ExecutorNodeRecord;
+  sessionId: string | null;
+  onGlobalError: (message: string | null) => void;
+}) {
+  const [command, setCommand] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function copyCommand(value: string) {
+    try {
+      await navigator.clipboard?.writeText(value);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  async function revealCommand() {
+    if (!sessionId || bro.source !== "runtime") return;
+    setBusy(true);
+    setError(null);
+    onGlobalError(null);
+    try {
+      const issue = await revealExecutorNodeConnectCommand(sessionId, node.node_id);
+      const nextCommand = buildExecutorRunCommand(issue.node.node_id, issue.token, {
+        enabledExecutors: issue.node.enabled_executors,
+        acpxAgent: issue.node.acpx_agent,
+      });
+      setCommand(nextCommand);
+      await copyCommand(nextCommand);
+    } catch (revealError: unknown) {
+      const detail = describeApiFailure(revealError, "Could not reveal the local node command.");
+      setError(detail);
+      onGlobalError(detail);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      data-testid="bro-node-disconnected-warning"
+      className="mx-4 mt-4 rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-4 text-amber-900 md:mx-6 xl:mx-8"
+    >
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">Local node offline</div>
+          <div className="mt-1 text-[14px] leading-6">
+            {disconnectedNodeWarning(node)}
+          </div>
+        </div>
+        <button
+          type="button"
+          data-testid="bro-node-copy-command"
+          disabled={busy || !sessionId}
+          className="rounded-full border border-amber-200 bg-white px-4 py-2 text-[13px] font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => { void revealCommand(); }}
+        >
+          {busy ? "Preparing..." : copied ? "Copied" : "Copy command"}
+        </button>
+      </div>
+      {error ? <div className="mt-3 text-[13px] leading-6 text-red-600">{error}</div> : null}
+      {command ? (
+        <pre className="command-field mt-3 max-h-[160px] overflow-auto whitespace-pre-wrap break-all bg-white/80 px-4 py-3 text-[12.5px] leading-6 text-[#374151]">
+          {command}
+        </pre>
+      ) : null}
     </div>
   );
 }
@@ -953,7 +1104,12 @@ export function BroDetailShellPage({
 }) {
   const shell = useNewbroShell();
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
-  const setupRequired = bro?.source === "runtime" && !bro.executorNodeId;
+  const nodeState = deriveBroNodeState(bro, shell.executorNodes);
+  const setupRequired = bro?.source === "runtime" && nodeStateRequiresSetup(nodeState);
+  const voiceBlocked = bro?.source === "runtime" && !nodeStateAllowsVoice(nodeState);
+  const voiceBlockReason = nodeState.kind === "usable_disconnected"
+    ? disconnectedNodeWarning(nodeState.node)
+    : null;
   const activeSummary = bro?.source === "runtime"
     ? shell.taskSummaries.find((summary) => summary.task_id === shell.runtimePersonas.find((persona) => persona.persona_id === bro.id)?.current_task_id) ?? null
     : null;
@@ -983,6 +1139,12 @@ export function BroDetailShellPage({
     };
   }, [shell.hasLoadedShellSnapshot, shell.activeShellSessionId, bro?.id, setupRequired]);
 
+  useEffect(() => {
+    if (voiceBlocked && shell.voiceSession.phase === "connected" && !shell.voiceSession.isMicMuted) {
+      void shell.toggleVoiceMute();
+    }
+  }, [voiceBlocked, shell.voiceSession.phase, shell.voiceSession.isMicMuted]);
+
   return (
     <ShellFrame
       activePage="Home"
@@ -1002,13 +1164,22 @@ export function BroDetailShellPage({
             <BroSetupGate
               bro={bro}
               sessionId={shell.activeShellSessionId}
+              nodeState={nodeState}
               onBack={() => onNavigate("Home")}
               onReady={shell.refreshShellSession}
               onGlobalError={shell.setShellError}
             />
           ) : (
             <>
-              <ShellVoiceBar />
+              <ShellVoiceBar startDisabled={voiceBlocked} blockReason={voiceBlockReason} />
+              {nodeState.kind === "usable_disconnected" ? (
+                <NodeDisconnectedWarning
+                  bro={bro}
+                  node={nodeState.node}
+                  sessionId={shell.activeShellSessionId}
+                  onGlobalError={shell.setShellError}
+                />
+              ) : null}
               <BroDetailPage
                 bro={bro}
                 sessionId={shell.activeShellSessionId}
@@ -1019,6 +1190,8 @@ export function BroDetailShellPage({
                 snapshotDraftSession={shell.draftSession}
                 latestDraftOutputEvent={shell.latestDraftOutputEvent}
                 onSubmitDraftAsrTurn={shell.submitDraftAsrTurn}
+                voiceInputDisabled={voiceBlocked}
+                voiceInputDisabledReason={voiceBlockReason}
                 onBack={() => onNavigate("Home")}
                 onGlobalError={shell.setShellError}
               />

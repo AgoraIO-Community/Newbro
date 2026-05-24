@@ -9,6 +9,8 @@ export function TopVoiceBar({
   isMicMuted,
   messageCount,
   sessionId,
+  startDisabled = false,
+  blockReason,
   onStart,
   onStop,
   onToggleMute,
@@ -19,6 +21,8 @@ export function TopVoiceBar({
   isMicMuted: boolean;
   messageCount: number;
   sessionId: string | null;
+  startDisabled?: boolean;
+  blockReason?: string | null;
   onStart: () => void;
   onStop: () => void;
   onToggleMute: () => void;
@@ -59,6 +63,11 @@ export function TopVoiceBar({
           <div className="rounded-full border border-white/85 bg-white/76 px-3 py-1.5">
             {messageCount} turns
           </div>
+          {blockReason ? (
+            <div data-testid="voice-node-blocked-warning" className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-700">
+              {blockReason}
+            </div>
+          ) : null}
           {sessionId && voicePhase !== "idle" ? (
             <div className="rounded-full border border-white/85 bg-white/76 px-3 py-1.5">
               Session {sessionId}
@@ -85,8 +94,9 @@ export function TopVoiceBar({
                 type="button"
                 variant="secondary"
                 size="sm"
+                disabled={startDisabled}
                 onClick={onToggleMute}
-                className="rounded-full px-3.5"
+                className="rounded-full px-3.5 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isMicMuted ? <Mic className="size-4" /> : <MicOff className="size-4" />}
                 <span className="ml-1">{isMicMuted ? "Unmute" : "Mute"}</span>
@@ -98,8 +108,9 @@ export function TopVoiceBar({
               type="button"
               variant="default"
               size="sm"
+              disabled={startDisabled}
               onClick={onStart}
-              className="rounded-full px-4"
+              className="rounded-full px-4 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {voicePhase === "loading" ? (
                 <LoaderCircle className="size-4 animate-spin" />
