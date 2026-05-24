@@ -50,6 +50,7 @@ jobs:
       DEPLOY_SSH_KEY: ${{ secrets.NEWBRO_DEPLOY_SSH_KEY }}
       DEPLOY_PORT: ${{ secrets.NEWBRO_DEPLOY_PORT || '22' }}
       PUBLIC_BASE_URL: ${{ secrets.NEWBRO_PUBLIC_BASE_URL }}
+      SIGNUP_INVITE_CODE: ${{ secrets.NEWBRO_SIGNUP_INVITE_CODE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,6 +72,7 @@ jobs:
           test -n "$DEPLOY_PATH"
           test -n "$DEPLOY_SSH_KEY"
           test -n "$PUBLIC_BASE_URL"
+          test -n "$SIGNUP_INVITE_CODE"
           case "$PUBLIC_BASE_URL" in
             https://*) ;;
             *)
@@ -130,6 +132,12 @@ jobs:
           if parsed.scheme != "https" or not parsed.hostname:
               raise SystemExit("NEWBRO_PUBLIC_BASE_URL must be an https:// URL with a host")
           print(parsed.hostname)
+          PY
+          )"
+          SIGNUP_INVITE_CODE_YAML="$(python - <<'PY'
+          import json
+          import os
+          print(json.dumps(os.environ["SIGNUP_INVITE_CODE"]))
           PY
           )"
           ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
@@ -198,6 +206,7 @@ jobs:
               environment:
                 HOME: /root
                 SYNAPSE_PUBLIC_COOKIE_SECURE: "true"
+                NEWBRO_SIGNUP_INVITE_CODE: $SIGNUP_INVITE_CODE_YAML
               volumes:
                 - /root/.newbro:/root/.newbro
               healthcheck:

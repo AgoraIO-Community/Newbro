@@ -86,6 +86,7 @@ const clientMock = vi.hoisted(() => ({
   createSession: vi.fn(),
   bootstrapPublicUser: vi.fn(),
   redeemInvite: vi.fn(),
+  signupPublicUser: vi.fn(),
   getCurrentUser: vi.fn(),
   logoutPublicUser: vi.fn(),
   getSessionSnapshot: vi.fn(),
@@ -383,6 +384,7 @@ describe("Newbro voice shell", () => {
       default_bro_detail_session_id: null,
     });
     clientMock.redeemInvite.mockResolvedValue({ user: { user_id: "user-1" } });
+    clientMock.signupPublicUser.mockResolvedValue({ user: { user_id: "user-1", email: "user@example.com" } });
     clientMock.getCurrentUser.mockResolvedValue({ user: { user_id: "user-1" } });
     clientMock.logoutPublicUser.mockResolvedValue({ ok: true });
     clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => ({
@@ -2076,7 +2078,7 @@ describe("Newbro voice shell", () => {
     expect(screen.queryByText("Atlas")).not.toBeInTheDocument();
   });
 
-  it("shows invite access instead of a shell API error when a requested session requires auth", async () => {
+  it("shows signup instead of a shell API error when a requested session requires auth", async () => {
     window.history.replaceState({}, "", "/?sid=session-private");
     clientMock.getSessionSnapshot.mockRejectedValueOnce(new Error("Authentication required."));
     clientMock.bootstrapPublicUser.mockRejectedValueOnce(new Error("Authentication required."));
@@ -2087,9 +2089,25 @@ describe("Newbro voice shell", () => {
       await router.load();
     });
 
-    expect(await screen.findByText("Invite access")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Invite code")).toBeInTheDocument();
+    expect(await screen.findByText("Sign up")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Email")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Invitation code")).toBeInTheDocument();
     expect(screen.queryByText("Unable to reach the Newbro API")).not.toBeInTheDocument();
+  });
+
+  it("signs up with email and fixed invitation code before bootstrapping", async () => {
+    clientMock.bootstrapPublicUser.mockRejectedValueOnce(new Error("Authentication required."));
+
+    render(<App />);
+
+    expect(await screen.findByText("Sign up")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Email"), { target: { value: "User@Example.com" } });
+    fireEvent.change(screen.getByPlaceholderText("Invitation code"), { target: { value: "open-sesame" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enter" }));
+
+    await waitFor(() => expect(clientMock.signupPublicUser).toHaveBeenCalledWith("User@Example.com", "open-sesame"));
+    await waitFor(() => expect(clientMock.getSessionSnapshot).toHaveBeenCalledWith("session-1"));
+    expect(await screen.findByTestId("bros-panel")).toBeInTheDocument();
   });
 
   it("keeps shell snapshot bros visible when the Bros page refresh fails", async () => {

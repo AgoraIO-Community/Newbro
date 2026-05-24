@@ -222,3 +222,4 @@ Short log of important design decisions and changes for Newbro.
 - Added `newbro invite create` for hosted operators and a Bro Detail waiting-executor path that creates or reveals a copyable local Codex node command for the current user-owned Bro.
 - Changed the public deployment workflow from host Python/systemd/rsync to a GHCR Docker image deployed on the VPS with Docker Compose, while keeping runtime secrets mounted from `/root/.newbro`.
 - Added Caddy as a managed Docker Compose service for the public deployment path, terminating HTTPS on `80/443` and reverse-proxying to the Newbro container on `8000`.
+- Changed public onboarding from per-user invite codes to open self-signup gated by `NEWBRO_SIGNUP_INVITE_CODE`, with email as a required label and each signup creating a separate user.

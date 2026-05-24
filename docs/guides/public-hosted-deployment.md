@@ -52,6 +52,7 @@ Configure at least:
 - `SYNAPSE_CONNECTOR_INTERNAL_TOKEN` when a connector process calls back into
   protected Newbro session APIs
 - `SYNAPSE_PUBLIC_COOKIE_SECURE=true` when serving over HTTPS
+- `NEWBRO_SIGNUP_INVITE_CODE` as the shared signup access code
 
 Users do not provide OpenAI or Agora keys for the first public path.
 
@@ -64,7 +65,7 @@ apt-get install -y docker.io docker-compose-v2
 systemctl enable --now docker
 ```
 
-Create invite codes through the running container:
+Legacy invite codes can still be created through the running container:
 
 ```bash
 cd /opt/newbro
@@ -72,19 +73,22 @@ docker compose exec newbro newbro invite create
 docker compose exec newbro newbro invite create friend-code --email user@example.com
 ```
 
-The command prints the invite code. The public auth database lives under
+The command prints the invite code. Normal public onboarding uses
+`NEWBRO_SIGNUP_INVITE_CODE` instead. The public auth database lives under
 `~/.newbro/public_auth.sqlite3` by default.
 
 ## User Setup
 
-Invited users only need:
+Users only need:
 
 1. a browser
-2. an invite code
-3. microphone permission
+2. an email address
+3. the shared invitation code
+4. microphone permission
 
-After invite redemption, Newbro bootstraps a user-owned session and default Bro,
-then opens Bro Detail directly.
+After signup, Newbro bootstraps a user-owned session and default Bro, then opens
+Bro Detail directly. Signing up again with the same email creates a separate
+user because email is only a label in this first public path.
 
 Real Codex execution still requires the user's detached local executor node.
 When a sent draft is waiting for execution, Bro Detail shows a copyable local
@@ -119,6 +123,7 @@ Required GitHub secrets:
 - `NEWBRO_DEPLOY_PATH`
 - `NEWBRO_DEPLOY_SSH_KEY`
 - `NEWBRO_PUBLIC_BASE_URL`
+- `NEWBRO_SIGNUP_INVITE_CODE`
 - optional `NEWBRO_DEPLOY_PORT`
 
 Do not put OpenAI or Agora secrets into GitHub Actions build variables. They
@@ -159,7 +164,7 @@ curl -i https://newbro.example.com/api/connectors/agora-convoai/health
 
 Then verify from a browser:
 
-- invite redemption works
+- signup with the shared invitation code works
 - bootstrap opens Bro Detail directly
 - voice starts from Bro Detail
 - session websocket connects

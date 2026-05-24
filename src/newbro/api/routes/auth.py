@@ -19,6 +19,11 @@ class RedeemInviteRequest(BaseModel):
     code: str
 
 
+class SignupRequest(BaseModel):
+    email: str
+    code: str
+
+
 class AuthMeResponse(BaseModel):
     user: PublicUser
 
@@ -39,6 +44,21 @@ async def redeem_invite(
     store = request.app.state.public_auth_store
     try:
         redeemed = await store.redeem_invite(body.code)
+    except PublicAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    set_public_session_cookie(response, redeemed.raw_token)
+    return AuthMeResponse(user=redeemed.user)
+
+
+@router.post("/auth/signup", response_model=AuthMeResponse)
+async def signup(
+    body: SignupRequest,
+    request: Request,
+    response: Response,
+) -> AuthMeResponse:
+    store = request.app.state.public_auth_store
+    try:
+        redeemed = await store.signup_with_fixed_code(email=body.email, code=body.code)
     except PublicAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     set_public_session_cookie(response, redeemed.raw_token)

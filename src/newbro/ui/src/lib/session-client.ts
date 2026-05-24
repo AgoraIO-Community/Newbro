@@ -130,6 +130,15 @@ export async function redeemInvite(code: string): Promise<AuthMeResponse> {
   return (await ensureOk(response)).json();
 }
 
+export async function signupPublicUser(email: string, code: string): Promise<AuthMeResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/auth/signup`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, code }),
+  });
+  return (await ensureOk(response)).json();
+}
+
 export async function getCurrentUser(): Promise<AuthMeResponse> {
   const response = await fetch(buildHttpUrl(`${API_PREFIX}/auth/me`));
   return (await ensureOk(response)).json();

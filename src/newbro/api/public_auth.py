@@ -21,6 +21,7 @@ from newbro.protocol import Persona
 
 PUBLIC_AUTH_DB = SYNAPSE_HOME_DIR / "public_auth.sqlite3"
 SESSION_COOKIE_NAME = "newbro_session"
+SIGNUP_INVITE_CODE_ENV = "NEWBRO_SIGNUP_INVITE_CODE"
 
 
 class PublicUser(BaseModel):
@@ -124,6 +125,21 @@ class PublicAuthStore:
                     (_hash_secret(code), _normalize_email(email), _timestamp()),
                 )
 
+    async def signup_with_fixed_code(self, *, email: str, code: str) -> RedeemedSession:
+        normalized_email = _normalize_email(email)
+        if not normalized_email:
+            raise PublicAuthError("Email is required.")
+        normalized_code = code.strip()
+        if not normalized_code:
+            raise PublicAuthError("Invitation code is required.")
+        expected_code = os.getenv(SIGNUP_INVITE_CODE_ENV, "").strip()
+        if not expected_code:
+            raise PublicAuthError("Self-signup is not configured.")
+        if not hmac.compare_digest(normalized_code, expected_code):
+            raise PublicAuthError("Invalid invitation code.")
+        async with self._lock:
+            return self._create_user_session(email=normalized_email)
+
     async def redeem_invite(self, code: str) -> RedeemedSession:
         normalized = code.strip()
         if not normalized:
@@ -167,6 +183,22 @@ class PublicAuthStore:
                     "INSERT INTO browser_sessions (token_hash, user_id, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
                     (_hash_secret(raw_token), public_user.user_id, now, now),
                 )
+        return RedeemedSession(user=public_user, raw_token=raw_token)
+
+    def _create_user_session(self, *, email: str | None) -> RedeemedSession:
+        with self._connect() as conn:
+            now = _timestamp()
+            user_id = f"user-{uuid4().hex[:12]}"
+            public_user = PublicUser(user_id=user_id, email=email)
+            conn.execute(
+                "INSERT INTO users (user_id, email, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                (user_id, email, now, now),
+            )
+            raw_token = secrets.token_urlsafe(32)
+            conn.execute(
+                "INSERT INTO browser_sessions (token_hash, user_id, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                (_hash_secret(raw_token), public_user.user_id, now, now),
+            )
         return RedeemedSession(user=public_user, raw_token=raw_token)
 
     async def user_for_token(self, raw_token: str | None) -> PublicUser | None:

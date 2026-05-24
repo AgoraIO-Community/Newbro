@@ -15,11 +15,11 @@ import {
   clearVoiceTarget,
   getConversationSnapshot,
   getSessionSnapshot,
-  redeemInvite,
   openSessionStream,
   sendSocketDraftAsrTurn,
   sendSocketMessage,
   setVoiceTarget,
+  signupPublicUser,
 } from "./lib/session-client";
 import { readSessionIdFromUrl, replaceSessionIdInUrl } from "./lib/session-url";
 import { BroDetailPage } from "./components/newbro/BroDetailPage";
@@ -116,37 +116,47 @@ function ShellLoadingPanel() {
   );
 }
 
-function InviteLoginPanel({
+function SignupPanel({
   error,
-  onRedeem,
+  onSignup,
 }: {
   error: string | null;
-  onRedeem: (code: string) => Promise<void>;
+  onSignup: (email: string, code: string) => Promise<void>;
 }) {
+  const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const canSubmit = email.trim().length > 0 && code.trim().length > 0 && !submitting;
   return (
     <div className="page-wash flex min-h-dvh items-center justify-center bg-[#f5f6f8] px-4 text-[#111827]">
       <div className="paper-panel w-full max-w-[420px] rounded-[30px] border border-white/80 px-6 py-6 shadow-[0_24px_54px_-40px_rgba(15,23,42,0.22)]">
-        <div className="text-[11px] uppercase tracking-[0.24em] text-[#8d5a62]">Invite access</div>
+        <div className="text-[11px] uppercase tracking-[0.24em] text-[#8d5a62]">Sign up</div>
         <div className="serif-flow mt-3 text-[32px] tracking-[-0.05em] text-foreground">Newbro</div>
         <form
           className="mt-5 space-y-3"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!code.trim() || submitting) return;
+            if (!canSubmit) return;
             setSubmitting(true);
-            void onRedeem(code.trim()).finally(() => setSubmitting(false));
+            void onSignup(email.trim(), code.trim()).finally(() => setSubmitting(false));
           }}
         >
           <input
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="Email"
+            className="command-field w-full px-4 py-3 text-[14px] outline-none"
+            autoComplete="email"
+            type="email"
+          />
+          <input
             value={code}
             onChange={(event) => setCode(event.target.value)}
-            placeholder="Invite code"
+            placeholder="Invitation code"
             className="command-field w-full px-4 py-3 text-[14px] outline-none"
             autoComplete="one-time-code"
           />
-          <button disabled={!code.trim() || submitting} className="nb-page-primary-action w-full" type="submit">
+          <button disabled={!canSubmit} className="nb-page-primary-action w-full" type="submit">
             {submitting ? "Opening..." : "Enter"}
           </button>
           {error ? <div className="text-[13px] leading-6 text-red-600">{error}</div> : null}
@@ -463,10 +473,10 @@ function useNewbroShellState() {
     return requestId;
   }, []);
 
-  const redeemInviteCode = useEffectEvent(async (code: string) => {
+  const signupWithCode = useEffectEvent(async (email: string, code: string) => {
     setAuthError(null);
     try {
-      await redeemInvite(code);
+      await signupPublicUser(email, code);
       if (!mountedRef.current) return;
       await bootstrapHostedUser();
       if (!mountedRef.current) return;
@@ -478,7 +488,7 @@ function useNewbroShellState() {
     } catch (error: unknown) {
       if (!mountedRef.current) return;
       startTransition(() => {
-        setAuthError(describeApiFailure(error, "Invite could not be redeemed."));
+        setAuthError(describeApiFailure(error, "Signup could not be completed."));
       });
     }
   });
@@ -506,7 +516,7 @@ function useNewbroShellState() {
     toggleVoiceMute: toggleMute,
     sendMessage,
     submitDraftAsrTurn,
-    redeemInviteCode,
+    signupWithCode,
     draftSession,
     latestDraftOutputEvent,
     chatMessages,
@@ -520,7 +530,7 @@ const NewbroShellContext = createContext<NewbroShellState | null>(null);
 export function NewbroShellProvider({ children }: { children: ReactNode }) {
   const value = useNewbroShellState();
   if (value.authRequired) {
-    return <InviteLoginPanel error={value.authError} onRedeem={value.redeemInviteCode} />;
+    return <SignupPanel error={value.authError} onSignup={value.signupWithCode} />;
   }
   return (
     <NewbroShellContext.Provider value={value}>

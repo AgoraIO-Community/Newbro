@@ -54,6 +54,54 @@ async def _redeem(client: AsyncClient, app, code: str):
     return response.json()["user"]["user_id"]
 
 
+async def _signup(client: AsyncClient, *, email: str, code: str):
+    response = await client.post("/api/auth/signup", json={"email": email, "code": code})
+    assert response.status_code == 200
+    return response.json()["user"]["user_id"]
+
+
+@pytest.mark.anyio
+async def test_fixed_code_signup_creates_authenticated_user(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEWBRO_SIGNUP_INVITE_CODE", "open-sesame")
+    app = _build_app(tmp_path)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        user_id = await _signup(client, email="User@Example.com", code="open-sesame")
+        me = await client.get("/api/auth/me")
+        assert me.status_code == 200
+        assert me.json()["user"] == {"user_id": user_id, "email": "user@example.com"}
+        assert client.cookies.get(SESSION_COOKIE_NAME)
+
+
+@pytest.mark.anyio
+async def test_fixed_code_signup_creates_new_user_for_duplicate_email(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEWBRO_SIGNUP_INVITE_CODE", "open-sesame")
+    app = _build_app(tmp_path)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as first:
+        first_user_id = await _signup(first, email="user@example.com", code="open-sesame")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as second:
+        second_user_id = await _signup(second, email="user@example.com", code="open-sesame")
+
+    assert first_user_id != second_user_id
+
+
+@pytest.mark.anyio
+async def test_fixed_code_signup_rejects_invalid_or_incomplete_requests(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEWBRO_SIGNUP_INVITE_CODE", "open-sesame")
+    app = _build_app(tmp_path)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        wrong_code = await client.post("/api/auth/signup", json={"email": "user@example.com", "code": "wrong"})
+        assert wrong_code.status_code == 401
+        assert wrong_code.json()["detail"] == "Invalid invitation code."
+
+        missing_email = await client.post("/api/auth/signup", json={"email": " ", "code": "open-sesame"})
+        assert missing_email.status_code == 401
+        assert missing_email.json()["detail"] == "Email is required."
+
+
 @pytest.mark.anyio
 async def test_invited_user_bootstraps_default_session_and_bro(tmp_path):
     app = _build_app(tmp_path)

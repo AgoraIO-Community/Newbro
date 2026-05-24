@@ -1,6 +1,7 @@
 # Public Onboarding and Ownership
 
-Newbro's first hosted public path is invite-gated and owner-scoped.
+Newbro's first hosted public path is self-signup gated by a shared access code
+and owner-scoped after signup.
 
 The public runtime still keeps Communication Brain, Execution Brain, shared
 blackboard, connectors, and detached executor nodes as separate boundaries. The
@@ -8,16 +9,21 @@ ownership layer only decides which browser user may access a runtime object.
 
 ## Accounts and Sessions
 
-An operator creates invite codes with:
+The hosted service configures one fixed signup code with
+`NEWBRO_SIGNUP_INVITE_CODE`. A browser user signs up with an email address and
+that code. The code is only an access gate; every successful signup creates a
+new lightweight user record, even if the email was used before.
+
+Operators may still create legacy invite codes with:
 
 ```bash
 newbro invite create
 newbro invite create friend-code --email user@example.com
 ```
 
-Redeeming an invite creates a lightweight user record and an HttpOnly
-`newbro_session` browser cookie. Browser routes for sessions, conversations,
-drafts, personas, executor nodes, and voice preparation require that cookie.
+Signup or legacy invite redemption creates an HttpOnly `newbro_session`
+browser cookie. Browser routes for sessions, conversations, drafts, personas,
+executor nodes, and voice preparation require that cookie.
 
 The bootstrap route creates or resumes the user's default runtime session,
 ensures a default Bro/persona, sets that Bro as the voice target, and lets the
