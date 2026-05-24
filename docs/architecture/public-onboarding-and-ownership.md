@@ -23,11 +23,14 @@ newbro invite create friend-code --email user@example.com
 
 Signup or legacy invite redemption creates an HttpOnly `newbro_session`
 browser cookie. Browser routes for sessions, conversations, drafts, personas,
-executor nodes, and voice preparation require that cookie.
+executor nodes, and voice preparation require that cookie. Logout clears the
+cookie, drops the current browser shell session state, and returns the browser
+to the signup gate.
 
 The bootstrap route creates or resumes the user's default runtime session,
-ensures a default Bro/persona, sets that Bro as the voice target, and lets the
-frontend open Bro Detail directly.
+ensures a default Bro/persona, and lets the frontend open Bro Detail directly.
+The frontend does not start voice or expose normal Bro Detail controls until
+that Bro is bound to a user-owned executor node.
 
 ## Owned Objects
 
@@ -51,15 +54,21 @@ rotate, bind, and delete those nodes.
 The hosted service owns OpenAI and Agora credentials. Browser voice starts from
 Bro Detail through same-origin connector routes under `/api/connectors/...`.
 
+Bro Detail is node-gated for runtime Bros. If the active Bro has no
+`executor_node_id`, the detail route shows an inline setup panel instead of the
+voice bar, draft controls, task controls, or normal workspace. The setup panel
+creates a private executor node, binds that node to the Bro, and shows a
+copyable `newbro executor run ...` command. The normal Bro Detail workspace
+unlocks only after the frontend refreshes state and observes the binding.
+
 Agora ConvoAI and STT browser prepare/start paths are owner-scoped to the
 current runtime session. Connector-to-runtime callbacks use the internal
 connector token instead of browser cookies.
 
 ## Waiting for Execution
 
-Draft confirmation may create a task before the user's local executor node is
-live. In that case the task stays in `waiting_executor`.
+Draft confirmation may create a task before the user's bound local executor
+node is live. In that case the task stays in `waiting_executor`.
 
-Bro Detail shows a "Connect Codex to run" state and can create or reveal a
-copyable local node command. Creating a command for an unbound Bro also binds
-the new private node to that Bro.
+For an already-bound Bro, Bro Detail shows a "Connect Codex to run" state and
+can reveal a copyable local node command for the bound node.

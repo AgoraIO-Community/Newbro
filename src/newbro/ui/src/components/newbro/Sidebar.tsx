@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Menu } from "lucide-react";
+import { LogOut, Menu, UserCircle } from "lucide-react";
 import { navItems } from "./data";
 import { NewbroLogo } from "./visual";
 import {
@@ -18,17 +18,56 @@ export function Sidebar({
   onNavigate,
   broCount,
   nodeCount,
+  accountLabel,
+  accountId,
+  onLogout,
+  logoutPending = false,
 }: {
   activePage: PageId;
   onNavigate: (page: PageId) => void;
   broCount: number;
   nodeCount: number;
+  accountLabel: string;
+  accountId?: string | null;
+  onLogout: () => void;
+  logoutPending?: boolean;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   function navigate(page: PageId) {
     onNavigate(page);
     setDrawerOpen(false);
+  }
+
+  function handleLogout() {
+    setDrawerOpen(false);
+    onLogout();
+  }
+
+  function renderAccount(testId: string) {
+    return (
+    <div className="rounded-xl border border-[#e5e7eb] bg-[#f1f3f5] p-2.5">
+      <div className="flex items-center gap-2.5">
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white text-[#6b7280]">
+          <UserCircle className="h-5 w-5" strokeWidth={1.9} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[12.5px] font-semibold text-[#111827]">{accountLabel}</div>
+          {accountId ? <div className="truncate text-[11px] text-[#9ca3af]">{accountId}</div> : null}
+        </div>
+      </div>
+      <button
+        type="button"
+        data-testid={testId}
+        disabled={logoutPending}
+        onClick={handleLogout}
+        className="mt-2 flex min-h-[36px] w-full items-center justify-center gap-2 rounded-lg border border-[#e5e7eb] bg-white px-3 text-[12px] font-semibold text-[#6b7280] transition hover:bg-[#fafafa] hover:text-[#111827] disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <LogOut className="h-3.5 w-3.5" strokeWidth={2} />
+        {logoutPending ? "Logging out..." : "Log out"}
+      </button>
+    </div>
+    );
   }
 
   const nav = (
@@ -91,15 +130,7 @@ export function Sidebar({
               <NewbroLogo />
             </SheetHeader>
             {nav}
-            <div className="mt-auto rounded-xl border border-[#e5e7eb] bg-[#f1f3f5] px-3 py-3">
-              <div className="flex items-center gap-2">
-                <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-[#6ea8ff] to-[#5eead4] text-[11px] font-bold text-[#111827]">MX</div>
-                <div>
-                  <div className="text-[12px] font-semibold text-[#111827]">Max Chen</div>
-                  <div className="text-[11px] text-[#9ca3af]">Pro · Online</div>
-                </div>
-              </div>
-            </div>
+            <div className="mt-auto">{renderAccount("mobile-sidebar-logout")}</div>
           </SheetContent>
         </Sheet>
         <NewbroLogo />
@@ -116,14 +147,7 @@ export function Sidebar({
         </div>
 
         <div className="mt-auto hidden lg:block">
-          <div className="flex cursor-default items-center gap-2.5 rounded-xl border border-[#e5e7eb] bg-[#f1f3f5] p-2.5 transition hover:bg-[#eceef1]">
-            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-[#6ea8ff] to-[#5eead4] text-[11px] font-bold text-[#111827]">MX</div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[12.5px] font-semibold text-[#111827]">Max Chen</div>
-              <div className="text-[11px] text-[#9ca3af]">Pro · Online</div>
-            </div>
-            <span className="h-2 w-2 rounded-full bg-[#10b981] shadow-[0_0_0_2px_rgba(16,185,129,0.2)]" />
-          </div>
+          {renderAccount("sidebar-logout")}
         </div>
       </aside>
     </>

@@ -120,7 +120,7 @@ const clientMock = vi.hoisted(() => ({
               name: "Forge",
               avatar: "rocket",
               base_prompt: "",
-              executor_node_id: null,
+              executor_node_id: "node-forge",
               bro_detail_session_id: "bro-detail-forge",
               status: "idle",
               current_task_id: null,
@@ -129,7 +129,19 @@ const clientMock = vi.hoisted(() => ({
           interaction_requests: [],
           attention_items: [],
           executor_capabilities: [],
-          executor_nodes: [],
+          executor_nodes: [
+            {
+              node_id: "node-forge",
+              name: "Workshop Mini",
+              enabled_executors: ["codex"],
+              connected_executors: ["codex"],
+              connection_status: "connected",
+              token_hint: "tok...1111",
+              last_connected_at: null,
+              last_seen_at: null,
+              acpx_agent: null,
+            },
+          ],
           draft_session: {
             id: "draft-session-1",
             current_revision_id: "draft-rev-1",
@@ -610,8 +622,140 @@ describe("Newbro voice shell", () => {
     render(<App />);
 
     const sidebar = await screen.findByTestId("newbro-sidebar");
-    expect(within(sidebar).getByRole("button", { name: "Bros" })).toHaveTextContent("2");
+    await waitFor(() => expect(within(sidebar).getByRole("button", { name: "Bros" })).toHaveTextContent("2"));
     expect(within(sidebar).getByRole("button", { name: "Nodes" })).toHaveTextContent("1");
+  });
+
+  it("shows the current account in the sidebar and logs out to the signup screen", async () => {
+    clientMock.bootstrapPublicUser.mockResolvedValueOnce({
+      user: { user_id: "user-1", email: "owner@example.com" },
+      session_id: "session-1",
+      default_persona_id: null,
+      default_bro_detail_session_id: null,
+    });
+
+    render(<App />);
+
+    const sidebar = await screen.findByTestId("newbro-sidebar");
+    expect(within(sidebar).getByText("owner@example.com")).toBeInTheDocument();
+
+    fireEvent.click(within(sidebar).getByTestId("sidebar-logout"));
+
+    await waitFor(() => expect(clientMock.logoutPublicUser).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText("Sign up")).toBeInTheDocument());
+    expect(socketHarness.socket.close).toHaveBeenCalled();
+    expect(window.location.search).toBe("");
+    expect(screen.queryByTestId("newbro-sidebar")).not.toBeInTheDocument();
+  });
+
+  it("blocks an unbound runtime Bro detail behind inline node setup", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce({
+      session_id: "session-existing",
+      tasks: [],
+      execution_sessions: [],
+      execution_runs: [],
+      execution_modes: [],
+      bindings: [],
+      summaries: [],
+      notification_candidates: [],
+      personas: [
+        {
+          persona_id: "persona-rook",
+          name: "Rook",
+          avatar: "bro",
+          base_prompt: "",
+          executor_node_id: null,
+          status: "idle",
+          current_task_id: null,
+        },
+      ],
+      interaction_requests: [],
+      attention_items: [],
+      executor_capabilities: [],
+      executor_nodes: [],
+    });
+    window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByTestId("bro-setup-gate")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Set up this Bro before talking" })).toBeInTheDocument();
+    expect(screen.queryByTestId("voice-session-start")).not.toBeInTheDocument();
+    expect(screen.queryByText("Current draft")).not.toBeInTheDocument();
+    expect(clientMock.setVoiceTarget).not.toHaveBeenCalled();
+  });
+
+  it("creates a node, binds it to an unbound Bro, then unlocks Bro detail after refresh", async () => {
+    const unboundSnapshot = {
+      session_id: "session-existing",
+      tasks: [],
+      execution_sessions: [],
+      execution_runs: [],
+      execution_modes: [],
+      bindings: [],
+      summaries: [],
+      notification_candidates: [],
+      personas: [
+        {
+          persona_id: "persona-rook",
+          name: "Rook",
+          avatar: "bro",
+          base_prompt: "",
+          executor_node_id: null,
+          status: "idle",
+          current_task_id: null,
+        },
+      ],
+      interaction_requests: [],
+      attention_items: [],
+      executor_capabilities: [],
+      executor_nodes: [],
+    };
+    const boundSnapshot = {
+      ...unboundSnapshot,
+      personas: [
+        {
+          ...unboundSnapshot.personas[0],
+          executor_node_id: "node-1",
+        },
+      ],
+      executor_nodes: [
+        {
+          node_id: "node-1",
+          name: "Local node",
+          enabled_executors: ["codex"],
+          connected_executors: [],
+          connection_status: "disconnected",
+          token_hint: "tok...0001",
+          last_connected_at: null,
+          last_seen_at: null,
+          acpx_agent: null,
+        },
+      ],
+    };
+    clientMock.getSessionSnapshot
+      .mockResolvedValueOnce(unboundSnapshot)
+      .mockResolvedValueOnce(boundSnapshot);
+    window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByTestId("bro-setup-create-node"));
+
+    await waitFor(() => expect(clientMock.createExecutorNode).toHaveBeenCalledWith("session-existing", {
+      name: "Rook local node",
+      enabled_executors: ["codex"],
+    }));
+    expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "persona-rook", {
+      executor_node_id: "node-1",
+    });
+    expect(await screen.findByText(/newbro executor run/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("bro-setup-open-detail"));
+
+    expect(await screen.findByText("Current draft")).toBeInTheDocument();
+    expect(screen.getByTestId("voice-session-start")).toBeInTheDocument();
+    await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "persona-rook"));
   });
 
 
@@ -2503,7 +2647,7 @@ describe("Newbro voice shell", () => {
           name: "Rook",
           avatar: "bro",
           base_prompt: "",
-          executor_node_id: null,
+          executor_node_id: "node-1",
           status: "busy",
           current_task_id: "task-waiting",
         },
@@ -2511,7 +2655,19 @@ describe("Newbro voice shell", () => {
       interaction_requests: [],
       attention_items: [],
       executor_capabilities: [],
-      executor_nodes: [],
+      executor_nodes: [
+        {
+          node_id: "node-1",
+          name: "Local node",
+          enabled_executors: ["codex"],
+          connected_executors: [],
+          connection_status: "disconnected",
+          token_hint: "tok...0001",
+          last_connected_at: null,
+          last_seen_at: null,
+          acpx_agent: null,
+        },
+      ],
     });
     window.history.replaceState({}, "", "/bros/persona-rook?sid=session-existing");
 
@@ -2520,13 +2676,9 @@ describe("Newbro voice shell", () => {
     const copyButton = await screen.findByRole("button", { name: "Copy local node command" });
     fireEvent.click(copyButton);
 
-    await waitFor(() => expect(clientMock.createExecutorNode).toHaveBeenCalledWith("session-existing", {
-      name: "Rook local node",
-      enabled_executors: ["codex"],
-    }));
-    expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "persona-rook", {
-      executor_node_id: "node-1",
-    });
+    await waitFor(() => expect(clientMock.revealExecutorNodeConnectCommand).toHaveBeenCalledWith("session-existing", "node-1"));
+    expect(clientMock.createExecutorNode).not.toHaveBeenCalled();
+    expect(clientMock.updatePersona).not.toHaveBeenCalled();
     expect(await screen.findByText(/newbro executor run/)).toBeInTheDocument();
   });
 

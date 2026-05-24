@@ -1,190 +1,111 @@
 <goal>
-Implement RFC 0014, "Minimal Public Onboarding for Hosted Newbro", as an adopted public-user v1 path.
-
-The deliverable is a working, tested, documented hosted Newbro experience where an invited user can open the Cloudflare-fronted HTTPS app, redeem/sign in with an invite, land directly in a per-user Bro Detail page, start voice with only browser microphone permission, draft/correct/confirm work, and connect a local executor node only when real Codex execution is needed.
-
-The deliverable also includes a repeatable GitHub Actions deployment path that deploys to a long-running Ubuntu VPS over SSH/rsync and runs Newbro through `newbro.service`, with Cloudflare used as public edge only.
+Implement authenticated UI logout and enforce a first-run Bro setup gate: a user cannot enter or use Bro Detail until the selected Bro has a user-owned executor node created and bound. The setup gate must live inline on the Bro Detail route, create a node, bind it to the Bro, and show the local `newbro executor run ...` command. Logout must be available from the sidebar account area and return the browser to the signup screen without stale session data.
 </goal>
 
 <context>
 Read first:
-- docs/rfcs/0014-minimal-public-onboarding.md
-- docs/rfcs/0013-newbro-v1.md
-- docs/guides/ubuntu-systemd.md
-- docs/guides/local-dev.md
-- docs/guides/cli.md
-- docs/guides/connector-host.md
-- docs/guides/agora-conversational-ai.md
-- docs/architecture/executors.md
-- docs/protocol/draft-to-execute.md
+- AGENTS.md project instructions in the repo root or conversation.
+- docs/architecture/public-onboarding-and-ownership.md
+- docs/guides/public-hosted-deployment.md
 - docs/memories.md
-- AGENTS.md project instructions in the conversation or repo root if present
-
-Inspect current implementation areas before editing:
-- src/newbro/api/app.py
-- src/newbro/api/routes/
-- src/newbro/api/ws/stream.py
-- src/newbro/api/ws/executors.py
-- src/newbro/runtime/container.py
-- src/newbro/runtime/session.py
-- src/newbro/runtime/config.py
-- src/newbro/communication/persona_pool.py
-- src/newbro/executors/node/registry.py
-- src/newbro/runtime/executor_node_manager.py
-- src/newbro/connectors/voice/agora_convoai/
-- src/newbro/ui/src/App.tsx
 - src/newbro/ui/src/NewbroShell.tsx
-- src/newbro/ui/src/routes/
+- src/newbro/ui/src/components/newbro/Sidebar.tsx
 - src/newbro/ui/src/components/newbro/BroDetailPage.tsx
-- src/newbro/ui/src/components/newbro/BrosPage.tsx
+- src/newbro/ui/src/components/newbro/TopVoiceBar.tsx
 - src/newbro/ui/src/components/newbro/NodesPage.tsx
 - src/newbro/ui/src/lib/session-client.ts
-- .github/workflows/
+- src/newbro/ui/src/__tests__/App.test.tsx
+- src/newbro/api/routes/auth.py
+- src/newbro/api/routes/personas.py
+- src/newbro/api/routes/executor_nodes.py
+- src/newbro/api/routes/sessions.py
 
 Useful discovery commands:
-- rg "create_session|get_session|sessions/|stream|executor-nodes|personas|draft|connectors|agora-convoai" src/newbro tests docs
-- rg "cookie|auth|invite|user|owner|session_id|node_id|token|raw_token|set_cookie|Depends|WebSocket" src/newbro tests docs
-- rg "newbro service install|newbro.service|rsync|ssh|Cloudflare|Vercel|Workers|Pages|deploy" .github docs README.md scripts src/newbro
-- rg "VITE_API_BASE_URL|VITE_CONNECTOR_BASE_URL|createSession|bootstrap|BroDetail|BrosPage|NodesPage" src/newbro/ui/src
+- rg -n "logout|logoutPublicUser|newbro_session|auth/logout" src/newbro/ui/src src/newbro/api tests docs
+- rg -n "executor_node_id|createExecutorNode|updatePersona|revealExecutorNodeConnectCommand|buildExecutorRunCommand" src/newbro/ui/src src/newbro/api tests
+- rg -n "BroDetailShellPage|BroDetailPage|voice-session-start|TopVoiceBar|VoicePad|setVoiceTarget" src/newbro/ui/src
 </context>
 
 <constraints>
-Source-of-truth and scope constraints:
-- RFC 0014 is the product target for this goal, but stable docs and current code remain authoritative until implementation adopts the behavior.
-- Preserve RFC 0013 quiet communication behavior. Do not change the draft-to-execute interaction model except where needed to add public onboarding, auth ownership, and deployment.
-- Keep Communication Brain and Execution Brain separate.
-- Keep connector transport thin. Browser connector routes may require authenticated owner context, but connector/vendor callbacks must not depend on browser cookies.
-- Treat protocol models as the source of truth.
-- Runtime V1 may remain single-executor in behavior, but schemas and ownership should not block future multi-executor support.
-
-Hard non-goals:
-- Do not add quotas, usage limits, billing, throttling, or rate-limit systems for this goal.
-- Do not add anonymous public access.
-- Do not build a hosted shared Codex executor fleet.
-- Do not require user-provided OpenAI or Agora keys for first-run voice.
-- Do not replace the detached executor-node architecture.
-- Do not rework Newbro into a Cloudflare Workers-native application.
-- Do not make Cloudflare Pages or Vercel the default public deployment shape.
-- Do not turn `/chat/completions` compatibility paths into the runtime source of truth.
-- Do not add hard-coded demo rules or transcript keyword shortcuts to make the user flow appear to work.
-
-Product constraints:
-- First public launch is invite-gated.
-- Public safety for this goal relies on invite-only access plus strict owner scoping, not quotas or limits.
-- Server-managed OpenAI and Agora credentials must remain server-side and must not be exposed to browser bundles or API responses.
-- A new invited user must land directly in Bro Detail after bootstrap, not a Bro picker or global workspace.
-- The default Bro/persona must be per-user, not global.
-- Voice-first usage must work without local install.
-- Real Codex execution requires a user-owned detached local executor node.
-- If a user confirms a draft without a live bound node, the task must enter or remain in a clear waiting-for-executor state and the UI must show how to connect a local node.
-
-Persistence and ownership constraints:
-- Add durable public-user ownership storage. Prefer a small SQLite-backed store under `~/.newbro` unless existing repo patterns clearly indicate a better local durable store.
-- User, invite, browser session, runtime session ownership, persona/Bro ownership, executor-node ownership, and node-token reveal/rotation must be represented durably or derived from durable owner-scoped records.
-- Existing service-level file stores for personas and executor nodes must not remain globally shared for public-user paths.
-- Websocket streams must enforce the same owner boundary as HTTP routes.
-
-Deployment constraints:
-- The adopted v1 deployment is GitHub Actions -> SSH/rsync -> Ubuntu VPS -> `newbro.service` / `newbro start`.
-- Cloudflare is DNS/HTTPS/proxy/Tunnel edge only, not the Newbro runtime host.
-- Runtime secrets and `~/.newbro/.env` / `~/.newbro/config.yaml` live on the VPS.
-- GitHub Actions must not bake OpenAI or Agora secrets into frontend build output.
+- Preserve Communication Brain, Execution Brain, Shared Blackboard, and transport boundaries.
+- Treat protocol models as source of truth; do not add UI-only fake node state.
+- Keep executor nodes user-owned and Bro bindings owner-scoped.
+- Do not change the backend auth/logout route unless a bug is discovered; `POST /api/auth/logout` already exists.
+- Do not introduce quotas, rate limits, billing, hard-coded transcript rules, or demo shortcuts.
+- Do not expose node tokens except through the existing create/reveal credential flows.
+- Do not require a Bro picker or global home path before setup; the user may still route directly to Bro Detail, but Bro Detail must show the setup wizard until bound.
+- Do not allow voice Start, mic controls, drafting, or send-from-Bro-detail interactions before setup is complete.
+- Existing waiting-executor task guidance may remain, but the new setup gate is required before normal Bro Detail usage.
+- Keep UI consistent with existing Newbro visual patterns; avoid nested cards and avoid marketing/landing-page copy.
+- Update stable docs and docs/memories.md for adopted behavior changes.
 </constraints>
 
 <done_when>
-- A new durable auth/ownership layer exists for invite redemption, browser sessions, users, session ownership, per-user default Bro/persona ownership, and executor-node ownership.
-- Browser-facing HTTP routes for sessions, conversations, drafts, personas, executor nodes, and browser-started connector prepare/start paths require authenticated user context and enforce owner scoping.
-- Browser websocket session streams reject unauthenticated users and reject users who do not own the session.
-- Executor-node websocket registration still authenticates detached nodes by node id and token, and node credentials are scoped so User A cannot use, reveal, rotate, bind, delete, or list User B's node.
-- Invite flow exists with concrete API behavior for `POST /api/auth/invites/redeem`, `GET /api/auth/me`, and `POST /api/auth/logout`, or equivalent routes documented in stable docs and tests.
-- Bootstrap flow exists with concrete API behavior for `GET /api/me/bootstrap`, or an equivalent route documented in stable docs and tests. It returns enough state for the UI to enter Bro Detail directly.
-- First authenticated bootstrap creates or resumes a user-owned default session and per-user default Bro/persona.
-- The UI routes authenticated first-run users directly to Bro Detail and does not require a Bro picker or node setup before voice use.
-- Voice can be started from Bro Detail for an authenticated user without local install, using server-managed OpenAI and Agora configuration only.
-- Server-managed OpenAI and Agora secrets are not present in frontend source-visible configuration, browser responses, generated build assets, or logs produced by normal API responses.
-- Confirming a draft without a live bound executor node creates or preserves a waiting-for-executor task state and shows a clear UI path with a copyable local node command.
-- The generated local node command uses the hosted public base URL and `newbro executor run --base-url ... --node-id ... --token ...`; it must not require repo checkout for the user-facing command.
-- Connecting the user's detached node resumes or enables waiting execution without exposing another user's sessions or node credentials.
-- A GitHub Actions workflow exists for production deployment to an Ubuntu VPS using SSH/rsync, then `./newbro service install` or `systemctl restart newbro.service`.
-- Deployment docs describe required GitHub secrets, VPS prerequisites, Cloudflare DNS/proxy or Tunnel shape, runtime config location, and post-deploy health checks.
-- Stable docs are updated for adopted behavior: public onboarding, auth/session ownership, executor-node ownership, service-hosted voice setup, and Cloudflare-fronted VPS deployment.
-- `docs/memories.md` contains a short factual note for the adopted public onboarding/deployment behavior.
-- RFC 0014 remains proposal/history and is not rewritten to pretend it is the stable runtime contract.
-- Tests prove User A cannot access User B's session snapshot, conversation, draft, personas, node list, node token reveal/rotation, browser connector prepare path, or session websocket stream.
-- Tests prove an unauthenticated browser request to protected routes returns 401 or an equivalent explicit auth failure.
-- Tests prove a new invited user bootstrap creates/resumes a default session and per-user default Bro/persona.
-- Tests prove no quota/rate-limit/usage-limit system was introduced for this goal by auditing implementation code and docs for quota/limit language, with any unrelated existing uses explained.
-- Verification succeeds with focused backend auth/ownership tests, focused connector/voice route tests, focused frontend onboarding tests, frontend build, and the full backend test suite.
+- `GOAL.md` remains a focused contract for this task and no stale RFC 0014 deployment scope remains in it.
+- Sidebar desktop and mobile drawer replace the fake “Max Chen / Pro · Online” footer with the current authenticated user email when available, otherwise user id, plus a visible `Log out` button using an appropriate icon.
+- Clicking `Log out` calls `logoutPublicUser()`, stops any active voice session before logout, clears shell/session UI state, removes `sid` from the URL, closes stale sockets if needed, and shows the signup screen.
+- UI tests prove logout calls `logoutPublicUser`, removes the `sid` query param, returns to the signup panel, and does not leave stale Bros/nodes/session UI visible.
+- Bro Detail routes are setup-gated when the active runtime Bro has no `executorNodeId`: the normal Bro Detail workspace, voice bar, voice Start, mic pad, draft controls, and task interaction UI are not shown as usable controls.
+- The setup gate is inline on Bro Detail and clearly guides the user to create and bind a node for the current Bro.
+- The setup action uses existing APIs: `createExecutorNode(sessionId, { name: "<Bro name> local node", enabled_executors: ["codex"] })`, then `updatePersona(sessionId, bro.id, { executor_node_id: issue.node.node_id })`, then `buildExecutorRunCommand(...)`.
+- After setup succeeds, the UI shows a copyable local executor command and transitions to the normal Bro Detail experience only after the Bro binding is reflected locally or in the refreshed shell snapshot.
+- If the Bro already has a bound node, Bro Detail behaves as before and does not show the setup gate.
+- If setup fails, the gate shows a clear error and does not partially unlock Bro Detail.
+- If the user is logged out or unauthenticated, setup APIs are not called and the signup screen remains the auth path.
+- Stable docs describe that talking to a Bro requires creating and binding a local executor node first, and logout is available from the sidebar account area.
+- docs/memories.md has a short factual note for the adopted logout and node-gated Bro Detail behavior.
+- Focused frontend tests and frontend build pass.
+- If backend behavior is touched, focused backend tests and full backend tests pass.
 </done_when>
 
 <workflow>
-1. Check git status and preserve unrelated user changes.
-2. Re-read RFC 0014 carefully. Extract all hard decisions: invite-only, no quotas/limits, per-user Bro Detail, managed credentials, detached node only for execution, Cloudflare edge only, SSH/rsync VPS deploy.
-3. Read stable docs and current code listed in `<context>` before implementing.
-4. Inspect existing runtime/session/persona/node persistence and route boundaries. Identify current global state that must become owner-scoped.
-5. Design the smallest durable auth/ownership substrate:
-   - invite records
-   - user records
-   - browser session records
-   - runtime session ownership
-   - default Bro/persona ownership
-   - executor-node ownership
-   Use SQLite under `~/.newbro` unless existing repo patterns strongly justify a different durable local store.
-6. Implement auth helpers/middleware/dependencies for HTTP routes and websocket routes.
-7. Add invite redemption, current-user, logout, and bootstrap APIs.
-8. Scope session creation/lookup, conversation, drafts, personas, and executor-node APIs by authenticated owner.
-9. Scope browser-started connector prepare/start paths by authenticated session/Bro owner while keeping vendor callback paths functional without browser cookies.
-10. Update runtime/bootstrap behavior so authenticated first-run users get a default session and per-user default Bro/persona.
-11. Update the UI login/invite/bootstrap path so users land directly in Bro Detail after authentication.
-12. Update Bro Detail and node UX so voice works immediately and execution without a live node shows waiting-for-executor plus a copyable local node command.
-13. Add the GitHub Actions SSH/rsync VPS deployment workflow. Keep OpenAI/Agora runtime secrets on the VPS, not in frontend build env.
-14. Update stable docs for the adopted public onboarding, deployment, auth/ownership, and service-hosted voice behavior. Append a short factual note to `docs/memories.md`.
-15. Add focused backend tests for auth, ownership, bootstrap, invite redemption, protected routes, websocket rejection, and node ownership.
-16. Add focused connector tests for authenticated browser connector paths and unauthenticated/vendor callback separation.
-17. Add focused frontend tests for invite/bootstrap/direct Bro Detail and waiting-for-executor/node command UX.
-18. Run focused tests, then full backend tests, then frontend checks. Fix failures in scope.
-19. Run audits for forbidden scope drift: quotas/limits, serverless/Workers default deployment, separate frontend default deployment, secret exposure, and hard-coded demo shortcuts.
+1. Check git status and preserve unrelated changes.
+2. Re-read the context files and inspect existing tests around logout mocks, Bro Detail voice start, Bro node creation, and executor binding.
+3. Add current-user state to the shell if not already exposed from bootstrap/signup responses. Use the existing authenticated user returned by bootstrap/auth APIs; do not create a new identity endpoint.
+4. Implement logout in `useNewbroShellState`:
+   - stop active voice if needed;
+   - call `logoutPublicUser()`;
+   - close or invalidate active session stream state;
+   - clear shell snapshot data, messages, draft state, warnings/errors that would expose old data;
+   - call `replaceSessionIdInUrl(null)`;
+   - set auth-required state so the signup panel appears.
+5. Update `ShellFrame` and `Sidebar` props so the sidebar receives current account display text, logout state, and an `onLogout` action.
+6. Replace the fake sidebar account footer in both desktop and mobile drawer with current account info plus a `Log out` button.
+7. Implement a Bro Detail setup gate for runtime Bros without `executorNodeId`.
+   - The gate must be rendered by `BroDetailShellPage` or `BroDetailPage` before normal detail controls are usable.
+   - Prefer reusing the existing `handlePrepareLocalNodeCommand` logic from `BroDetailPage`; refactor if needed so it is available to the setup gate without duplication.
+   - The setup gate creates the node, binds the Bro, builds/copies the command, and then unlocks normal detail when binding state is present.
+8. Ensure `ShellVoiceBar`, `VoicePad`, draft send/clear, and normal detail panels are not available before setup completion.
+9. Add tests:
+   - logout from sidebar;
+   - mobile drawer logout if practical with existing test utilities;
+   - unbound Bro Detail shows setup gate and hides/disables normal voice controls;
+   - setup gate creates node, binds persona, shows command, and unlocks normal detail;
+   - already-bound Bro Detail skips setup gate.
+10. Update stable docs and docs/memories.md.
+11. Run focused UI tests, then frontend build. Run backend tests only if backend files changed.
+12. Review final diff for unrelated churn, stale fake account text, stale docs, and any hidden pre-setup voice controls.
 </workflow>
 
 <verification_loop>
-Focused backend checks:
-- .venv/bin/python -m pytest tests/unit
-- .venv/bin/python -m pytest tests/integration/api
-- If new auth/ownership tests are in narrower files, run those files first before broader suites.
-
-Focused connector checks:
-- .venv/bin/python -m pytest tests/unit/connectors/voice/agora_convoai
-
-Full backend check:
-- .venv/bin/python -m pytest
-
-Frontend checks:
-- cd src/newbro/ui && bun run test
+Focused frontend checks:
+- cd src/newbro/ui && bun run test src/__tests__/App.test.tsx
 - cd src/newbro/ui && bun run build
 
-Deployment workflow checks:
-- Review the new GitHub Actions workflow for required secrets and commands.
-- Validate workflow syntax as far as local tooling permits.
-- If `act` or GitHub workflow validation is unavailable, document the manual review and any unverified assumptions.
+Backend checks, only if backend files changed:
+- .venv/bin/python -m pytest tests/integration/api/test_public_auth_onboarding.py
+- .venv/bin/python -m pytest
 
-Security/constraint audits:
-- rg -n "quota|rate.?limit|usage.?limit|billing|throttle" src docs .github
-- rg -n "Workers|Cloudflare Pages|Vercel|VITE_API_BASE_URL|VITE_CONNECTOR_BASE_URL" docs .github src/newbro/ui/src
-- rg -n "OPENAI_API_KEY|AGORA|APP_CERTIFICATE|APP_CERT" src/newbro/ui .github
-- rg -n "keyword|phrase|hard.?code|demo" src/newbro/runtime src/newbro/connectors src/newbro/api tests
-- Inspect every hit. Hits are acceptable only when they are documentation of non-goals, existing unrelated constants, test assertions against shortcuts, or non-secret public configuration.
+Manual browser smoke check when feasible:
+- Open hosted/local UI while authenticated.
+- Confirm sidebar shows the signed-in email or user id and a Log out button.
+- Click Log out and confirm the signup panel appears and `sid` is removed.
+- Sign up/log in again and open a Bro with no bound node.
+- Confirm Bro Detail shows only the setup wizard and no usable voice/draft controls.
+- Click setup, confirm a node is created, the Bro is bound, and the local executor command is shown/copyable.
+- Confirm the normal Bro Detail/voice UI appears only after setup.
 
-Manual local smoke check when feasible:
-- Start the backend/UI with service-hosted connector routes.
-- Redeem an invite.
-- Confirm `/api/auth/me` returns the user and bootstrap creates/resumes a default session plus Bro.
-- Confirm the browser opens Bro Detail directly.
-- Start voice from Bro Detail without local node setup.
-- Confirm draft/correction/confirmation still follows RFC 0013 behavior.
-- Confirm sending/confirming without a live node shows waiting-for-executor and a copyable node command.
-- Connect a local executor node with the generated command and confirm the node appears only for the owning user.
-
-If any check cannot run, document exactly why, what was run instead, and what risk remains. Do not claim the goal is complete with unexplained failures.
+If a check cannot run, document why, what was run instead, and the remaining risk.
 </verification_loop>
 
 <execution_rules>
@@ -196,24 +117,16 @@ If any check cannot run, document exactly why, what was run instead, and what ri
 - Batch independent file reads in parallel when available.
 - Run focused tests before broad tests.
 - Do not paper over failures.
-- Do not widen scope beyond RFC 0014 public onboarding, owner scoping, same-origin hosted voice, deferred local executor node UX, deployment workflow, docs, and tests.
-- Do not introduce quotas, usage limits, rate limits, billing, hosted shared executor fleets, Cloudflare Workers-native runtime migration, or separate frontend deployment as default.
-- Do not expose server-managed OpenAI or Agora credentials to the browser or GitHub Actions build output.
-- Do not implement semantic transcript heuristics, hard-coded demo rules, or fake success paths.
-- Update stable docs and `docs/memories.md` only for adopted implementation-relevant behavior.
+- Do not widen scope beyond UI logout and node-gated Bro Detail setup.
 - Keep final answer concise.
 </execution_rules>
 
 <output_contract>
 Final output must include:
-- A concise summary of the public onboarding path implemented.
-- A concise summary of the auth/ownership model and persistence choice.
-- A concise summary of how direct Bro Detail bootstrap works.
-- A concise summary of how voice remains zero-config for users and how real execution is deferred to local nodes.
-- A concise summary of the GitHub Actions -> SSH/rsync -> Ubuntu VPS -> Cloudflare edge deployment path.
-- Key files changed, grouped by backend/auth, runtime ownership, connector, UI, deployment, docs, and tests.
+- Summary of logout UI behavior.
+- Summary of Bro Detail setup-gate behavior.
+- Key files changed, grouped by UI, docs, and tests.
 - Verification commands run and outcomes.
-- Security/constraint audit results, including no quota/limit implementation and no secret exposure.
-- Any skipped checks, blockers, or residual risks.
-- A clear completion signal only when every `done_when` item is satisfied or explicitly documented as out of scope.
+- Any skipped checks or residual risks.
+- A clear completion signal only when every `done_when` item is satisfied or explicitly documented.
 </output_contract>

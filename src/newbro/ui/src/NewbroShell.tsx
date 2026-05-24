@@ -11,15 +11,21 @@ import {
   type ReactNode,
 } from "react";
 import {
+  buildExecutorRunCommand,
   bootstrapPublicUser,
   clearVoiceTarget,
+  createExecutorNode,
   getConversationSnapshot,
+  getCurrentUser,
   getSessionSnapshot,
+  logoutPublicUser,
   openSessionStream,
   sendSocketDraftAsrTurn,
   sendSocketMessage,
   setVoiceTarget,
   signupPublicUser,
+  updatePersona,
+  type PublicUser,
 } from "./lib/session-client";
 import { readSessionIdFromUrl, replaceSessionIdInUrl } from "./lib/session-url";
 import { BroDetailPage } from "./components/newbro/BroDetailPage";
@@ -31,7 +37,8 @@ import { Sidebar, type PageId } from "./components/newbro/Sidebar";
 import { TopVoiceBar } from "./components/newbro/TopVoiceBar";
 import { buildBroCardModels, buildBroTaskRecords } from "./components/newbro/adapters";
 import { useVoiceSession } from "./components/newbro/useVoiceSession";
-import { WindowDots } from "./components/newbro/visual";
+import { BroDetailHeader, WindowDots } from "./components/newbro/visual";
+import { Check, Copy, LoaderCircle } from "lucide-react";
 import type {
   DraftOutputCompletedStreamEvent,
   DraftOutputDeltaStreamEvent,
@@ -46,6 +53,7 @@ import type {
   Task,
   TaskSummary,
 } from "./types";
+import type { BroCardModel } from "./components/newbro/types";
 
 export type PageNavigator = (page: PageId) => void;
 export type BroNavigator = (broId: string) => void;
@@ -223,6 +231,8 @@ function useNewbroShellState() {
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [activeShellSessionId, setActiveShellSessionId] = useState<string | null>(null);
   const [defaultPersonaId, setDefaultPersonaId] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<PublicUser | null>(null);
+  const [logoutPending, setLogoutPending] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [hasLoadedShellSnapshot, setHasLoadedShellSnapshot] = useState(false);
@@ -245,6 +255,24 @@ function useNewbroShellState() {
     setDraftSession(snapshot.draft_session ?? null);
     setHasLoadedShellSnapshot(true);
     setShellError(null);
+  }
+
+  function clearShellSessionState() {
+    setRuntimePersonas([]);
+    setExecutorNodes([]);
+    setTasks([]);
+    setExecutionRuns([]);
+    setTaskSummaries([]);
+    setAgentEvents([]);
+    setActiveShellSessionId(null);
+    setDefaultPersonaId(null);
+    setCurrentUser(null);
+    setHasLoadedShellSnapshot(false);
+    setShellError(null);
+    setShellWarning(null);
+    setChatMessages([]);
+    setDraftSession(null);
+    setLatestDraftOutputEvent(null);
   }
 
   const loadShellSession = useEffectEvent(async (sessionId: string) => {
@@ -273,9 +301,17 @@ function useNewbroShellState() {
 
   const bootstrapHostedUser = useEffectEvent(async () => {
     const bootstrap = await bootstrapPublicUser();
+    setCurrentUser(bootstrap.user);
     setDefaultPersonaId(bootstrap.default_persona_id);
     replaceSessionIdInUrl(bootstrap.session_id);
     await loadShellSession(bootstrap.session_id);
+  });
+
+  const refreshShellSession = useEffectEvent(async () => {
+    if (!activeShellSessionId) {
+      return;
+    }
+    await loadShellSession(activeShellSessionId);
   });
 
   useEffect(() => {
@@ -286,10 +322,14 @@ function useNewbroShellState() {
       if (requestedSessionId) {
         try {
           await loadShellSession(requestedSessionId);
+          const me = await getCurrentUser();
           if (!mountedRef.current) {
             return;
           }
-          startTransition(() => setShellWarning(null));
+          startTransition(() => {
+            setCurrentUser(me.user);
+            setShellWarning(null);
+          });
           return;
         } catch {
           try {
@@ -309,10 +349,7 @@ function useNewbroShellState() {
               startTransition(() => {
                 setAuthRequired(true);
                 setAuthError(null);
-                setActiveShellSessionId(null);
-                setHasLoadedShellSnapshot(false);
-                setShellWarning(null);
-                setShellError(null);
+                clearShellSessionState();
               });
               return;
             }
@@ -343,10 +380,7 @@ function useNewbroShellState() {
           startTransition(() => {
             setAuthRequired(true);
             setAuthError(null);
-            setActiveShellSessionId(null);
-            setHasLoadedShellSnapshot(false);
-            setShellWarning(null);
-            setShellError(null);
+            clearShellSessionState();
           });
           return;
         }
@@ -493,11 +527,47 @@ function useNewbroShellState() {
     }
   });
 
+  const logout = useEffectEvent(async () => {
+    if (logoutPending) {
+      return;
+    }
+    setLogoutPending(true);
+    setShellError(null);
+    try {
+      try {
+        await stop();
+      } catch {
+        // Keep logout authoritative even if local voice teardown already failed.
+      }
+      socketRef.current?.close();
+      socketRef.current = null;
+      await logoutPublicUser();
+      if (!mountedRef.current) return;
+      replaceSessionIdInUrl(null);
+      startTransition(() => {
+        clearShellSessionState();
+        setAuthRequired(true);
+        setAuthError(null);
+      });
+    } catch (error: unknown) {
+      if (!mountedRef.current) return;
+      startTransition(() => {
+        setShellError(describeApiFailure(error, "Logout could not be completed."));
+      });
+    } finally {
+      if (mountedRef.current) {
+        setLogoutPending(false);
+      }
+    }
+  });
+
   return {
     bros,
     voiceSession,
     activeShellSessionId,
     defaultPersonaId,
+    currentUser,
+    logoutPending,
     authRequired,
     authError,
     hasLoadedShellSnapshot,
@@ -517,6 +587,8 @@ function useNewbroShellState() {
     sendMessage,
     submitDraftAsrTurn,
     signupWithCode,
+    logout,
+    refreshShellSession,
     draftSession,
     latestDraftOutputEvent,
     chatMessages,
@@ -583,6 +655,10 @@ function ShellFrame({
   onGlobalMessageDismiss,
   broCount,
   nodeCount,
+  accountLabel,
+  accountId,
+  onLogout,
+  logoutPending,
   children,
 }: {
   activePage: PageId;
@@ -591,6 +667,10 @@ function ShellFrame({
   onGlobalMessageDismiss?: () => void;
   broCount: number;
   nodeCount: number;
+  accountLabel: string;
+  accountId?: string | null;
+  onLogout: () => void;
+  logoutPending?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -602,6 +682,10 @@ function ShellFrame({
           onNavigate={onNavigate}
           broCount={broCount}
           nodeCount={nodeCount}
+          accountLabel={accountLabel}
+          accountId={accountId}
+          onLogout={onLogout}
+          logoutPending={logoutPending}
         />
         <main data-testid="newbro-shell" className="relative flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-[#fafbfc] lg:overflow-hidden">
           {children}
@@ -634,6 +718,10 @@ export function HomeShellPage({
       onGlobalMessageDismiss={shell.clearGlobalMessage}
       broCount={shell.runtimePersonas.length}
       nodeCount={shell.executorNodes.length}
+      accountLabel={shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in"}
+      accountId={shell.currentUser?.email ? shell.currentUser.user_id : null}
+      onLogout={() => { void shell.logout(); }}
+      logoutPending={shell.logoutPending}
     >
 
       {shell.hasLoadedShellSnapshot ? (
@@ -713,6 +801,148 @@ export function MobileWalkieShellPage() {
   );
 }
 
+function BroSetupGate({
+  bro,
+  sessionId,
+  onBack,
+  onReady,
+  onGlobalError,
+}: {
+  bro: BroCardModel;
+  sessionId: string | null;
+  onBack: () => void;
+  onReady: () => Promise<void>;
+  onGlobalError: (message: string | null) => void;
+}) {
+  const [command, setCommand] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+
+  async function copyCommand(value: string) {
+    try {
+      await navigator.clipboard?.writeText(value);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  async function setupLocalNode() {
+    if (!sessionId || bro.source !== "runtime") {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    onGlobalError(null);
+    try {
+      const issue = await createExecutorNode(sessionId, {
+        name: `${bro.name} local node`,
+        enabled_executors: ["codex"],
+      });
+      await updatePersona(sessionId, bro.id, {
+        executor_node_id: issue.node.node_id,
+      });
+      const nextCommand = buildExecutorRunCommand(issue.node.node_id, issue.token, {
+        enabledExecutors: issue.node.enabled_executors,
+        acpxAgent: issue.node.acpx_agent,
+      });
+      setCommand(nextCommand);
+      await copyCommand(nextCommand);
+    } catch (setupError: unknown) {
+      const detail = describeApiFailure(setupError, "Could not create and bind a local node.");
+      setError(detail);
+      onGlobalError(detail);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openBroDetail() {
+    setOpening(true);
+    setError(null);
+    try {
+      await onReady();
+    } catch (refreshError: unknown) {
+      const detail = describeApiFailure(refreshError, "Could not refresh this Bro after setup.");
+      setError(detail);
+      onGlobalError(detail);
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  return (
+    <div className="nb-detail-shell nb-detail-shell-full">
+      <section className="nb-detail-main">
+        <BroDetailHeader bro={bro} onBack={onBack} />
+        <div className="nb-detail-scroll space-y-5 sm:space-y-6">
+          <section
+            data-testid="bro-setup-gate"
+            className="glass-panel rounded-[24px] border border-white/75 p-5 shadow-[0_24px_54px_-42px_rgba(15,23,42,0.28)] sm:p-6"
+          >
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-[700px]">
+                <div className="command-label text-[#9ca3af]">Local executor required</div>
+                <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.02em] text-[#111827]">
+                  Set up this Bro before talking
+                </h2>
+                <p className="mt-2 text-[14px] leading-7 text-[#6b7280]">
+                  Create a user-owned node, bind it to {bro.name}, then run the command locally so this Bro has a place to execute work.
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="bro-setup-create-node"
+                disabled={busy || !sessionId || Boolean(command)}
+                onClick={() => { void setupLocalNode(); }}
+                className="nb-page-primary-action inline-flex min-h-[42px] shrink-0 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {busy ? <LoaderCircle className="h-4 w-4 animate-spin" strokeWidth={2} /> : <Copy className="h-4 w-4" strokeWidth={2} />}
+                {busy ? "Creating..." : command ? "Node bound" : "Create node"}
+              </button>
+            </div>
+            {error ? (
+              <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-600">
+                {error}
+              </div>
+            ) : null}
+            {command ? (
+              <div className="mt-5 space-y-4">
+                <div className="flex items-center gap-2 text-[13px] font-semibold text-[#111827]">
+                  <Check className="h-4 w-4 text-[#059669]" strokeWidth={2} />
+                  Local command {copied ? "copied" : "ready"}
+                </div>
+                <pre className="command-field max-h-[180px] overflow-auto whitespace-pre-wrap break-all px-4 py-3 text-[12.5px] leading-6 text-[#374151]">
+                  {command}
+                </pre>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-full border border-[#e5e7eb] bg-white px-4 py-2 text-[13px] font-semibold text-[#6b7280] transition hover:bg-[#fafafa] hover:text-[#111827]"
+                    onClick={() => { void copyCommand(command); }}
+                  >
+                    Copy command
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="bro-setup-open-detail"
+                    disabled={opening}
+                    className="nb-page-primary-action inline-flex min-h-[38px] items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => { void openBroDetail(); }}
+                  >
+                    {opening ? "Opening..." : "Open Bro Detail"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 export function BroDetailShellPage({
   broId,
@@ -723,6 +953,7 @@ export function BroDetailShellPage({
 }) {
   const shell = useNewbroShell();
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
+  const setupRequired = bro?.source === "runtime" && !bro.executorNodeId;
   const activeSummary = bro?.source === "runtime"
     ? shell.taskSummaries.find((summary) => summary.task_id === shell.runtimePersonas.find((persona) => persona.persona_id === bro.id)?.current_task_id) ?? null
     : null;
@@ -740,7 +971,7 @@ export function BroDetailShellPage({
     : [];
 
   useEffect(() => {
-    if (!shell.hasLoadedShellSnapshot || !shell.activeShellSessionId || !bro) {
+    if (!shell.hasLoadedShellSnapshot || !shell.activeShellSessionId || !bro || setupRequired) {
       return undefined;
     }
     const sessionId = shell.activeShellSessionId;
@@ -750,7 +981,7 @@ export function BroDetailShellPage({
     return () => {
       void clearVoiceTarget(sessionId).catch(() => {});
     };
-  }, [shell.hasLoadedShellSnapshot, shell.activeShellSessionId, bro?.id]);
+  }, [shell.hasLoadedShellSnapshot, shell.activeShellSessionId, bro?.id, setupRequired]);
 
   return (
     <ShellFrame
@@ -760,25 +991,39 @@ export function BroDetailShellPage({
       onGlobalMessageDismiss={shell.clearGlobalMessage}
       broCount={shell.runtimePersonas.length}
       nodeCount={shell.executorNodes.length}
+      accountLabel={shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in"}
+      accountId={shell.currentUser?.email ? shell.currentUser.user_id : null}
+      onLogout={() => { void shell.logout(); }}
+      logoutPending={shell.logoutPending}
     >
       {shell.hasLoadedShellSnapshot ? (
         bro ? (
-          <>
-            <ShellVoiceBar />
-            <BroDetailPage
+          setupRequired ? (
+            <BroSetupGate
               bro={bro}
               sessionId={shell.activeShellSessionId}
-              activeTaskId={activePersona?.current_task_id ?? null}
-              summary={activeSummary}
-              taskRecords={taskRecords}
-              agentEvents={shell.agentEvents.filter((event) => event.task_id === activePersona?.current_task_id)}
-              snapshotDraftSession={shell.draftSession}
-              latestDraftOutputEvent={shell.latestDraftOutputEvent}
-              onSubmitDraftAsrTurn={shell.submitDraftAsrTurn}
               onBack={() => onNavigate("Home")}
+              onReady={shell.refreshShellSession}
               onGlobalError={shell.setShellError}
             />
-          </>
+          ) : (
+            <>
+              <ShellVoiceBar />
+              <BroDetailPage
+                bro={bro}
+                sessionId={shell.activeShellSessionId}
+                activeTaskId={activePersona?.current_task_id ?? null}
+                summary={activeSummary}
+                taskRecords={taskRecords}
+                agentEvents={shell.agentEvents.filter((event) => event.task_id === activePersona?.current_task_id)}
+                snapshotDraftSession={shell.draftSession}
+                latestDraftOutputEvent={shell.latestDraftOutputEvent}
+                onSubmitDraftAsrTurn={shell.submitDraftAsrTurn}
+                onBack={() => onNavigate("Home")}
+                onGlobalError={shell.setShellError}
+              />
+            </>
+          )
         ) : (
           <div className="flex flex-1 items-center justify-center p-6">
             <div className="glass-panel max-w-[520px] rounded-[30px] border border-white/75 px-6 py-6 text-center">
@@ -816,6 +1061,10 @@ export function BrosShellPage({ onNavigate }: { onNavigate: PageNavigator }) {
       onGlobalMessageDismiss={shell.clearGlobalMessage}
       broCount={shell.runtimePersonas.length}
       nodeCount={shell.executorNodes.length}
+      accountLabel={shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in"}
+      accountId={shell.currentUser?.email ? shell.currentUser.user_id : null}
+      onLogout={() => { void shell.logout(); }}
+      logoutPending={shell.logoutPending}
     >
       {shell.activeShellSessionId && shell.hasLoadedShellSnapshot ? (
         <BrosPage
@@ -843,6 +1092,10 @@ export function NodesShellPage({ onNavigate }: { onNavigate: PageNavigator }) {
       onGlobalMessageDismiss={shell.clearGlobalMessage}
       broCount={shell.runtimePersonas.length}
       nodeCount={shell.executorNodes.length}
+      accountLabel={shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in"}
+      accountId={shell.currentUser?.email ? shell.currentUser.user_id : null}
+      onLogout={() => { void shell.logout(); }}
+      logoutPending={shell.logoutPending}
     >
       {shell.activeShellSessionId && shell.hasLoadedShellSnapshot ? (
         <NodesPage
@@ -870,6 +1123,10 @@ export function SettingsShellPage({ onNavigate }: { onNavigate: PageNavigator })
       onGlobalMessageDismiss={shell.clearGlobalMessage}
       broCount={shell.runtimePersonas.length}
       nodeCount={shell.executorNodes.length}
+      accountLabel={shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in"}
+      accountId={shell.currentUser?.email ? shell.currentUser.user_id : null}
+      onLogout={() => { void shell.logout(); }}
+      logoutPending={shell.logoutPending}
     >
       <div className="flex flex-1 items-center justify-center px-4 py-10">
         <div className="text-[14px] text-neutral-400">Settings coming soon.</div>

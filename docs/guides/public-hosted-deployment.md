@@ -85,20 +85,27 @@ Users only need:
 2. an email address
 3. the shared invitation code
 4. microphone permission
+5. a local machine that can run the detached executor command for real Codex
+   work
 
 After signup, Newbro bootstraps a user-owned session and default Bro, then opens
 Bro Detail directly. Signing up again with the same email creates a separate
 user because email is only a label in this first public path.
 
-Real Codex execution still requires the user's detached local executor node.
-When a sent draft is waiting for execution, Bro Detail shows a copyable local
-node command. The hosted app issues a user-owned node id and token, and the
-user runs:
+Bro Detail requires a user-owned executor node before the normal voice,
+draft, and task controls appear. If the default Bro is not bound yet, the page
+shows an inline setup panel that creates the node, binds it to that Bro, and
+prints a copyable local command. The hosted app issues a user-owned node id and
+token, and the user runs:
 
 ```bash
 python3 -m pip install --user --upgrade newbro-cli
 newbro executor run --base-url https://newbro.example.com --node-id node-1234 --token secret
 ```
+
+Already-bound Bros continue to open directly into the normal Bro Detail
+workspace. If a bound node is offline when a task is sent, the task waits in
+`waiting_executor` and Bro Detail can reveal the local command again.
 
 ## GitHub Actions Deployment
 
@@ -156,7 +163,10 @@ Then verify from a browser:
 
 - signup with the shared invitation code works
 - bootstrap opens Bro Detail directly
+- unbound Bro Detail shows the inline node setup panel instead of voice controls
+- creating the local node command binds the Bro and unlocks Bro Detail after refresh
 - voice starts from Bro Detail
+- the sidebar account area shows the current email or user id and Log out returns to signup
 - session websocket connects
 - a local executor node can connect through `/api/executors/control`
 
