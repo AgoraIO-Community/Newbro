@@ -223,7 +223,7 @@ jobs:
         if: failure()
         run: |
           ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd '$DEPLOY_PATH' && docker compose ps && docker compose logs --tail=200 newbro && docker compose exec -T newbro python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read().decode())\"" || true
+            "cd '$DEPLOY_PATH' && docker compose ps && docker compose logs --tail=200 caddy && docker compose logs --tail=200 newbro && curl -i --max-time 5 http://127.0.0.1/api/health && curl -k -i --max-time 5 https://127.0.0.1/api/health && docker compose exec -T newbro python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read().decode())\"" || true
 
       - name: Create invite
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.create_invite }}
@@ -262,4 +262,4 @@ jobs:
         if: failure()
         run: |
           ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd '$DEPLOY_PATH' && docker compose ps && docker compose logs --tail=300 newbro || true"
+            "cd '$DEPLOY_PATH' && docker compose ps && docker compose logs --tail=300 caddy && docker compose logs --tail=300 newbro || true"
