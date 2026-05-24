@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from newbro.api.models import DiagnosticTimelineResponse, SessionResponse
 from newbro.api.public_auth import require_public_user, require_session_owner, require_session_owner_or_internal
+from newbro.api.snapshots import scope_session_snapshot_for_user
 from newbro.observability.schema import LEVEL_PRIORITY
 
 router = APIRouter()
@@ -28,13 +29,20 @@ async def get_session(
     session_id: str,
     request: Request,
 ):
-    await require_session_owner_or_internal(request, session_id)
+    user = await require_session_owner_or_internal(request, session_id)
     container = request.app.state.runtime_container
     try:
         session = container.get_session(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return await session.snapshot()
+    snapshot = await session.snapshot()
+    if user is None:
+        return snapshot
+    return await scope_session_snapshot_for_user(
+        request.app.state.public_auth_store,
+        user,
+        snapshot,
+    )
 
 
 @router.get("/sessions/{session_id}/conversation")

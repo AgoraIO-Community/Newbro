@@ -155,15 +155,24 @@ async def test_user_cannot_access_other_user_session_or_node(tmp_path):
         )
         assert create_node.status_code == 201
         node_id = create_node.json()["node"]["node_id"]
+        snapshot_a = await user_a.get(f"/api/sessions/{session_a}")
+        assert snapshot_a.status_code == 200
+        assert [node["node_id"] for node in snapshot_a.json()["executor_nodes"]] == [node_id]
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as user_b:
         await _redeem(user_b, app, "invite-b")
         bootstrap_b = (await user_b.get("/api/me/bootstrap")).json()
         session_b = bootstrap_b["session_id"]
+        user_b_cookie = user_b.cookies.get(SESSION_COOKIE_NAME)
+        assert user_b_cookie
 
         assert (await user_b.get(f"/api/sessions/{session_a}")).status_code == 404
         assert (await user_b.get(f"/api/sessions/{session_a}/conversation")).status_code == 404
         assert (await user_b.get(f"/api/sessions/{session_a}/draft")).status_code == 404
+
+        snapshot_b = await user_b.get(f"/api/sessions/{session_b}")
+        assert snapshot_b.status_code == 200
+        assert snapshot_b.json()["executor_nodes"] == []
 
         list_nodes = await user_b.get(f"/api/sessions/{session_b}/executor-nodes")
         assert list_nodes.status_code == 200
@@ -175,6 +184,20 @@ async def test_user_cannot_access_other_user_session_or_node(tmp_path):
         assert rotate.status_code == 404
         delete = await user_b.delete(f"/api/sessions/{session_b}/executor-nodes/{node_id}")
         assert delete.status_code == 404
+
+    async with ASGIWebSocketSession(
+        app,
+        f"/api/sessions/{session_b}/stream",
+        headers=[(b"cookie", f"{SESSION_COOKIE_NAME}={user_b_cookie}".encode())],
+    ) as socket:
+        initial = await socket.receive_json()
+        assert initial["type"] == "snapshot"
+        assert initial["snapshot"]["executor_nodes"] == []
+
+        await app.state.runtime_container.get_session(session_b).publish_snapshot()
+        published = await socket.receive_json()
+        assert published["type"] == "snapshot"
+        assert published["snapshot"]["executor_nodes"] == []
 
 
 @pytest.mark.anyio

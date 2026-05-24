@@ -13,6 +13,7 @@ from newbro.api.models import (
     SubmitAsrTurnSocketAction,
 )
 from newbro.api.public_auth import user_for_websocket
+from newbro.api.snapshots import scope_stream_event_for_user
 from newbro.communication.resolver import TaskResolver, describe_candidates
 from newbro.observability.context import bind_diagnostic_context
 from newbro.protocol import TaskCommand
@@ -38,6 +39,7 @@ async def session_stream(websocket: WebSocket, session_id: str):
     expected = getattr(container.settings, "connector_internal_token", None)
     supplied = websocket.headers.get("X-Newbro-Connector-Token")
     internal = expected and supplied == expected
+    user = None
     if not internal:
         user = await user_for_websocket(websocket)
         if user is None:
@@ -54,8 +56,11 @@ async def session_stream(websocket: WebSocket, session_id: str):
 
     await websocket.accept()
     queue = session.subscribe()
-    await websocket.send_json((await session.initial_snapshot_event()).model_dump(mode="json"))
-    sender = asyncio.create_task(_send_events(websocket, queue))
+    initial_event = await session.initial_snapshot_event()
+    if user is not None:
+        initial_event = await scope_stream_event_for_user(store, user, initial_event)
+    await websocket.send_json(initial_event.model_dump(mode="json"))
+    sender = asyncio.create_task(_send_events(websocket, queue, store=store, user=user))
     try:
         while True:
             payload = await websocket.receive_json()
@@ -71,9 +76,11 @@ async def session_stream(websocket: WebSocket, session_id: str):
         session.unsubscribe(queue)
 
 
-async def _send_events(websocket: WebSocket, queue: asyncio.Queue) -> None:
+async def _send_events(websocket: WebSocket, queue: asyncio.Queue, *, store, user) -> None:
     while True:
         event = await queue.get()
+        if user is not None:
+            event = await scope_stream_event_for_user(store, user, event)
         await websocket.send_json(event.model_dump(mode="json"))
 
 
