@@ -2,22 +2,6 @@ name: Deploy Newbro VPS
 
 on:
   workflow_dispatch:
-    inputs:
-      create_invite:
-        description: "Create an invite after a successful deploy"
-        required: false
-        default: false
-        type: boolean
-      invite_code:
-        description: "Optional invite code. Leave blank to generate one."
-        required: false
-        default: ""
-        type: string
-      invite_email:
-        description: "Optional email label for the invite."
-        required: false
-        default: ""
-        type: string
   push:
     branches:
       - main
@@ -233,39 +217,6 @@ jobs:
         run: |
           ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
             "cd '$DEPLOY_PATH' && docker compose ps && docker compose logs --tail=200 caddy && docker compose logs --tail=200 newbro && curl -i --max-time 5 http://127.0.0.1/api/health && curl -k -i --max-time 5 https://127.0.0.1/api/health && docker compose exec -T newbro python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read().decode())\"" || true
-
-      - name: Create invite
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.create_invite }}
-        env:
-          INVITE_CODE: ${{ inputs.invite_code }}
-          INVITE_EMAIL: ${{ inputs.invite_email }}
-        run: |
-          set -euo pipefail
-          remote_script='
-            set -euo pipefail
-            cd "$1"
-            shift
-            docker compose exec -T newbro newbro invite create "$@"
-          '
-          args=()
-          if [ -n "$INVITE_CODE" ]; then
-            args+=("$INVITE_CODE")
-          fi
-          if [ -n "$INVITE_EMAIL" ]; then
-            args+=("--email" "$INVITE_EMAIL")
-          fi
-          output="$(
-            ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-              "bash -s -- '$DEPLOY_PATH' ${args[*]@Q}" <<< "$remote_script"
-          )"
-          printf '%s\n' "$output"
-          {
-            echo "## Newbro Invite"
-            echo
-            echo '```text'
-            printf '%s\n' "$output"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Show container logs on failure
         if: failure()
