@@ -74,24 +74,15 @@ jobs:
       - name: Run backend tests
         run: .venv/bin/python -m pytest
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
       - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.IMAGE_NAME }}:main
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+          docker build -t "${IMAGE_NAME}:${GITHUB_SHA}" -t "${IMAGE_NAME}:main" .
+          docker push "${IMAGE_NAME}:${GITHUB_SHA}"
+          docker push "${IMAGE_NAME}:main"
 
       - name: Configure SSH
         run: |
