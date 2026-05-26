@@ -710,6 +710,8 @@ function MobileThreadSurface({
   const [draft, setDraft] = useState("");
   const draftText = shell.draftSession?.current_draft?.text ?? draft;
   const activeRecord = records[0] ?? null;
+  const threadMessages = shell.chatMessages.slice(-8);
+  const hasThreadMessages = threadMessages.length > 0;
   const connected = shell.voiceSession.phase === "connected";
   const loading = shell.voiceSession.phase === "loading";
   const [inputMode, setInputMode] = useState<"ptt" | "free">("ptt");
@@ -731,8 +733,8 @@ function MobileThreadSurface({
   function submitDraftText() {
     const text = draft.trim();
     if (!text || disabled) return;
-    shell.sendMessage(text);
-    shell.submitDraftAsrTurn({ raw_text: text, assigned_bro_id: bro.id });
+    const sent = shell.sendMessage(text, bro.id);
+    if (!sent) return;
     setDraft("");
   }
 
@@ -772,6 +774,14 @@ function MobileThreadSurface({
             </div>
           </div>
         ) : null}
+        {threadMessages.map((message) => (
+          <div key={message.id} className={`thr-turn ${message.role === "user" ? "thr-turn-you" : "thr-turn-bro"}`}>
+            <div className={`thr-bubble ${message.role === "user" ? "thr-bubble-you" : "thr-bubble-bro"}`}>{message.text}</div>
+            <div className="thr-meta">
+              {message.role === "user" ? "You · sent" : `${bro.name} · reply`}
+            </div>
+          </div>
+        ))}
         {activeRecord ? (
           <div className="thr-turn thr-turn-bro">
             <div className="thr-status">
@@ -784,14 +794,14 @@ function MobileThreadSurface({
               <div className="thr-status-foot">{activeRecord.description || activeRecord.summary || bro.progressLabel}</div>
             </div>
           </div>
-        ) : (
+        ) : !hasThreadMessages ? (
           <div className="thr-turn thr-turn-bro">
             <div className="thr-bubble thr-bubble-bro">
               {disabled ? "I am paused until the node reconnects." : "No thread yet. Tell me what to build."}
             </div>
             <div className="thr-meta">{bro.name} · standby</div>
           </div>
-        )}
+        ) : null}
         {records.slice(1).map((record) => (
           <div key={record.taskId} className="thr-turn thr-turn-bro">
             <div className="thr-bubble thr-bubble-bro">{record.description || record.summary || record.title}</div>

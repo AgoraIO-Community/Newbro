@@ -408,6 +408,21 @@ describe("Newbro artboard shell", () => {
 
     await waitFor(() => expect(clientMock.sendSocketMessage).toHaveBeenCalled());
     expect(clientMock.sendSocketMessage.mock.calls.at(-1)?.[2]).toBe("Please draft the launch note");
+    expect(clientMock.sendSocketMessage.mock.calls.at(-1)?.[3]).toBe("forge");
+    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+
+    act(() => {
+      socketHarness.handlers?.onMessage({
+        type: "user_message_appended",
+        sequence: 2,
+        message_id: "msg-mobile-direct",
+        role: "user",
+        text: "Please draft the launch note",
+        source: "user",
+      });
+    });
+
+    expect(await screen.findByText("Please draft the launch note")).toBeInTheDocument();
   });
 
   it("starts free-route and selected mobile voice through the connector path", async () => {
