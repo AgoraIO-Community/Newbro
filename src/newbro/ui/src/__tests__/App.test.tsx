@@ -298,6 +298,44 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByText(/The Bro appears after the first successful connection/)).toBeInTheDocument();
   });
 
+  it("creates the first Bro once after connection and shows a done action", async () => {
+    let sessionOneSnapshots = 0;
+    clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
+      if (sessionId === "session-existing") return forgeSnapshot(sessionId);
+      sessionOneSnapshots += 1;
+      if (sessionOneSnapshots >= 3) {
+        return {
+          ...emptySessionSnapshot(sessionId),
+          executor_nodes: [
+            usableExecutorNode({
+              node_id: "node-1",
+              name: "Local node",
+              last_connected_at: "2026-05-23T20:00:00Z",
+            }),
+          ],
+        };
+      }
+      return emptySessionSnapshot(sessionId);
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create your first bro" }));
+    fireEvent.click(await screen.findByTestId("bro-setup-create-node"));
+
+    await waitFor(() => expect(clientMock.createPersona).toHaveBeenCalledTimes(1), { timeout: 3500 });
+    expect(clientMock.createPersona).toHaveBeenCalledWith("session-1", {
+      name: "atlas",
+      avatar: "bro",
+      base_prompt: "Help turn voice instructions into clear executable drafts.",
+      executor_node_id: "node-1",
+    });
+    expect(screen.getByTestId("bro-setup-done")).toHaveTextContent("Done");
+
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+    expect(clientMock.createPersona).toHaveBeenCalledTimes(1);
+  });
+
   it("resumes a Bro detail session from sid and targets voice to that Bro", async () => {
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 

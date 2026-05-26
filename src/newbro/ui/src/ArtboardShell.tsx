@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Check, Copy, FileText, LogOut, Mic, Plus, SendHorizontal, X } from "lucide-react";
 import {
   buildExecutorRunCommand,
@@ -384,11 +384,36 @@ function CreateConnectSheet({
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
   const [pendingBroName, setPendingBroName] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
+  const finalizingRef = useRef(false);
   const trimmedName = name.trim();
   const canCreate = trimmedName.length > 0 && !busy && !command && !pendingNodeId && !completed;
 
   async function copyCommand(value: string) {
     await navigator.clipboard?.writeText(value).then(() => setCopied(true), () => setCopied(false));
+  }
+
+  async function finalizeConnectedNode(nodeId: string, broName: string) {
+    if (finalizingRef.current) return;
+    finalizingRef.current = true;
+    try {
+      if (bro?.source === "runtime" && !bro.executorNodeId) {
+        await updatePersona(sessionId, bro.id, { executor_node_id: nodeId });
+      } else if (!bro) {
+        await createPersona(sessionId, {
+          name: broName,
+          avatar: "bro",
+          base_prompt: "Help turn voice instructions into clear executable drafts.",
+          executor_node_id: nodeId,
+        });
+      }
+      setCompleted(true);
+      setPendingNodeId(null);
+      setError(null);
+      await onCreated();
+    } catch (err) {
+      finalizingRef.current = false;
+      setError(describeError(err, "Could not finish creating this Bro after the node connected."));
+    }
   }
 
   async function createAndConnect() {
@@ -411,18 +436,7 @@ function CreateConnectSheet({
       await copyCommand(nextCommand);
       await onCreated();
       if (issue.node.last_connected_at) {
-        if (bro?.source === "runtime" && !bro.executorNodeId) {
-          await updatePersona(sessionId, bro.id, { executor_node_id: issue.node.node_id });
-        } else if (!bro) {
-          await createPersona(sessionId, {
-            name: nextBroName,
-            avatar: "bro",
-            base_prompt: "Help turn voice instructions into clear executable drafts.",
-            executor_node_id: issue.node.node_id,
-          });
-        }
-        setCompleted(true);
-        await onCreated();
+        await finalizeConnectedNode(issue.node.node_id, nextBroName);
       }
     } catch (err) {
       setError(describeError(err, "Could not create and connect this Bro."));
@@ -441,21 +455,8 @@ function CreateConnectSheet({
         const snapshot = await getSessionSnapshot(sessionId);
         const node = snapshot.executor_nodes.find((candidate) => candidate.node_id === pendingNodeId);
         if (node?.last_connected_at) {
-          if (bro?.source === "runtime" && !bro.executorNodeId) {
-            await updatePersona(sessionId, bro.id, { executor_node_id: pendingNodeId });
-          } else if (!bro) {
-            await createPersona(sessionId, {
-              name: pendingBroName,
-              avatar: "bro",
-              base_prompt: "Help turn voice instructions into clear executable drafts.",
-              executor_node_id: pendingNodeId,
-            });
-          }
           if (!cancelled) {
-            setCompleted(true);
-            setPendingNodeId(null);
-            setError(null);
-            await onCreated();
+            await finalizeConnectedNode(pendingNodeId, pendingBroName);
           }
           return;
         }
@@ -550,8 +551,8 @@ function CreateConnectSheet({
           </div>
           <footer className="ob-sheet-foot">
             {command && completed ? (
-              <button type="button" data-testid="bro-setup-open-detail" className="ob-cta ob-cta-block ob-cta-ghost" onClick={() => { void onCreated(); }}>
-                Open detail
+              <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block ob-cta-ghost" onClick={() => { void onCreated().finally(onClose); }}>
+                Done
               </button>
             ) : null}
             <button type="button" data-testid="bro-setup-create-node" className={`ob-cta ob-cta-block${busy ? " ob-cta-pending" : ""}`} disabled={!canCreate} onClick={() => { void createAndConnect(); }}>

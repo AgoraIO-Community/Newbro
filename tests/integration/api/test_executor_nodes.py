@@ -165,6 +165,19 @@ async def test_delete_executor_node_rejects_bound_bros_until_unbound(monkeypatch
             },
         )
         assert persona_response.status_code == 201
+        duplicate_persona = await client.post(
+            f"/api/sessions/{session_id}/personas",
+            json={
+                "name": "Alex duplicate retry",
+                "avatar": "A",
+                "base_prompt": "Be direct.",
+                "executor_node_id": node_id,
+            },
+        )
+        assert duplicate_persona.status_code == 201
+        assert duplicate_persona.json()["persona_id"] == persona_response.json()["persona_id"]
+        list_personas = await client.get(f"/api/sessions/{session_id}/personas")
+        assert [persona["persona_id"] for persona in list_personas.json()].count(persona_response.json()["persona_id"]) == 1
 
         # Simulate file drift: the persisted file says the bro is unbound, but
         # the live blackboard for this active session still has the binding.

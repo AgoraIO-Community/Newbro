@@ -62,7 +62,9 @@ controls, task controls, or normal workspace. The first-run Home setup creates a
 private executor node and shows a copyable `newbro executor run ...` command,
 but it does not create the Bro persona until the frontend refreshes state and
 observes `last_connected_at` on that node. API persona creation and node binding
-also reject user-owned nodes that have not connected successfully once.
+also reject user-owned nodes that have not connected successfully once. Creating
+a persona with an already-bound `executor_node_id` is idempotent for that user
+and returns the existing Bro instead of creating duplicates.
 
 A created node is not yet usable. A usable node is one with a durable
 `last_connected_at`, meaning the executor websocket registered successfully at

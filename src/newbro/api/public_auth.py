@@ -292,6 +292,18 @@ class PublicAuthStore:
         now = _timestamp()
         async with self._lock:
             with self._connect() as conn:
+                if record.executor_node_id is not None:
+                    existing = conn.execute(
+                        """
+                        SELECT * FROM personas
+                        WHERE user_id = ? AND executor_node_id = ?
+                        ORDER BY created_at, persona_id
+                        LIMIT 1
+                        """,
+                        (user_id, record.executor_node_id),
+                    ).fetchone()
+                    if existing is not None:
+                        return _persona_from_row(existing).to_persona()
                 conn.execute(
                     """
                     INSERT INTO personas
