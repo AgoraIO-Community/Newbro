@@ -551,14 +551,15 @@ function CreateConnectSheet({
           </div>
           <footer className="ob-sheet-foot">
             {command && completed ? (
-              <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block ob-cta-ghost" onClick={() => { void onCreated().finally(onClose); }}>
+              <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" onClick={() => { void onCreated().finally(onClose); }}>
                 Done
               </button>
-            ) : null}
-            <button type="button" data-testid="bro-setup-create-node" className={`ob-cta ob-cta-block${busy ? " ob-cta-pending" : ""}`} disabled={!canCreate} onClick={() => { void createAndConnect(); }}>
-              {busy ? <span className="ob-cta-spinner" aria-hidden="true" /> : null}
-              <span>{busy ? "Preparing..." : completed ? "Bro created" : command ? "Waiting for first connection..." : "Create and connect"}</span>
-            </button>
+            ) : (
+              <button type="button" data-testid="bro-setup-create-node" className={`ob-cta ob-cta-block${busy ? " ob-cta-pending" : ""}`} disabled={!canCreate} onClick={() => { void createAndConnect(); }}>
+                {busy ? <span className="ob-cta-spinner" aria-hidden="true" /> : null}
+                <span>{busy ? "Preparing..." : command ? "Waiting for first connection..." : "Create and connect"}</span>
+              </button>
+            )}
           </footer>
         </section>
       </div>
