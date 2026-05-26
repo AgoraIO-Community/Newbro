@@ -19,7 +19,8 @@ It does not own:
 
 Core communication policy:
 
-- typed voice/text runtime input follows the v1 path: utterance -> structured Draft -> Dispatch Plan -> Dispatch Gate -> Task
+- typed voice/ASR runtime input follows the v1 path: utterance -> structured Draft -> Dispatch Plan -> Dispatch Gate -> Task
+- desktop Bro Detail typed input in push-to-talk mode is a direct targeted Communication Brain message to the selected Bro, not a Draft preparation/confirmation surface
 - the dispatch gate is deterministic and is the final authority for starting execution
 - the default execution mode for draft-created work is read-only/proposal-first; code modification and side effects require explicit confirmation
 - free-form utterance meaning is produced by the Communication Brain interaction-classifier boundary, not by runtime transcript keyword checks

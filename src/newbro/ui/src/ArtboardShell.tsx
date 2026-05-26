@@ -899,7 +899,6 @@ function DesktopComposerBar({
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
-  const draftText = shell.draftSession?.current_draft?.text ?? draft;
   const connected = shell.voiceSession.phase === "connected";
   const loading = shell.voiceSession.phase === "loading";
 
@@ -907,24 +906,7 @@ function DesktopComposerBar({
     event.preventDefault();
     const text = draft.trim();
     if (!text || disabled) return;
-    shell.sendMessage(text);
-    shell.submitDraftAsrTurn({ raw_text: text, assigned_bro_id: bro.id });
-    setDraft("");
-  }
-
-  async function sendCurrentDraft() {
-    if (!shell.activeShellSessionId || disabled) return;
-    await sendDraft(shell.activeShellSessionId, {
-      draft_session_id: shell.draftSession?.id,
-      draft_revision_id: shell.draftSession?.current_revision_id ?? undefined,
-    });
-    await shell.refreshShellSession();
-  }
-
-  async function clearCurrentDraft() {
-    if (!shell.activeShellSessionId) return;
-    await clearDraft(shell.activeShellSessionId, { draft_session_id: shell.draftSession?.id });
-    await shell.refreshShellSession();
+    shell.sendMessage(text, bro.id);
     setDraft("");
   }
 
@@ -943,7 +925,7 @@ function DesktopComposerBar({
         </div>
         <span className="dt-cmp-hint">
           <kbd className="dt-kbd">space</kbd>
-          {disabled ? "node required before sending" : "push to talk anywhere"}
+          {disabled ? "node required before sending" : "type sends directly"}
         </span>
       </div>
       <div className="dt-cmp-bar">
@@ -956,7 +938,7 @@ function DesktopComposerBar({
           placeholder={disabled ? "Reconnect the node before sending" : `Type to ${bro.name}...`}
           disabled={disabled}
         />
-        <button type="button" className="dt-cmp-mode nb-detail-clear" onClick={() => { void clearCurrentDraft(); }} disabled={!draftText}>
+        <button type="button" className="dt-cmp-mode nb-detail-clear" onClick={() => setDraft("")} disabled={!draft}>
           Clear
         </button>
         <button
@@ -970,15 +952,13 @@ function DesktopComposerBar({
           <Mic size={18} aria-hidden="true" />
         </button>
         <button
-          type="button"
+          type="submit"
           className="dt-cmp-send"
           aria-label="Send message"
-          disabled={disabled || !draftText}
-          onClick={() => { void sendCurrentDraft(); }}
+          disabled={disabled || !draft.trim()}
         >
           <SendHorizontal size={16} strokeWidth={2.2} />
         </button>
-        <button type="submit" className="sr-only">Send message</button>
       </div>
     </form>
   );

@@ -90,6 +90,9 @@ Current behavior:
 - Bro Detail draft input uses a separate connector-managed Agora STT path: the
   page first prepares a fresh Agora-safe channel and browser RTC token, then
   starts the ASR bot after the browser joins RTC with the microphone disabled
+- Desktop Bro Detail typed input in push-to-talk mode bypasses the Draft card:
+  submitting the composer sends a targeted session message directly to the
+  selected Bro instead of calling draft ASR or draft Send endpoints
 - Bro Detail does not use the shell `session_id` as the Agora channel name;
   each page start receives a unique channel from the connector to avoid channel
   conflicts

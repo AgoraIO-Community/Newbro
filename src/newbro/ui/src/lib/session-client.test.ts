@@ -147,6 +147,20 @@ describe("session-client transport base URL handling", () => {
     expect(revealed.token).toBe("token-1");
   });
 
+  it("includes the target persona on websocket messages when provided", async () => {
+    const client = await import("./session-client");
+    const socket = { send: vi.fn() } as unknown as WebSocket;
+
+    client.sendSocketMessage(socket, "req-1", "Run this", "forge");
+
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "send_message",
+      request_id: "req-1",
+      text: "Run this",
+      target_persona_id: "forge",
+    }));
+  });
+
   it("submits task commands to the session commands endpoint", async () => {
     const fetchMock = vi.fn(async () =>
       okJsonResponse({

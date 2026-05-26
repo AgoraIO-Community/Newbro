@@ -284,12 +284,13 @@ export function openSessionStream(
   return openSocket<SessionStreamEvent>(`${API_PREFIX}/sessions/${sessionId}/stream`, handlers);
 }
 
-export function sendSocketMessage(socket: WebSocket, requestId: string, text: string) {
+export function sendSocketMessage(socket: WebSocket, requestId: string, text: string, targetPersonaId?: string | null) {
   socket.send(
     JSON.stringify({
       type: "send_message",
       request_id: requestId,
       text,
+      ...(targetPersonaId ? { target_persona_id: targetPersonaId } : {}),
     }),
   );
 }

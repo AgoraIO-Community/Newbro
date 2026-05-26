@@ -1,6 +1,9 @@
 # Draft-to-Execute Protocol
 
-`newbro v1` uses a quiet, voice/text-driven draft-to-execute workflow.
+`newbro v1` uses a quiet, voice/ASR-driven draft-to-execute workflow.
+Desktop Bro Detail typed input in push-to-talk mode is the exception: it sends a
+targeted Communication Brain message directly to the selected Bro instead of
+preparing a Draft that needs a separate Send confirmation.
 
 The stable contract is:
 

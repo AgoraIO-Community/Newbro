@@ -237,3 +237,4 @@ Short log of important design decisions and changes for Newbro.
 - Limited the active Newbro UI to artboarded Home, Bro Detail, mobile, onboarding, create/connect, and offline states; standalone Bros, Nodes, Settings, and custom fallback product screens are removed or rendered blank.
 - Changed first-run Bro setup so Home issues a user-owned executor-node command first and creates/binds the Bro persona only after that node records its first successful connection.
 - Made connected-node persona creation idempotent per user and executor node so repeated first-run completion requests return the existing Bro instead of creating duplicates.
+- Changed desktop Bro Detail typed input in push-to-talk mode to send a targeted Communication Brain message directly to the selected Bro instead of preparing a Draft and requiring a separate Send confirmation.

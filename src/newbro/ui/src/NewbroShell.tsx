@@ -500,11 +500,11 @@ function useNewbroShellState() {
     setShellWarning(null);
   });
 
-  const sendMessage = useCallback((text: string): boolean => {
+  const sendMessage = useCallback((text: string, targetPersonaId?: string | null): boolean => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     const requestId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    sendSocketMessage(socket, requestId, text);
+    sendSocketMessage(socket, requestId, text, targetPersonaId);
     return true;
   }, []);
 

@@ -347,6 +347,24 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "forge"));
   });
 
+  it("sends desktop typed Bro detail input directly to the targeted Bro", async () => {
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Run the desktop direct send path" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(clientMock.sendSocketMessage).toHaveBeenCalled());
+    expect(clientMock.sendSocketMessage.mock.calls.at(-1)?.[2]).toBe("Run the desktop direct send path");
+    expect(clientMock.sendSocketMessage.mock.calls.at(-1)?.[3]).toBe("forge");
+    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+    expect(clientMock.sendDraft).not.toHaveBeenCalled();
+  });
+
   it("uses the artboarded offline detail state and blocks talk/send for disconnected usable nodes", async () => {
     const offlineNode = usableExecutorNode({
       connected_executors: [],
