@@ -1,180 +1,147 @@
 <goal>
-Refactor the active Newbro frontend under `src/newbro/ui` to follow the new design in `design/` with pixel-accurate desktop and mobile UI while preserving and wiring the existing Newbro runtime functionality. The finished app should use or faithfully port the design prototype's components, tokens, assets, and interaction states, then connect those surfaces to the current session, persona, executor-node, draft, and voice connector flows.
+Recreate the active Newbro frontend as new artboard-first UI pages matching the exact states represented in `design/Voice Interaction.html`, then wire existing runtime functionality into those pages. Keep only artboarded UI states active, remove or fold away non-artboard pages, and preserve runtime wiring required by the remaining artboarded flows.
 </goal>
 
 <context>
 Read first:
-- AGENTS.md project instructions in the repo root or conversation.
-- docs/guides/frontend-workbench.md
-- docs/guides/frontend-contracts.md
-- docs/guides/frontend-handoff.md
-- docs/architecture/public-onboarding-and-ownership.md
-- docs/architecture/executors.md
-- docs/protocol/session-stream.md
-- docs/protocol/draft-to-execute.md
-- docs/memories.md
-- design/README-equivalent sources:
-  - design/app.jsx
-  - design/tokens.css
-  - design/voice-state.jsx
-  - design/variants-desktop.jsx
-  - design/variants-mobile.jsx
-  - design/variants-channel-mobile.jsx
-  - design/variants-onboarding.jsx
-  - design/variant-stage.jsx
-  - design/variant-walkie.jsx
-  - design/variant-document.jsx
-  - design/bro-characters.jsx
-  - design/bro-characters.css
-  - design/assets/newbro-logo.webp
-  - design/assets/avatars/
-  - design/screenshots/
-  - design/uploads/export 2/README.md
-  - design/uploads/export 2/app.jsx
-  - design/uploads/export 2/characters.jsx
-  - design/uploads/export 2/styles.css
-- Current active frontend:
-  - src/newbro/ui/package.json
-  - src/newbro/ui/src/NewbroShell.tsx
-  - src/newbro/ui/src/App.tsx
-  - src/newbro/ui/src/router.tsx
-  - src/newbro/ui/src/styles/app.css
-  - src/newbro/ui/src/components/newbro/
-  - src/newbro/ui/src/components/ui/
-  - src/newbro/ui/src/lib/session-client.ts
-  - src/newbro/ui/src/lib/connector-client.ts
-  - src/newbro/ui/src/lib/voice-runtime.ts
-  - src/newbro/ui/src/types.ts
-  - src/newbro/ui/src/__tests__/App.test.tsx
+- `AGENTS.md`
+- `SPEC.md`
+- `docs/README.md`
+- Stable frontend/runtime docs under `docs/architecture/`, `docs/protocol/`, and `docs/guides/` that describe sessions, onboarding, executor nodes, draft-to-execute, and frontend contracts. Treat stable docs as authoritative over RFCs.
+
+Design source of truth:
+- `design/Voice Interaction.html`
+- `design/app.jsx`
+- `design/tokens.css`
+- `design/variants-desktop.jsx`
+- `design/variants-desktop.css`
+- `design/variants-mobile.jsx`
+- `design/variants-mobile.css`
+- `design/variants-onboarding.jsx`
+- `design/variants-onboarding.css`
+- `design/variants-channel-mobile.jsx`
+- `design/variants-channel-mobile.css`
+- `design/bro-characters.jsx`
+- `design/bro-characters.css`
+- `design/assets/`
+- `design/screenshots/`
+
+Current active frontend:
+- `src/newbro/ui/package.json`
+- `src/newbro/ui/src/NewbroShell.tsx`
+- `src/newbro/ui/src/App.tsx`
+- `src/newbro/ui/src/router.tsx`
+- `src/newbro/ui/src/styles/app.css`
+- `src/newbro/ui/src/styles/`
+- `src/newbro/ui/src/components/newbro/`
+- `src/newbro/ui/src/components/newbro/mobile/`
+- `src/newbro/ui/src/lib/session-client.ts`
+- `src/newbro/ui/src/lib/connector-client.ts`
+- `src/newbro/ui/src/lib/voice-runtime.ts`
+- `src/newbro/ui/src/types.ts`
+- `src/newbro/ui/src/__tests__/`
+
+Use these current frontend files primarily as runtime wiring references, data-shape references, and regression-test anchors. Do not treat the existing visual/page structure as the implementation base unless a small helper is already design-compatible.
+
+Required artboard state matrix:
+- Desktop home workspace: `dt-home`
+- Desktop bro detail active session: `dt-thread`
+- Desktop sign in / invitation: `dt-signin`
+- Desktop empty workspace: `dt-empty-home`
+- Desktop create/connect bro: `dt-create-bro`
+- Desktop bro detail offline/send blocked: `dt-bro-offline`
+- Mobile sign in / invitation: `signin`
+- Mobile empty workspace: `empty-home`
+- Mobile create/connect bro: `create-bro`
+- Mobile bro offline/send blocked: `bro-offline`
+- Mobile home workspace: `home`
+- Mobile threads/chat: `threads`
 
 Useful discovery commands:
-- rg --files design src/newbro/ui/src | sort
-- rg -n "HomeDesktop|BroDetailActiveDesktop|SignInDesktop|FirstRunHomeDesktop|CreateBroDesktop|BroDetailOfflineDesktop|HomeVariant|ThreadsVariant|SignInVariant|CreateBroVariant|ThreadsOfflineVariant" design
-- rg -n "VoiceProvider|useVoice|inputMode|freeSubMode|listening|thinking|working|reporting|offline|send blocked" design
-- rg -n "bootstrapPublicUser|signupPublicUser|getCurrentUser|logoutPublicUser|getSessionSnapshot|getConversationSnapshot|openSessionStream|sendSocketMessage|sendSocketDraftAsrTurn|createExecutorNode|updatePersona|revealExecutorNodeConnectCommand|setVoiceTarget|clearVoiceTarget" src/newbro/ui/src
-- rg -n "useVoiceSession|prepare|activate|stop|Agora|connector|draft|transcript|executorNodeId|connection_status|last_connected_at" src/newbro/ui/src
-- rg -n "data-testid|voice-session-start|voice-session-stop|copy|signup|session|persona|executor" src/newbro/ui/src/__tests__ src/newbro/ui/src/components/newbro
+- `rg --files design src/newbro/ui/src | sort`
+- `rg -n "DCArtboard|dt-home|dt-thread|dt-signin|dt-empty-home|dt-create-bro|dt-bro-offline|signin|empty-home|create-bro|bro-offline|HomeVariant|ThreadsVariant|HomeDesktop|BroDetailActiveDesktop|SignInDesktop|FirstRunHomeDesktop|CreateBroDesktop|BroDetailOfflineDesktop" design`
+- `rg -n "PageId|activePage|BrosPage|NodesPage|Settings|NotFound|Catch|ShellLoading|ShellApiError|MobileWalkie|BroDetail|HomeShell|signup|createExecutorNode|revealExecutorNodeConnectCommand|setVoiceTarget|sendSocket" src/newbro/ui/src`
 </context>
 
 <constraints>
-- Treat `src/newbro/ui/` as the only active frontend. Do not revive or route users to an older UI shell.
-- Preserve Newbro's protocol-first runtime boundaries. UI components may render state and invoke typed client functions, but must not invent backend policy, parse transcript keywords, or bypass session/draft/executor-node contracts.
-- Keep Communication Brain, Execution Brain, Shared Blackboard, and transport responsibilities separate. Do not move business policy into the browser for cosmetic reasons.
-- Keep transport thin: same-origin or `VITE_API_BASE_URL` session APIs own durable Newbro state; connector APIs own Agora browser voice/session lifecycle.
-- The new design prototype is the visual source of truth. Prefer directly porting components, tokens, assets, and state-specific layouts from `design/` when practical. Where direct copy is not practical, match dimensions, spacing, typography, colors, and interaction states as closely as the active app architecture allows.
-- Existing live functionality must remain wired. Do not replace runtime data with static design arrays except for isolated empty/error/demo fallbacks.
-- Current routes and deep-link behavior must remain usable: the shell follows one active session, preserves `?sid=...`, resumes it on load, and keeps sidebar/mobile navigation session-aware.
-- Existing auth/signup/logout behavior must remain functional and visually align with the design's sign-in/invitation state.
-- Existing persona and executor-node management behavior must remain functional, including create, bind, edit, rotate/reveal/copy command, delete where supported, ownership scoping, and token secrecy.
-- Preserve current Bro node usability semantics already in the codebase: no usable node stays gated; a usable but disconnected node keeps Bro Detail visible but blocks talk/start actions with warning; live connection changes re-render from snapshot state.
-- Preserve current voice and draft behavior: voice target setup/cleanup, connector prepare/activate/stop, STT/draft transcript flow, sendSocketMessage, sendSocketDraftAsrTurn, and stop/error cleanup must stay connected to real runtime clients.
-- Do not change backend or protocol contracts unless the frontend cannot represent a required existing runtime behavior without a minimal contract fix. If backend/protocol changes are made, add focused backend tests and update stable docs.
-- Do not broaden scope into unrelated backend features, new authentication systems, new executor orchestration, or design-only marketing pages.
-- Use existing frontend dependencies and design-system primitives where appropriate. Add dependencies only when the design cannot be implemented cleanly with the current stack and the tradeoff is justified.
-- Keep responsive behavior first-class. Desktop and mobile should be purpose-built from the design variants, not an overflowing desktop layout squeezed into mobile.
-- Avoid nested cards, decorative gradient/orb backgrounds, and explanatory in-app text about how the UI was built. The product screen should be the first screen after auth/session load.
-- Update stable docs and `docs/memories.md` only for adopted implementation-relevant frontend/runtime behavior changes, not for tiny refactors or test-only changes.
+- The design prototype is the visual source of truth. Recreate the app as new artboard-first pages/components from the design, then wire runtime functionality into those pages.
+- Do not incrementally tweak the current pages into shape. Existing components may be reused only when they already fit the artboard architecture or are pure wiring/helpers without visual constraints.
+- Port or faithfully reuse design tokens, CSS, assets, component structure, and interaction states from `design/` before inventing new visual patterns.
+- Only directly artboarded UI states should remain active. Remove, hide, or fold non-artboard UI into artboarded flows.
+- Removable UI includes standalone Bros management, standalone Nodes management, standalone Settings/preferences, node credential/enrollment pages beyond create/connect, custom not-found/catch-boundary product screens, custom shell loading/API error product screens, and any non-artboard modal/toast/page.
+- No custom fallback UI remains. Loading, API error, missing route, catch-boundary, and failed runtime states must be removed, hidden, allowed to fail plainly, or expressed through an existing artboarded state; do not create or keep a separate fallback screen.
+- Preserve runtime wiring needed by artboarded flows: auth/signup/logout, current user bootstrap, `?sid` resume, session snapshots, websocket updates, personas, executor node creation/binding, credential reveal/copy inside create/connect, Bro detail, conversation/thread display, voice connector prepare/activate/stop, STT/draft flow, message/draft send, voice target cleanup, and offline send blocking.
+- Do not replace runtime data with static prototype data except artboarded empty/offline states that cannot mask broken API wiring.
+- Keep Communication Brain and Execution Brain boundaries intact. UI may render state and call typed clients; it must not invent semantic transcript rules, dispatch raw speech directly to executors, or bypass draft/session contracts.
+- Keep transport thin. Browser UI and connector clients translate typed state and actions; they do not own backend policy.
+- Do not broaden scope into backend features, new authentication systems, executor orchestration changes, or marketing pages.
+- Update stable docs and `docs/memories.md` only if the implementation adopts meaningful frontend/runtime behavior changes beyond visual restructuring.
 </constraints>
 
 <done_when>
-- `src/newbro/ui` visually matches the new `design/` prototype for desktop and mobile home, Bro detail, onboarding/sign-in, create/connect Bro, and offline-node states.
-- The implementation directly reuses or faithfully ports components, design tokens, CSS, image assets, character assets, and state-specific layouts from `design/` where practical, rather than re-creating a loosely similar layout.
-- Existing live functionality remains wired: auth/signup/logout, current user bootstrap, session resume via `?sid`, session snapshot reads, websocket stream updates, conversation history hydration, personas, executor nodes, Bro management, node management, connector prepare/activate/stop, STT/draft flow, voice target behavior, and message/draft send behavior.
-- The design's new UI controls invoke the existing runtime actions instead of mock data wherever backend data exists.
-- Sample/mock design data is allowed only as an empty/error/demo fallback and is isolated from runtime state so it cannot mask broken API wiring.
-- Desktop visual QA covers at least the design-equivalent states for home workspace, active Bro detail, sign-in/invitation, empty workspace, create/connect Bro, and Bro detail with node offline/send blocked.
-- Mobile visual QA covers at least the design-equivalent states for home workspace, thread/detail, sign-in/invitation, empty workspace, create/connect Bro, and offline/send blocked.
-- The app remains free of horizontal page overflow and incoherent overlapping text at representative desktop and mobile viewports.
-- Tests cover key wiring regressions: session bootstrap/resume, Bro cards sourced from runtime personas, Bro detail voice actions, node/offline blocking behavior, onboarding/sign-in flow, and create/connect Bro path.
-- Existing frontend tests that validate auth, session, Bro Detail, node management, draft/STT, and voice behavior still pass or are intentionally updated to match the new visual structure without weakening runtime assertions.
+- Every required artboard state in the matrix is implemented in `src/newbro/ui`.
+- UI not represented in the artboards is removed, hidden, or folded into an artboarded flow.
+- No custom fallback UI remains for loading, API error, not-found, catch-boundary, or non-artboard runtime states.
+- Desktop states visually match the corresponding 1440x900 artboards: home workspace, bro detail active session, sign in/invitation, empty workspace, create/connect bro, and bro detail offline/send blocked.
+- Mobile states visually match the corresponding 440x920 artboards: sign in/invitation, empty workspace, create/connect bro, bro offline/send blocked, home workspace, and threads/chat.
+- Mobile states remain usable at 390x820 with no clipped primary controls, incoherent text overlap, broken scroll, or horizontal page overflow.
+- Remaining artboarded flows use existing runtime APIs for auth, sessions, personas, executor nodes, connect command reveal/copy, Bro detail, voice connector lifecycle, STT/draft, message/draft send, and offline blocking.
+- Empty workspace uses the artboarded empty state instead of fake active data.
+- Disconnected usable nodes show the artboarded offline/send-blocked state and block talk/send actions without hiding the bro detail state.
 - `cd src/newbro/ui && bun run test` passes.
 - `cd src/newbro/ui && bun run build` passes.
-- Browser/manual visual QA compares the implemented app against `design/screenshots/*` at desktop and mobile viewports, with any remaining pixel deltas documented in the final answer.
-- Stable frontend docs are updated if the active UI structure, source-of-truth design, or user-visible runtime behavior changes meaningfully.
-- `docs/memories.md` contains a short factual note only if this refactor adopts a meaningful behavior or architecture change beyond visual/component restructuring.
+- Browser/manual visual QA captures screenshots for every required artboard state at the required desktop/mobile viewport sizes.
+- Any remaining pixel deltas are documented with concrete reasons and follow-up paths; do not claim pixel-perfect completion for undocumented visual drift.
 </done_when>
 
 <workflow>
-1. Check git status and preserve unrelated user changes. Treat the existing untracked `design/` folder as user-provided source material.
-2. Read the stable frontend/runtime docs, then inspect the current `src/newbro/ui` implementation and tests.
-3. Inspect the design prototype sources and screenshots. Identify the canonical components, tokens, assets, and screen states to port:
-   - desktop home workspace;
-   - desktop active Bro detail;
-   - desktop sign-in/invitation;
-   - desktop empty workspace;
-   - desktop create/connect Bro;
-   - desktop offline/send-blocked Bro detail;
-   - mobile home;
-   - mobile thread/detail;
-   - mobile onboarding/create/offline variants;
-   - character/avatar/logo assets;
-   - voice state model and input-mode controls.
-4. Map design components to current runtime surfaces before editing:
-   - auth/signup/logout;
-   - active session bootstrap/resume;
-   - websocket/snapshot state;
-   - persona-derived Bro cards;
-   - executor-node status and create/connect flows;
-   - Bro management and node management routes;
-   - conversation memory;
-   - voice connector lifecycle;
-   - STT/draft transcript;
-   - send/talk controls and offline blocking.
-5. Decide the integration shape:
-   - port reusable visual primitives into `src/newbro/ui/src/components/newbro/` or a clearly named subfolder;
-   - merge design tokens into `src/newbro/ui/src/styles/app.css` without breaking Tailwind v4 and existing utility classes;
-   - copy required assets into the frontend public/src asset path used by Vite;
-   - keep runtime adapters separate from presentational components where practical.
-6. Implement the visual foundation first: tokens, fonts, body/page styling, shared primitives, character/logo/avatar assets, and responsive frame/layout utilities.
-7. Refactor authenticated shell layout to match the design's desktop and mobile structure while preserving route/session behavior.
-8. Refactor home workspace to render runtime persona/task/node state through the design's Bro/channel cards, with isolated fallback data only when runtime data is absent by documented design.
-9. Refactor Bro detail/thread surfaces to match the design and wire existing conversation memory, voice state, draft/STT, send, stop, and offline-blocked behavior.
-10. Refactor onboarding/sign-in/empty/create-connect/offline states to match the design and call existing auth, persona, node, reveal/copy command, and bind/update APIs.
-11. Refactor management pages only as much as needed to stay coherent with the new visual system while preserving existing functionality.
-12. Add or update focused tests for runtime wiring through the new components. Prefer assertions on user-observable behavior and mocked client calls over implementation details.
-13. Run focused tests during development, then run the full frontend test/build commands.
-14. Start the local frontend/backend as needed and perform browser visual QA against desktop and mobile viewports. Compare the implemented states to `design/screenshots/*`; fix layout, overflow, and interaction polish issues.
-15. Update stable docs and memory only if the adopted implementation changes the active UI structure or runtime behavior in a meaningful way.
-16. Review final diff for unrelated churn, mock-data leakage, broken runtime wiring, duplicated dead components, stale docs, and test assertions that only check cosmetic implementation details.
+1. Check git status and preserve unrelated user changes.
+2. Read `SPEC.md`, `AGENTS.md`, and stable docs relevant to frontend/session/onboarding/executor/draft behavior before editing.
+3. Inspect the design prototype and current frontend in parallel. Build a file-level checklist mapping each artboard state to new page/component files, and separately map current components only to runtime APIs, data transforms, and edge-case behavior.
+4. Render or otherwise visually inspect the design artboards. Use `design/screenshots/` where available and capture fresh references if needed.
+5. Audit current routes/pages and remove or fold non-artboard product UI from navigation and reachable flows.
+6. Create a new artboard-first UI layer: shared visual foundation, tokens, body/page styling, shell dimensions, top bars, mobile bars, paper surfaces, status chips, buttons, command blocks, character/avatar assets, and responsive utilities.
+7. Recreate desktop artboard pages first with design-faithful component structure: home, bro detail active, sign in, empty workspace, create/connect, offline/send blocked.
+8. Recreate mobile artboard pages first with design-faithful component structure: sign in, empty workspace, create/connect, offline/send blocked, home, threads/chat.
+9. Wire runtime data and actions into the recreated pages using existing client functions. Avoid mock data except artboarded empty/offline states.
+10. Add or update focused tests for key regressions: signup/auth, session resume, runtime bro cards/home state, create/connect, bro detail voice actions, draft/message send, and offline blocking.
+11. Run focused tests during development, then full frontend test and build commands.
+12. Perform browser screenshot QA for every matrix row at 1440x900 desktop, 440x920 mobile, and 390x820 mobile spot-checks. Iterate until visual drift is fixed or explicitly documented.
+13. Update stable docs and `docs/memories.md` only if adopted runtime/frontend behavior changes meaningfully.
+14. Review final diff for unrelated churn, dead non-artboard routes, leaked mock data, broken runtime calls, stale docs, and insufficient visual evidence.
 </workflow>
 
 <verification_loop>
 Focused inspection:
-- rg --files design src/newbro/ui/src | sort
-- rg -n "mock|sample|CHANNELS|BROS|bootstrapPublicUser|signupPublicUser|getSessionSnapshot|openSessionStream|sendSocketMessage|sendSocketDraftAsrTurn|createExecutorNode|updatePersona|setVoiceTarget|clearVoiceTarget|useVoiceSession" src/newbro/ui/src
+- `rg --files design src/newbro/ui/src | sort`
+- `rg -n "DCArtboard|dt-home|dt-thread|dt-signin|dt-empty-home|dt-create-bro|dt-bro-offline|HomeDesktop|BroDetailActiveDesktop|SignInDesktop|FirstRunHomeDesktop|CreateBroDesktop|BroDetailOfflineDesktop|HomeVariant|ThreadsVariant|SignInVariant|CreateBroVariant|ThreadsOfflineVariant" design`
+- `rg -n "BrosPage|NodesPage|Settings|NotFound|Catch|ShellLoading|ShellApiError|mock|sample|bootstrapPublicUser|signupPublicUser|getSessionSnapshot|openSessionStream|sendSocketMessage|sendSocketDraftAsrTurn|createExecutorNode|revealExecutorNodeConnectCommand|setVoiceTarget|clearVoiceTarget|useVoiceSession" src/newbro/ui/src`
+- `rg -n "fallback|loading|error panel|catch boundary|not found|NotFound|ShellLoading|ShellApiError|DefaultCatchBoundary" src/newbro/ui/src`
 
-Frontend tests and build:
-- cd src/newbro/ui && bun run test
-- cd src/newbro/ui && bun run build
+Frontend verification:
+- `cd src/newbro/ui && bun run test`
+- `cd src/newbro/ui && bun run build`
 
-Backend tests, only if backend/protocol files changed:
-- .venv/bin/python -m pytest tests/unit tests/integration/api
-- .venv/bin/python -m pytest
+Manual/browser visual QA:
+- Start services if needed with `./newbro dev`.
+- Capture implementation screenshots for each desktop artboard state at 1440x900.
+- Capture implementation screenshots for each mobile artboard state at 440x920.
+- Spot-check mobile at 390x820.
+- Compare against `design/screenshots/*` and/or freshly rendered design artboards from `design/Voice Interaction.html`.
 
-Manual/browser visual QA when feasible:
-- Start backend if needed: ./newbro backend
-- Start frontend if needed: cd src/newbro/ui && bun run dev
-- Open the local UI in a browser and check desktop viewport around 1440x900.
-- Check mobile viewport around 390x820 or 440x920.
-- Compare against `design/screenshots/01-canvas.png`, `design/screenshots/02-stage-focus.png`, `design/screenshots/dt-detail-current.png`, `design/screenshots/firsthome-sheet-closed.png`, `design/screenshots/hero-only.png`, `design/screenshots/hero-tight.png`, `design/screenshots/hero-zoom.png`, `design/screenshots/onboarding-overview.png`, `design/screenshots/onboarding-right.png`, `design/screenshots/recheck-hq.png`, and `design/screenshots/recheck.png` as applicable to the implemented states.
-
-Manual functional smoke checks:
-- Sign in with email and invitation code, including visible error handling.
+Functional smoke checks:
+- Sign in with an invitation code.
 - Confirm current user bootstrap and logout still work.
-- Confirm session opens, writes `?sid`, resumes from `?sid`, and falls back cleanly if resume fails.
-- Confirm home Bro/channel cards come from runtime personas and node/task state.
-- Confirm navigation preserves `sid` on desktop and mobile.
-- Confirm Bro Detail can start/stop voice through the existing connector flow.
-- Confirm STT/draft transcript and message/draft send actions call existing client paths.
-- Confirm create/connect Bro flow creates or binds an executor node, shows/reveals/copies the connect command only through existing credential flows, and updates persona binding.
-- Confirm offline/send-blocked state appears for usable disconnected nodes and blocks talk/start actions without hiding normal detail.
-- Confirm empty runtime state uses the design empty/onboarding state rather than silently replacing runtime with fake active data.
+- Confirm session opens, writes or preserves `?sid`, and resumes from `?sid`.
+- Confirm empty workspace renders the design empty state when no bros exist.
+- Confirm create/connect creates or binds runtime persona/executor-node state and exposes connect command copy only through the artboarded flow.
+- Confirm home workspace renders runtime bros and state.
+- Confirm bro detail/thread renders runtime conversation and draft state.
+- Confirm voice start/stop uses existing connector flow and cleans up voice target state.
+- Confirm STT/draft and message send actions call existing client paths.
+- Confirm disconnected usable nodes show offline/send-blocked state and prevent talk/send actions.
 
-Audits:
-- rg -n "design/|uploads/export|localhost|TODO|FIXME|Babel|CDN|window.__voice|TWEAK|CHANNELS|NEWBRO_INDEX" src/newbro/ui/src
-- rg -n "frontend|UI|design|Newbro Walkie|Bro detail|offline|create/connect" docs/guides docs/architecture docs/memories.md
-
-If a check cannot run, document why, what was run instead, and the residual risk. Do not claim pixel-perfect completion without either browser visual QA evidence or an explicit note of unverified visual risk.
+If a check cannot run, document why, what was run instead, and the residual risk.
 </verification_loop>
 
 <execution_rules>
@@ -186,26 +153,20 @@ If a check cannot run, document why, what was run instead, and the residual risk
 - Batch independent file reads in parallel when available.
 - Run focused tests before broad tests.
 - Do not paper over failures.
-- Do not widen scope beyond the new-design UI refactor and required runtime wiring.
+- Do not widen scope.
 - Keep the final answer concise.
-- Respect AGENTS.md project skills:
-  - read stable docs before RFCs;
-  - preserve Communication Brain and Execution Brain boundaries;
-  - avoid fake semantic rules;
-  - keep transport thin;
-  - diagnose from real state;
-  - protect dispatch from raw speech shortcuts;
-  - verify activation before judging a manual run;
-  - update stable docs and memories deliberately only for adopted meaningful changes.
+- Follow repo guardrails from `AGENTS.md`: read stable docs first, preserve Communication Brain and Execution Brain boundaries, avoid fake semantic rules, keep transport thin, diagnose from real state, protect dispatch, test the failure mode, verify activation, and update memory deliberately.
 </execution_rules>
 
 <output_contract>
 Final output must include:
-- Summary of the design integration approach, including which design sources/components/assets were ported or reused.
-- Summary of runtime wiring preserved for auth, sessions, personas, nodes, Bro detail, draft/STT, and voice connector actions.
+- Completed artboard state matrix with each state marked complete or documented with reason.
+- Summary of removed/hidden/folded non-artboard UI.
+- Summary of the new artboard-first UI layer and the design sources, tokens, CSS, assets, and components ported or reused.
+- Summary of runtime wiring preserved for auth, sessions, personas, nodes, create/connect, bro detail, voice connector, STT/draft, message/draft send, and offline blocking.
 - Key files changed, grouped by UI components/styles/assets, runtime wiring, tests, and docs.
 - Verification commands run and outcomes.
-- Manual visual QA performed, including desktop/mobile viewports and any known pixel deltas from `design/screenshots/*`.
-- Any skipped checks or residual risks.
-- A clear completion signal only when every `done_when` item is satisfied or explicitly documented.
+- Screenshot QA evidence paths and viewport sizes.
+- Any skipped checks, documented pixel deltas, or residual risks.
+- Clear completion signal only when every `done_when` item is satisfied or explicitly documented.
 </output_contract>
