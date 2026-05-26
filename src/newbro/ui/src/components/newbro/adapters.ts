@@ -266,8 +266,11 @@ export function buildBroCardModels(
   summaries?: TaskSummary[] | null,
   tasks?: Task[] | null,
 ): BroCardModel[] {
-  if (!personas || personas.length === 0) {
+  if (!personas) {
     return sampleBros;
+  }
+  if (personas.length === 0) {
+    return [];
   }
   const taskByTaskId = new Map((tasks ?? []).map((task) => [task.task_id, task]));
   const nodesById = new Map((executorNodes ?? []).map((node) => [node.node_id, node]));

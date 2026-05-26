@@ -35,8 +35,8 @@ export function BroProgress({
           talking ? "border-primary/12 bg-primary/6" : "border-white/80 bg-[hsl(var(--paper))]"
         }`}
       >
-        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Current state</div>
-        <div className={`serif-flow mt-3 text-[21px] leading-tight tracking-[-0.03em] ${talking ? "text-primary" : "text-foreground"}`}>
+        <div className="text-[10px] uppercase tracking-normal text-muted-foreground">Current state</div>
+        <div className={`serif-flow mt-3 text-[21px] leading-tight tracking-normal ${talking ? "text-primary" : "text-foreground"}`}>
           {bro.taskTitle}
         </div>
         <div className="mt-2 text-[12px] leading-6 text-muted-foreground">
@@ -70,13 +70,13 @@ export function BroProgress({
       {!compact ? (
         <>
           <div className="flex items-center justify-between gap-3">
-            <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Current task</div>
+            <div className="text-[10px] uppercase tracking-normal text-muted-foreground">Current task</div>
             <div className={`text-[11px] ${talking ? "text-primary" : "text-muted-foreground"}`}>
               {bro.progressLabel}
             </div>
           </div>
 
-          <div className={`serif-flow mt-3 text-[21px] leading-tight tracking-[-0.03em] ${talking ? "text-primary" : "text-foreground"}`}>
+          <div className={`serif-flow mt-3 text-[21px] leading-tight tracking-normal ${talking ? "text-primary" : "text-foreground"}`}>
             {bro.taskTitle}
           </div>
         </>

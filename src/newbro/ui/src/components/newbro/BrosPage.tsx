@@ -88,7 +88,7 @@ function BroForm({
       </div>
 
       <div className="space-y-2">
-        <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.18em] text-[#9ca3af]">
+        <div className="flex items-center gap-2 text-[12px] uppercase tracking-normal text-[#9ca3af]">
           <Link2 className="h-3.5 w-3.5" strokeWidth={1.8} />
           Executor Node
         </div>
@@ -190,7 +190,7 @@ function BroRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="text-[15px] font-medium tracking-[-0.02em] text-[#111827]">
+          <div className="text-[15px] font-medium tracking-normal text-[#111827]">
             {persona.name}
           </div>
           <div className="nb-chip nb-chip-muted uppercase">
@@ -355,25 +355,27 @@ export function BrosPage({
   const liveCount = personas.filter((persona) => nodeStateLabel(persona, nodesById) === "live").length;
 
   return (
-    <div className="nb-detail-shell nb-detail-shell-full">
-      <section className="nb-detail-main">
-        <div className="nb-detail-topbar">
-          <div className="nb-detail-crumb">
-            <span>Workspace</span>
-            <span className="nb-detail-crumb-sep">/</span>
-            <span className="nb-detail-crumb-current">Bros</span>
+    <div className="dt-main-pad">
+      <section className="dt-home-main">
+        <div className="dt-page-head">
+          <div>
+            <div className="dt-detail-crumb">
+              <span>Workspace</span>
+              <span className="dt-detail-crumb-sep">/</span>
+              <span className="dt-detail-crumb-cur">Bros</span>
+            </div>
+            <h1 className="dt-h1 mt-3">Worker Bros</h1>
+            <p className="dt-sub">Manage worker personas, prompts, avatars, and their executor-node bindings.</p>
           </div>
-        </div>
-
-        <div className="nb-detail-bro-header">
-          <div className="nb-detail-bro-title">
-            <h1>Bros</h1>
-            <span className="nb-chip">{personas.length} configured</span>
-            <span className="nb-chip nb-chip-online">
-              <span className="nb-pulse" />
+          <div className="dt-page-actions">
+            <span className="dt-home-chip dt-home-chip-calm">
+              <span className="dt-home-chip-dot" />
+              {personas.length} configured
+            </span>
+            <span className="dt-home-chip dt-home-chip-info">
+              <span className="dt-home-chip-dot" />
               {liveCount} live
             </span>
-          </div>
           {!editingId && mode !== "add" && (
             <button
               onClick={() => {
@@ -382,21 +384,22 @@ export function BrosPage({
                 setError(null);
                 setStatus(null);
               }}
-              className="nb-page-primary-action"
+              className="dt-page-action-primary"
             >
               <Plus strokeWidth={2} />
               New Bro
             </button>
           )}
+          </div>
         </div>
 
-        <div className="nb-detail-scroll space-y-5 sm:space-y-6">
+        <div className="space-y-5 sm:space-y-6">
           <div className="hidden lg:block">
             <div className="command-label text-[#9ca3af]">
               Worker Prompts / Node Bindings
             </div>
           </div>
-          <SectionHeader title="Worker Bros" />
+          <SectionHeader title="Prompts and bindings" />
 
           {error && (
             <div className="nb-status-banner nb-status-banner-error">

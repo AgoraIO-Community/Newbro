@@ -83,7 +83,7 @@ function NodeForm({
 
       {enabledExecutors.includes("acpx") ? (
         <div className="space-y-2">
-          <div className="text-[12px] uppercase tracking-[0.18em] text-neutral-400">ACPX Agent</div>
+          <div className="text-[12px] uppercase tracking-normal text-neutral-400">ACPX Agent</div>
           <div className="flex flex-wrap gap-2">
             {ACPX_AGENT_OPTIONS.map((agent) => (
               <button
@@ -157,7 +157,7 @@ function CredentialsPanel({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="command-label text-[#9ca3af]">Enrollment Kit</div>
-          <div className="mt-2 text-[24px] font-bold tracking-[-0.03em] text-[#111827] sm:text-[28px]">
+          <div className="mt-2 text-[24px] font-bold tracking-normal text-[#111827] sm:text-[28px]">
             {issue.node.name}
           </div>
           <div className="mt-2 max-w-[640px] text-[13px] leading-6 text-[#6b7280]">
@@ -193,7 +193,7 @@ function CredentialsPanel({
 
         <div className="nb-subcard">
           <div className="command-label text-[#9ca3af]">Local Machine</div>
-          <div className="mt-3 text-[18px] font-semibold tracking-[-0.03em] text-[#111827]">Start the executor node</div>
+          <div className="mt-3 text-[18px] font-semibold tracking-normal text-[#111827]">Start the executor node</div>
           <div className="mt-3 space-y-3 text-[13px] leading-6 text-[#6b7280]">
             <div>1. Copy the command below onto the client machine that will run the node.</div>
             <div>2. Run it directly to connect back to this Newbro service.</div>
@@ -249,7 +249,7 @@ function NodeCard({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-[18px] font-semibold tracking-[-0.03em] text-[#111827]">{node.name}</div>
+            <div className="text-[18px] font-semibold tracking-normal text-[#111827]">{node.name}</div>
             <div
               className={`nb-chip uppercase ${
                 connected
@@ -321,7 +321,7 @@ function NodeCard({
             <Cable className="h-3.5 w-3.5" strokeWidth={1.8} />
             Connection
           </div>
-          <div className="mt-3 text-[20px] font-semibold tracking-[-0.03em] text-[#111827]">
+          <div className="mt-3 text-[20px] font-semibold tracking-normal text-[#111827]">
             {connected ? "Live" : "Waiting"}
           </div>
           <div className="mt-1 text-[12px] leading-5 text-neutral-500">
@@ -499,28 +499,32 @@ export function NodesPage({
   const editingNode = editingNodeId ? nodes.find((node) => node.node_id === editingNodeId) ?? null : null;
 
   return (
-    <div className="nb-detail-shell nb-detail-shell-full">
-      <section className="nb-detail-main">
-        <div className="nb-detail-topbar">
-          <div className="nb-detail-crumb">
-            <span>Workspace</span>
-            <span className="nb-detail-crumb-sep">/</span>
-            <span className="nb-detail-crumb-current">Nodes</span>
+    <div className="dt-main-pad">
+      <section className="dt-home-main">
+        <div className="dt-page-head">
+          <div>
+            <div className="dt-detail-crumb">
+              <span>Workspace</span>
+              <span className="dt-detail-crumb-sep">/</span>
+              <span className="dt-detail-crumb-cur">Nodes</span>
+            </div>
+            <h1 className="dt-h1 mt-3">Executor Nodes</h1>
+            <p className="dt-sub">
+              Create, reveal, rotate, and manage the local executor nodes that make Bros usable.
+            </p>
           </div>
-        </div>
-
-        <div className="nb-detail-bro-header">
-          <div className="nb-detail-bro-title">
-            <h1>Executor Nodes</h1>
-            <span className="nb-chip">{nodes.length} configured</span>
-            <span className="nb-chip nb-chip-online">
-              <span className="nb-pulse" />
+          <div className="dt-page-actions">
+            <span className="dt-home-chip dt-home-chip-calm">
+              <span className="dt-home-chip-dot" />
+              {nodes.length} configured
+            </span>
+            <span className="dt-home-chip dt-home-chip-info">
+              <span className="dt-home-chip-dot" />
               {connectedCount} connected
             </span>
-            <span className="nb-chip">
+            <span className="dt-home-chip dt-home-chip-calm">
               {personas.filter((persona) => Boolean(persona.executor_node_id)).length} bound
             </span>
-          </div>
 
           {mode === "list" && (
             <button
@@ -530,15 +534,16 @@ export function NodesPage({
                 setError(null);
                 setStatus(null);
               }}
-              className="nb-page-primary-action"
+              className="dt-page-action-primary"
             >
               <Plus strokeWidth={2} />
               New Node
             </button>
           )}
+          </div>
         </div>
 
-        <div className="nb-detail-scroll space-y-5 sm:space-y-6">
+        <div className="space-y-5 sm:space-y-6">
           <div className="nb-page-copy">
             Create a node, issue its credential pair, and bind Bros to that machine. A Bro only becomes live
             after its bound node reconnects to Newbro with the matching node id and token.

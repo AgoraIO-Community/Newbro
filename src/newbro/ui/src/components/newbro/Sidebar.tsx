@@ -142,7 +142,7 @@ export function Sidebar({
       >
         <div className="flex w-full flex-col">
           <NewbroLogo />
-          <div className="mt-7 px-2 text-[10px] font-medium uppercase tracking-[0.18em] text-[#9ca3af]">Workspace</div>
+          <div className="mt-7 px-2 text-[10px] font-medium uppercase tracking-normal text-[#9ca3af]">Workspace</div>
           {nav}
         </div>
 

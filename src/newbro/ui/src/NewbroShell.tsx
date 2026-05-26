@@ -15,6 +15,7 @@ import {
   bootstrapPublicUser,
   clearVoiceTarget,
   createExecutorNode,
+  createPersona,
   getConversationSnapshot,
   getCurrentUser,
   getSessionSnapshot,
@@ -34,12 +35,12 @@ import { BrosPage } from "./components/newbro/BrosPage";
 import { BrosPanel } from "./components/newbro/BrosPanel";
 import { MobileWalkie } from "./components/newbro/mobile/MobileWalkie";
 import { NodesPage } from "./components/newbro/NodesPage";
-import { Sidebar, type PageId } from "./components/newbro/Sidebar";
+import type { PageId } from "./components/newbro/Sidebar";
 import { TopVoiceBar } from "./components/newbro/TopVoiceBar";
 import { buildBroCardModels, buildBroTaskRecords } from "./components/newbro/adapters";
 import { useVoiceSession } from "./components/newbro/useVoiceSession";
-import { BroDetailHeader, WindowDots } from "./components/newbro/visual";
-import { Check, Copy, LoaderCircle } from "lucide-react";
+import { BroDetailHeader } from "./components/newbro/visual";
+import { Check, Copy, Home, LoaderCircle, LogOut, Plus, Search, Server, Settings, Users, X } from "lucide-react";
 import type {
   DraftOutputCompletedStreamEvent,
   DraftOutputDeltaStreamEvent,
@@ -104,8 +105,8 @@ function ShellApiErrorPanel({ detail }: { detail: string }) {
       data-testid="shell-api-error"
       className="paper-panel mx-4 my-4 rounded-[30px] border border-white/80 px-6 py-6 shadow-[0_24px_54px_-40px_rgba(15,23,42,0.22)] md:mx-6 md:my-6 xl:mx-8 xl:my-8"
     >
-      <div className="text-[11px] uppercase tracking-[0.24em] text-[#8d5a62]">Connection problem</div>
-      <div className="serif-flow mt-3 text-[32px] tracking-[-0.05em] text-foreground">
+      <div className="text-[11px] uppercase tracking-normal text-[#8d5a62]">Connection problem</div>
+      <div className="serif-flow mt-3 text-[32px] tracking-normal text-foreground">
         {SHELL_API_ERROR_TITLE}
       </div>
       <div className="mt-3 max-w-[720px] text-[14px] leading-7 text-foreground/82">{detail}</div>
@@ -125,6 +126,51 @@ function ShellLoadingPanel() {
   );
 }
 
+function SignupInviteCodeInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const normalized = value.toUpperCase();
+  const cellCount = Math.max(8, Math.min(12, normalized.length || 8));
+
+  return (
+    <div
+      className={`ob-invite-row nb-signup-invite-row${cellCount > 8 ? " nb-signup-invite-row-long" : ""}`}
+      role="group"
+      aria-label="Invitation code"
+      onClick={() => inputRef.current?.focus()}
+    >
+      <input
+        ref={inputRef}
+        aria-label="Invitation code"
+        className="nb-signup-invite-input"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        autoComplete="one-time-code"
+        spellCheck={false}
+      />
+      {Array.from({ length: cellCount }).map((_, index) => {
+        const char = normalized[index] ?? "";
+        const filled = char.length > 0;
+        const cursor = Math.min(normalized.length, cellCount - 1) === index;
+        return (
+          <span key={index} className="nb-signup-invite-cell-wrap">
+            <span className={`ob-invite-cell${filled ? " ob-invite-cell-on" : ""}${cursor ? " ob-invite-cell-cur" : ""}`}>
+              <span className="ob-invite-glyph">{char}</span>
+              {cursor ? <span className="ob-invite-caret" aria-hidden="true" /> : null}
+            </span>
+            {index === 3 && index !== cellCount - 1 ? <span className="ob-invite-sep" aria-hidden="true">-</span> : null}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function SignupPanel({
   error,
   onSignup,
@@ -137,12 +183,27 @@ function SignupPanel({
   const [submitting, setSubmitting] = useState(false);
   const canSubmit = email.trim().length > 0 && code.trim().length > 0 && !submitting;
   return (
-    <div className="page-wash flex min-h-dvh items-center justify-center bg-[#f5f6f8] px-4 text-[#111827]">
-      <div className="paper-panel w-full max-w-[420px] rounded-[30px] border border-white/80 px-6 py-6 shadow-[0_24px_54px_-40px_rgba(15,23,42,0.22)]">
-        <div className="text-[11px] uppercase tracking-[0.24em] text-[#8d5a62]">Sign up</div>
-        <div className="serif-flow mt-3 text-[32px] tracking-[-0.05em] text-foreground">Newbro</div>
+    <div className="dt-frame flex min-h-dvh items-stretch justify-center px-0 py-0 text-[#111827] md:items-center md:px-4 md:py-8">
+      <div className="ob-page ob-signin min-h-dvh w-full overflow-hidden border-0 shadow-none md:h-auto md:min-h-[620px] md:max-w-[430px] md:rounded-[32px] md:border md:border-[#e5e7eb] md:shadow-[0_30px_70px_-30px_rgba(16,17,20,0.26)]">
+        <header className="ob-signin-bar">
+          <div className="ob-signin-logo">
+            <img src="/newbro.webp" alt="" draggable={false} />
+          </div>
+          <span className="ob-wordmark">
+            <span className="ob-wordmark-text">newbro</span>
+            <span className="ob-wordmark-build">alpha</span>
+          </span>
+          <span className="ob-signin-build">Sign up</span>
+        </header>
+        <main className="ob-signin-main">
+          <span className="ob-eyebrow ob-eyebrow-coral">INVITATION ONLY · CLOSED ALPHA</span>
+          <h1 className="ob-h1">Hi there.<br />Let's get you in.</h1>
+          <p className="ob-sub">
+            Newbro is a small crew of bros — each one bound to an executor on a machine you trust.
+            They keep working while you keep talking.
+          </p>
         <form
-          className="mt-5 space-y-3"
+          className="ob-form"
           onSubmit={(event) => {
             event.preventDefault();
             if (!canSubmit) return;
@@ -150,26 +211,39 @@ function SignupPanel({
             void onSignup(email.trim(), code.trim()).finally(() => setSubmitting(false));
           }}
         >
-          <input
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="Email"
-            className="command-field w-full px-4 py-3 text-[14px] outline-none"
-            autoComplete="email"
-            type="email"
-          />
-          <input
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
-            placeholder="Invitation code"
-            className="command-field w-full px-4 py-3 text-[14px] outline-none"
-            autoComplete="one-time-code"
-          />
-          <button disabled={!canSubmit} className="nb-page-primary-action w-full" type="submit">
-            {submitting ? "Opening..." : "Enter"}
+          <label className="ob-field">
+            <span className="ob-field-eyebrow">YOUR EMAIL</span>
+            <span className={`ob-input${email.trim() ? " ob-input-filled" : ""}`}>
+              <input
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@example.com"
+                autoComplete="email"
+                type="email"
+              />
+              {email.trim() ? (
+                <span className="ob-input-check" aria-hidden="true">
+                  <Check size={11} strokeWidth={2.6} />
+                </span>
+              ) : null}
+            </span>
+            <span className="ob-field-hint">This becomes your workspace handle.</span>
+          </label>
+          <label className="ob-field">
+            <span className="ob-field-eyebrow">INVITATION CODE</span>
+            <SignupInviteCodeInput value={code} onChange={setCode} />
+            <span className="ob-field-hint">From the email we sent — case-insensitive.</span>
+          </label>
+          <button disabled={!canSubmit} className="ob-cta ob-cta-block" type="submit">
+            <span>{submitting ? "Opening..." : "Continue"}</span>
+            {!submitting ? <kbd className="ob-cta-kbd">↵</kbd> : null}
           </button>
           {error ? <div className="text-[13px] leading-6 text-red-600">{error}</div> : null}
         </form>
+        </main>
+        <footer className="ob-signin-footer">
+          <span className="ob-mono-tiny">no passwords · invitation tokens only</span>
+        </footer>
       </div>
     </div>
   );
@@ -557,6 +631,57 @@ function useNewbroShellState() {
     return requestId;
   }, []);
 
+  const startMobileVoiceSession = useEffectEvent(async (targetBroId: string | null) => {
+    if (!activeShellSessionId) {
+      setShellWarning("Voice needs an active session before it can start.");
+      return;
+    }
+    if (runtimePersonas.length === 0) {
+      setShellWarning("Create a Bro before starting voice.");
+      return;
+    }
+    const targetBro = targetBroId ? bros.find((bro) => bro.id === targetBroId) ?? null : null;
+    if (targetBro && targetBro.liveState !== "live") {
+      setShellWarning(
+        targetBro.liveState === "offline"
+          ? `${targetBro.name}'s node is offline. Reconnect it before starting this channel.`
+          : `${targetBro.name} needs an executor node before voice can target it.`,
+      );
+      return;
+    }
+    try {
+      if (targetBroId) {
+        await setVoiceTarget(activeShellSessionId, targetBroId);
+      } else {
+        await clearVoiceTarget(activeShellSessionId).catch(() => undefined);
+      }
+      await start(activeShellSessionId);
+      if (mountedRef.current) {
+        startTransition(() => setShellWarning(null));
+      }
+    } catch (error: unknown) {
+      if (!mountedRef.current) return;
+      startTransition(() => {
+        setShellError(describeApiFailure(error, "Mobile voice could not start."));
+      });
+    }
+  });
+
+  const stopMobileVoiceSession = useEffectEvent(async () => {
+    const sessionId = activeShellSessionId;
+    try {
+      await stop();
+      if (sessionId) {
+        await clearVoiceTarget(sessionId).catch(() => undefined);
+      }
+    } catch (error: unknown) {
+      if (!mountedRef.current) return;
+      startTransition(() => {
+        setShellError(describeApiFailure(error, "Mobile voice could not stop cleanly."));
+      });
+    }
+  });
+
   const signupWithCode = useEffectEvent(async (email: string, code: string) => {
     setAuthError(null);
     try {
@@ -634,6 +759,8 @@ function useNewbroShellState() {
     startVoiceSession: start,
     stopVoiceSession: stop,
     toggleVoiceMute: toggleMute,
+    startMobileVoiceSession,
+    stopMobileVoiceSession,
     sendMessage,
     submitDraftAsrTurn,
     signupWithCode,
@@ -680,9 +807,14 @@ function ShellVoiceBar({
   if (!shell.hasLoadedShellSnapshot || !shell.activeShellSessionId) {
     return null;
   }
+  const emptyCrewBlockReason = shell.runtimePersonas.length === 0
+    ? "Create a Bro before starting voice."
+    : null;
+  const effectiveStartDisabled = startDisabled || Boolean(emptyCrewBlockReason);
+  const effectiveBlockReason = blockReason ?? emptyCrewBlockReason;
 
   return (
-    <div className="px-4 pt-4 md:px-6 xl:px-8">
+    <div>
       <TopVoiceBar
         bros={shell.bros}
         voicePhase={shell.voiceSession.phase}
@@ -690,21 +822,103 @@ function ShellVoiceBar({
         isMicMuted={shell.voiceSession.isMicMuted}
         messageCount={shell.voiceSession.transcript.length}
         sessionId={shell.activeShellSessionId}
-        startDisabled={startDisabled}
-        blockReason={blockReason}
+        startDisabled={effectiveStartDisabled}
+        blockReason={effectiveBlockReason}
         onStart={() => {
-          if (startDisabled) return;
+          if (effectiveStartDisabled) return;
           void shell.startVoiceSession(shell.activeShellSessionId);
         }}
         onStop={() => {
           void shell.stopVoiceSession();
         }}
         onToggleMute={() => {
-          if (startDisabled) return;
+          if (effectiveStartDisabled) return;
           void shell.toggleVoiceMute();
         }}
       />
     </div>
+  );
+}
+
+function DesktopShellHeader({
+  activePage,
+  onNavigate,
+  broCount,
+  nodeCount,
+  accountLabel,
+  accountId,
+  onLogout,
+  logoutPending,
+}: {
+  activePage: PageId;
+  onNavigate: PageNavigator;
+  broCount: number;
+  nodeCount: number;
+  accountLabel: string;
+  accountId?: string | null;
+  onLogout: () => void;
+  logoutPending?: boolean;
+}) {
+  const nav = [
+    { page: "Home" as const, count: broCount, icon: Home },
+    { page: "Bros" as const, count: broCount, icon: Users },
+    { page: "Nodes" as const, count: nodeCount, icon: Server },
+    { page: "Settings" as const, count: null, icon: Settings },
+  ];
+  const initial = accountLabel.trim().charAt(0).toUpperCase() || "N";
+
+  return (
+    <header className="dt-header" data-testid="newbro-sidebar">
+      <div className="dt-header-l">
+        <button type="button" className="dt-header-brand border-0 bg-transparent p-0" onClick={() => onNavigate("Home")}>
+          <div className="dt-header-brand-tile">
+            <img src="/newbro.webp" alt="" draggable={false} />
+          </div>
+          <span className="dt-header-brand-name">newbro</span>
+        </button>
+        <span className="dt-header-sep" />
+        <nav className="flex min-w-0 items-center gap-1" aria-label="Workspace">
+          {nav.map(({ page, count, icon: Icon }) => (
+            <button
+              key={page}
+              type="button"
+              aria-label={page}
+              onClick={() => onNavigate(page)}
+              className={`dt-header-workspace ${activePage === page ? "border-[#ffb89e] bg-[#fff1ec] text-[#ff6a3d]" : ""}`}
+            >
+              <Icon className="h-3.5 w-3.5" strokeWidth={1.9} />
+              <span className="dt-header-workspace-name">{page}</span>
+              {count !== null ? <span className="dt-header-workspace-label">{count}</span> : null}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      <div className="dt-header-r">
+        <span className={`dt-header-pill ${nodeCount > 0 ? "dt-header-pill-ready" : "dt-header-pill-empty"}`}>
+          <span className="dt-header-pill-dot" />
+          <span className="dt-header-pill-label">{nodeCount > 0 ? "runtime ready" : "setup needed"}</span>
+        </span>
+        <span className="dt-header-icon-btn dt-header-search dt-header-static" aria-hidden="true">
+          <Search className="h-3.5 w-3.5" strokeWidth={1.9} />
+        </span>
+        <div className="dt-header-account dt-header-static" aria-label="Signed in account">
+          <span className="dt-header-account-avatar">{initial}</span>
+          <span className="dt-header-account-name">{accountLabel}</span>
+        </div>
+        <button
+          type="button"
+          data-testid="sidebar-logout"
+          className="dt-header-icon-btn"
+          aria-label="Sign out"
+          disabled={logoutPending}
+          onClick={onLogout}
+        >
+          {logoutPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" strokeWidth={1.9} />}
+        </button>
+        {accountId ? <span className="sr-only">{accountId}</span> : null}
+      </div>
+    </header>
   );
 }
 
@@ -734,10 +948,9 @@ function ShellFrame({
   children: ReactNode;
 }) {
   return (
-    <div className="page-wash min-h-dvh overflow-x-hidden bg-[#f5f6f8] text-[#111827] antialiased">
-      <WindowDots />
-      <div className="grid min-h-dvh grid-cols-1 grid-rows-[auto_minmax(0,1fr)] lg:h-dvh lg:grid-cols-[248px_minmax(0,1fr)] lg:grid-rows-none lg:overflow-hidden">
-        <Sidebar
+    <div className="dt-frame min-h-dvh">
+      <div className="dt-shell min-h-dvh">
+        <DesktopShellHeader
           activePage={activePage}
           onNavigate={onNavigate}
           broCount={broCount}
@@ -747,12 +960,185 @@ function ShellFrame({
           onLogout={onLogout}
           logoutPending={logoutPending}
         />
-        <main data-testid="newbro-shell" className="relative flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-[#fafbfc] lg:overflow-hidden">
+        <main data-testid="newbro-shell" className="dt-main">
           {children}
         </main>
         {globalMessage && onGlobalMessageDismiss ? (
           <GlobalMessageBanner message={globalMessage} onDismiss={onGlobalMessageDismiss} />
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function FirstRunCreateSheet({
+  sessionId,
+  onClose,
+  onCreated,
+}: {
+  sessionId: string;
+  onClose: () => void;
+  onCreated: () => Promise<void>;
+}) {
+  const [name, setName] = useState("atlas");
+  const [command, setCommand] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmedName = name.trim();
+  const canCreate = trimmedName.length > 0 && !busy && !command;
+
+  async function copyCommand(value: string) {
+    try {
+      await navigator.clipboard?.writeText(value);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  async function createAndConnect() {
+    if (!canCreate) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const issue = await createExecutorNode(sessionId, {
+        name: `${trimmedName} local node`,
+        enabled_executors: ["codex"],
+      });
+      await createPersona(sessionId, {
+        name: trimmedName,
+        avatar: "bro",
+        base_prompt: "Help turn voice instructions into clear executable drafts.",
+        executor_node_id: issue.node.node_id,
+      });
+      const nextCommand = buildExecutorRunCommand(issue.node.node_id, issue.token, {
+        enabledExecutors: issue.node.enabled_executors,
+        acpxAgent: issue.node.acpx_agent,
+      });
+      setCommand(nextCommand);
+      await copyCommand(nextCommand);
+      await onCreated();
+    } catch (createError: unknown) {
+      setError(describeApiFailure(createError, "Could not create and connect this Bro."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="nb-first-run-sheet-layer" role="dialog" aria-modal="true" aria-label="Create and connect a Bro">
+      <div className="nb-first-run-sheet-frame ob-firsthome-sheet">
+        <div className="ob-sheet-dim" onClick={onClose} aria-hidden="true" />
+        <section className="ob-sheet">
+          <div className="ob-sheet-handle" aria-hidden="true" />
+          <header className="ob-sheet-head">
+            <div className="ob-sheet-titles">
+              <span className="ob-eyebrow ob-eyebrow-coral">NEW BRO</span>
+              <h2 className="ob-sheet-h">Name it, then connect a node.</h2>
+            </div>
+            <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}>
+              <X size={16} strokeWidth={2.2} />
+            </button>
+          </header>
+
+          <div className="ob-sheet-body">
+            <div className="ob-fieldset">
+              <label className="ob-field">
+                <span className="ob-field-eyebrow">NAME</span>
+                <div className="ob-input ob-input-filled">
+                  <span className="ob-input-prefix">@</span>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    disabled={Boolean(command) || busy}
+                  />
+                </div>
+                <span className="ob-field-hint">One word, easy to say out loud. e.g. atlas, scout, forge, muse.</span>
+              </label>
+            </div>
+
+            <div className="ob-fieldset">
+              <span className="ob-field-eyebrow ob-fieldset-eyebrow">EXECUTOR</span>
+              <div className="ob-exec-grid">
+                <div className="ob-exec-card ob-exec-card-on">
+                  <span className="ob-exec-check" aria-hidden="true">
+                    <Check size={11} strokeWidth={2.8} />
+                  </span>
+                  <span className="ob-exec-name">Codex</span>
+                  <span className="ob-exec-desc">Long-running agent · shell + browser</span>
+                </div>
+                <div className="ob-exec-card" aria-disabled="true">
+                  <span className="ob-exec-name">Hermes</span>
+                  <span className="ob-exec-desc">Headless · ops + scripts</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="ob-fieldset">
+              <div className="ob-fieldset-eyebrow-row">
+                <span className="ob-field-eyebrow">CONNECT A NODE</span>
+                <span className="ob-fieldset-eyebrow-meta">{command ? "ready" : "on demand"}</span>
+              </div>
+              <div className="ob-connect">
+                <div className="ob-connect-cmd">
+                  <span className="ob-connect-prompt">$</span>
+                  <span className="ob-connect-line">
+                    {command ? (
+                      <>
+                        {command.split("--token ")[0]}
+                        <span className="ob-connect-tok">--token {command.split("--token ")[1] ?? ""}</span>
+                      </>
+                    ) : (
+                      <>newbro executor run <span className="ob-connect-tok">--token pending</span></>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    className="ob-connect-copy"
+                    aria-label="Copy command"
+                    disabled={!command}
+                    onClick={() => {
+                      if (command) void copyCommand(command);
+                    }}
+                  >
+                    {copied ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
+                  </button>
+                </div>
+                <div className="ob-connect-status">
+                  <span className="ob-connect-spinner" aria-hidden="true">
+                    <span /><span /><span />
+                  </span>
+                  <span className="ob-connect-status-text">
+                    <strong>{command ? `Listening for ${trimmedName}...` : `Ready to create ${trimmedName || "a Bro"}...`}</strong>
+                    <span>{command ? "Run that command on the machine where this Bro should work." : "Newbro will create a Bro and issue a local node command."}</span>
+                  </span>
+                  <span className="ob-connect-time">{copied ? "copied" : command ? "ready" : "new"}</span>
+                </div>
+              </div>
+              {error ? <div className="nb-status-banner nb-status-banner-error">{error}</div> : null}
+              {command ? (
+                <div className="ob-connect-meta">
+                  <span>Command is generated through the real node credential flow.</span>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <footer className="ob-sheet-foot">
+            <button
+              type="button"
+              className={`ob-cta ob-cta-block${busy ? " ob-cta-pending" : ""}`}
+              disabled={!canCreate}
+              onClick={() => { void createAndConnect(); }}
+            >
+              {busy ? <span className="ob-cta-spinner" aria-hidden="true" /> : null}
+              <span>{busy ? "Preparing..." : command ? "Waiting for node..." : "Create and connect"}</span>
+            </button>
+          </footer>
+        </section>
       </div>
     </div>
   );
@@ -766,9 +1152,7 @@ export function HomeShellPage({
   onBroNavigate?: BroNavigator;
 }) {
   const shell = useNewbroShell();
-  if (shell.hasLoadedShellSnapshot && shell.defaultPersonaId) {
-    return <BroDetailShellPage broId={shell.defaultPersonaId} onNavigate={onNavigate} />;
-  }
+  const [firstRunSheetOpen, setFirstRunSheetOpen] = useState(false);
 
   return (
     <ShellFrame
@@ -785,48 +1169,130 @@ export function HomeShellPage({
     >
 
       {shell.hasLoadedShellSnapshot ? (
-        <div className="nb-detail-shell nb-detail-shell-full">
-          <section className="nb-detail-main">
-            <div className="nb-detail-topbar">
-              <div className="nb-detail-crumb">
-                <span>Workspace</span>
-                <span className="nb-detail-crumb-sep">/</span>
-                <span className="nb-detail-crumb-current">Home</span>
-              </div>
-            </div>
-            <div className="nb-detail-bro-header">
-              <div className="nb-detail-bro-title">
-                <h1>Command Center</h1>
-                <span className="nb-chip nb-chip-online">
-                  <span className="nb-pulse" />
-                  Runtime standby
-                </span>
-                <span className="nb-chip">{shell.runtimePersonas.length} Bros</span>
-                <span className="nb-chip">{shell.executorNodes.length} Nodes</span>
-              </div>
-            </div>
-            <div className="nb-detail-scroll space-y-5 sm:space-y-6">
-              <div>
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="command-label text-[#9ca3af]">Runtime Bros</div>
-                  <span className="nb-chip">{shell.bros.length} visible</span>
+        <div className="dt-main-pad dt-home-pad">
+          <ShellVoiceBar />
+          <div className="dt-home-grid">
+            <section className="dt-home-main">
+              <header className="dt-page-head">
+                <div>
+                  <h1 className="dt-page-title">Workspace</h1>
+                  <p className="dt-page-sub">
+                    Your runtime crew, local executor nodes, and live work queue in one place.
+                  </p>
                 </div>
-                <BrosPanel
-                  bros={shell.bros}
-                  sessionId={shell.activeShellSessionId}
-                  onBroClick={(broId) => {
-                    onBroNavigate?.(broId);
-                  }}
-                />
-              </div>
-            </div>
-          </section>
+                {shell.runtimePersonas.length > 0 ? (
+                  <div className="dt-page-actions">
+                    <button type="button" className="dt-page-action dt-page-action-primary" onClick={() => onNavigate("Bros")}>
+                      <Plus size={14} aria-hidden="true" />
+                      <span>Manage Bros</span>
+                    </button>
+                  </div>
+                ) : null}
+              </header>
+
+              {shell.runtimePersonas.length === 0 ? (
+                <section className="ob-hero-card">
+                  <div className="ob-hero-art">
+                    <div className="ob-hero-mascot">
+                      <img src="/newbro.webp" alt="" draggable={false} />
+                    </div>
+                    <span className="ob-hero-zzz" aria-hidden="true">
+                      <i>z</i><i>z</i><i>z</i>
+                    </span>
+                  </div>
+                  <div className="ob-hero-body">
+                    <span className="ob-eyebrow ob-eyebrow-coral">Your crew · 0 Bros</span>
+                    <h2 className="ob-hero-h">You don't have a bro yet.</h2>
+                    <p className="ob-hero-sub">
+                      Create a worker persona, bind it to a user-owned executor node, and it will appear here when Newbro can use it.
+                    </p>
+                    <div className="ob-hero-actions">
+                      <button
+                        type="button"
+                        className="ob-cta ob-cta-block"
+                        onClick={() => setFirstRunSheetOpen(true)}
+                        disabled={!shell.activeShellSessionId}
+                      >
+                        <span>Create your first bro</span>
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              ) : (
+                <section className="dt-home-section">
+                  <div className="dt-home-section-head">
+                    <div>
+                      <span className="ob-eyebrow">Your crew · {shell.runtimePersonas.length}</span>
+                      <p className="dt-home-section-sub">Live, queued, and resting Bros from the current Newbro session.</p>
+                    </div>
+                  </div>
+                  <BrosPanel
+                    bros={shell.bros}
+                    sessionId={shell.activeShellSessionId}
+                    onBroClick={(broId) => {
+                      onBroNavigate?.(broId);
+                    }}
+                  />
+                </section>
+              )}
+            </section>
+
+            <aside className="dt-home-rail">
+              <section className="dt-rail-block">
+                <div className="dt-rail-block-head">
+                  <span className="ob-eyebrow">Runtime</span>
+                  <span className="dt-rail-block-sub">{shell.activeShellSessionId ? "connected" : "starting"}</span>
+                </div>
+                <ul className="dt-node-list">
+                  <li className="dt-node-row">
+                    <span className="dt-node-led dt-node-led-live" />
+                    <span className="dt-node-body">
+                      <span className="dt-node-name">{shell.runtimePersonas.length} Bros</span>
+                      <span className="dt-node-meta">session</span>
+                    </span>
+                  </li>
+                  <li className="dt-node-row">
+                    <span className={shell.executorNodes.some((node) => node.connection_status === "connected") ? "dt-node-led dt-node-led-live" : "dt-node-led"} />
+                    <span className="dt-node-body">
+                      <span className="dt-node-name">{shell.executorNodes.length} Nodes</span>
+                      <span className="dt-node-meta">{shell.executorNodes.filter((node) => node.connection_status === "connected").length} live</span>
+                    </span>
+                  </li>
+                </ul>
+              </section>
+              <section className="dt-rail-block">
+                <div className="dt-rail-block-head">
+                  <span className="ob-eyebrow">Recent tasks</span>
+                  <span className="dt-rail-block-sub">{shell.tasks.length}</span>
+                </div>
+                <div className="dt-recent-list">
+                  {shell.tasks.slice(-4).reverse().map((task) => (
+                    <article className="dt-recent" key={task.task_id}>
+                      <span className="dt-recent-icon">›</span>
+                      <span className="dt-recent-body">
+                        <span className="dt-recent-title">{task.title}</span>
+                        <span className="dt-recent-meta">{task.status}</span>
+                      </span>
+                    </article>
+                  ))}
+                  {shell.tasks.length === 0 ? <div className="dt-art-empty">No tasks yet.</div> : null}
+                </div>
+              </section>
+            </aside>
+          </div>
         </div>
       ) : shell.shellError ? (
         <ShellApiErrorPanel detail={shell.shellError} />
       ) : (
         <ShellLoadingPanel />
       )}
+      {firstRunSheetOpen && shell.activeShellSessionId ? (
+        <FirstRunCreateSheet
+          sessionId={shell.activeShellSessionId}
+          onClose={() => setFirstRunSheetOpen(false)}
+          onCreated={shell.refreshShellSession}
+        />
+      ) : null}
     </ShellFrame>
   );
 }
@@ -838,7 +1304,13 @@ export function MobileWalkieShellPage() {
   if (shell.hasLoadedShellSnapshot) {
     return (
       <>
-        <MobileWalkie bros={shell.bros} onSubmitMessage={shell.sendMessage} />
+        <MobileWalkie
+          bros={shell.bros}
+          onSubmitMessage={shell.sendMessage}
+          onStartVoice={shell.startMobileVoiceSession}
+          onStopVoice={() => { void shell.stopMobileVoiceSession(); }}
+          voicePhase={shell.voiceSession.phase}
+        />
         {globalMessage ? (
           <GlobalMessageBanner message={globalMessage} onDismiss={shell.clearGlobalMessage} />
         ) : null}
@@ -941,18 +1413,18 @@ function BroSetupGate({
   }
 
   return (
-    <div className="nb-detail-shell nb-detail-shell-full">
-      <section className="nb-detail-main">
+    <div className="dt-main-pad">
+      <section className="dt-detail-main">
         <BroDetailHeader bro={bro} onBack={onBack} />
-        <div className="nb-detail-scroll space-y-5 sm:space-y-6">
+        <div className="space-y-5 sm:space-y-6">
           <section
             data-testid="bro-setup-gate"
-            className="glass-panel rounded-[24px] border border-white/75 p-5 shadow-[0_24px_54px_-42px_rgba(15,23,42,0.28)] sm:p-6"
+            className="nb-setup-gate"
           >
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div className="max-w-[700px]">
+            <div className="nb-setup-gate-head">
+              <div className="nb-setup-gate-copy">
                 <div className="command-label text-[#9ca3af]">Local executor required</div>
-                <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.02em] text-[#111827]">
+                <h2 className="mt-2 text-[24px] font-semibold tracking-normal text-[#111827]">
                   {nodeState.kind === "never_connected" ? "Waiting for first node connection" : "Set up this Bro before talking"}
                 </h2>
                 <p className="mt-2 text-[14px] leading-7 text-[#6b7280]">
@@ -972,6 +1444,70 @@ function BroSetupGate({
                 {busy ? "Preparing..." : bro.executorNodeId ? "Copy command" : "Create node"}
               </button>
             </div>
+            <div className="nb-setup-grid">
+              <div className="ob-fieldset">
+                <span className="ob-field-eyebrow ob-fieldset-eyebrow">EXECUTOR</span>
+                <div className="ob-exec-grid">
+                  <div className="ob-exec-card ob-exec-card-on">
+                    <span className="ob-exec-name">Codex</span>
+                    <span className="ob-exec-desc">Long-running agent · shell + browser</span>
+                    <span className="ob-exec-check" aria-hidden="true">
+                      <Check size={11} strokeWidth={2.8} />
+                    </span>
+                  </div>
+                  <div className="ob-exec-card" aria-disabled="true">
+                    <span className="ob-exec-name">Hermes</span>
+                    <span className="ob-exec-desc">Headless · ops + scripts</span>
+                  </div>
+                </div>
+              </div>
+              <div className="ob-fieldset">
+                <div className="ob-fieldset-eyebrow-row">
+                  <span className="ob-field-eyebrow">CONNECT A NODE</span>
+                  <span className="ob-fieldset-eyebrow-meta">{command ? "ready" : "on demand"}</span>
+                </div>
+                <div className={`ob-connect${!command ? " nb-setup-connect-muted" : ""}`}>
+                  <div className="ob-connect-cmd">
+                    <span className="ob-connect-prompt">$</span>
+                    <span className="ob-connect-line">
+                      {command ? (
+                        <>
+                          {command.split("--token ")[0]}
+                          <span className="ob-connect-tok">--token {command.split("--token ")[1] ?? ""}</span>
+                        </>
+                      ) : (
+                        <>newbro executor run <span className="ob-connect-tok">--token pending</span></>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="ob-connect-copy"
+                      aria-label="Copy command"
+                      disabled={!command}
+                      onClick={() => {
+                        if (command) void copyCommand(command);
+                      }}
+                    >
+                      {copied ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
+                    </button>
+                  </div>
+                  <div className="ob-connect-status">
+                    <span className="ob-connect-spinner" aria-hidden="true">
+                      <span /><span /><span />
+                    </span>
+                    <span className="ob-connect-status-text">
+                      <strong>{command ? `Listening for ${bro.name}...` : `Ready to issue a command for ${bro.name}.`}</strong>
+                      <span>
+                        {command
+                          ? `Run that command on the machine where ${bro.name} should work.`
+                          : "Create or reveal the node command through the real credential flow."}
+                      </span>
+                    </span>
+                    <span className="ob-connect-time">{copied ? "copied" : command ? "ready" : "new"}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
             {error ? (
               <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-600">
                 {error}
@@ -983,9 +1519,6 @@ function BroSetupGate({
                   <Check className="h-4 w-4 text-[#059669]" strokeWidth={2} />
                   Local command {copied ? "copied" : "ready"}
                 </div>
-                <pre className="command-field max-h-[180px] overflow-auto whitespace-pre-wrap break-all px-4 py-3 text-[12.5px] leading-6 text-[#374151]">
-                  {command}
-                </pre>
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -1070,7 +1603,7 @@ function NodeDisconnectedWarning({
     >
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">Local node offline</div>
+          <div className="text-[11px] font-semibold uppercase tracking-normal text-amber-700">Local node offline</div>
           <div className="mt-1 text-[14px] leading-6">
             {disconnectedNodeWarning(node)}
           </div>
@@ -1170,7 +1703,7 @@ export function BroDetailShellPage({
               onGlobalError={shell.setShellError}
             />
           ) : (
-            <>
+            <div className="dt-main-pad">
               <ShellVoiceBar startDisabled={voiceBlocked} blockReason={voiceBlockReason} />
               {nodeState.kind === "usable_disconnected" ? (
                 <NodeDisconnectedWarning
@@ -1195,12 +1728,12 @@ export function BroDetailShellPage({
                 onBack={() => onNavigate("Home")}
                 onGlobalError={shell.setShellError}
               />
-            </>
+            </div>
           )
         ) : (
           <div className="flex flex-1 items-center justify-center p-6">
             <div className="glass-panel max-w-[520px] rounded-[30px] border border-white/75 px-6 py-6 text-center">
-              <div className="serif-flow text-[32px] tracking-[-0.05em]">Bro not found</div>
+              <div className="serif-flow text-[32px] tracking-normal">Bro not found</div>
               <p className="mt-3 text-[14px] leading-7 text-muted-foreground">
                 This Bro is not available in the current session.
               </p>

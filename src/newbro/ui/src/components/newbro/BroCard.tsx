@@ -2,14 +2,23 @@ import { motion } from "framer-motion";
 import { BroPortrait } from "./BroPortrait";
 import type { BroCardModel } from "./types";
 
-function liveStateNote(bro: BroCardModel) {
-  if (bro.liveState === "live") {
-    return bro.nodeName ? `Live on ${bro.nodeName}` : "Live runtime route";
-  }
-  if (bro.liveState === "offline") {
-    return bro.nodeName ? `Waiting for ${bro.nodeName} to reconnect.` : "Waiting for executor node to reconnect.";
-  }
-  return "Needs node binding.";
+function broState(bro: BroCardModel): "working" | "offline" | "idle" {
+  if (bro.status === "busy") return "working";
+  if (bro.liveState === "offline" || bro.liveState === "unbound") return "offline";
+  return "idle";
+}
+
+function stateLabel(bro: BroCardModel) {
+  if (bro.status === "busy") return `${Math.round(bro.progress)}%`;
+  if (bro.liveState === "live") return "ready";
+  if (bro.liveState === "offline") return "offline";
+  return "setup";
+}
+
+function nodeNote(bro: BroCardModel) {
+  if (bro.liveState === "live") return bro.nodeName ? `on ${bro.nodeName}` : "node connected";
+  if (bro.liveState === "offline") return bro.nodeName ? `${bro.nodeName} offline` : "node offline";
+  return "needs node";
 }
 
 export function BroCard({
@@ -19,7 +28,8 @@ export function BroCard({
   bro: BroCardModel;
   onClick?: (broId: string) => void;
 }) {
-  const isBusy = bro.status === "busy";
+  const state = broState(bro);
+  const tone = state === "working" ? "info" : state === "offline" ? "warn" : "calm";
 
   return (
     <motion.button
@@ -27,40 +37,32 @@ export function BroCard({
       type="button"
       whileTap={{ scale: 0.997 }}
       onClick={() => onClick?.(bro.id)}
-      className="nb-card nb-bro-card min-h-[132px] w-full px-4 py-4 text-left transition duration-200 hover:-translate-y-px hover:border-[#d1d5db] sm:min-h-[150px] sm:px-5 sm:py-5"
+      className={`dt-bro-card ${state === "offline" ? "dt-bro-card-warn" : ""}`}
     >
-      <div className="flex min-w-0 items-start gap-3">
-        <div className="shrink-0">
-          <BroPortrait bro={bro} active={isBusy} talking={false} />
+      <BroPortrait bro={bro} active={state === "working"} talking={false} />
+      <div className="dt-bro-card-body">
+        <div className="dt-bro-card-row">
+          <span className="dt-bro-card-name">{bro.name}</span>
+          <span className={`dt-home-chip dt-home-chip-${tone}`}>
+            <span className="dt-home-chip-dot" />
+            {stateLabel(bro)}
+          </span>
         </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-col gap-4">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="nb-bro-card-title">{bro.name}</div>
-                <div
-                  className={`nb-chip uppercase ${
-                    isBusy
-                      ? "border-[#ff6a3d]/20 bg-[#fff0ec] text-[#ff6a3d]"
-                      : "border-[#10b981]/20 bg-[#ecfdf5] text-[#059669]"
-                  }`}
-                >
-                  {bro.status}
-                </div>
-              </div>
-              <div className="mt-2 break-words text-[12px] leading-5 text-[#6b7280]">
-                {bro.role} · {liveStateNote(bro)}
-              </div>
-            </div>
-
-            <div className="command-field px-3 py-2.5 sm:px-4 sm:py-3">
-              <div className="break-words text-[14px] leading-snug text-[#111827]">
-                {bro.taskTitle}
-              </div>
-            </div>
+        <div className="dt-bro-card-meta">
+          <span>{bro.role}</span>
+          <span className="dt-bro-card-mono">{nodeNote(bro)}</span>
+        </div>
+        <div className="dt-bro-card-task">
+          {state === "working" ? <span className="dt-bro-card-spin" /> : null}
+          <span className="dt-bro-card-task-text">{bro.taskTitle || bro.idleNote}</span>
+          <span className="dt-bro-card-arrow">›</span>
+        </div>
+        {state === "working" ? (
+          <div className="dt-bro-card-bar">
+            <span className="dt-bro-card-bar-fill" style={{ width: `${Math.max(5, Math.min(100, bro.progress))}%` }} />
           </div>
-        </div>
+        ) : null}
+        {bro.progressDetails[0] ? <div className="dt-bro-card-step">{bro.progressDetails[0]}</div> : null}
       </div>
     </motion.button>
   );

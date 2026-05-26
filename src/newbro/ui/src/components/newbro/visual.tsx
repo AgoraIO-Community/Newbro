@@ -17,8 +17,8 @@ export function NewbroLogo() {
           <img src="/newbro.webp" alt="" className="h-full w-full scale-[1.18] object-cover" />
         </div>
         <div>
-          <div className="text-[14px] font-bold uppercase tracking-[0.08em] text-[#111827]">NEWBRO</div>
-          <div className="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-[#9ca3af]">Voice Command</div>
+          <div className="text-[14px] font-bold uppercase tracking-normal text-[#111827]">NEWBRO</div>
+          <div className="mt-0.5 text-[10px] uppercase tracking-normal text-[#9ca3af]">Voice Command</div>
         </div>
       </div>
     </div>
@@ -110,7 +110,10 @@ export function LiveTranscriptPanel({
 }
 
 export function DraftBrainPanel({
+  broName,
   draftText,
+  transcriptText = "",
+  transcriptActive = false,
   dispatchPlan,
   summary,
   canSend,
@@ -122,7 +125,10 @@ export function DraftBrainPanel({
   onSend,
   onClear,
 }: {
+  broName?: string;
   draftText: string;
+  transcriptText?: string;
+  transcriptActive?: boolean;
   dispatchPlan?: {
     target_agent: string;
     mode: string;
@@ -140,29 +146,62 @@ export function DraftBrainPanel({
   onClear: () => void;
 }) {
   const charCount = draftText.length;
+  const hasTranscript = transcriptText.trim().length > 0;
+  const agentName = broName ?? "Bro";
 
   return (
-    <div className="nb-card nb-draft-card">
-      <div className="nb-card-head">
+    <section className="nb-card nb-draft-card nb-draft-thread dt-thread" aria-label={`${agentName} draft workspace`}>
+      <div className="nb-thread-toolbar">
         <div className="nb-card-label">Current Draft<span className="sr-only">Current draft</span></div>
-        <div className="nb-card-hint">{draftText ? "auto-saved · just now" : "waiting"}</div>
-      </div>
-      {summary ? <p className="mt-2 text-[12px] leading-5 text-[#6b7280]">{summary}</p> : null}
-      <div className="nb-draft-area">
-        {draftText ? draftText : (
-          <span className="nb-draft-placeholder">
-            <span>No draft yet. Hold the mic to start shaping one.</span>
-            <br />
-            Tell your bro what to build.
+        <div className="nb-thread-toolbar-right">
+          <span className="nb-card-hint">{draftText ? "auto-saved · just now" : "waiting"}</span>
+          <span className="nb-card-hint">Live Transcript</span>
+          <span className="nb-chip">
+            <span className={`nb-pulse ${transcriptActive ? "" : "nb-pulse-muted"}`} />
+            {transcriptActive ? "Listening" : "Standby"}
           </span>
-        )}
+        </div>
       </div>
+
+      <div className="dt-thread-day"><span>Current session</span></div>
+
+      {hasTranscript ? (
+        <div className="dt-turn dt-turn-you">
+          <div className="dt-bubble dt-bubble-you">
+            {transcriptText}
+          </div>
+          <div className="dt-bubble-meta">Voice · transcribed</div>
+        </div>
+      ) : (
+        <div className="dt-turn dt-turn-sys">
+          <div className="nb-thread-empty-transcript">Latest transcript will appear here.</div>
+        </div>
+      )}
+
+      <div className="dt-turn dt-turn-bro">
+        <div className={`dt-bubble dt-bubble-bro nb-draft-bubble ${draftText ? "" : "nb-draft-bubble-empty"}`}>
+          {draftText ? draftText : (
+            <span>
+              <span>No draft yet. Hold the mic to start shaping one.</span>
+              <br />
+              Tell your bro what to build.
+            </span>
+          )}
+        </div>
+        <div className="dt-bubble-meta">{agentName} · Draft Brain</div>
+      </div>
+
+      {summary ? <p className="nb-thread-summary">{summary}</p> : null}
+
       {dispatchPlan ? (
-        <div className="mt-4 rounded-xl border border-[#e5e7eb] bg-white/70 px-4 py-3">
-          <div className="nb-card-label text-[#9ca3af]">Dispatch plan</div>
-          <div className="mt-3 grid gap-2 text-[12px] leading-5 text-[#4b5563]">
+        <div className="dt-status nb-dispatch-status">
+          <div className="dt-status-head">
+            <span className="dt-status-spin" />
+            <span className="dt-status-title">Dispatch plan</span>
+            <span className="dt-status-pct">{dispatchPlan.mode}</span>
+          </div>
+          <div className="grid gap-2 text-[12px] leading-5 text-[#4b5563]">
             <div><span className="font-semibold text-[#111827]">To:</span> {dispatchPlan.target_agent}</div>
-            <div><span className="font-semibold text-[#111827]">Mode:</span> {dispatchPlan.mode}</div>
             <div><span className="font-semibold text-[#111827]">Task:</span> {dispatchPlan.task_title}</div>
             {(dispatchPlan.missing_context?.length ?? 0) > 0 ? (
               <div><span className="font-semibold text-[#111827]">Missing:</span> {dispatchPlan.missing_context?.join(", ")}</div>
@@ -200,7 +239,7 @@ export function DraftBrainPanel({
         </button>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -271,7 +310,7 @@ export function RunnerBrainPanel({
   } as CSSProperties;
 
   return (
-    <aside className="nb-rightpanel">
+    <div className="nb-rightpanel">
       <h2 className="sr-only">Runner workspace</h2>
       <div className="nb-status-card" style={statusCardStyle}>
         <div className="nb-status-head">
@@ -316,7 +355,7 @@ export function RunnerBrainPanel({
       {waitingForExecutor ? (
         <div className="nb-card px-4 py-4">
           <div className="nb-card-label text-[#9ca3af]">Local node</div>
-          <div className="mt-2 text-[16px] font-semibold tracking-[-0.02em] text-[#111827]">
+          <div className="mt-2 text-[16px] font-semibold tracking-normal text-[#111827]">
             Connect Codex to run this task
           </div>
           <p className="mt-2 text-[13px] leading-6 text-[#6b7280]">
@@ -358,7 +397,7 @@ export function RunnerBrainPanel({
         <div className="mt-3 space-y-2">
           {agentEvents.length > 0 ? agentEvents.slice(-5).reverse().map((event) => (
             <div key={event.event_id} className="rounded-lg border border-[#e5e7eb] bg-white/70 px-3 py-2">
-              <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.12em] text-[#9ca3af]">
+              <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-normal text-[#9ca3af]">
                 <span>{event.type}</span>
                 <span>{event.delivery}</span>
               </div>
@@ -406,7 +445,7 @@ export function RunnerBrainPanel({
         )}
       </div>
 
-    </aside>
+    </div>
   );
 }
 
@@ -419,33 +458,32 @@ export function BroDetailHeader({
 }) {
   return (
     <>
-      <div className="nb-detail-topbar">
-        <div className="nb-detail-crumb">
+      <div className="dt-detail-crumb">
+        <button type="button" className="dt-detail-back" onClick={onBack}>
+          <ArrowLeft />
+          Back home
+        </button>
+        <div>
           <span className="sr-only">Bro detail</span>
           <span>Workspace</span>
-          <span className="nb-detail-crumb-sep">/</span>
+          <span className="dt-detail-crumb-sep">/</span>
           <span>Bros</span>
-          <span className="nb-detail-crumb-sep">/</span>
-          <span className="nb-detail-crumb-current">Bro Detail</span>
-        </div>
-        <div className="nb-detail-actions">
-          <button type="button" className="nb-back-btn" onClick={onBack}>
-            <ArrowLeft />
-            Back home
-          </button>
+          <span className="dt-detail-crumb-sep">/</span>
+          <span className="dt-detail-crumb-cur">Bro Detail</span>
         </div>
       </div>
-      <div className="nb-detail-bro-header">
-        <div className="nb-detail-bro-identity">
-          <BroPortrait bro={bro} active={bro.status === "busy"} talking={false} />
-          <div className="nb-detail-bro-title">
-            <h1>{bro.name}</h1>
-            <span className="nb-chip nb-chip-online">
-              <span className="nb-pulse" />
+      <div className="dt-bro-head">
+        <BroPortrait bro={bro} active={bro.status === "busy"} talking={false} />
+        <div className="dt-bro-titles">
+          <h1 className="dt-bro-name">{bro.name}</h1>
+          <div className="dt-bro-role">{bro.role}</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <span className={`dt-home-chip ${bro.status === "busy" ? "dt-home-chip-info" : "dt-home-chip-calm"}`}>
+              <span className="dt-home-chip-dot" />
               {bro.status === "busy" ? "Runtime running" : "Runtime standby"}
             </span>
-            <span className="nb-chip nb-chip-muted">
-              <span className="nb-pulse nb-pulse-muted" />
+            <span className={`dt-home-chip ${bro.liveState === "offline" || bro.liveState === "unbound" ? "dt-home-chip-warn" : "dt-home-chip-calm"}`}>
+              <span className="dt-home-chip-dot" />
               {bro.liveState}
             </span>
           </div>

@@ -1,0 +1,274 @@
+/* ============================================================
+   Newbro Design System — Foundations
+   Source of truth: src/newbro/ui/src/styles/app.css (Tailwind v4)
+   Brand: coral primary on warm-off-white paper. Voice-first agent UI.
+   ============================================================ */
+
+/* --- Fonts -------------------------------------------------- */
+/* Inter (sans, system body) + JetBrains Mono (operator/agent voice) */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+:root {
+  /* ----- TYPE FAMILIES ----- */
+  --nb-font-sans: "Inter", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans SC", "Noto Sans CJK SC", sans-serif;
+  --nb-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* ============================================================
+     COLORS — base palette
+     The system is monochrome paper + one signature coral.
+     Greens/blues/ambers are reserved for status, never decoration.
+     ============================================================ */
+
+  /* Primary — Newbro Coral */
+  --nb-coral:        #ff6a3d;   /* default brand action, focus ring */
+  --nb-coral-hover:  #f05a2e;   /* hover/press shade */
+  --nb-coral-tint:   #fff0ec;   /* soft fill, hover bg, active nav */
+  --nb-coral-soft:   #fff1ec;   /* mobile soft pill bg */
+  --nb-coral-border: #ffb89e;   /* tinted border for focus halo */
+  --nb-coral-shadow: rgba(255, 106, 61, 0.25);
+
+  /* Ink — text scale on paper */
+  --nb-ink:        #111827;     /* primary heading + body */
+  --nb-ink-soft:   #6b7280;     /* secondary body */
+  --nb-ink-muted:  #9ca3af;     /* tertiary, metadata, hints */
+
+  /* Paper — background scale */
+  --nb-paper:      #ffffff;     /* card surface */
+  --nb-paper-sub:  #fafbfc;     /* recessed input, code block */
+  --nb-wash:       #f5f6f8;     /* page wash (body bg) */
+  --nb-wash-alt:   #f1f3f5;     /* hover wash, sidebar nav */
+
+  /* Lines — hairlines + dividers */
+  --nb-line:       #e5e7eb;     /* default border */
+  --nb-line-soft:  #efeff2;     /* lighter inner divider */
+  --nb-line-hover: #d1d5db;     /* border on hover */
+
+  /* Status — semantic accent (used sparingly, paired with tinted bg) */
+  --nb-live:       #10b981;     /* "Live", connected, talking */
+  --nb-live-ink:   #059669;     /* live status text */
+  --nb-live-soft:  #ecfdf5;     /* live pill bg */
+  --nb-live-edge:  rgba(16, 185, 129, 0.2); /* live tinted border */
+
+  --nb-warn:       #f59e0b;     /* "bound offline", needs attention */
+  --nb-warn-ink:   #b45309;     /* amber-700 from tailwind */
+  --nb-warn-soft:  #fffbeb;
+  --nb-warn-edge:  #fde68a;
+
+  --nb-danger:       #ef4444;
+  --nb-danger-ink:   #dc2626;
+  --nb-danger-soft:  #fef2f2;
+  --nb-danger-edge:  #fecaca;
+
+  --nb-info:       #3b82f6;     /* runner/execution blue accent */
+  --nb-info-ink:   #2563eb;
+  --nb-info-soft:  #eff6ff;
+  --nb-info-edge:  rgba(59, 130, 246, 0.2);
+
+  /* Selection — coral on white (browser ::selection) */
+  --nb-selection-bg: #ff6a3d;
+  --nb-selection-fg: #ffffff;
+
+  /* ============================================================
+     RADII
+     ============================================================ */
+  --nb-radius-xs:   5px;     /* keyboard chip, micro pill */
+  --nb-radius-sm:   8px;     /* icon button, tiny tag */
+  --nb-radius-md:   10px;    /* logo tile, badge */
+  --nb-radius-lg:   12px;    /* input, sub-card, command-field */
+  --nb-radius-xl:   14px;    /* row card, mobile route */
+  --nb-radius-2xl:  16px;    /* primary card (.nb-card) */
+  --nb-radius-3xl:  18px;    /* portrait tile, focus card */
+  --nb-radius-pill: 999px;   /* chips, buttons, dock */
+  --nb-radius-talk: 36px;    /* hold-to-talk dock pill */
+  --nb-radius-phone: 44px;   /* mobile device frame */
+
+  /* ============================================================
+     SHADOWS
+     Soft, single-layer paper shadows; never glow except primary CTA.
+     ============================================================ */
+  --nb-shadow-hairline: 0 1px 2px rgba(0, 0, 0, 0.035);
+  --nb-shadow-card:     0 1px 3px rgba(0, 0, 0, 0.07),
+                        0 1px 2px rgba(0, 0, 0, 0.04);
+  --nb-shadow-card-inner-glow: 0 1px 3px rgba(0, 0, 0, 0.07),
+                               inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  --nb-shadow-hover:    0 10px 28px rgba(15, 23, 42, 0.055),
+                        0 2px 8px rgba(15, 23, 42, 0.035);
+  --nb-shadow-lift:     0 16px 34px rgba(15, 23, 42, 0.08),
+                        0 4px 12px rgba(15, 23, 42, 0.045);
+  --nb-shadow-cta:      0 2px 8px rgba(255, 106, 61, 0.25);
+  --nb-shadow-cta-hover:0 4px 14px rgba(255, 106, 61, 0.35);
+  --nb-shadow-talk:     0 8px 24px rgba(255, 106, 61, 0.35),
+                        0 2px 6px rgba(255, 106, 61, 0.2);
+  --nb-shadow-talk-live:0 8px 24px rgba(16, 185, 129, 0.35),
+                        0 2px 6px rgba(16, 185, 129, 0.2);
+
+  /* ============================================================
+     SPACING — 4px base (Tailwind compatible)
+     ============================================================ */
+  --nb-space-1: 4px;
+  --nb-space-2: 8px;
+  --nb-space-3: 12px;
+  --nb-space-4: 16px;
+  --nb-space-5: 20px;
+  --nb-space-6: 24px;
+  --nb-space-7: 28px;
+  --nb-space-8: 32px;
+  --nb-space-10: 40px;
+  --nb-space-12: 48px;
+
+  /* ============================================================
+     MOTION
+     Cubic-bezier presets matched to Tailwind defaults.
+     ============================================================ */
+  --nb-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --nb-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --nb-dur-fast: 150ms;        /* hover/press */
+  --nb-dur-base: 200ms;        /* card transitions */
+  --nb-dur-slow: 450ms;        /* progress fills */
+  /* Signature loops */
+  --nb-anim-pulse: 2s ease-in-out infinite;       /* "live" dots */
+  --nb-anim-breathe: 1.6s ease-in-out infinite;   /* listening CTA */
+  --nb-anim-wave: 1.2s ease-in-out infinite;      /* transcript bars */
+  --nb-anim-talk-wave: 0.9s ease-in-out infinite; /* talk waves */
+
+  /* ============================================================
+     TYPOGRAPHY SCALE
+     Body baseline is 14px / -0.01em letter-spacing (cv11+ss01).
+     Headings tighten to -0.03em at display sizes.
+     ============================================================ */
+
+  /* Display — page titles, bro names */
+  --nb-text-display-size: 28px;
+  --nb-text-display-line: 1.12;
+  --nb-text-display-tracking: -0.03em;
+  --nb-text-display-weight: 700;
+
+  /* H1 — bro card title */
+  --nb-text-h1-size: 18px;
+  --nb-text-h1-line: 1.2;
+  --nb-text-h1-tracking: -0.03em;
+  --nb-text-h1-weight: 700;
+
+  /* H2 — section heading */
+  --nb-text-h2-size: 14px;
+  --nb-text-h2-line: 1.3;
+  --nb-text-h2-tracking: -0.01em;
+  --nb-text-h2-weight: 600;
+
+  /* Body */
+  --nb-text-body-size: 14px;
+  --nb-text-body-line: 1.5;
+  --nb-text-body-tracking: -0.01em;
+  --nb-text-body-weight: 400;
+
+  /* Body-sm — secondary text, descriptions */
+  --nb-text-body-sm-size: 12.5px;
+  --nb-text-body-sm-line: 1.55;
+  --nb-text-body-sm-weight: 400;
+
+  /* Caption — metadata, hints */
+  --nb-text-caption-size: 11.5px;
+  --nb-text-caption-line: 1.5;
+  --nb-text-caption-weight: 400;
+
+  /* Eyebrow / Kicker — ALL-CAPS, wide tracking, the Newbro "operator" voice */
+  --nb-text-eyebrow-size: 11px;
+  --nb-text-eyebrow-tracking: 0.14em;
+  --nb-text-eyebrow-weight: 600;
+  /* used uppercase letter-spacing tiers in source: 0.08em / 0.12em / 0.14em / 0.16em / 0.18em */
+
+  /* Mono — for command output, draft area, file paths */
+  --nb-text-mono-size: 13px;
+  --nb-text-mono-line: 1.8;
+  --nb-text-mono-weight: 400;
+
+  /* Mono micro — metadata captions in mono */
+  --nb-text-mono-micro-size: 10.5px;
+
+  /* ============================================================
+     SEMANTIC PRESETS — drop-in classes
+     ============================================================ */
+}
+
+/* page-level + selection */
+html { background: var(--nb-wash); }
+body {
+  background: var(--nb-wash);
+  color: var(--nb-ink);
+  font-family: var(--nb-font-sans);
+  font-size: var(--nb-text-body-size);
+  letter-spacing: var(--nb-text-body-tracking);
+  font-feature-settings: "cv11", "ss01";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--nb-selection-bg); color: var(--nb-selection-fg); }
+
+/* ----- TYPE SEMANTIC PRESETS ----- */
+.nb-display {
+  font-family: var(--nb-font-sans);
+  font-size: var(--nb-text-display-size);
+  line-height: var(--nb-text-display-line);
+  letter-spacing: var(--nb-text-display-tracking);
+  font-weight: var(--nb-text-display-weight);
+  color: var(--nb-ink);
+  text-wrap: pretty;
+}
+.nb-h1 {
+  font-size: var(--nb-text-h1-size);
+  line-height: var(--nb-text-h1-line);
+  letter-spacing: var(--nb-text-h1-tracking);
+  font-weight: var(--nb-text-h1-weight);
+  color: var(--nb-ink);
+  text-wrap: pretty;
+}
+.nb-h2 {
+  font-size: var(--nb-text-h2-size);
+  line-height: var(--nb-text-h2-line);
+  letter-spacing: var(--nb-text-h2-tracking);
+  font-weight: var(--nb-text-h2-weight);
+  color: var(--nb-ink);
+}
+.nb-body {
+  font-size: var(--nb-text-body-size);
+  line-height: var(--nb-text-body-line);
+  color: var(--nb-ink);
+}
+.nb-body-soft {
+  font-size: var(--nb-text-body-sm-size);
+  line-height: var(--nb-text-body-sm-line);
+  color: var(--nb-ink-soft);
+}
+.nb-caption {
+  font-size: var(--nb-text-caption-size);
+  line-height: var(--nb-text-caption-line);
+  color: var(--nb-ink-muted);
+}
+.nb-eyebrow {
+  font-size: var(--nb-text-eyebrow-size);
+  font-weight: var(--nb-text-eyebrow-weight);
+  letter-spacing: var(--nb-text-eyebrow-tracking);
+  text-transform: uppercase;
+  color: var(--nb-ink-soft);
+}
+.nb-kicker {
+  font-size: var(--nb-text-eyebrow-size);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--nb-coral);
+}
+.nb-mono {
+  font-family: var(--nb-font-mono);
+  font-size: var(--nb-text-mono-size);
+  line-height: var(--nb-text-mono-line);
+}
+.nb-mono-micro {
+  font-family: var(--nb-font-mono);
+  font-size: var(--nb-text-mono-micro-size);
+  color: var(--nb-ink-muted);
+  letter-spacing: 0.04em;
+}

@@ -1,12 +1,13 @@
 # Frontend Workbench
 
-The main frontend under `src/newbro/ui/` renders the `Newbro` command-center
+The main frontend under `src/newbro/ui/` renders the active `Newbro` runtime
 shell at `/`.
 
-It keeps the protocol-first runtime behavior, but the active shell now uses a
-Newbro voice command-center visual system: light gray app surfaces, white
-bordered panels, compact navigation, orange voice controls, green live state,
-mono operational labels, and task queue cards.
+It keeps the protocol-first runtime behavior, but the active shell now follows
+the checked-in design prototype under `design/`: a compact glass top header,
+light gray workspace surface, bordered paper panels, coral primary actions,
+green live state, mono operational labels, design-port Bro avatars, empty
+onboarding cards, and mobile Walkie/detail variants.
 
 ## Current Structure
 
@@ -19,22 +20,19 @@ The current frontend stack is:
 - `framer-motion` for shell motion
 - Agora connector/browser voice integration for live transcript state
 
-The root shell remains a routed command center:
-
-- desktop left sidebar: `Home`, `Bros`, `Nodes`, `Settings`
-- mobile header with the menu on the left, logo on the right, and a drawer menu
-  for the same navigation
-- home page: command-center heading plus queue-card Bro grid
-- Bro detail page: desktop uses the command-center shape from the voice-command
-  reference, with central draft/live transcript/hold-to-talk controls and a
-  right runtime status/task panel; mobile splits the same content into `Draft`
-  and a compact `Status` dashboard with current task, summary, stop action, and
-  recent tasks
-- mobile layouts use a drawer navigation, single-column content, contained
-  technical strings, and mobile-safe voice controls without horizontal page
-  overflow
+- desktop top header: `Home`, `Bros`, `Nodes`, `Settings`, account, logout, and
+  runtime readiness
+- home page: design workspace with top voice control, runtime Bro grid,
+  runtime/node rail, and an explicit empty workspace card when no personas
+  exist
+- Bro detail page: design-style activity rail plus main pane, preserving the
+  Draft/STT/send/talk controls and disconnected-node warning behavior
+- setup/connect state: design cards and first-run sheet for creating or
+  revealing the current Bro's local node command before Bro Detail unlocks
+- mobile route: `MobileWalkie` channel surface sourced from runtime Bro cards,
+  with mobile-safe header/detail states and no horizontal page overflow
 - management pages: Bro management on `Bros`, node enrollment on `Nodes`
-- left-menu pages are real routed paths, so refresh and direct open preserve the
+- navigation pages are real routed paths, so refresh and direct open preserve the
   selected page instead of falling back to `Home`
 
 ## Data Sources
@@ -61,8 +59,13 @@ Current behavior:
   `sid`, and shows a non-blocking resume-failed warning
 - the active session stream keeps `personas` and `executor_nodes` fresh while
   the shell stays open
-- if persona data is empty or unavailable, the home view falls back to seeded
-  sample bros
+- the `Home` route remains the workspace when a default Bro exists; explicit
+  Bro Detail navigation uses Bro cards or `/bros/:broId`
+- if persona data is empty, the home view renders the design empty workspace
+  instead of replacing runtime state with seeded active cards
+- the empty workspace `Create your first bro` action opens a design-backed
+  first-run sheet that creates a real executor node, creates the Bro persona,
+  shows the issued connect command, and refreshes the shell snapshot
 - Bro liveness is derived from `persona.executor_node_id` plus the matching
   executor node connection state
 - the `Bros` page edits each worker Bro's base prompt, avatar, and node binding
@@ -95,10 +98,10 @@ Current behavior:
 
 ## Component Direction
 
-The visual shell uses reusable pieces under `src/components/newbro/`:
+The visual shell uses reusable pieces under `src/components/newbro/` plus
+design CSS copied into `src/styles/` from the prototype:
 
-- `Sidebar`
-- `ConversationMemory`
+- `BroAvatar`
 - `BrosPanel`
 - `BrosPage`
 - `NodesPage`
@@ -113,15 +116,14 @@ The visual shell uses reusable pieces under `src/components/newbro/`:
 - `RunnerBrainPanel`
 - `useVoiceSession`
 
-The visual language should stay close to the `NEWBRO` voice command-center
-reference:
+The visual language should stay close to the `design/` prototype:
 
 - light gray app background with white bordered panels
 - orange `#ff6a3d` as the main action color
 - green live/listening state with restrained status cards
 - compact Inter-like headings rather than poster-scale display type
-- monospace operational labels via `newbro-mono`
-- compact queue-card task and Bro surfaces
+- monospace operational labels via the design token font stack
+- compact top navigation, Bro cards, setup cards, and mobile channel surfaces
 - pill-shaped hold-to-talk control with animated listening bars
 
 ## Constraints

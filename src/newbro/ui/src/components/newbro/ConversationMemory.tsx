@@ -74,7 +74,7 @@ export function ConversationMemory({
                         : "rounded-tl-md border-white/80 bg-[hsl(var(--paper))] shadow-[0_18px_40px_-34px_rgba(15,23,42,0.12)]"
                     }`}
                   >
-                    <div className="mb-2 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+                    <div className="mb-2 text-[10px] uppercase tracking-normal text-muted-foreground">
                       {item.role === "user" ? "Me" : "NewBro"}
                     </div>
                     <div className="serif-flow whitespace-pre-wrap text-[15px] leading-7 text-foreground/92">

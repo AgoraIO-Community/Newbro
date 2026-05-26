@@ -1,0 +1,63 @@
+/* bro-characters.css — bro avatar wrapper styles. */
+
+.bro-av {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.bro-av svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* sleeping zzz puffs */
+.bro-av-zzz {
+  position: absolute;
+  top: -2px; right: -4px;
+  display: inline-flex; align-items: flex-end; gap: 1px;
+  font-family: var(--nb-font-mono);
+  color: var(--nb-ink-muted);
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+.bro-av-zzz i {
+  display: inline-block;
+  font-style: italic;
+  line-height: 1;
+  animation: bro-av-zzz-rise 2.4s ease-in infinite;
+  opacity: 0;
+}
+.bro-av-zzz i:nth-child(1) { animation-delay: 0s; }
+.bro-av-zzz i:nth-child(2) { animation-delay: 0.6s; }
+@keyframes bro-av-zzz-rise {
+  0%   { transform: translateY(2px); opacity: 0; }
+  20%  { opacity: 1; }
+  100% { transform: translateY(-9px) translateX(2px); opacity: 0; }
+}
+
+/* working halo — breathing coral dot */
+.bro-av-halo {
+  position: absolute;
+  top: -2px; right: -2px;
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: var(--nb-coral);
+  box-shadow: 0 0 0 3px rgba(255,106,61,0.18);
+  animation: bro-av-halo-breathe 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes bro-av-halo-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 3px rgba(255,106,61,0.18); }
+  50%      { transform: scale(1.12); box-shadow: 0 0 0 5px rgba(255,106,61,0.28); }
+}
+
+/* offline — fade + grayscale */
+.bro-av-offline {
+  filter: grayscale(0.55);
+  opacity: 0.78;
+}
+.bro-av-offline .bro-av-halo { display: none; }

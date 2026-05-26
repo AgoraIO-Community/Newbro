@@ -11,8 +11,8 @@ export function BrosPanel({
   onBroClick?: (broId: string) => void;
 }) {
   return (
-    <div data-testid="bros-panel" className="nb-bros-panel">
-      <div className="nb-bros-grid">
+    <div data-testid="bros-panel" className="w-full">
+      <div className="dt-bro-grid">
         {bros.map((bro) => (
           <BroCard key={bro.id} bro={bro} onClick={onBroClick} />
         ))}

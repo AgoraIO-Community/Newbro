@@ -19,7 +19,7 @@ import {
 } from "../../lib/session-client";
 import { loadAgoraBrowserStack } from "../../lib/voice-runtime";
 import { describeProtobufTranscriptPayload, describeTranscriptPayload, extractTranscriptText, type ExtractedSttTranscript } from "./stt-transcript";
-import { BroDetailHeader, DraftBrainPanel, LiveTranscriptPanel, RunnerBrainPanel, VoicePad } from "./visual";
+import { BroDetailHeader, DraftBrainPanel, RunnerBrainPanel, VoicePad } from "./visual";
 import type { BroCardModel, BroTaskRecord } from "./types";
 import type { AgentEvent, DraftOutputCompletedStreamEvent, DraftOutputDeltaStreamEvent, DraftOutputFailedStreamEvent, DraftOutputStartedStreamEvent, TaskSummary } from "../../types";
 
@@ -289,7 +289,7 @@ function DraftPanel({
   if (!draftText) {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-primary">Current draft</div>
+        <div className="text-[11px] uppercase tracking-normal text-primary">Current draft</div>
         <div className="mt-3 flex min-h-[240px] flex-1 items-center justify-center rounded-[24px] border border-dashed border-border/70 bg-white/45 p-5 text-center text-[14px] leading-7 text-muted-foreground">
           No draft yet. Hold the mic to start shaping one.
         </div>
@@ -299,10 +299,10 @@ function DraftPanel({
 
   return (
     <div className="min-h-0 flex-1 overflow-auto rounded-[24px] border border-white/75 bg-white/58 p-4">
-      <div className="text-[11px] uppercase tracking-[0.18em] text-primary">Current draft</div>
+      <div className="text-[11px] uppercase tracking-normal text-primary">Current draft</div>
       {draft?.last_update_summary ? <p className="mt-2 text-[12px] text-muted-foreground">{draft.last_update_summary}</p> : null}
       <div className="mt-4 rounded-[22px] bg-white/70 p-4">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Draft text</div>
+        <div className="text-[11px] uppercase tracking-normal text-muted-foreground">Draft text</div>
         <p className="mt-2 whitespace-pre-wrap text-[14px] leading-7 text-foreground/82">{draftText}</p>
       </div>
     </div>
@@ -913,7 +913,7 @@ export function BroDetailPage({
   const waitingForExecutor = taskRecords?.some((record) => record.status === "waiting_executor")
     || (Boolean(activeTaskId) && bro.liveState !== "live");
   const mobileTabClass = (page: MobileDetailPage) => (
-    `min-h-[40px] flex-1 rounded-lg px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.12em] transition ${
+    `min-h-[40px] flex-1 rounded-lg px-4 py-2 text-[12px] font-semibold uppercase tracking-normal transition ${
       mobileDetailPage === page
         ? "bg-[#fff0ec] text-[#ff6a3d]"
         : "bg-white text-[#6b7280] hover:bg-[#f1f3f5] hover:text-[#111827]"
@@ -943,88 +943,125 @@ export function BroDetailPage({
     />
   );
 
-  return (
-    <div className="nb-detail-shell">
-      <section className="nb-detail-main">
-        <BroDetailHeader bro={bro} onBack={onBack} />
-        <div
-          className="mt-4 flex rounded-xl border border-[#e5e7eb] bg-white p-1 lg:hidden"
-          role="tablist"
-          aria-label="Bro detail sections"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mobileDetailPage === "draft"}
-            className={mobileTabClass("draft")}
-            onClick={() => setMobileDetailPage("draft")}
-          >
-            Draft
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mobileDetailPage === "status"}
-            className={mobileTabClass("status")}
-            onClick={() => setMobileDetailPage("status")}
-          >
-            Status
-          </button>
-        </div>
-        <h2 className="sr-only">Draft workspace for {bro.name}</h2>
+  const voicePad = (
+    <VoicePad
+      active={capturing}
+      disabled={voiceInputDisabled || !sessionId || !readyForMic || sttPhase === "draft_updating" || draftActionPending}
+      onPointerDown={handleMicPointerDown}
+      onPointerUp={handleMicPointerUp}
+      onPointerCancel={(event) => handleMicPointerUp(event)}
+      onKeyDown={handleMicKeyDown}
+      onKeyUp={handleMicKeyUp}
+      onBlur={() => {
+        if (activePointerIdRef.current === null) void setMicEnabled(false);
+      }}
+    />
+  );
 
-        <div className={`${mobileDetailPage === "draft" ? "flex" : "hidden"} mt-4 nb-detail-scroll nb-draft-tab-content lg:mt-0 lg:block`}>
-            {voiceInputDisabled ? (
-              <div
-                data-testid="bro-detail-node-warning"
-                className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-6 text-amber-800"
+  return (
+    <div className="dt-detail-v2 nb-detail-runtime">
+      <aside className="dt-activity hidden lg:flex">
+        {renderRunnerPanel()}
+      </aside>
+
+      <section className="dt-pane">
+        <div className="dt-pane-scroll">
+          <div className="dt-pane-content">
+            <BroDetailHeader bro={bro} onBack={onBack} />
+            <div
+              className="mt-4 flex rounded-xl border border-[#e5e7eb] bg-white p-1 lg:hidden"
+              role="tablist"
+              aria-label="Bro detail sections"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mobileDetailPage === "draft"}
+                className={mobileTabClass("draft")}
+                onClick={() => setMobileDetailPage("draft")}
               >
-                {voiceInputDisabledReason ?? "Local node is not connected. Reconnect it before talking to this Bro."}
+                Draft
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mobileDetailPage === "status"}
+                className={mobileTabClass("status")}
+                onClick={() => setMobileDetailPage("status")}
+              >
+                Status
+              </button>
+            </div>
+            <h2 className="sr-only">Draft workspace for {bro.name}</h2>
+
+            <div className={`${mobileDetailPage === "draft" ? "flex" : "hidden"} mt-4 min-h-0 flex-col gap-4 lg:mt-0 lg:flex`}>
+              {voiceInputDisabled ? (
+                <div
+                  data-testid="bro-detail-node-warning"
+                  className="ob-offline-banner dt-offline-banner"
+                >
+                  <span className="ob-offline-banner-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M2 8.5a18 18 0 0 1 20 0" />
+                      <path d="M5 12.5a13 13 0 0 1 14 0" />
+                      <path d="M8.5 16a8 8 0 0 1 7 0" />
+                      <circle cx="12" cy="20" r="0.9" fill="currentColor" />
+                      <path d="M3 3l18 18" />
+                    </svg>
+                  </span>
+                  <div className="ob-offline-banner-body">
+                    <strong>Local node is offline.</strong>
+                    <span>{voiceInputDisabledReason ?? "Reconnect it before talking to this Bro."}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="ob-offline-banner-action"
+                    disabled={localNodeBusy}
+                    onClick={() => {
+                      void handlePrepareLocalNodeCommand();
+                    }}
+                  >
+                    <span>{localNodeBusy ? "Preparing" : "Reconnect"}</span>
+                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M5 12h14" />
+                      <path d="M13 6l6 6-6 6" />
+                    </svg>
+                  </button>
+                </div>
+              ) : null}
+              <DraftBrainPanel
+                broName={bro.name}
+                draftText={draftText}
+                transcriptText={transcriptText}
+                transcriptActive={capturing}
+                dispatchPlan={draftSession?.current_dispatch_plan ?? null}
+                summary={draftSession?.current_draft?.last_update_summary}
+                canSend={canSendDraft}
+                sendDisabled={!sessionId || !draftReady || draftActionPending}
+                clearDisabled={!sessionId || !draftReady || draftActionPending}
+                sending={sendingDraft}
+                clearing={clearingDraft}
+                error={draftActionError}
+                onSend={() => {
+                  void handleSendDraft();
+                }}
+                onClear={() => {
+                  void handleClearDraft();
+                }}
+              />
+            </div>
+            {mobileDetailPage === "status" ? (
+              <div className="mt-4 lg:hidden">
+                {renderRunnerPanel()}
               </div>
             ) : null}
-            <DraftBrainPanel
-              draftText={draftText}
-              dispatchPlan={draftSession?.current_dispatch_plan ?? null}
-              summary={draftSession?.current_draft?.last_update_summary}
-              canSend={canSendDraft}
-              sendDisabled={!sessionId || !draftReady || draftActionPending}
-              clearDisabled={!sessionId || !draftReady || draftActionPending}
-              sending={sendingDraft}
-              clearing={clearingDraft}
-              error={draftActionError}
-              onSend={() => {
-                void handleSendDraft();
-              }}
-              onClear={() => {
-                void handleClearDraft();
-              }}
-            />
-
-          <LiveTranscriptPanel active={capturing} transcriptText={transcriptText} />
-
-            <VoicePad
-              active={capturing}
-              disabled={voiceInputDisabled || !sessionId || !readyForMic || sttPhase === "draft_updating" || draftActionPending}
-              onPointerDown={handleMicPointerDown}
-              onPointerUp={handleMicPointerUp}
-              onPointerCancel={(event) => handleMicPointerUp(event)}
-              onKeyDown={handleMicKeyDown}
-              onKeyUp={handleMicKeyUp}
-              onBlur={() => {
-                if (activePointerIdRef.current === null) void setMicEnabled(false);
-              }}
-            />
-        </div>
-        {mobileDetailPage === "status" ? (
-          <div className="mt-4 nb-detail-scroll lg:hidden">
-            {renderRunnerPanel()}
           </div>
-        ) : null}
-      </section>
+        </div>
 
-      <div className="hidden min-h-0 overflow-hidden lg:block">
-        {renderRunnerPanel()}
-      </div>
-      </div>
+        <div className={`${mobileDetailPage === "draft" ? "block" : "hidden"} lg:block`}>
+          {voicePad}
+        </div>
+      </section>
+    </div>
   );
 }

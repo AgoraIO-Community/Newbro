@@ -1,26 +1,26 @@
 # Frontend Handoff
 
 This document records the current handoff state for `src/newbro/ui/` after the
-root shell was rebuilt to match the provided JSX layout and then wired to a
-Newbro-backed interaction-memory flow.
+active shell was refactored toward the design prototype in `design/` while
+keeping the Newbro runtime clients wired.
 
 ## Current Product State
 
-The root route now renders a `Newbro` command-center shell instead of the prior
-live chat/workbench runtime.
+The root route now renders a design-backed `Newbro` workspace shell.
 
 Current visible structure:
 
-- left sidebar with literal sample branding
-- top voice summary bar with real session controls
-- `Interaction memory` transcript panel
-- `Bro` card grid with hold-to-talk visual state
-
-The copy is intentionally literal to the reference for this pass.
+- compact top header with session-aware route navigation, account, and logout
+- top voice summary bar with the existing connector-backed session controls
+- runtime Bro card grid sourced from `personas`, `tasks`, and `executor_nodes`
+- explicit empty workspace state when the session has no Bros
+- Bro Detail with local-node setup gate, disconnected-node warning, Draft/STT,
+  send, and hold-to-talk controls
+- mobile Walkie route sourced from the same runtime Bro card models
 
 ## Runtime Relationship
 
-The shell is now voice-aware, but still narrower than the previous workbench.
+The shell remains one-session-at-a-time and protocol-first.
 
 Current behavior:
 
@@ -31,7 +31,9 @@ Current behavior:
   and shows a non-blocking warning
 - it fetches that session snapshot for personas
 - if `personas` exist, it maps them into `Bro` cards
-- if not, it renders the seeded sample cards
+- if not, it renders the empty workspace card rather than seeded active data
+- the root `Home` route stays the workspace even when a default Bro exists;
+  Bro Detail opens only from a Bro card or `/bros/:broId`
 - pressing `Start` prepares and activates a gateway-backed voice session
 - the connector attaches that voice session to the existing shell
   `synapse_session_id`
@@ -59,11 +61,52 @@ The current root page does **not** expose:
 
 ```bash
 cd src/newbro/ui
-npm test
-npm run build
+bun run test
+bun run build
 ```
 
 These should pass from the current state.
+
+## Visual QA Evidence
+
+The current design refactor was checked against the design screenshots in
+`design/screenshots/` using desktop captures at `1440x900` and mobile captures
+at `390x820`.
+
+| Required state | Design reference | Current evidence |
+| --- | --- | --- |
+| Desktop sign-in / invitation | `design/screenshots/onboarding-overview.png`, `design/screenshots/onboarding-right.png` | `/tmp/newbro-live-signin-desktop-current.png` |
+| Mobile sign-in / invitation | `design/screenshots/onboarding-overview.png`, `design/screenshots/onboarding-right.png` | `/tmp/newbro-live-signin-mobile-current.png` |
+| Desktop empty workspace | `design/screenshots/firsthome-sheet-closed.png`, `design/screenshots/recheck.png` | `/tmp/newbro-live-empty-desktop-current.png` |
+| Mobile empty workspace | `design/screenshots/firsthome-sheet-closed.png`, `design/screenshots/recheck.png` | `/tmp/newbro-live-empty-mobile-current.png` |
+| Desktop create/connect Bro | `design/screenshots/recheck-hq.png`, `design/screenshots/recheck.png` | `/tmp/newbro-live-create-sheet-desktop-current.png` |
+| Mobile create/connect Bro | `design/screenshots/recheck-hq.png`, `design/screenshots/recheck.png` | `/tmp/newbro-live-create-sheet-mobile-current.png` |
+| Desktop home workspace | `design/screenshots/01-canvas.png`, `design/screenshots/hero-only.png`, `design/screenshots/hero-tight.png`, `design/screenshots/hero-zoom.png` | `/tmp/newbro-live-home-desktop-current.png` |
+| Mobile home workspace | `design/screenshots/01-canvas.png`, `design/screenshots/hero-only.png`, `design/screenshots/hero-tight.png`, `design/screenshots/hero-zoom.png` | `/tmp/newbro-live-home-mobile-current.png` |
+| Desktop active Bro detail / thread | `design/screenshots/dt-detail-current.png`, `design/screenshots/02-stage-focus.png` | `/tmp/newbro-live-detail-connected-desktop-current.png` |
+| Mobile active Bro detail / thread | `design/screenshots/dt-detail-current.png`, `design/screenshots/02-stage-focus.png` | `/tmp/newbro-live-detail-connected-mobile-current.png` |
+| Desktop offline / send blocked | `design/screenshots/dt-detail-current.png` | `/tmp/newbro-live-offline-send-blocked-desktop-current.png` |
+| Mobile offline / send blocked | `design/screenshots/dt-detail-current.png` | `/tmp/newbro-live-offline-send-blocked-mobile-current.png` |
+
+Known intentional deltas:
+
+- The implementation is the production app viewport, not the design canvas or
+  iOS device frame. Outer bezels, status bars, and artboard chrome are not
+  duplicated.
+- Some screenshot references are prototype overview/canvas variants, including
+  stage, hero, and recheck frames. The production UI maps their layout language
+  to real runtime surfaces instead of recreating the prototype carousel or
+  static artboard exactly.
+- App typography keeps `letter-spacing: 0` to satisfy the frontend UI
+  constraint against negative or viewport-scaled text, so it differs from some
+  prototype tracking.
+- Sign-in uses the prototype's segmented invitation-code idea but supports
+  real longer invite codes such as `open-sesame` by shrinking cells on mobile.
+- Create/connect uses the real executor-node and persona APIs and shows the
+  issued `newbro executor run ...` command instead of the static prototype
+  command copy.
+- Counts, names, node status, draft content, and warnings reflect live runtime
+  snapshots rather than the prototype's fixed sample data.
 
 ## Next Likely Directions
 
