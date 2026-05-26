@@ -635,6 +635,8 @@ function ThreadPanel({
   const shell = useNewbroShell();
   const draftText = shell.draftSession?.current_draft?.text ?? "";
   const activeRecord = records[0] ?? null;
+  const threadMessages = shell.chatMessages.slice(-8);
+  const hasThreadMessages = threadMessages.length > 0;
 
   return (
     <>
@@ -655,6 +657,14 @@ function ThreadPanel({
           <div className="dt-bubble-meta">Draft · ready to send</div>
         </div>
       ) : null}
+      {threadMessages.map((message) => (
+        <div key={message.id} className={`dt-turn ${message.role === "user" ? "dt-turn-you" : "dt-turn-bro"}`}>
+          <div className={`dt-bubble ${message.role === "user" ? "dt-bubble-you" : "dt-bubble-bro"}`}>{message.text}</div>
+          <div className="dt-bubble-meta">
+            {message.role === "user" ? "You · sent" : `${bro.name} · reply`}
+          </div>
+        </div>
+      ))}
       {activeRecord ? (
         <div className="dt-turn dt-turn-bro">
           <div className="dt-status">
@@ -667,14 +677,14 @@ function ThreadPanel({
             <div className="dt-status-foot">{activeRecord.description || activeRecord.summary || bro.progressLabel}</div>
           </div>
         </div>
-      ) : (
+      ) : !hasThreadMessages ? (
         <div className="dt-turn dt-turn-bro">
           <div className="dt-bubble dt-bubble-bro">
             {disabled ? "I am paused until the node reconnects." : "No thread yet. Tell me what to build."}
           </div>
           <div className="dt-bubble-meta">{bro.name} · standby</div>
         </div>
-      )}
+      ) : null}
       {records.slice(1).map((record) => (
         <div key={record.taskId} className="dt-turn dt-turn-bro">
           <div className="dt-bubble dt-bubble-bro">{record.description || record.summary || record.title}</div>
@@ -906,7 +916,8 @@ function DesktopComposerBar({
     event.preventDefault();
     const text = draft.trim();
     if (!text || disabled) return;
-    shell.sendMessage(text, bro.id);
+    const sent = shell.sendMessage(text, bro.id);
+    if (!sent) return;
     setDraft("");
   }
 

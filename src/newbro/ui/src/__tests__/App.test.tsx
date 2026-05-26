@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RouterProvider } from "@tanstack/react-router";
 import App from "../App";
 import { buildBroCardModels } from "../components/newbro";
@@ -363,6 +363,19 @@ describe("Newbro artboard shell", () => {
     expect(clientMock.sendSocketMessage.mock.calls.at(-1)?.[3]).toBe("forge");
     expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
     expect(clientMock.sendDraft).not.toHaveBeenCalled();
+
+    act(() => {
+      socketHarness.handlers?.onMessage({
+        type: "user_message_appended",
+        sequence: 2,
+        message_id: "msg-desktop-direct",
+        role: "user",
+        text: "Run the desktop direct send path",
+        source: "user",
+      });
+    });
+
+    expect(await screen.findByText("Run the desktop direct send path")).toBeInTheDocument();
   });
 
   it("uses the artboarded offline detail state and blocks talk/send for disconnected usable nodes", async () => {
