@@ -626,98 +626,15 @@ function ThreadPanel({
   records,
   disabled,
   disabledReason,
-  variant = "desktop",
 }: {
   bro: BroCardModel;
   records: BroTaskRecord[];
   disabled?: boolean;
   disabledReason?: string | null;
-  variant?: "desktop" | "mobile";
 }) {
   const shell = useNewbroShell();
-  const [draft, setDraft] = useState("");
-  const draftText = shell.draftSession?.current_draft?.text ?? draft;
-  const charCount = draftText.length;
+  const draftText = shell.draftSession?.current_draft?.text ?? "";
   const activeRecord = records[0] ?? null;
-
-  function submitText(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const text = draft.trim();
-    if (!text || disabled) return;
-    shell.sendMessage(text);
-    shell.submitDraftAsrTurn({ raw_text: text, assigned_bro_id: bro.id });
-    setDraft("");
-  }
-
-  async function sendCurrentDraft() {
-    if (!shell.activeShellSessionId || disabled) return;
-    await sendDraft(shell.activeShellSessionId, {
-      draft_session_id: shell.draftSession?.id,
-      draft_revision_id: shell.draftSession?.current_revision_id ?? undefined,
-    });
-    await shell.refreshShellSession();
-  }
-
-  async function clearCurrentDraft() {
-    if (!shell.activeShellSessionId) return;
-    await clearDraft(shell.activeShellSessionId, { draft_session_id: shell.draftSession?.id });
-    await shell.refreshShellSession();
-  }
-
-  if (variant === "mobile") {
-    return (
-      <section className="dt-thread nb-artboard-thread" aria-label={`${bro.name} thread`}>
-        <div className="nb-thread-toolbar">
-          <div className="nb-card-label">Current draft</div>
-          <div className="nb-thread-toolbar-right">
-            <span className="nb-card-hint">{draftText ? "auto-saved · just now" : "waiting"}</span>
-            <span className="nb-chip"><span className={`nb-pulse ${shell.voiceSession.phase === "connected" ? "" : "nb-pulse-muted"}`} />{shell.voiceSession.phase === "connected" ? "Listening" : "Standby"}</span>
-          </div>
-        </div>
-        <div className="dt-thread-day"><span>Current session</span></div>
-        <div className="dt-turn dt-turn-bro">
-          <div className={`dt-bubble dt-bubble-bro nb-draft-bubble ${draftText ? "" : "nb-draft-bubble-empty"}`}>
-            {draftText || "No draft yet. Tell your bro what to build."}
-          </div>
-          <div className="dt-bubble-meta">{bro.name} · Draft Brain</div>
-        </div>
-        {records.map((record) => (
-          <div key={record.taskId} className="dt-status">
-            <div className="dt-status-head">
-              <span className="dt-status-spin" />
-              <span className="dt-status-title">{record.title}</span>
-              <span className="dt-status-pct">{record.statusLabel}</span>
-            </div>
-            <p>{record.description || record.summary}</p>
-          </div>
-        ))}
-        {disabled && disabledReason ? <div className="nb-thread-summary">{disabledReason}</div> : null}
-        <form className="nb-draft-footer" onSubmit={submitText}>
-          <div className="nb-meta"><span>{charCount} chars</span></div>
-          <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
-          <input
-            id={`message-${bro.id}`}
-            className="command-field nb-artboard-thread-input"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder={disabled ? "Reconnect the node before sending" : `Type to ${bro.name}...`}
-            disabled={disabled}
-          />
-          <div className="nb-btn-row">
-            <button type="button" className="nb-btn" onClick={() => { void clearCurrentDraft(); }}>Clear Draft</button>
-            <button type="button" data-testid="voice-session-mic-toggle" className="nb-btn" aria-label="Hold to Talk" disabled={disabled}>
-              Hold to Talk
-            </button>
-            <button type="button" className="nb-btn nb-btn-primary" disabled={disabled || !draftText} onClick={() => { void sendCurrentDraft(); }}>
-              <span>Send to Bro</span>
-              <SendHorizontal />
-            </button>
-            <button type="submit" className="sr-only">Send message</button>
-          </div>
-        </form>
-      </section>
-    );
-  }
 
   return (
     <>
@@ -764,6 +681,169 @@ function ThreadPanel({
           <div className="dt-bubble-meta">{bro.name} · {record.statusLabel}</div>
         </div>
       ))}
+    </>
+  );
+}
+
+function MobileThreadSurface({
+  bro,
+  records,
+  disabled,
+  disabledReason,
+}: {
+  bro: BroCardModel;
+  records: BroTaskRecord[];
+  disabled?: boolean;
+  disabledReason?: string | null;
+}) {
+  const shell = useNewbroShell();
+  const [draft, setDraft] = useState("");
+  const draftText = shell.draftSession?.current_draft?.text ?? draft;
+  const activeRecord = records[0] ?? null;
+  const connected = shell.voiceSession.phase === "connected";
+  const loading = shell.voiceSession.phase === "loading";
+
+  function submitText(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const text = draft.trim();
+    if (!text || disabled) return;
+    shell.sendMessage(text);
+    shell.submitDraftAsrTurn({ raw_text: text, assigned_bro_id: bro.id });
+    setDraft("");
+  }
+
+  async function sendCurrentDraft() {
+    if (!shell.activeShellSessionId || disabled) return;
+    await sendDraft(shell.activeShellSessionId, {
+      draft_session_id: shell.draftSession?.id,
+      draft_revision_id: shell.draftSession?.current_revision_id ?? undefined,
+    });
+    await shell.refreshShellSession();
+  }
+
+  async function clearCurrentDraft() {
+    if (!shell.activeShellSessionId) return;
+    await clearDraft(shell.activeShellSessionId, { draft_session_id: shell.draftSession?.id });
+    await shell.refreshShellSession();
+    setDraft("");
+  }
+
+  function toggleVoice() {
+    if (!shell.activeShellSessionId || disabled) return;
+    if (connected) {
+      void shell.stopMobileVoiceSession();
+    } else {
+      void shell.startMobileVoiceSession(bro.id);
+    }
+  }
+
+  return (
+    <>
+      <main className="thr-thread nb-mobile-thread-body" aria-label={`${bro.name} thread`}>
+        <h1 className="sr-only">{bro.name}</h1>
+        <span className="sr-only">Current draft</span>
+        <div className="thr-day"><span>Current session</span></div>
+        {draftText ? (
+          <div className={`thr-turn thr-turn-you${disabled ? " nb-mobile-turn-blocked" : ""}`}>
+            <div className={`thr-bubble thr-bubble-you${disabled ? " ob-bubble-failed" : ""}`}>{draftText}</div>
+            <div className={`thr-meta${disabled ? " ob-meta-failed" : ""}`}>
+              {disabled ? (
+                <>
+                  <span className="ob-meta-failed-icon" aria-hidden="true">!</span>
+                  <span>Not delivered · waiting for node</span>
+                </>
+              ) : "Draft · ready to send"}
+            </div>
+          </div>
+        ) : null}
+        {disabled && disabledReason ? (
+          <div className="thr-turn thr-turn-sys">
+            <div className="ob-sys-event">
+              <span className="ob-sys-event-dot" />
+              <span>{disabledReason}</span>
+            </div>
+          </div>
+        ) : null}
+        {activeRecord ? (
+          <div className="thr-turn thr-turn-bro">
+            <div className="thr-status">
+              <div className="thr-status-head">
+                <span className="thr-status-spin" />
+                <span className="thr-status-title">{activeRecord.title}</span>
+                <span className="thr-status-pct">{activeRecord.statusLabel}</span>
+              </div>
+              <div className="thr-status-bar"><i style={{ width: `${Math.max(8, Math.min(100, Math.round(bro.progress || 64)))}%` }} /></div>
+              <div className="thr-status-foot">{activeRecord.description || activeRecord.summary || bro.progressLabel}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="thr-turn thr-turn-bro">
+            <div className="thr-bubble thr-bubble-bro">
+              {disabled ? "I am paused until the node reconnects." : "No thread yet. Tell me what to build."}
+            </div>
+            <div className="thr-meta">{bro.name} · standby</div>
+          </div>
+        )}
+        {records.slice(1).map((record) => (
+          <div key={record.taskId} className="thr-turn thr-turn-bro">
+            <div className="thr-bubble thr-bubble-bro">{record.description || record.summary || record.title}</div>
+            <div className="thr-meta">{bro.name} · {record.statusLabel}</div>
+          </div>
+        ))}
+      </main>
+      <form className={`thr-composer nb-mobile-thread-composer${disabled ? " ob-composer-disabled" : ""}`} onSubmit={submitText}>
+        {disabled ? (
+          <div className="ob-composer-lock">
+            <span className="ob-composer-lock-icon" aria-hidden="true">
+              <WifiOff size={13} strokeWidth={2} />
+            </span>
+            <span className="ob-composer-lock-text">{disabledReason ? `Sending paused while ${disabledReason}` : "Sending paused while the node is offline."}</span>
+          </div>
+        ) : null}
+        <div className={`thr-composer-row${disabled ? " ob-composer-row-disabled" : ""}`} aria-disabled={disabled || undefined}>
+          <div className={`thr-ptt-idle${disabled ? " ob-ptt-idle-disabled" : ""}`}>
+            <span className="thr-ptt-idle-dot" aria-hidden="true" />
+            <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
+            <input
+              id={`message-${bro.id}`}
+              className="nb-mobile-thread-input"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder={disabled ? "Reconnect the node before sending" : `Type to ${bro.name}...`}
+              disabled={disabled}
+            />
+          </div>
+          <button
+            type="button"
+            className="nb-mobile-thread-clear"
+            aria-label="Clear draft"
+            disabled={!draftText}
+            onClick={() => { void clearCurrentDraft(); }}
+          >
+            <X size={16} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            className="nb-mobile-thread-send"
+            aria-label="Send current draft"
+            disabled={disabled || !draftText}
+            onClick={() => { void sendCurrentDraft(); }}
+          >
+            <SendHorizontal size={16} strokeWidth={2.1} />
+          </button>
+          <button
+            type="button"
+            data-testid={connected ? "voice-session-stop" : "voice-session-start"}
+            className={`thr-mic-btn thr-mic-btn-${disabled ? "idle ob-mic-disabled" : connected ? "listening" : "idle"}`}
+            aria-label={disabled ? "Hold to talk · node offline" : connected ? "Stop voice session" : `Wake up ${bro.name}`}
+            disabled={disabled || loading}
+            onClick={toggleVoice}
+          >
+            <Mic size={22} strokeWidth={2} aria-hidden="true" />
+          </button>
+          <button type="submit" className="sr-only">Send message</button>
+        </div>
+      </form>
     </>
   );
 }
@@ -1143,6 +1223,16 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const offline = nodeState.kind === "usable_disconnected" ? nodeState.node : null;
   const needsConnect = bro.source === "runtime" && nodeStateNeedsConnect(nodeState) && nodeState.kind !== "no_bound_node";
+  const persona = bro.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
+  const records = bro.source === "runtime"
+    ? buildBroTaskRecords(bro.id, {
+        activeTaskId: persona?.current_task_id ?? null,
+        broDetailSessionId: persona?.bro_detail_session_id ?? null,
+        tasks: shell.tasks,
+        executionRuns: shell.executionRuns,
+        summaries: shell.taskSummaries,
+      })
+    : [];
   if (needsConnect && shell.activeShellSessionId) {
     return (
       <MobileStage>
@@ -1162,7 +1252,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   }
   return (
     <MobileStage>
-      <div className="thr nb-mobile-runtime-thread nb-mobile-detail-content" data-testid={`mobile-bro-focus-${bro.id}`}>
+      <div className={`thr nb-mobile-runtime-thread nb-mobile-detail-content${offline ? " nb-mobile-runtime-thread-offline ob-thr-offline" : ""}`} data-testid={`mobile-bro-focus-${bro.id}`}>
         <header className="thr-bar">
           <button type="button" className="thr-back" aria-label="Back" onClick={onBack}>
             <ChevronLeft size={20} strokeWidth={2.2} />
@@ -1188,28 +1278,8 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
             <MoreHorizontal size={20} strokeWidth={1.9} />
           </button>
         </header>
-        <main className="thr-thread nb-mobile-thread-body">
-          {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
-          <ThreadPanel bro={bro} records={[]} disabled={Boolean(offline)} disabledReason={offline ? `${offline.name} is not connected.` : null} variant="mobile" />
-        </main>
-        <div className="mobile-action-dock">
-          <button
-            type="button"
-            className="home-fab"
-            aria-label={shell.voiceSession.phase === "connected" ? "Stop voice session" : `Wake up ${bro.name}`}
-            disabled={Boolean(offline)}
-            onClick={() => {
-              if (!shell.activeShellSessionId) return;
-              if (shell.voiceSession.phase === "connected") {
-                void shell.stopMobileVoiceSession();
-              } else {
-                void shell.startMobileVoiceSession(bro.id);
-              }
-            }}
-          >
-            {shell.voiceSession.phase === "connected" ? "Stop voice session" : `Wake up ${bro.name}`}
-          </button>
-        </div>
+        {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
+        <MobileThreadSurface bro={bro} records={records} disabled={Boolean(offline)} disabledReason={offline ? `${offline.name} is not connected.` : null} />
       </div>
     </MobileStage>
   );
