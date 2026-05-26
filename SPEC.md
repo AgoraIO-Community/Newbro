@@ -1,12 +1,14 @@
-# Newbro UI Artboard Realignment Spec
+# Newbro Desktop And Mobile Design Alignment Spec
 
 ## Goal
 
-Recreate the active Newbro frontend as new artboard-first UI pages based on `design/Voice Interaction.html` and its linked design assets, then wire the existing runtime functionality into those new pages. The product boundary is strict: only UI states directly represented by the artboards should remain active. UI that is not on an artboard should be removed, hidden, or folded into an artboarded flow.
+Make the active Newbro UI follow `design/Voice Interaction.html` closely for the core runtime surfaces: Home, Create & Connect a Bro, and Bro Detail. The goal covers both desktop and mobile, with desktop treated as the first and strictest acceptance gate because the current desktop implementation is visibly farthest from the checked-in design.
+
+This is an alignment and verification goal, not a product rewrite. Keep the runtime behavior that already works, and reshape the UI around the design prototype.
 
 ## Source Of Truth
 
-The visual source of truth is:
+Primary design source:
 
 - `design/Voice Interaction.html`
 - `design/app.jsx`
@@ -15,111 +17,131 @@ The visual source of truth is:
 - `design/variants-desktop.css`
 - `design/variants-mobile.jsx`
 - `design/variants-mobile.css`
-- `design/variants-onboarding.jsx`
-- `design/variants-onboarding.css`
 - `design/variants-channel-mobile.jsx`
 - `design/variants-channel-mobile.css`
+- `design/variants-onboarding.jsx`
+- `design/variants-onboarding.css`
 - `design/bro-characters.jsx`
 - `design/bro-characters.css`
 - `design/assets/`
 - `design/screenshots/`
 
+Current implementation to align:
+
+- `src/newbro/ui/src/ArtboardShell.tsx`
+- `src/newbro/ui/src/styles/variants-desktop.css`
+- `src/newbro/ui/src/styles/variants-mobile.css`
+- `src/newbro/ui/src/styles/variants-onboarding.css`
+- `src/newbro/ui/src/styles/app.css`
+- `src/newbro/ui/src/components/newbro/`
+- `src/newbro/ui/src/NewbroShell.tsx`
+- `src/newbro/ui/src/lib/session-client.ts`
+- `src/newbro/ui/src/lib/connector-client.ts`
+- `src/newbro/ui/src/lib/voice-runtime.ts`
+- `src/newbro/ui/src/__tests__/App.test.tsx`
+
 ## In Scope
 
-The implemented app should keep and align only these directly artboarded states:
+Desktop must be aligned first:
 
-- Desktop home workspace: `dt-home`
-- Desktop bro detail active session: `dt-thread`
-- Desktop sign in / invitation: `dt-signin`
-- Desktop empty workspace: `dt-empty-home`
-- Desktop create/connect bro: `dt-create-bro`
-- Desktop bro detail offline/send blocked: `dt-bro-offline`
-- Mobile sign in / invitation: `signin`
-- Mobile empty workspace: `empty-home`
-- Mobile create/connect bro: `create-bro`
-- Mobile bro offline/send blocked: `bro-offline`
-- Mobile home workspace: `home`
-- Mobile threads/chat: `threads`
+- Empty Home: `FirstRunHomeDesktop` / `dt-empty-home`
+- Populated Home: `HomeDesktop` / `dt-home`
+- Create & Connect modal: `CreateBroModal` and `CreateBroDesktop` / `dt-create-bro`
+- Bro Detail active thread: `BroDetailActiveDesktop` / `dt-thread`
+- Bro Detail offline/send blocked, if current runtime state reaches it: `BroDetailOfflineDesktop` / `dt-bro-offline`
 
-## Out Of Scope / Removable UI
+Mobile must be aligned after desktop is stable:
 
-The following current UI is not directly on the artboards and should be removed, made unreachable, or folded into an artboarded flow:
+- Mobile empty Home
+- Mobile populated Home
+- Mobile Create & Connect
+- Mobile Bro Detail / threads
+- Mobile Bro offline/send blocked, if current runtime state reaches it
 
-- Standalone Bros management page
-- Standalone Nodes management page
-- Standalone Settings/preferences page
-- Node credentials/enrollment pages beyond the create/connect artboard flow
-- Not found and catch-boundary custom product screens
-- Shell loading/error screens
-- Any custom fallback UI not represented in the artboards
-- Any modal, toast, page, or route state not represented in the artboards
+The sign-in/invitation UI may be adjusted only if shared tokens, shell styling, or viewport behavior make it visibly inconsistent with the same design source. It is not the main acceptance target for this goal.
 
-Backend-required functionality may remain available only when it is needed by an artboarded flow. For example, creating a persona, creating/binding an executor node, revealing/copying a connect command, voice actions, session resume, and offline blocking should stay wired through the artboarded create/connect, home, and bro detail states.
+## Non-Goals
+
+- Do not redesign the product beyond the checked-in design prototype.
+- Do not remove functional runtime routes solely because they are not part of this alignment pass.
+- Do not replace runtime state with static design mock data.
+- Do not change backend behavior, auth semantics, executor node semantics, persona creation rules, draft contracts, or voice connector contracts.
+- Do not implement new management pages, settings pages, node admin pages, onboarding copy, or marketing screens.
+- Do not claim pixel-perfect completion without screenshot evidence.
 
 ## User-Visible Behavior
 
-Desktop states should visually match the corresponding 1440x900 artboards. Mobile states should visually match the corresponding 440x920 artboards and remain usable at 390x820.
+At desktop `1440x900`, the live UI should visually match the design prototype for the desktop target states. The most important desktop fixes are expected around global shell placement, page padding, header height, modal size/position, shadows, card spacing, activity rail placement, thread pane sizing, and composer position.
 
-Dynamic runtime data may differ from the static prototype, but the implemented shell, layout, spacing, typography, colors, surfaces, cards, buttons, voice controls, status chips, mobile sheets, avatar/character treatments, and empty/offline states should match the design.
+At mobile `440x920`, the live UI should match the corresponding mobile design states. At `390x820`, the same states must remain usable without clipped primary controls, broken scroll, horizontal overflow, or incoherent overlap.
 
-## Architecture Constraints
+Runtime data can differ from the static design content, but layout, visual hierarchy, typography, spacing, borders, shadows, button treatment, command block treatment, avatars, chips, and interaction states should come from the design.
 
-- Treat `src/newbro/ui/` as the active frontend.
-- Implementation should create a new artboard-first UI surface instead of incrementally tweaking the current pages. Existing components may be read for runtime wiring, data shape, edge cases, and tests, but should not constrain the new visual/component architecture.
-- Prefer porting/reusing design tokens, CSS, assets, and component structure from `design/` over inventing a parallel visual system.
-- Wire runtime behavior into the new pages after the page structure is recreated from the design.
-- Preserve runtime wiring required by artboarded flows: auth/signup/logout, session bootstrap and `?sid` resume, persona and executor node creation/binding, connect command reveal/copy, Bro detail, conversation/thread display, voice connector prepare/activate/stop, STT/draft flow, message/draft send, and offline send blocking.
-- Do not replace live runtime state with static design data except artboarded empty/offline states that cannot mask broken API wiring.
-- Do not keep custom fallback UI. If an error, loading, missing route, or failed runtime state is not represented in the artboards, remove that product UI or route it into an artboarded state; do not design a separate fallback screen.
-- Keep Communication Brain and Execution Brain boundaries intact. The UI renders state and invokes typed client APIs; it must not invent transcript keyword rules, backend policy, or dispatch shortcuts.
-- Do not broaden scope into backend features, new auth systems, executor orchestration changes, or marketing pages.
+## Implementation Constraints
+
+- Read stable docs before implementation and preserve Newbro runtime boundaries from `AGENTS.md`.
+- Use the design files as the visual source of truth. Port or reuse design CSS/class structure where practical.
+- Preserve existing runtime wiring for auth bootstrap, `?sid` session handling, session snapshots, websocket updates, personas, executor nodes, create/connect, command copy, Bro Detail, voice start/stop, STT/draft, draft send, and offline blocking.
+- Keep the browser UI transport thin. The UI may call typed client APIs and render state; it must not invent business policy or semantic transcript shortcuts.
+- Prefer aligning the active `ArtboardShell` and style files over building a second disconnected prototype.
+- Use icons from the existing icon system where the active app already uses them; do not introduce hand-drawn replacement icons unless the design asset requires it.
+- Preserve mobile behavior while doing desktop work. Desktop-first does not mean mobile regressions are acceptable.
 
 ## Edge Cases
 
-- No signed-in user should show the artboarded invitation/sign-in state.
-- Empty workspace should use the artboarded empty state instead of fake active data.
-- Loading, error, and not-found cases should not introduce separate visible fallback UI unless they are expressed through an existing artboarded state.
-- A created or connected bro should appear through the artboarded home and detail states.
-- A disconnected but usable node should keep the bro detail visible, show the artboarded offline/send-blocked state, and block talk/send actions.
-- Long names, prompts, commands, and transcript text should wrap or scroll without clipping primary controls.
-- Desktop and mobile navigation should preserve the active session id where session routing is still required.
+- Empty workspace must render the design empty state when there are no runtime personas.
+- Create/connect must keep the real executor-node command flow and first-connection gating.
+- Completed create/connect state must have a meaningful close/confirm action, not disabled decorative buttons.
+- Long node commands must not overflow the modal.
+- Long Bro names and task titles must wrap or truncate like the design without resizing fixed controls.
+- Offline usable nodes must keep Bro Detail visible, show the offline/send-blocked treatment, and block talk/send.
+- Active voice state must not push the desktop thread pane or mobile controls out of frame.
+- Mobile browser chrome / small viewport height must not hide the primary create/connect or voice controls.
 
 ## Verification
 
 Required commands:
 
+- `cd src/newbro/ui && bun run test src/__tests__/App.test.tsx`
 - `cd src/newbro/ui && bun run test`
 - `cd src/newbro/ui && bun run build`
 
-Required visual checks:
+Required screenshot evidence:
 
-- Capture desktop screenshots at 1440x900 for every desktop artboarded state.
-- Capture mobile screenshots at 440x920 for every mobile artboarded state.
-- Spot-check mobile at 390x820.
-- Compare implementation screenshots against `design/screenshots/*` and/or freshly rendered design artboards.
+- Desktop design references at `1440x900` for empty Home, populated Home, Create & Connect, Bro Detail active, and Bro Detail offline if implemented.
+- Desktop live screenshots at `1440x900` for the same states.
+- Desktop live spot checks at `1280x800` and `1024x768` for Home, Create & Connect, and Bro Detail.
+- Mobile design references at `440x920` for empty Home, populated Home, Create & Connect, Bro Detail/threads, and offline if implemented.
+- Mobile live screenshots at `440x920` for the same states.
+- Mobile live spot checks at `390x820` for empty Home, Create & Connect, and Bro Detail.
 
-Required functional smoke checks:
+Suggested artifact naming:
 
-- Sign in with an invitation code.
-- Resume a session from `?sid`.
-- Show empty workspace when no bros exist.
-- Create/connect a bro through the artboarded flow.
-- Show home workspace with runtime bros.
-- Open active bro detail/thread.
-- Start/stop voice through the existing connector flow.
-- Send draft/message through existing client paths.
-- Show offline/send-blocked state for disconnected usable nodes.
+- `/tmp/newbro-design-desktop-empty-home-1440x900.png`
+- `/tmp/newbro-live-desktop-empty-home-1440x900.png`
+- `/tmp/newbro-design-desktop-create-bro-1440x900.png`
+- `/tmp/newbro-live-desktop-create-bro-1440x900.png`
+- `/tmp/newbro-design-desktop-home-1440x900.png`
+- `/tmp/newbro-live-desktop-home-1440x900.png`
+- `/tmp/newbro-design-desktop-detail-1440x900.png`
+- `/tmp/newbro-live-desktop-detail-1440x900.png`
+- `/tmp/newbro-design-mobile-*.png`
+- `/tmp/newbro-live-mobile-*.png`
 
 ## Done When
 
-- Every in-scope artboarded state is implemented in the active frontend.
-- UI not represented in the artboards is removed, hidden, or folded into an artboarded flow.
-- No custom fallback UI remains for loading, API error, not-found, catch-boundary, or non-artboard runtime states.
-- Desktop states visually match their 1440x900 artboards.
-- Mobile states visually match their 440x920 artboards and remain usable at 390x820.
-- Runtime actions needed by the remaining artboarded flows remain wired to existing APIs.
-- No page has horizontal overflow, incoherent overlap, clipped primary controls, or unreadable command/thread text at the checked viewports.
+- Desktop empty Home matches the design at `1440x900`.
+- Desktop populated Home matches the design at `1440x900`.
+- Desktop Create & Connect matches the design at `1440x900`.
+- Desktop Bro Detail active matches the design at `1440x900`.
+- Desktop Bro Detail offline/send blocked matches the design if that state is reachable in the active runtime.
+- Desktop Home, Create & Connect, and Bro Detail have no horizontal overflow, incoherent overlap, or clipped primary controls at `1440x900`, `1280x800`, and `1024x768`.
+- Mobile empty Home, populated Home, Create & Connect, and Bro Detail/threads match the design at `440x920`.
+- Mobile offline/send blocked matches the design if that state is reachable in the active runtime.
+- Mobile target states remain usable at `390x820` with no clipped primary controls, broken scroll, or horizontal overflow.
+- Existing runtime behavior still works for empty workspace, create/connect, one Bro creation after first successful connection, connected Bro Home, Bro Detail, voice start/stop, draft/message send, and offline blocking.
+- `cd src/newbro/ui && bun run test src/__tests__/App.test.tsx` passes.
 - `cd src/newbro/ui && bun run test` passes.
 - `cd src/newbro/ui && bun run build` passes.
-- Screenshot QA evidence is produced for the artboarded state matrix.
-- Any remaining pixel deltas are documented with a concrete reason and follow-up path.
+- Screenshot QA evidence exists for the required state and viewport matrix.
+- Any remaining visual deltas are documented with concrete reason and follow-up path.

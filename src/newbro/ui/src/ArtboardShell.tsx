@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Check, Copy, FileText, LogOut, Mic, Plus, SendHorizontal, X } from "lucide-react";
+import { Check, ChevronLeft, Copy, FileText, LogOut, Mic, MoreHorizontal, Plus, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorRunCommand,
   clearDraft,
@@ -298,17 +298,19 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
         <EmptyWorkspace onCreate={() => setSheetOpen(true)} />
       ) : (
         <div className="dt-main-pad dt-home-pad">
-          <div className={`dt-home-grid${recents.length ? "" : " dt-home-grid-solo"}`}>
+          <div className="dt-home-grid">
             <section className="dt-home-main">
               <header className="dt-page-head">
                 <div>
                   <h1 className="dt-page-title">Home</h1>
-                  <p className="dt-page-sub">Talk to your crew, open a bro thread, or create the first local worker.</p>
+                  <p className="dt-page-sub">Hold space anywhere, talk to any bro, or open one to read their thread. Sessions persist as long as the node stays online.</p>
                 </div>
-                <button type="button" className="dt-page-action dt-page-action-primary" onClick={() => setSheetOpen(true)}>
-                  <Plus size={14} aria-hidden="true" />
-                  <span>New bro</span>
-                </button>
+                <div className="dt-page-actions">
+                  <button type="button" className="dt-page-action dt-page-action-primary" onClick={() => setSheetOpen(true)}>
+                    <Plus size={14} aria-hidden="true" />
+                    <span>New bro</span>
+                  </button>
+                </div>
               </header>
               <>
                 {workingBros.length > 0 ? (
@@ -325,7 +327,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
                 <section className="dt-home-section">
                   <div className="dt-home-section-head">
                     <span className="ob-eyebrow">STANDING BY · {standingByBros.length}</span>
-                    <span className="dt-home-section-sub">Quiet for now - open a bro to start a thread</span>
+                    <span className="dt-home-section-sub">Quiet for now - hold space to wake one</span>
                   </div>
                   <div className="dt-bro-roster">
                     {standingByBros.map((bro) => <DesktopRosterRow key={bro.id} bro={bro} onOpen={onOpenBro} />)}
@@ -333,12 +335,13 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
                 </section>
               </>
             </section>
-            {recents.length > 0 ? (
-              <aside className="dt-home-rail">
-                <section className="dt-rail-block">
-                  <div className="dt-rail-block-head">
-                    <span className="ob-eyebrow">RECENT</span>
-                  </div>
+            <aside className="dt-home-rail">
+              <section className="dt-rail-block">
+                <div className="dt-rail-block-head">
+                  <span className="ob-eyebrow">RECENT</span>
+                  <button type="button" className="ob-link ob-link-sm">See all</button>
+                </div>
+                {recents.length > 0 ? (
                   <ul className="dt-recent-list">
                     {recents.map((recent) => (
                       <li key={recent.id}>
@@ -352,9 +355,11 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
                       </li>
                     ))}
                   </ul>
-                </section>
-              </aside>
-            ) : null}
+                ) : (
+                  <div className="dt-art-empty">Threads will appear here after your bros start reporting back.</div>
+                )}
+              </section>
+            </aside>
           </div>
         </div>
       )}
@@ -482,7 +487,7 @@ function CreateConnectSheet({
     <div className="nb-first-run-sheet-layer" role="dialog" aria-modal="true" aria-label="Create and connect a Bro">
       <div className="nb-first-run-sheet-frame ob-firsthome-sheet">
         <div className="ob-sheet-dim" onClick={onClose} aria-hidden="true" />
-        <section className="ob-sheet">
+        <section className="ob-sheet nb-create-connect-modal">
           <div className="ob-sheet-handle" aria-hidden="true" />
           <header className="ob-sheet-head">
             <div className="ob-sheet-titles">
@@ -492,64 +497,81 @@ function CreateConnectSheet({
             <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}><X size={16} strokeWidth={2.2} /></button>
           </header>
           <div className="ob-sheet-body">
-            <div className="ob-fieldset">
-              <label className="ob-field">
-                <span className="ob-field-eyebrow">NAME</span>
-                <div className="ob-input ob-input-filled">
-                  <span className="ob-input-prefix">@</span>
-                  <input type="text" value={name} disabled={Boolean(bro) || Boolean(command) || busy} onChange={(event) => setName(event.target.value)} />
+            <div className="dt-modal-cols nb-create-connect-cols">
+              <div className="dt-modal-col">
+                <div className="ob-fieldset">
+                  <label className="ob-field">
+                    <span className="ob-field-eyebrow">NAME</span>
+                    <div className="ob-input ob-input-filled">
+                      <span className="ob-input-prefix">@</span>
+                      <input type="text" value={name} disabled={Boolean(bro) || Boolean(command) || busy} onChange={(event) => setName(event.target.value)} />
+                    </div>
+                    <span className="ob-field-hint">One word, easy to say out loud. e.g. atlas, scout, forge, muse.</span>
+                  </label>
                 </div>
-                <span className="ob-field-hint">One word, easy to say out loud. e.g. atlas, scout, forge, muse.</span>
-              </label>
-            </div>
-            <div className="ob-fieldset">
-              <span className="ob-field-eyebrow ob-fieldset-eyebrow">EXECUTOR</span>
-              <div className="ob-exec-grid">
-                <div className="ob-exec-card ob-exec-card-on">
-                  <span className="ob-exec-check" aria-hidden="true"><Check size={11} strokeWidth={2.8} /></span>
-                  <span className="ob-exec-name">Codex</span>
-                  <span className="ob-exec-desc">Long-running agent · shell + browser</span>
-                </div>
-                <div className="ob-exec-card" aria-disabled="true">
-                  <span className="ob-exec-name">Hermes</span>
-                  <span className="ob-exec-desc">Headless · ops + scripts</span>
-                </div>
-              </div>
-            </div>
-            <div className="ob-fieldset">
-              <div className="ob-fieldset-eyebrow-row">
-                <span className="ob-field-eyebrow">CONNECT A NODE</span>
-                <span className="ob-fieldset-eyebrow-meta">{command ? "ready" : "on demand"}</span>
-              </div>
-              <div className="ob-connect">
-                <div className="ob-connect-cmd">
-                  <span className="ob-connect-prompt">$</span>
-                  <span className="ob-connect-line">
-                    {command ? command : <>newbro executor run <span className="ob-connect-tok">--token pending</span></>}
-                  </span>
-                  <button type="button" className="ob-connect-copy" aria-label="Copy command" disabled={!command} onClick={() => { if (command) void copyCommand(command); }}>
-                    {copied ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
-                  </button>
-                </div>
-                <div className="ob-connect-status">
-                  <span className="ob-connect-spinner" aria-hidden="true"><span /><span /><span /></span>
-                  <span className="ob-connect-status-text">
-                    <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : command ? `Listening for ${pendingBroName || trimmedName}...` : `Ready to connect ${trimmedName || "a Bro"}...`}</strong>
-                    <span>{completed ? "The Bro has been created after the node connected successfully." : command ? "Run that command on the machine where this Bro should work. The Bro appears after the first successful connection." : "Newbro will issue a node command first. The Bro is created only after that node connects once."}</span>
-                  </span>
-                  <span className="ob-connect-time">{completed ? "done" : copied ? "copied" : command ? "ready" : "new"}</span>
-                </div>
-                {command ? (
-                  <div className="ob-connect-meta">
-                    <span>Command is generated through the real node credential flow.</span>
-                    <span>Waiting for this node to connect successfully once.</span>
+                <div className="ob-fieldset">
+                  <span className="ob-field-eyebrow ob-fieldset-eyebrow">EXECUTOR</span>
+                  <div className="ob-exec-grid">
+                    <div className="ob-exec-card ob-exec-card-on">
+                      <span className="ob-exec-name">Codex</span>
+                      <span className="ob-exec-desc">Long-running agent · shell + browser</span>
+                      <span className="ob-exec-check" aria-hidden="true"><Check size={11} strokeWidth={2.8} /></span>
+                    </div>
+                    <div className="ob-exec-card" aria-disabled="true">
+                      <span className="ob-exec-name">Hermes</span>
+                      <span className="ob-exec-desc">Headless · ops + scripts</span>
+                    </div>
                   </div>
-                ) : null}
+                </div>
+              </div>
+
+              <div className="dt-modal-col">
+                <div className="ob-fieldset">
+                  <div className="ob-fieldset-eyebrow-row">
+                    <span className="ob-field-eyebrow">CONNECT A NODE</span>
+                    <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : command ? "ready" : "on demand"}</span>
+                  </div>
+                  <div className="ob-connect">
+                    <div className="ob-connect-cmd">
+                      <span className="ob-connect-prompt">$</span>
+                      <span className="ob-connect-line">
+                        {command ? command : <>newbro executor run <span className="ob-connect-tok">--token pending</span></>}
+                      </span>
+                      <button type="button" className="ob-connect-copy" aria-label="Copy command" disabled={!command} onClick={() => { if (command) void copyCommand(command); }}>
+                        {copied ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
+                      </button>
+                    </div>
+                    <div className="ob-connect-status">
+                      <span className="ob-connect-spinner" aria-hidden="true"><span /><span /><span /></span>
+                      <span className="ob-connect-status-text">
+                        <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : command ? `Listening for ${pendingBroName || trimmedName}...` : `Ready to connect ${trimmedName || "a Bro"}...`}</strong>
+                        <span>{completed ? "The Bro has been created after the node connected successfully." : command ? `Run that command on the machine where ${pendingBroName || trimmedName} should work. The Bro appears after the first successful connection.` : "Newbro will issue a node command first. The Bro appears after the first successful connection."}</span>
+                      </span>
+                      <span className="ob-connect-time">{completed ? "done" : copied ? "copied" : command ? "ready" : "new"}</span>
+                    </div>
+                  </div>
+                  <div className="ob-connect-meta">
+                    <span>Real node credential flow</span>
+                    <span className="ob-connect-meta-sep">·</span>
+                    <span>First successful connection creates the Bro</span>
+                  </div>
+                </div>
+                <div className="dt-modal-tip">
+                  <span className="dt-modal-tip-eyebrow">TIP</span>
+                  <p>
+                    The node is just a long-running process. It can sit on a Mac mini,
+                    a workshop laptop, or any always-on box. You can rebind {pendingBroName || trimmedName || "this Bro"} later.
+                  </p>
+                </div>
               </div>
             </div>
             {error ? <div className="nb-status-banner nb-status-banner-error">{error}</div> : null}
           </div>
           <footer className="ob-sheet-foot">
+            <span className="dt-modal-foot-status nb-create-connect-foot-status">
+              <span className="dt-modal-foot-dot" />
+              {completed ? "Connected once · Bro ready" : command ? "Waiting for first node connection" : "Command will be generated on demand"}
+            </span>
             {command && completed ? (
               <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" onClick={() => { void onCreated().finally(onClose); }}>
                 Done
@@ -581,18 +603,19 @@ function OfflineBanner({ bro, node, sessionId }: { bro: BroCardModel; node: Exec
     await navigator.clipboard?.writeText(next).then(() => setCopied(true), () => setCopied(false));
   }
   return (
-    <section data-testid="bro-node-disconnected-warning" className="dt-status dt-status-warn nb-artboard-offline">
-      <div className="dt-status-head">
-        <span className="dt-status-spin" />
-        <span className="dt-status-title">Local node offline</span>
-        <span className="dt-status-pct">{node.name}</span>
+    <section data-testid="bro-node-disconnected-warning" className="ob-offline-banner dt-offline-banner nb-artboard-offline">
+      <span className="ob-offline-banner-icon" aria-hidden="true">
+        <WifiOff size={16} strokeWidth={2} />
+      </span>
+      <div className="ob-offline-banner-body">
+        <strong>{node.name} is not connected.</strong>
+        <span>{bro.name} can't take new messages until the node reconnects. The current draft stays saved.</span>
+        {command ? <pre className="nb-artboard-command">{command}</pre> : null}
       </div>
-      <p>{node.name} is not connected. Run or reconnect the local executor command before talking to {bro.name}.</p>
-      <button type="button" className="nb-btn" onClick={() => { void reveal(); }}>Reconnect</button>
-      <button type="button" data-testid="bro-node-copy-command" className="nb-btn nb-btn-primary" onClick={() => { void reveal(); }}>
-        {copied ? "Copied" : "Copy command"}
+      <button type="button" data-testid="bro-node-copy-command" className="ob-offline-banner-action" onClick={() => { void reveal(); }}>
+        <span>{copied ? "Copied" : "Copy command"}</span>
+        <SendHorizontal size={11} strokeWidth={2.2} />
       </button>
-      {command ? <pre className="nb-artboard-command">{command}</pre> : null}
     </section>
   );
 }
@@ -691,6 +714,116 @@ function ThreadPanel({
   );
 }
 
+function DesktopActivityRail({
+  bro,
+  records,
+  offline,
+  onHome,
+}: {
+  bro: BroCardModel;
+  records: BroTaskRecord[];
+  offline: ExecutorNodeRecord | null;
+  onHome: () => void;
+}) {
+  const live = !offline;
+  const activeRecords = records.slice(0, 4);
+  return (
+    <aside className="dt-activity nb-detail-activity" aria-label={`${bro.name} activity`}>
+      <div className="dt-activity-head">
+        <button type="button" className="nb-detail-back" onClick={onHome}>Home</button>
+        <span className={`dt-activity-state dt-activity-state-${live ? "live" : "paused"}`}>
+          <span className="dt-activity-state-dot" />
+          {live ? "Live" : "Paused"}
+        </span>
+      </div>
+
+      <section className="dt-activity-block nb-detail-identity">
+        <div className="nb-detail-avatar">
+          <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={live ? "working" : "offline"} size={76} />
+        </div>
+        <div className="nb-detail-title-block">
+          <span className="ob-eyebrow ob-eyebrow-coral">{homeBroChipLabel(homeBroState(bro))}</span>
+          <h1 className="nb-detail-title">{bro.name}</h1>
+          <p>{offline ? `${offline.name} is offline` : bro.taskTitle || bro.idleNote}</p>
+        </div>
+      </section>
+
+      <section className="dt-activity-block">
+        <div className="dt-activity-block-head">
+          <span className="dt-activity-block-title">Current node</span>
+          <span className="dt-threadlist-meta">{bro.nodeName || "local"}</span>
+        </div>
+        <ul className="dt-threadlist">
+          <li>
+            <button type="button" className="dt-threadlist-row dt-threadlist-row-on">
+              <span className="dt-threadlist-body">
+                <span className="dt-threadlist-title">{offline ? "Waiting for reconnect" : "Ready for voice + text"}</span>
+                <span className="dt-threadlist-meta">
+                  <span>{offline ? "blocked" : "active"}</span>
+                  <span className="dt-bro-meta-sep">·</span>
+                  <span>{activeRecords.length || 1} thread</span>
+                </span>
+              </span>
+              <span className={`dt-threadlist-pip${offline ? " dt-threadlist-pip-paused" : ""}`} />
+            </button>
+          </li>
+        </ul>
+      </section>
+
+      <section className="dt-activity-block">
+        <div className="dt-activity-block-head">
+          <span className="dt-activity-block-title">Execution</span>
+          <span className="dt-threadlist-meta">{activeRecords.length ? "live state" : "idle"}</span>
+        </div>
+        {activeRecords.length ? (
+          <ul className="dt-trace">
+            {activeRecords.map((record) => (
+              <li key={record.taskId} className={`dt-trace-row ${record.statusLabel === "running" ? "dt-trace-row-running" : "dt-trace-row-done"}`}>
+                <span className="dt-trace-pip" />
+                <span className="dt-trace-body">
+                  <span className="dt-trace-tool">{record.title}</span>
+                  <span className="dt-trace-arg">{record.description || record.summary}</span>
+                </span>
+                <span className="dt-trace-time">{record.statusLabel}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="dt-art-empty">{offline ? "Reconnect the node before sending new work." : "No active execution yet. Start with voice or text."}</div>
+        )}
+      </section>
+    </aside>
+  );
+}
+
+function DesktopVoiceDock({
+  phase,
+  disabled,
+  onToggle,
+}: {
+  phase: ReturnType<typeof useNewbroShell>["voiceSession"]["phase"];
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  const connected = phase === "connected";
+  return (
+    <div className="nb-talk-dock">
+      <div className="nb-talk-hint"><span className="nb-talk-key">space</span><span>{connected ? "voice channel open" : "push to talk anywhere"}</span></div>
+      <button
+        type="button"
+        className={`nb-talk-btn${connected ? " nb-talk-btn-listening" : ""}`}
+        data-testid={connected ? "voice-session-stop" : "voice-session-start"}
+        aria-label={connected ? "Stop voice session" : "Start voice session"}
+        disabled={disabled || phase === "loading"}
+        onClick={onToggle}
+      >
+        <Mic size={18} aria-hidden="true" />
+        <span>{connected ? "Stop voice" : "Start voice"}</span>
+      </button>
+    </div>
+  );
+}
+
 function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void }) {
   const shell = useNewbroShell();
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
@@ -722,42 +855,36 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
 
   return (
     <DesktopFrame active="detail" bro={bro} onHome={onHome}>
-      <div className="dt-main-pad">
-        {needsConnect && shell.activeShellSessionId ? (
+      {needsConnect && shell.activeShellSessionId ? (
+        <div className="dt-main-pad nb-detail-connect-stage">
           <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onHome} onCreated={shell.refreshShellSession} bro={bro} />
-        ) : null}
-        <section className="dt-detail-main nb-artboard-detail">
-          <header className="dt-page-head">
-            <div>
-              <div className="dt-detail-crumb"><button type="button" onClick={onHome}>Home</button><span className="dt-detail-crumb-sep">/</span><span>{bro.name}</span></div>
-              <h1 className="dt-page-title">{bro.name}</h1>
-              <p className="dt-page-sub">{bro.taskTitle || bro.idleNote}</p>
+        </div>
+      ) : null}
+      {!needsConnect ? (
+        <div className="dt-detail-v2 nb-detail-runtime">
+          <DesktopActivityRail bro={bro} records={records} offline={offline} onHome={onHome} />
+          <section className="dt-pane">
+            <div className="dt-pane-scroll">
+              <div className="dt-pane-content">
+                {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
+                <ThreadPanel bro={bro} records={records} disabled={Boolean(offline)} disabledReason={disabledReason} />
+              </div>
             </div>
-            <div className="dt-page-actions">
-              <button
-                type="button"
-                className="dt-page-action dt-page-action-primary"
-                data-testid={shell.voiceSession.phase === "connected" ? "voice-session-stop" : "voice-session-start"}
-                aria-label={shell.voiceSession.phase === "connected" ? "Stop voice session" : "Start voice session"}
-                disabled={Boolean(offline) || shell.voiceSession.phase === "loading"}
-                onClick={() => {
-                  if (!shell.activeShellSessionId) return;
-                  if (shell.voiceSession.phase === "connected") {
-                    void shell.stopVoiceSession();
-                  } else {
-                    void shell.startVoiceSession(shell.activeShellSessionId);
-                  }
-                }}
-              >
-                <Mic size={14} aria-hidden="true" />
-                <span>{shell.voiceSession.phase === "connected" ? "Stop" : "Start"}</span>
-              </button>
-            </div>
-          </header>
-          {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
-          {!needsConnect ? <ThreadPanel bro={bro} records={records} disabled={Boolean(offline)} disabledReason={disabledReason} /> : null}
-        </section>
-      </div>
+            <DesktopVoiceDock
+              phase={shell.voiceSession.phase}
+              disabled={Boolean(offline)}
+              onToggle={() => {
+                if (!shell.activeShellSessionId) return;
+                if (shell.voiceSession.phase === "connected") {
+                  void shell.stopVoiceSession();
+                } else {
+                  void shell.startVoiceSession(shell.activeShellSessionId);
+                }
+              }}
+            />
+          </section>
+        </div>
+      ) : null}
     </DesktopFrame>
   );
 }
@@ -799,25 +926,49 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
   if (!shell.hasLoadedShellSnapshot) return null;
   return (
     <MobileStage>
-      <div className="home nb-mobile-home" data-testid="mobile-home">
+      <div className={`home nb-mobile-home${shell.runtimePersonas.length === 0 ? " ob-firsthome" : ""}`} data-testid="mobile-home">
         <header className="home-bar">
           <div className="home-bar-l">
             <div className="home-bar-logo"><img src="/newbro.webp" alt="" draggable={false} /></div>
             <div className="home-bar-titles">
               <div className="home-bar-greet">Hi · workspace</div>
-              <div className="home-bar-meta">{working.length} of {shell.bros.length} bros working · {recents.length} sessions</div>
+              <div className="home-bar-meta">{shell.runtimePersonas.length === 0 ? "workspace is empty · let's fix that" : `${working.length} of ${shell.bros.length} bros working · ${recents.length} sessions`}</div>
             </div>
           </div>
+          <button type="button" className="home-bar-btn" aria-label="Settings">
+            <Settings size={19} strokeWidth={1.9} />
+          </button>
         </header>
-        <main className="home-body">
+        <main className={shell.runtimePersonas.length === 0 ? "ob-firsthome-body" : "home-body"}>
           {shell.runtimePersonas.length === 0 ? (
-            <section className="nb-mobile-first-run" data-testid="mobile-empty-workspace">
-              <div className="nb-mobile-first-run-art"><img src="/newbro.webp" alt="" draggable={false} /><span>z</span><span>z</span></div>
-              <span className="home-section-eyebrow">Your crew · 0 Bros</span>
-              <h2>You don't have a bro yet.</h2>
-              <p>Create a worker persona, bind it to a user-owned executor node, and it will appear here when Newbro can use it.</p>
-              <button type="button" className="nb-mobile-first-run-cta" onClick={() => setSheetOpen(true)}>Create your first bro</button>
+            <>
+            <section className="ob-hero-card" data-testid="mobile-empty-workspace">
+              <div className="ob-hero-art">
+                <div className="ob-hero-art-bg" aria-hidden="true">{Array.from({ length: 28 }).map((_, index) => <i key={index} style={{ animationDelay: `${(index % 7) * 0.15}s` }} />)}</div>
+                <div className="ob-hero-mascot"><img src="/newbro.webp" alt="" draggable={false} /></div>
+                <span className="ob-hero-zzz" aria-hidden="true"><i>z</i><i>z</i><i>z</i></span>
+              </div>
+              <div className="ob-hero-body">
+                <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
+                <h2 className="ob-hero-h">You don't have a bro yet.</h2>
+                <p className="ob-hero-sub">Create a worker persona, bind it to a user-owned executor node, and it will appear here after Newbro can use it.</p>
+                <div className="ob-hero-actions">
+                  <button type="button" className="ob-cta ob-cta-block" onClick={() => setSheetOpen(true)}>
+                    <Plus size={15} strokeWidth={2.4} />
+                    <span>Create your first bro</span>
+                  </button>
+                </div>
+              </div>
             </section>
+            <section className="ob-ghost-section">
+              <div className="ob-explain-head"><span className="ob-eyebrow">STANDING BY · 0</span></div>
+              <div className="ob-ghost-list">
+                <div className="ob-ghost-row"><span className="ob-ghost-avatar" /><span className="ob-ghost-lines"><span className="ob-ghost-line ob-ghost-line-lg" /><span className="ob-ghost-line ob-ghost-line-sm" /></span><span className="ob-ghost-chip" /></div>
+                <div className="ob-ghost-row"><span className="ob-ghost-avatar" /><span className="ob-ghost-lines"><span className="ob-ghost-line ob-ghost-line-md" /><span className="ob-ghost-line ob-ghost-line-sm" /></span><span className="ob-ghost-chip" /></div>
+              </div>
+              <div className="ob-ghost-foot">These seats fill up after you connect a bro.</div>
+            </section>
+            </>
           ) : (
             <>
               {working.length > 0 ? (
@@ -887,12 +1038,33 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   }
   return (
     <MobileStage>
-      <div className="nb-mobile-content nb-mobile-detail-content" data-testid={`mobile-bro-focus-${bro.id}`}>
-        <header className="nb-mobile-heading">
-          <div className="nb-mobile-crumb"><button type="button" className="nb-mobile-link-button" onClick={onBack}>Home</button><span>/</span><strong>{bro.name}</strong></div>
-          <div className="nb-mobile-title-row"><h1>{bro.name}</h1><span className={`home-chip home-chip-${offline ? "warn" : "live"}`}><span className="home-chip-dot" />{offline ? "offline" : "live"}</span></div>
+      <div className="thr nb-mobile-runtime-thread nb-mobile-detail-content" data-testid={`mobile-bro-focus-${bro.id}`}>
+        <header className="thr-bar">
+          <button type="button" className="thr-back" aria-label="Back" onClick={onBack}>
+            <ChevronLeft size={20} strokeWidth={2.2} />
+          </button>
+          <div className="thr-bar-bro">
+            <div className={`thr-bar-avatar${offline ? " ob-avatar-offline" : ""}`}>
+              <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={offline ? "offline" : "working"} size={30} />
+              {offline ? <span className="ob-avatar-offline-pip" aria-hidden="true" /> : null}
+            </div>
+            <div className="thr-bar-meta">
+              <div className="thr-bar-title-row">
+                <span className="thr-bar-name">{bro.name}</span>
+                <span className="thr-bar-sep">·</span>
+                <span className="thr-bar-thread-title">{bro.taskTitle || "Current draft"}</span>
+              </div>
+              <div className={`thr-bar-state thr-bar-state-${offline ? "warn" : "live"}`}>
+                <span className="thr-bar-dot" />
+                {offline ? `Offline · ${offline.name}` : "Live · ready"}
+              </div>
+            </div>
+          </div>
+          <button type="button" className="thr-more" aria-label="More">
+            <MoreHorizontal size={20} strokeWidth={1.9} />
+          </button>
         </header>
-        <main className="nb-mobile-scroll">
+        <main className="thr-thread nb-mobile-thread-body">
           {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
           <ThreadPanel bro={bro} records={[]} disabled={Boolean(offline)} disabledReason={offline ? `${offline.name} is not connected.` : null} />
         </main>
