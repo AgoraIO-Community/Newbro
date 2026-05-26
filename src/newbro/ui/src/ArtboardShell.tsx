@@ -124,6 +124,7 @@ function Header({
   nodeCount: number;
 }) {
   const tone = bro ? homeBroTone(homeBroState(bro)) : nodeCount > 0 ? "calm" : "warn";
+  const detailPaused = bro?.liveState === "offline" || bro?.liveState === "unbound";
   return (
     <header className="dt-header" data-testid="newbro-sidebar">
       <div className="dt-header-l">
@@ -147,9 +148,9 @@ function Header({
         ) : null}
       </div>
       <div className="dt-header-r">
-        <span className={`dt-header-pill ${nodeCount > 0 ? "dt-header-pill-ready" : "dt-header-pill-empty"}`}>
+        <span className={`dt-header-pill ${bro ? (detailPaused ? "dt-header-pill-paused" : "dt-header-pill-live") : nodeCount > 0 ? "dt-header-pill-ready" : "dt-header-pill-empty"}`}>
           <span className="dt-header-pill-dot" />
-          {nodeCount > 0 ? "runtime ready" : "setup needed"}
+          {bro ? (detailPaused ? "paused · node offline" : "live · listening") : nodeCount > 0 ? "runtime ready" : "setup needed"}
         </span>
         <span className="dt-header-account dt-header-static">
           <span className="dt-header-account-avatar">{account.trim().charAt(0).toUpperCase() || "N"}</span>
@@ -625,16 +626,19 @@ function ThreadPanel({
   records,
   disabled,
   disabledReason,
+  variant = "desktop",
 }: {
   bro: BroCardModel;
   records: BroTaskRecord[];
   disabled?: boolean;
   disabledReason?: string | null;
+  variant?: "desktop" | "mobile";
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
   const draftText = shell.draftSession?.current_draft?.text ?? draft;
   const charCount = draftText.length;
+  const activeRecord = records[0] ?? null;
 
   function submitText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -660,57 +664,203 @@ function ThreadPanel({
     await shell.refreshShellSession();
   }
 
-  return (
-    <section className="dt-thread nb-artboard-thread" aria-label={`${bro.name} thread`}>
-      <div className="nb-thread-toolbar">
-        <div className="nb-card-label">Current draft</div>
-        <div className="nb-thread-toolbar-right">
-          <span className="nb-card-hint">{draftText ? "auto-saved · just now" : "waiting"}</span>
-          <span className="nb-chip"><span className={`nb-pulse ${shell.voiceSession.phase === "connected" ? "" : "nb-pulse-muted"}`} />{shell.voiceSession.phase === "connected" ? "Listening" : "Standby"}</span>
-        </div>
-      </div>
-      <div className="dt-thread-day"><span>Current session</span></div>
-      <div className="dt-turn dt-turn-bro">
-        <div className={`dt-bubble dt-bubble-bro nb-draft-bubble ${draftText ? "" : "nb-draft-bubble-empty"}`}>
-          {draftText || "No draft yet. Tell your bro what to build."}
-        </div>
-        <div className="dt-bubble-meta">{bro.name} · Draft Brain</div>
-      </div>
-      {records.map((record) => (
-        <div key={record.taskId} className="dt-status">
-          <div className="dt-status-head">
-            <span className="dt-status-spin" />
-            <span className="dt-status-title">{record.title}</span>
-            <span className="dt-status-pct">{record.statusLabel}</span>
+  if (variant === "mobile") {
+    return (
+      <section className="dt-thread nb-artboard-thread" aria-label={`${bro.name} thread`}>
+        <div className="nb-thread-toolbar">
+          <div className="nb-card-label">Current draft</div>
+          <div className="nb-thread-toolbar-right">
+            <span className="nb-card-hint">{draftText ? "auto-saved · just now" : "waiting"}</span>
+            <span className="nb-chip"><span className={`nb-pulse ${shell.voiceSession.phase === "connected" ? "" : "nb-pulse-muted"}`} />{shell.voiceSession.phase === "connected" ? "Listening" : "Standby"}</span>
           </div>
-          <p>{record.description || record.summary}</p>
+        </div>
+        <div className="dt-thread-day"><span>Current session</span></div>
+        <div className="dt-turn dt-turn-bro">
+          <div className={`dt-bubble dt-bubble-bro nb-draft-bubble ${draftText ? "" : "nb-draft-bubble-empty"}`}>
+            {draftText || "No draft yet. Tell your bro what to build."}
+          </div>
+          <div className="dt-bubble-meta">{bro.name} · Draft Brain</div>
+        </div>
+        {records.map((record) => (
+          <div key={record.taskId} className="dt-status">
+            <div className="dt-status-head">
+              <span className="dt-status-spin" />
+              <span className="dt-status-title">{record.title}</span>
+              <span className="dt-status-pct">{record.statusLabel}</span>
+            </div>
+            <p>{record.description || record.summary}</p>
+          </div>
+        ))}
+        {disabled && disabledReason ? <div className="nb-thread-summary">{disabledReason}</div> : null}
+        <form className="nb-draft-footer" onSubmit={submitText}>
+          <div className="nb-meta"><span>{charCount} chars</span></div>
+          <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
+          <input
+            id={`message-${bro.id}`}
+            className="command-field nb-artboard-thread-input"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder={disabled ? "Reconnect the node before sending" : `Type to ${bro.name}...`}
+            disabled={disabled}
+          />
+          <div className="nb-btn-row">
+            <button type="button" className="nb-btn" onClick={() => { void clearCurrentDraft(); }}>Clear Draft</button>
+            <button type="button" data-testid="voice-session-mic-toggle" className="nb-btn" aria-label="Hold to Talk" disabled={disabled}>
+              Hold to Talk
+            </button>
+            <button type="button" className="nb-btn nb-btn-primary" disabled={disabled || !draftText} onClick={() => { void sendCurrentDraft(); }}>
+              <span>Send to Bro</span>
+              <SendHorizontal />
+            </button>
+            <button type="submit" className="sr-only">Send message</button>
+          </div>
+        </form>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      <h1 className="sr-only">{bro.name}</h1>
+      <span className="sr-only">Current draft</span>
+      {disabled && disabledReason ? (
+        <div className="dt-turn dt-turn-sys">
+          <div className="dt-sys-event">
+            <span className="dt-sys-event-dot" />
+            <span>{disabledReason}</span>
+          </div>
+        </div>
+      ) : null}
+      <div className="dt-thread-day"><span>Current session</span></div>
+      {draftText ? (
+        <div className="dt-turn dt-turn-you">
+          <div className="dt-bubble dt-bubble-you">{draftText}</div>
+          <div className="dt-bubble-meta">Draft · ready to send</div>
+        </div>
+      ) : null}
+      {activeRecord ? (
+        <div className="dt-turn dt-turn-bro">
+          <div className="dt-status">
+            <div className="dt-status-head">
+              <span className="dt-status-spin" />
+              <span className="dt-status-title">{activeRecord.title}</span>
+              <span className="dt-status-pct">{activeRecord.statusLabel}</span>
+            </div>
+            <div className="dt-status-bar"><i style={{ width: `${Math.max(8, Math.min(100, Math.round(bro.progress || 64)))}%` }} /></div>
+            <div className="dt-status-foot">{activeRecord.description || activeRecord.summary || bro.progressLabel}</div>
+          </div>
+        </div>
+      ) : (
+        <div className="dt-turn dt-turn-bro">
+          <div className="dt-bubble dt-bubble-bro">
+            {disabled ? "I am paused until the node reconnects." : "No thread yet. Tell me what to build."}
+          </div>
+          <div className="dt-bubble-meta">{bro.name} · standby</div>
+        </div>
+      )}
+      {records.slice(1).map((record) => (
+        <div key={record.taskId} className="dt-turn dt-turn-bro">
+          <div className="dt-bubble dt-bubble-bro">{record.description || record.summary || record.title}</div>
+          <div className="dt-bubble-meta">{bro.name} · {record.statusLabel}</div>
         </div>
       ))}
-      {disabled && disabledReason ? <div className="nb-thread-summary">{disabledReason}</div> : null}
-      <form className="nb-draft-footer" onSubmit={submitText}>
-        <div className="nb-meta"><span>{charCount} chars</span></div>
+    </>
+  );
+}
+
+function DesktopComposerBar({
+  bro,
+  disabled,
+  onToggleVoice,
+}: {
+  bro: BroCardModel;
+  disabled: boolean;
+  onToggleVoice: () => void;
+}) {
+  const shell = useNewbroShell();
+  const [draft, setDraft] = useState("");
+  const draftText = shell.draftSession?.current_draft?.text ?? draft;
+  const connected = shell.voiceSession.phase === "connected";
+  const loading = shell.voiceSession.phase === "loading";
+
+  function submitText(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const text = draft.trim();
+    if (!text || disabled) return;
+    shell.sendMessage(text);
+    shell.submitDraftAsrTurn({ raw_text: text, assigned_bro_id: bro.id });
+    setDraft("");
+  }
+
+  async function sendCurrentDraft() {
+    if (!shell.activeShellSessionId || disabled) return;
+    await sendDraft(shell.activeShellSessionId, {
+      draft_session_id: shell.draftSession?.id,
+      draft_revision_id: shell.draftSession?.current_revision_id ?? undefined,
+    });
+    await shell.refreshShellSession();
+  }
+
+  async function clearCurrentDraft() {
+    if (!shell.activeShellSessionId) return;
+    await clearDraft(shell.activeShellSessionId, { draft_session_id: shell.draftSession?.id });
+    await shell.refreshShellSession();
+    setDraft("");
+  }
+
+  return (
+    <form className={`dt-cmp${disabled ? " dt-cmp-disabled" : ""}`} onSubmit={submitText}>
+      <div className="dt-cmp-head">
+        <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} aria-label="Voice mode">
+          <button type="button" className="dt-cmp-mode dt-cmp-mode-on">
+            <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-ptt${!connected && !disabled ? " dt-cmp-mode-dot-on" : ""}`} />
+            Push to talk
+          </button>
+          <button type="button" className="dt-cmp-mode" disabled={disabled}>
+            <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-free${connected ? " dt-cmp-mode-dot-on" : ""}`} />
+            Open channel
+          </button>
+        </div>
+        <span className="dt-cmp-hint">
+          <kbd className="dt-kbd">space</kbd>
+          {disabled ? "node required before sending" : "push to talk anywhere"}
+        </span>
+      </div>
+      <div className="dt-cmp-bar">
         <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
         <input
           id={`message-${bro.id}`}
-          className="command-field nb-artboard-thread-input"
+          className="dt-cmp-input"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder={disabled ? "Reconnect the node before sending" : `Type to ${bro.name}...`}
           disabled={disabled}
         />
-        <div className="nb-btn-row">
-          <button type="button" className="nb-btn" onClick={() => { void clearCurrentDraft(); }}>Clear Draft</button>
-          <button type="button" data-testid="voice-session-mic-toggle" className="nb-btn" aria-label="Hold to Talk" disabled={disabled}>
-            Hold to Talk
-          </button>
-          <button type="button" className="nb-btn nb-btn-primary" disabled={disabled || !draftText} onClick={() => { void sendCurrentDraft(); }}>
-            <span>Send to Bro</span>
-            <SendHorizontal />
-          </button>
-          <button type="submit" className="sr-only">Send message</button>
-        </div>
-      </form>
-    </section>
+        <button type="button" className="dt-cmp-mode nb-detail-clear" onClick={() => { void clearCurrentDraft(); }} disabled={!draftText}>
+          Clear
+        </button>
+        <button
+          type="button"
+          data-testid={connected ? "voice-session-stop" : "voice-session-start"}
+          className={`dt-cmp-mic dt-cmp-mic-${disabled ? "off" : connected ? "free" : "ptt"}`}
+          aria-label={connected ? "Stop voice session" : "Hold to Talk"}
+          disabled={disabled || loading}
+          onClick={onToggleVoice}
+        >
+          <Mic size={18} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="dt-cmp-send"
+          aria-label="Send message"
+          disabled={disabled || !draftText}
+          onClick={() => { void sendCurrentDraft(); }}
+        >
+          <SendHorizontal size={16} strokeWidth={2.2} />
+        </button>
+        <button type="submit" className="sr-only">Send message</button>
+      </div>
+    </form>
   );
 }
 
@@ -718,79 +868,53 @@ function DesktopActivityRail({
   bro,
   records,
   offline,
-  onHome,
 }: {
   bro: BroCardModel;
   records: BroTaskRecord[];
   offline: ExecutorNodeRecord | null;
-  onHome: () => void;
 }) {
   const live = !offline;
-  const activeRecords = records.slice(0, 4);
+  const threads = records.slice(0, 4);
+  const threadCount = Math.max(1, threads.length);
   return (
     <aside className="dt-activity nb-detail-activity" aria-label={`${bro.name} activity`}>
-      <div className="dt-activity-head">
-        <button type="button" className="nb-detail-back" onClick={onHome}>Home</button>
-        <span className={`dt-activity-state dt-activity-state-${live ? "live" : "paused"}`}>
-          <span className="dt-activity-state-dot" />
-          {live ? "Live" : "Paused"}
-        </span>
-      </div>
-
-      <section className="dt-activity-block nb-detail-identity">
-        <div className="nb-detail-avatar">
-          <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={live ? "working" : "offline"} size={76} />
-        </div>
-        <div className="nb-detail-title-block">
-          <span className="ob-eyebrow ob-eyebrow-coral">{homeBroChipLabel(homeBroState(bro))}</span>
-          <h1 className="nb-detail-title">{bro.name}</h1>
-          <p>{offline ? `${offline.name} is offline` : bro.taskTitle || bro.idleNote}</p>
-        </div>
-      </section>
-
       <section className="dt-activity-block">
         <div className="dt-activity-block-head">
-          <span className="dt-activity-block-title">Current node</span>
-          <span className="dt-threadlist-meta">{bro.nodeName || "local"}</span>
+          <span className="ob-eyebrow">THREADS WITH {bro.name.toUpperCase()} · {threadCount}</span>
         </div>
         <ul className="dt-threadlist">
           <li>
             <button type="button" className="dt-threadlist-row dt-threadlist-row-on">
               <span className="dt-threadlist-body">
-                <span className="dt-threadlist-title">{offline ? "Waiting for reconnect" : "Ready for voice + text"}</span>
+                <span className="dt-threadlist-title">{records[0]?.title || "Current session"}</span>
                 <span className="dt-threadlist-meta">
-                  <span>{offline ? "blocked" : "active"}</span>
+                  <span>{offline ? "paused" : live ? "live" : "today"}</span>
                   <span className="dt-bro-meta-sep">·</span>
-                  <span>{activeRecords.length || 1} thread</span>
+                  <span>{Math.max(1, records.length)} turns</span>
                 </span>
               </span>
               <span className={`dt-threadlist-pip${offline ? " dt-threadlist-pip-paused" : ""}`} />
             </button>
           </li>
-        </ul>
-      </section>
-
-      <section className="dt-activity-block">
-        <div className="dt-activity-block-head">
-          <span className="dt-activity-block-title">Execution</span>
-          <span className="dt-threadlist-meta">{activeRecords.length ? "live state" : "idle"}</span>
-        </div>
-        {activeRecords.length ? (
-          <ul className="dt-trace">
-            {activeRecords.map((record) => (
-              <li key={record.taskId} className={`dt-trace-row ${record.statusLabel === "running" ? "dt-trace-row-running" : "dt-trace-row-done"}`}>
-                <span className="dt-trace-pip" />
-                <span className="dt-trace-body">
-                  <span className="dt-trace-tool">{record.title}</span>
-                  <span className="dt-trace-arg">{record.description || record.summary}</span>
+          {threads.slice(1).map((record) => (
+            <li key={record.taskId}>
+              <button type="button" className="dt-threadlist-row">
+                <span className="dt-threadlist-body">
+                  <span className="dt-threadlist-title">{record.title}</span>
+                  <span className="dt-threadlist-meta">
+                    <span>{record.timeLabel || record.statusLabel}</span>
+                    <span className="dt-bro-meta-sep">·</span>
+                    <span>{record.statusLabel}</span>
+                  </span>
                 </span>
-                <span className="dt-trace-time">{record.statusLabel}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div className="dt-art-empty">{offline ? "Reconnect the node before sending new work." : "No active execution yet. Start with voice or text."}</div>
-        )}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <button type="button" className="dt-thread-new">
+          <Plus size={12} strokeWidth={2.4} aria-hidden="true" />
+          <span>New thread with {bro.name}</span>
+        </button>
       </section>
     </aside>
   );
@@ -862,7 +986,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
       ) : null}
       {!needsConnect ? (
         <div className="dt-detail-v2 nb-detail-runtime">
-          <DesktopActivityRail bro={bro} records={records} offline={offline} onHome={onHome} />
+          <DesktopActivityRail bro={bro} records={records} offline={offline} />
           <section className="dt-pane">
             <div className="dt-pane-scroll">
               <div className="dt-pane-content">
@@ -870,10 +994,10 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
                 <ThreadPanel bro={bro} records={records} disabled={Boolean(offline)} disabledReason={disabledReason} />
               </div>
             </div>
-            <DesktopVoiceDock
-              phase={shell.voiceSession.phase}
+            <DesktopComposerBar
+              bro={bro}
               disabled={Boolean(offline)}
-              onToggle={() => {
+              onToggleVoice={() => {
                 if (!shell.activeShellSessionId) return;
                 if (shell.voiceSession.phase === "connected") {
                   void shell.stopVoiceSession();
@@ -1066,7 +1190,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
         </header>
         <main className="thr-thread nb-mobile-thread-body">
           {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
-          <ThreadPanel bro={bro} records={[]} disabled={Boolean(offline)} disabledReason={offline ? `${offline.name} is not connected.` : null} />
+          <ThreadPanel bro={bro} records={[]} disabled={Boolean(offline)} disabledReason={offline ? `${offline.name} is not connected.` : null} variant="mobile" />
         </main>
         <div className="mobile-action-dock">
           <button
