@@ -1,20 +1,7 @@
 export { buildBroCardModels } from "./adapters";
-export { BrosPage } from "./BrosPage";
-export { ConversationMemory } from "./ConversationMemory";
-export { NodesPage } from "./NodesPage";
-export { Sidebar } from "./Sidebar";
-export type { PageId } from "./Sidebar";
-export { BrosPanel } from "./BrosPanel";
-export { TopVoiceBar } from "./TopVoiceBar";
 export { useVoiceSession } from "./useVoiceSession";
-export { BroDetailPage } from "./BroDetailPage";
 export {
-  BroDetailHeader,
-  DraftBrainPanel,
-  LiveTranscriptPanel,
   NewbroLogo,
-  RunnerBrainPanel,
   StatusPill,
-  VoicePad,
   WindowDots,
 } from "./visual";

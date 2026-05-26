@@ -1661,6 +1661,10 @@
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: 24px;
 }
+.dt-home-grid-solo {
+  grid-template-columns: minmax(0, 1fr);
+  padding-right: 32px;
+}
 .dt-home-main {
   display: flex; flex-direction: column;
   gap: 22px;

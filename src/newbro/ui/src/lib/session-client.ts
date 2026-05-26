@@ -117,8 +117,8 @@ export interface AuthMeResponse {
 export interface PublicBootstrapResponse {
   user: PublicUser;
   session_id: string;
-  default_persona_id: string;
-  default_bro_detail_session_id: string;
+  default_persona_id: string | null;
+  default_bro_detail_session_id: string | null;
 }
 
 export async function redeemInvite(code: string): Promise<AuthMeResponse> {

@@ -87,6 +87,7 @@
 .ch-tag-live   { background: var(--nb-live-soft); color: var(--nb-live-ink); border: 1px solid var(--nb-live-edge); }
 .ch-tag-live .ch-tag-dot { background: var(--nb-live); animation: bro-av-halo-breathe 1.6s infinite; }
 .ch-tag-queued { background: var(--nb-coral-soft); color: var(--nb-coral); border: 1px solid var(--nb-coral-border); }
+.ch-tag-warn   { background: rgba(255, 251, 235, 0.9); color: #b45309; border: 1px solid rgba(245, 158, 11, 0.28); }
 .ch-tag-idle   { background: var(--nb-paper-sub); color: var(--nb-ink-muted); border: 1px solid var(--nb-line); }
 .ch-tag-mono   {
   font-family: var(--nb-font-mono);

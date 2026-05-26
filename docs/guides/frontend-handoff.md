@@ -6,17 +6,24 @@ keeping the Newbro runtime clients wired.
 
 ## Current Product State
 
-The root route now renders a design-backed `Newbro` workspace shell.
+The root route now renders a design-backed `Newbro` workspace shell. Active
+product routes are limited to the artboarded home, Bro detail, and mobile
+surfaces.
 
 Current visible structure:
 
 - compact top header with session-aware route navigation, account, and logout
 - top voice summary bar with the existing connector-backed session controls
-- runtime Bro card grid sourced from `personas`, `tasks`, and `executor_nodes`
+- runtime Home regions sourced from `personas`, `tasks`, and
+  `executor_nodes`: `IN FLIGHT`, `STANDING BY`, and `RECENT`
 - explicit empty workspace state when the session has no Bros
 - Bro Detail with local-node setup gate, disconnected-node warning, Draft/STT,
   send, and hold-to-talk controls
-- mobile Walkie route sourced from the same runtime Bro card models
+- mobile Home route sourced from the same runtime Bro card models, with Bro
+  detail drill-in, empty-workspace create CTA, and the existing voice/text
+  action wiring
+- removed standalone Bros, Nodes, Settings, product not-found, catch-boundary,
+  shell loading, and shell API-error screens
 
 ## Runtime Relationship
 
@@ -31,6 +38,8 @@ Current behavior:
   and shows a non-blocking warning
 - it fetches that session snapshot for personas
 - if `personas` exist, it maps them into `Bro` cards
+- the `Home` route presents runtime Bros through the design's in-flight,
+  standing-by, and recent-work regions rather than one generic crew grid
 - if not, it renders the empty workspace card rather than seeded active data
 - the root `Home` route stays the workspace even when a default Bro exists;
   Bro Detail opens only from a Bro card or `/bros/:broId`
@@ -41,10 +50,14 @@ Current behavior:
   open and then continues from Newbro user-message and assistant stream events
 - pressing `Stop` tears the voice session down without changing the shell
 - the stopped transcript remains visible until the next live session replaces it
-- left-sidebar route navigation preserves the active `sid`
+- artboarded route navigation preserves the active `sid`
 
 The current root page does **not** expose:
 
+- standalone Bros management
+- standalone Nodes management
+- standalone Settings/preferences
+- custom product not-found, catch-boundary, loading, or API-error screens
 - the text composer
 - the previous workbench/task detail panes
 - the websocket-backed conversation shell
@@ -70,8 +83,8 @@ These should pass from the current state.
 ## Visual QA Evidence
 
 The current design refactor was checked against the design screenshots in
-`design/screenshots/` using desktop captures at `1440x900` and mobile captures
-at `390x820`.
+`design/screenshots/` using desktop captures at `1440x900`, primary mobile
+captures at `440x920`, and narrow mobile spot checks at `390x820`.
 
 | Required state | Design reference | Current evidence |
 | --- | --- | --- |
@@ -100,13 +113,73 @@ Known intentional deltas:
 - App typography keeps `letter-spacing: 0` to satisfy the frontend UI
   constraint against negative or viewport-scaled text, so it differs from some
   prototype tracking.
-- Sign-in uses the prototype's segmented invitation-code idea but supports
-  real longer invite codes such as `open-sesame` by shrinking cells on mobile.
+- Sign-in uses the prototype's segmented invitation-code idea with a fixed
+  8 digit numeric code, currently `12345678` for local development.
 - Create/connect uses the real executor-node and persona APIs and shows the
   issued `newbro executor run ...` command instead of the static prototype
   command copy.
 - Counts, names, node status, draft content, and warnings reflect live runtime
   snapshots rather than the prototype's fixed sample data.
+
+Second-pass visual evidence:
+
+- `/tmp/newbro-goal-signin-desktop-1440.png` checks the desktop sign-in and
+  8 digit invitation gate at `1440x900`.
+- `/tmp/newbro-goal-signin-mobile-440.png` checks the mobile sign-in and
+  8 digit invitation gate at `440x920`.
+- `/tmp/newbro-goal-signin-mobile-390.png` checks the narrow mobile sign-in
+  layout at `390x820`.
+- `/tmp/newbro-goal-home-desktop-1440.png` checks the desktop Home regions at
+  `1440x900`.
+- `/tmp/newbro-goal-mobile-home-440.png` checks the mobile Home composition at
+  `440x920`.
+- `/tmp/newbro-goal-mobile-home-390.png` checks the mobile Home composition at
+  `390x820`.
+- `/tmp/newbro-goal-empty-desktop-1440.png` checks the desktop empty workspace
+  at `1440x900`.
+- `/tmp/newbro-goal-empty-mobile-440.png` checks the mobile empty workspace
+  and first-run CTA at `440x920`.
+- `/tmp/newbro-goal-empty-mobile-390.png` checks the narrow mobile empty
+  workspace at `390x820`.
+- `/tmp/newbro-goal-create-sheet-desktop-1440.png` checks the desktop
+  create/connect sheet before credentials are issued at `1440x900`.
+- `/tmp/newbro-goal-create-connect-command-desktop-1440.png` checks the
+  desktop create/connect sheet after real node credential issuance at
+  `1440x900`.
+- `/tmp/newbro-goal-create-sheet-mobile-440.png` checks the mobile
+  create/connect sheet at `440x920`.
+- `/tmp/newbro-goal-create-sheet-mobile-390.png` checks the narrow mobile
+  create/connect sheet at `390x820`.
+- `/tmp/newbro-goal-create-connect-command-mobile-390.png` checks the mobile
+  issued-command state after real node credential issuance at `390x820`.
+- `/tmp/newbro-goal-mobile-create-sheet-from-empty-390.png` checks that the
+  mobile empty-workspace CTA opens the real create/connect sheet.
+- `/tmp/newbro-goal-mobile-create-sheet-from-empty-440.png` checks the same
+  mobile empty-workspace create sheet at `440x920`.
+- `/tmp/newbro-goal-detail-active-desktop-1440.png` checks desktop Bro detail
+  with a real registered executor node at `1440x900`.
+- `/tmp/newbro-goal-detail-active-mobile-440.png` checks mobile Bro detail
+  with a real registered executor node at `440x920`.
+- `/tmp/newbro-goal-detail-active-mobile-390.png` checks narrow mobile Bro
+  detail with a real registered executor node at `390x820`.
+- `/tmp/newbro-goal-detail-offline-desktop-1440.png` checks desktop
+  disconnected-but-usable Bro detail at `1440x900`.
+- `/tmp/newbro-goal-detail-offline-mobile-440.png` checks mobile
+  disconnected-but-usable Bro detail at `440x920`.
+- `/tmp/newbro-goal-detail-offline-mobile-390.png` checks narrow mobile
+  disconnected-but-usable Bro detail at `390x820`.
+- `/tmp/newbro-artboard-qa/removed-nodes-chrome-after-authguard.png` checks
+  that a removed standalone management route renders blank, including before
+  auth, instead of showing a fallback or sign-in product surface.
+
+Overflow checks:
+
+- Sign-in at `1024x768`: `scrollWidth=1024`, `clientWidth=1024`, no
+  horizontal overflow.
+- Home, empty workspace, and Bro detail at `1024x768`: `scrollWidth=1024`,
+  `clientWidth=1024`, no horizontal overflow on each artboarded route.
+- Mobile empty workspace and mobile Bro detail at `390x820`:
+  `scrollWidth=390`, `clientWidth=390`, no horizontal overflow on each route.
 
 ## Next Likely Directions
 

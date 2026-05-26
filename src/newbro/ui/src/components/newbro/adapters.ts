@@ -1,6 +1,5 @@
 import type { ExecutionRun, Task, TaskStatus, TaskSummary } from "../../types";
 import type { BroCardModel, BroTaskRecord, RuntimeExecutorNodeInput, RuntimePersonaInput } from "./types";
-import { sampleBros } from "./data";
 
 const avatarCycle = ["fox", "cat", "bunny", "bro"] as const;
 
@@ -177,13 +176,13 @@ function normalizeProgressCandidate(value: string | null | undefined): string | 
   return normalized ? normalized : null;
 }
 
-function isFallbackProgressText(value: string, task: Task | null): boolean {
+function isPlaceholderProgressText(value: string, task: Task | null): boolean {
   if (!task) return false;
   const normalized = value.toLowerCase();
   const title = task.title.trim().toLowerCase();
   const goal = task.goal.trim().toLowerCase();
   const instruction = task.latest_instruction?.trim().toLowerCase() ?? "";
-  const fallbackTexts = [
+  const placeholderTexts = [
     title,
     goal,
     instruction,
@@ -197,7 +196,7 @@ function isFallbackProgressText(value: string, task: Task | null): boolean {
     `i queued ${title} again.`,
     `i paused ${title}.`,
   ].filter(Boolean);
-  return fallbackTexts.includes(normalized);
+  return placeholderTexts.includes(normalized);
 }
 
 function progressDetailsFromRuntime(
@@ -216,7 +215,7 @@ function progressDetailsFromRuntime(
   return uniqueDetails([
     normalizeProgressCandidate(summary?.conversational_summary),
     normalizeProgressCandidate(summary?.operational_summary),
-  ].filter((value) => value && !isFallbackProgressText(value, task)));
+  ].filter((value) => value && !isPlaceholderProgressText(value, task)));
 }
 
 export function buildBroTaskRecords(
@@ -267,7 +266,7 @@ export function buildBroCardModels(
   tasks?: Task[] | null,
 ): BroCardModel[] {
   if (!personas) {
-    return sampleBros;
+    return [];
   }
   if (personas.length === 0) {
     return [];

@@ -1,8 +1,6 @@
 /// <reference types="vite/client" />
 import { HeadContent, Outlet, createRootRoute } from "@tanstack/react-router";
 import type { DetailedHTMLProps, LinkHTMLAttributes } from "react";
-import { DefaultCatchBoundary } from "../components/DefaultCatchBoundary";
-import { NotFound } from "../components/NotFound";
 import { normalizeSessionIdParam } from "../lib/session-url";
 import { NewbroShellProvider } from "../NewbroShell";
 
@@ -38,8 +36,8 @@ export const Route = createRootRoute({
     links: externalFontLinks,
   }),
   component: RootDocument,
-  errorComponent: DefaultCatchBoundary,
-  notFoundComponent: () => <NotFound />,
+  errorComponent: () => null,
+  notFoundComponent: () => null,
 });
 
 function RootDocument() {

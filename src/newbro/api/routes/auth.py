@@ -31,8 +31,8 @@ class AuthMeResponse(BaseModel):
 class BootstrapResponse(BaseModel):
     user: PublicUser
     session_id: str
-    default_persona_id: str
-    default_bro_detail_session_id: str
+    default_persona_id: str | None
+    default_bro_detail_session_id: str | None
 
 
 @router.post("/auth/invites/redeem", response_model=AuthMeResponse)
@@ -94,12 +94,13 @@ async def bootstrap_public_user(request: Request) -> BootstrapResponse:
         session = container.create_session()
         await store.claim_session(user_id=user.user_id, session_id=session.session_id)
         session.observability.api.session_created(conversation_id=session.session_id)
-    persona = await store.ensure_default_persona(user_id=user.user_id)
-    await container.sync_user_personas(session_id=session.session_id, personas=[persona])
-    session.set_voice_target(persona.persona_id)
+    personas = await store.list_personas(user_id=user.user_id)
+    await container.sync_user_personas(session_id=session.session_id, personas=personas)
+    default_persona = personas[0] if personas else None
+    session.set_voice_target(default_persona.persona_id if default_persona is not None else None)
     return BootstrapResponse(
         user=user,
         session_id=session.session_id,
-        default_persona_id=persona.persona_id,
-        default_bro_detail_session_id=persona.bro_detail_session_id,
+        default_persona_id=default_persona.persona_id if default_persona is not None else None,
+        default_bro_detail_session_id=default_persona.bro_detail_session_id if default_persona is not None else None,
     )

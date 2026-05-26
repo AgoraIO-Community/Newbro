@@ -59,13 +59,14 @@ Current behavior:
   `sid`, and shows a non-blocking resume-failed warning
 - the active session stream keeps `personas` and `executor_nodes` fresh while
   the shell stays open
-- the `Home` route remains the workspace when a default Bro exists; explicit
-  Bro Detail navigation uses Bro cards or `/bros/:broId`
+- the `Home` route remains the workspace when runtime Bros exist; explicit Bro
+  Detail navigation uses Bro cards or `/bros/:broId`
 - if persona data is empty, the home view renders the design empty workspace
   instead of replacing runtime state with seeded active cards
 - the empty workspace `Create your first bro` action opens a design-backed
-  first-run sheet that creates a real executor node, creates the Bro persona,
-  shows the issued connect command, and refreshes the shell snapshot
+  first-run sheet that creates a real executor node, shows the issued connect
+  command, and waits to create the Bro persona until the node has connected
+  successfully once
 - Bro liveness is derived from `persona.executor_node_id` plus the matching
   executor node connection state
 - the `Bros` page edits each worker Bro's base prompt, avatar, and node binding

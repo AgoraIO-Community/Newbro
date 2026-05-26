@@ -10,6 +10,25 @@ from newbro.api.public_auth import PublicAuthError, require_session_owner
 router = APIRouter()
 
 
+async def _require_connected_once_node(request: Request, node_id: str) -> None:
+    container = request.app.state.runtime_container
+    node = next(
+        (
+            candidate
+            for candidate in await container.executor_node_manager.list_nodes()
+            if candidate.node_id == node_id
+        ),
+        None,
+    )
+    if node is None:
+        raise HTTPException(status_code=400, detail=f"Executor node '{node_id}' not found.")
+    if node.last_connected_at is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Executor node '{node_id}' must connect successfully before creating a Bro.",
+        )
+
+
 @router.get("/sessions/{session_id}/personas")
 async def list_personas(session_id: str, request: Request):
     user = await require_session_owner(request, session_id)
@@ -36,6 +55,8 @@ async def create_persona(
         node_id=body.executor_node_id,
     ):
         raise HTTPException(status_code=400, detail=f"Executor node '{body.executor_node_id}' not found.")
+    if body.executor_node_id is not None:
+        await _require_connected_once_node(request, body.executor_node_id)
     try:
         persona = await store.create_persona(
             user_id=user.user_id,
@@ -86,6 +107,8 @@ async def update_persona(
             node_id=body.executor_node_id,
         ):
             raise HTTPException(status_code=400, detail=f"Executor node '{body.executor_node_id}' not found.")
+        if body.executor_node_id is not None:
+            await _require_connected_once_node(request, body.executor_node_id)
         updates["executor_node_id"] = body.executor_node_id
         if body.executor_node_id != persona.executor_node_id:
             updates["bro_detail_session_id"] = f"bro-detail-{uuid4().hex[:8]}"

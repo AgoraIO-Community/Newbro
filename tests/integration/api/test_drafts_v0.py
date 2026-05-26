@@ -9,6 +9,7 @@ from newbro.runtime.drafts import DraftRewriteInput, DraftRewriter
 from newbro.communication.models.scripted import ScriptedCommunicationModel, ScriptedPlan
 from newbro.executors.node import registry as node_registry
 from newbro.protocol import Draft, Persona
+from tests.helpers.asgi_websocket import ASGIWebSocketSession
 
 
 class FakeDraftRewriter(DraftRewriter):
@@ -32,6 +33,27 @@ def _runtime_container(*, settings: Settings | None = None) -> RuntimeContainer:
         settings=settings or Settings(),
         draft_rewriter=FakeDraftRewriter(),
     )
+
+
+async def _register_node_once(app, *, node_id: str, token: str) -> None:
+    async with ASGIWebSocketSession(app, "/api/executors/control") as websocket:
+        await websocket.send_json(
+            {
+                "type": "register_node",
+                "node_id": node_id,
+                "token": token,
+                "executors": [
+                    {
+                        "executor_type": "codex",
+                        "supports_resume": True,
+                        "supports_follow_up": True,
+                        "supports_pause": True,
+                        "supports_cancel": True,
+                    }
+                ],
+            }
+        )
+        assert (await websocket.receive_json())["type"] == "ack"
 
 
 @pytest.mark.anyio
@@ -245,6 +267,7 @@ async def test_rebinding_bro_rotates_detail_session_without_deleting_old_tasks(m
             json={"name": "Studio Mac", "enabled_executors": ["codex"]},
         )).json()
         node_id = node_issue["node"]["node_id"]
+        await _register_node_once(app, node_id=node_id, token=node_issue["token"])
         patch_response = await client.patch(
             f"/api/sessions/{session_id}/personas/{persona['persona_id']}",
             json={"executor_node_id": node_id},

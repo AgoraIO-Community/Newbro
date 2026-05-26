@@ -103,7 +103,7 @@ async def test_fixed_code_signup_rejects_invalid_or_incomplete_requests(tmp_path
 
 
 @pytest.mark.anyio
-async def test_invited_user_bootstraps_default_session_and_bro(tmp_path):
+async def test_invited_user_bootstraps_empty_session_without_default_bro(tmp_path):
     app = _build_app(tmp_path)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
@@ -117,18 +117,18 @@ async def test_invited_user_bootstraps_default_session_and_bro(tmp_path):
         body = bootstrap.json()
         assert body["user"]["user_id"] == user_id
         assert body["session_id"].startswith("session-")
-        assert body["default_persona_id"].startswith("persona-")
-        assert body["default_bro_detail_session_id"].startswith("bro-detail-")
+        assert body["default_persona_id"] is None
+        assert body["default_bro_detail_session_id"] is None
 
         snapshot = await client.get(f"/api/sessions/{body['session_id']}")
         assert snapshot.status_code == 200
-        assert snapshot.json()["voice_target_persona_id"] == body["default_persona_id"]
-        assert snapshot.json()["personas"][0]["persona_id"] == body["default_persona_id"]
+        assert snapshot.json()["voice_target_persona_id"] is None
+        assert snapshot.json()["personas"] == []
 
         resumed = await client.get("/api/me/bootstrap")
         assert resumed.status_code == 200
         assert resumed.json()["session_id"] == body["session_id"]
-        assert resumed.json()["default_persona_id"] == body["default_persona_id"]
+        assert resumed.json()["default_persona_id"] is None
 
 
 @pytest.mark.anyio
@@ -217,7 +217,12 @@ async def test_user_cannot_bind_bro_to_other_user_node(tmp_path):
         await _redeem(user_b, app, "invite-b")
         bootstrap_b = (await user_b.get("/api/me/bootstrap")).json()
         session_b = bootstrap_b["session_id"]
-        persona_id = bootstrap_b["default_persona_id"]
+        persona = await user_b.post(
+            f"/api/sessions/{session_b}/personas",
+            json={"name": "Beta", "avatar": "bro", "base_prompt": ""},
+        )
+        assert persona.status_code == 201
+        persona_id = persona.json()["persona_id"]
 
         bind = await user_b.patch(
             f"/api/sessions/{session_b}/personas/{persona_id}",

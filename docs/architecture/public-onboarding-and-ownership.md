@@ -27,10 +27,11 @@ executor nodes, and voice preparation require that cookie. Logout clears the
 cookie, drops the current browser shell session state, and returns the browser
 to the signup gate.
 
-The bootstrap route creates or resumes the user's default runtime session,
-ensures a default Bro/persona, and lets the frontend open Bro Detail directly.
-The frontend does not expose normal Bro Detail controls until that Bro is bound
-to a user-owned executor node that has connected successfully at least once.
+The bootstrap route creates or resumes the user's default runtime session and
+syncs the user's persisted Bros/personas into that session. It does not create a
+default Bro. If the user has no personas, Home stays in the empty workspace
+state until the first-run connect flow observes a user-owned executor node that
+has connected successfully at least once.
 
 ## Owned Objects
 
@@ -57,11 +58,11 @@ Bro Detail through same-origin connector routes under `/api/connectors/...`.
 Bro Detail is node-gated for runtime Bros. If the active Bro has no
 `executor_node_id`, or its bound node has never connected successfully, the
 detail route shows an inline setup panel instead of the voice bar, draft
-controls, task controls, or normal workspace. The setup panel creates a private
-executor node when needed, binds that node to the Bro, and shows a copyable
-`newbro executor run ...` command. The normal Bro Detail workspace unlocks only
-after the frontend refreshes state and observes `last_connected_at` on the
-bound node.
+controls, task controls, or normal workspace. The first-run Home setup creates a
+private executor node and shows a copyable `newbro executor run ...` command,
+but it does not create the Bro persona until the frontend refreshes state and
+observes `last_connected_at` on that node. API persona creation and node binding
+also reject user-owned nodes that have not connected successfully once.
 
 A created node is not yet usable. A usable node is one with a durable
 `last_connected_at`, meaning the executor websocket registered successfully at

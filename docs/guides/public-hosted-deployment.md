@@ -88,17 +88,15 @@ Users only need:
 5. a local machine that can run the detached executor command for real Codex
    work
 
-After signup, Newbro bootstraps a user-owned session and default Bro, then opens
-Bro Detail directly. Signing up again with the same email creates a separate
+After signup, Newbro bootstraps a user-owned session and opens Home. It does not
+create a default Bro. Signing up again with the same email creates a separate
 user because email is only a label in this first public path.
 
-Bro Detail requires a usable user-owned executor node before the normal voice,
-draft, and task controls appear. A node becomes usable only after it has
-connected successfully at least once. If the default Bro is not bound yet, or
-the bound node has not connected once, the page shows an inline setup panel
-that creates or reveals the node command, binds it to that Bro when needed, and
-prints a copyable local command. The hosted app issues a user-owned node id and
-token, and the user runs:
+Creating the first Bro requires a usable user-owned executor node. A node
+becomes usable only after it has connected successfully at least once. The
+first-run setup panel issues a user-owned node id and token, prints a copyable
+local command, and creates the Bro persona only after the service observes the
+node's first successful connection. The user runs:
 
 ```bash
 python3 -m pip install --user --upgrade newbro-cli

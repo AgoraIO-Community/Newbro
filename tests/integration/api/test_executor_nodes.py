@@ -12,6 +12,7 @@ from newbro.communication.models import ScriptedCommunicationModel
 from newbro.communication.models.scripted import ScriptedPlan
 from newbro.runtime import Settings
 from newbro.runtime.container import RuntimeContainer
+from tests.helpers.asgi_websocket import ASGIWebSocketSession
 
 
 def _build_app(tmp_path):
@@ -31,6 +32,28 @@ async def _redeem(client: AsyncClient, app, code: str = "invite-test"):
     response = await client.post("/api/auth/invites/redeem", json={"code": code})
     assert response.status_code == 200
     return response.json()["user"]["user_id"]
+
+
+async def _register_node_once(app, *, node_id: str, token: str) -> None:
+    async with ASGIWebSocketSession(app, "/api/executors/control") as websocket:
+        await websocket.send_json(
+            {
+                "type": "register_node",
+                "node_id": node_id,
+                "token": token,
+                "executors": [
+                    {
+                        "executor_type": "codex",
+                        "supports_resume": True,
+                        "supports_follow_up": True,
+                        "supports_pause": True,
+                        "supports_cancel": True,
+                    }
+                ],
+            }
+        )
+        ack = await websocket.receive_json()
+        assert ack["type"] == "ack"
 
 
 @pytest.mark.anyio
@@ -116,6 +139,21 @@ async def test_delete_executor_node_rejects_bound_bros_until_unbound(monkeypatch
             },
         )
         node_id = create_response.json()["node"]["node_id"]
+        node_token = create_response.json()["token"]
+
+        blocked_persona = await client.post(
+            f"/api/sessions/{session_id}/personas",
+            json={
+                "name": "Blocked",
+                "avatar": "B",
+                "base_prompt": "Be direct.",
+                "executor_node_id": node_id,
+            },
+        )
+        assert blocked_persona.status_code == 409
+        assert "must connect successfully before creating a Bro" in blocked_persona.text
+
+        await _register_node_once(app, node_id=node_id, token=node_token)
 
         persona_response = await client.post(
             f"/api/sessions/{session_id}/personas",
