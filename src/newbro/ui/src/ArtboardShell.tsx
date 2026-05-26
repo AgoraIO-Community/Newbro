@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Check, ChevronLeft, Copy, FileText, LogOut, Mic, MoreHorizontal, Plus, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
+import { ArrowUp, Check, ChevronLeft, Copy, FileText, Layers, LogOut, MessageSquare, Mic, Plus, Radio, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorRunCommand,
   clearDraft,
@@ -702,14 +702,11 @@ function MobileThreadSurface({
   const activeRecord = records[0] ?? null;
   const connected = shell.voiceSession.phase === "connected";
   const loading = shell.voiceSession.phase === "loading";
+  const [inputMode, setInputMode] = useState<"ptt" | "free">("ptt");
 
   function submitText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const text = draft.trim();
-    if (!text || disabled) return;
-    shell.sendMessage(text);
-    shell.submitDraftAsrTurn({ raw_text: text, assigned_bro_id: bro.id });
-    setDraft("");
+    submitDraftText();
   }
 
   async function sendCurrentDraft() {
@@ -721,10 +718,11 @@ function MobileThreadSurface({
     await shell.refreshShellSession();
   }
 
-  async function clearCurrentDraft() {
-    if (!shell.activeShellSessionId) return;
-    await clearDraft(shell.activeShellSessionId, { draft_session_id: shell.draftSession?.id });
-    await shell.refreshShellSession();
+  function submitDraftText() {
+    const text = draft.trim();
+    if (!text || disabled) return;
+    shell.sendMessage(text);
+    shell.submitDraftAsrTurn({ raw_text: text, assigned_bro_id: bro.id });
     setDraft("");
   }
 
@@ -792,6 +790,32 @@ function MobileThreadSurface({
         ))}
       </main>
       <form className={`thr-composer nb-mobile-thread-composer${disabled ? " ob-composer-disabled" : ""}`} onSubmit={submitText}>
+        {!disabled ? (
+          <div className="mob-mode mob-mode-light" role="tablist" aria-label="Input mode">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={inputMode === "ptt"}
+              className={`mob-mode-btn${inputMode === "ptt" ? " mob-mode-btn-on" : ""}`}
+              onClick={() => setInputMode("ptt")}
+              title="Tap to send"
+            >
+              <span className="mob-mode-icon"><MessageSquare size={15} strokeWidth={2} /></span>
+              <span className="mob-mode-label">Tap to send</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={inputMode === "free"}
+              className={`mob-mode-btn${inputMode === "free" ? " mob-mode-btn-on" : ""}`}
+              onClick={() => setInputMode("free")}
+              title="Always on"
+            >
+              <span className="mob-mode-icon"><Radio size={15} strokeWidth={2} /></span>
+              <span className="mob-mode-label">Always on</span>
+            </button>
+          </div>
+        ) : null}
         {disabled ? (
           <div className="ob-composer-lock">
             <span className="ob-composer-lock-icon" aria-hidden="true">
@@ -801,47 +825,63 @@ function MobileThreadSurface({
           </div>
         ) : null}
         <div className={`thr-composer-row${disabled ? " ob-composer-row-disabled" : ""}`} aria-disabled={disabled || undefined}>
-          <div className={`thr-ptt-idle${disabled ? " ob-ptt-idle-disabled" : ""}`}>
-            <span className="thr-ptt-idle-dot" aria-hidden="true" />
-            <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
-            <input
-              id={`message-${bro.id}`}
-              className="nb-mobile-thread-input"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder={disabled ? "Reconnect the node before sending" : `Type to ${bro.name}...`}
-              disabled={disabled}
-            />
-          </div>
-          <button
-            type="button"
-            className="nb-mobile-thread-clear"
-            aria-label="Clear draft"
-            disabled={!draftText}
-            onClick={() => { void clearCurrentDraft(); }}
-          >
-            <X size={16} strokeWidth={2} />
-          </button>
-          <button
-            type="button"
-            className="nb-mobile-thread-send"
-            aria-label="Send current draft"
-            disabled={disabled || !draftText}
-            onClick={() => { void sendCurrentDraft(); }}
-          >
-            <SendHorizontal size={16} strokeWidth={2.1} />
-          </button>
-          <button
-            type="button"
-            data-testid={connected ? "voice-session-stop" : "voice-session-start"}
-            className={`thr-mic-btn thr-mic-btn-${disabled ? "idle ob-mic-disabled" : connected ? "listening" : "idle"}`}
-            aria-label={disabled ? "Hold to talk · node offline" : connected ? "Stop voice session" : `Wake up ${bro.name}`}
-            disabled={disabled || loading}
-            onClick={toggleVoice}
-          >
-            <Mic size={22} strokeWidth={2} aria-hidden="true" />
-          </button>
-          <button type="submit" className="sr-only">Send message</button>
+          {inputMode === "free" && !disabled ? (
+            <button type="button" className={`thr-free${connected ? "" : " thr-free-open"}`} aria-label={connected ? "Stop voice session" : `Wake up ${bro.name}`} disabled={loading} onClick={toggleVoice}>
+              <span className="thr-free-led thr-free-led-active" />
+              <span className="thr-free-label">{connected ? "Listening..." : "Always on · tap to talk"}</span>
+              <span className="thr-free-waves" aria-hidden="true">{Array.from({ length: 16 }).map((_, index) => <i key={index} style={{ height: `${4 + (index % 5) * 2}px` }} />)}</span>
+            </button>
+          ) : (
+            <>
+              <div className={disabled ? "thr-ptt-idle ob-ptt-idle-disabled" : "thr-ptt-input"}>
+                {disabled ? <span className="thr-ptt-idle-dot" aria-hidden="true" /> : null}
+                <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
+                <input
+                  id={`message-${bro.id}`}
+                  className={disabled ? "nb-mobile-thread-input" : "thr-ptt-input-field"}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && draft.trim()) {
+                      event.preventDefault();
+                      submitDraftText();
+                    }
+                  }}
+                  placeholder={disabled ? "Reconnect the node before sending" : `Message ${bro.name} - or hold the mic to talk`}
+                  disabled={disabled}
+                />
+              </div>
+              {draftText && !disabled ? (
+                <button
+                  type="submit"
+                  className="thr-mic-btn thr-mic-btn-send"
+                  aria-label="Send message"
+                  onClick={(event) => {
+                    if (!draft.trim()) {
+                      event.preventDefault();
+                      void sendCurrentDraft();
+                    }
+                  }}
+                >
+                  <ArrowUp size={22} strokeWidth={2.4} aria-hidden="true" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-testid={connected ? "voice-session-stop" : "voice-session-start"}
+                  className={`thr-mic-btn thr-mic-btn-${disabled ? "idle ob-mic-disabled" : connected ? "listening" : "idle"}`}
+                  aria-label={disabled ? "Hold to talk · node offline" : connected ? "Stop voice session" : `Wake up ${bro.name}`}
+                  disabled={disabled || loading}
+                  onClick={toggleVoice}
+                >
+                  <span className="thr-mic-halo" aria-hidden="true" />
+                  <span className="thr-mic-halo thr-mic-halo-2" aria-hidden="true" />
+                  <Mic size={22} strokeWidth={2} aria-hidden="true" />
+                </button>
+              )}
+            </>
+          )}
+          {disabled ? <button type="submit" className="sr-only">Send message</button> : null}
         </div>
       </form>
     </>
@@ -1220,6 +1260,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
 
 function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }) {
   const shell = useNewbroShell();
+  const [pickerOpen, setPickerOpen] = useState(false);
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const offline = nodeState.kind === "usable_disconnected" ? nodeState.node : null;
   const needsConnect = bro.source === "runtime" && nodeStateNeedsConnect(nodeState) && nodeState.kind !== "no_bound_node";
@@ -1274,10 +1315,59 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
               </div>
             </div>
           </div>
-          <button type="button" className="thr-more" aria-label="More">
-            <MoreHorizontal size={20} strokeWidth={1.9} />
+          <button type="button" className="thr-more" aria-label="Switch thread" onClick={() => setPickerOpen(true)}>
+            <Layers size={20} strokeWidth={1.9} />
           </button>
         </header>
+        {pickerOpen ? <div className="thr-drawer-backdrop" onClick={() => setPickerOpen(false)} /> : null}
+        <aside className={`thr-drawer${pickerOpen ? " thr-drawer-open" : ""}`} aria-hidden={!pickerOpen}>
+          <header className="thr-drawer-head">
+            <div>
+              <div className="thr-drawer-eyebrow">Threads with</div>
+              <div className="thr-drawer-title">{bro.name}</div>
+            </div>
+            <button type="button" className="thr-drawer-close" onClick={() => setPickerOpen(false)} aria-label="Close">
+              <X size={18} strokeWidth={2} />
+            </button>
+          </header>
+          <ul className="thr-drawer-list">
+            <li>
+              <button type="button" className={`thr-drawer-item ${bro.status === "busy" ? "thr-drawer-item-working" : "thr-drawer-item-open"} thr-drawer-item-on`} onClick={() => setPickerOpen(false)}>
+                <span className="thr-drawer-item-dot" aria-hidden="true" />
+                <span className="thr-drawer-item-body">
+                  <span className="thr-drawer-item-title">{bro.taskTitle || "Waiting for assignment"}</span>
+                  <span className="thr-drawer-item-meta">
+                    <span className="thr-drawer-item-state">{bro.status === "busy" ? "working" : "open"}</span>
+                    <span className="thr-drawer-item-sep">·</span>
+                    <span className="thr-drawer-item-when">now</span>
+                  </span>
+                </span>
+                <span className="thr-drawer-item-check" aria-hidden="true">
+                  <Check size={14} strokeWidth={2.2} />
+                </span>
+              </button>
+            </li>
+            {records.slice(0, 3).map((record) => (
+              <li key={record.taskId}>
+                <button type="button" className="thr-drawer-item thr-drawer-item-open" onClick={() => setPickerOpen(false)}>
+                  <span className="thr-drawer-item-dot" aria-hidden="true" />
+                  <span className="thr-drawer-item-body">
+                    <span className="thr-drawer-item-title">{record.title}</span>
+                    <span className="thr-drawer-item-meta">
+                      <span className="thr-drawer-item-state">{record.statusLabel}</span>
+                      <span className="thr-drawer-item-sep">·</span>
+                      <span className="thr-drawer-item-when">{record.timeLabel || "now"}</span>
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button type="button" className="thr-drawer-new" onClick={() => setPickerOpen(false)}>
+            <Plus size={14} strokeWidth={2.2} />
+            <span>New thread with {bro.name}</span>
+          </button>
+        </aside>
         {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
         <MobileThreadSurface bro={bro} records={records} disabled={Boolean(offline)} disabledReason={offline ? `${offline.name} is not connected.` : null} />
       </div>
