@@ -3287,6 +3287,17 @@
 }
 
 @media (max-width: 767px) {
+  .nb-first-run-sheet-layer {
+    background: transparent;
+    backdrop-filter: none;
+  }
+
+  .nb-first-run-sheet-frame {
+    width: 100%;
+    height: 100dvh;
+    border-radius: 0;
+  }
+
   .nb-create-connect-cols {
     display: flex;
     flex-direction: column;
