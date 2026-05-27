@@ -119,6 +119,7 @@ class ExecutorNodeService:
         self._live_sessions: dict[str, ExecutorSession] = {}
         self._active_runs: dict[str, LocalRunContext] = {}
         self._codex_thread_subscriptions: dict[str, CodexThreadSubscriptionContext] = {}
+        self._background_commands: set[asyncio.Task[None]] = set()
         self._send_lock = asyncio.Lock()
         self._reporter = reporter or ExecutorNodeLifecycleReporter()
 
@@ -179,6 +180,7 @@ class ExecutorNodeService:
                     )
                 await self._cancel_active_runs()
                 await self._cancel_codex_thread_subscriptions()
+                await self._cancel_background_commands()
                 self._reporter.retrying(delay_seconds=retry_delay_seconds)
                 await asyncio.sleep(retry_delay_seconds)
 
@@ -202,19 +204,19 @@ class ExecutorNodeService:
             return
         if message_type == "list_codex_threads":
             command = ListCodexThreadsCommand.model_validate(payload)
-            await self._list_codex_threads(websocket, command)
+            self._schedule_background_command(self._list_codex_threads(websocket, command))
             return
         if message_type == "read_codex_thread":
             command = ReadCodexThreadCommand.model_validate(payload)
-            await self._read_codex_thread(websocket, command)
+            self._schedule_background_command(self._read_codex_thread(websocket, command))
             return
         if message_type == "subscribe_codex_thread":
             command = SubscribeCodexThreadCommand.model_validate(payload)
-            await self._subscribe_codex_thread(websocket, command)
+            self._schedule_background_command(self._subscribe_codex_thread(websocket, command))
             return
         if message_type == "unsubscribe_codex_thread":
             command = UnsubscribeCodexThreadCommand.model_validate(payload)
-            await self._unsubscribe_codex_thread(websocket, command)
+            self._schedule_background_command(self._unsubscribe_codex_thread(websocket, command))
             return
         if message_type == "cancel_run":
             command = CancelRunCommand.model_validate(payload)
@@ -228,6 +230,19 @@ class ExecutorNodeService:
             command = ReleaseRunCommand.model_validate(payload)
             self._live_sessions.pop(command.execution_session_id, None)
             return
+
+    def _schedule_background_command(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._background_commands.add(task)
+        task.add_done_callback(self._finish_background_command)
+
+    def _finish_background_command(self, task: asyncio.Task[None]) -> None:
+        self._background_commands.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            LOGGER.warning("Executor node background command failed: %s", exc)
 
     async def _dispatch_run(self, websocket: Any, command: DispatchRunCommand) -> None:
         executor = self._executors[command.executor_type]
@@ -472,9 +487,14 @@ class ExecutorNodeService:
         session: CodexExecutorSession,
         command: SubscribeCodexThreadCommand,
     ) -> None:
+        executor = self._executors.get(command.executor_type)
+        next_thread_event = getattr(executor, "next_thread_event", None)
         try:
             while True:
-                event = await session.client.next_event()
+                if next_thread_event is not None:
+                    event = await next_thread_event(session)
+                else:
+                    event = await session.client.next_event()
                 method = str(event.get("method") or "")
                 if not method:
                     continue
@@ -871,6 +891,14 @@ class ExecutorNodeService:
         subscription_ids = list(self._codex_thread_subscriptions)
         for subscription_id in subscription_ids:
             await self._stop_codex_thread_subscription(subscription_id)
+
+    async def _cancel_background_commands(self) -> None:
+        tasks = list(self._background_commands)
+        self._background_commands.clear()
+        for task in tasks:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     async def _send_json(self, websocket: Any, payload: dict[str, object]) -> None:
         async with self._send_lock:

@@ -73,9 +73,14 @@ Adapter direction:
 - Codex app-server `thread/list` is the source for imported Codex dialog
   threads; `thread/read` is the required per-thread hydration path when a user
   opens/selects a thread. Opening a selected thread is also a loaded-thread
-  lifecycle owned by the detached executor node: the node calls
-  `thread/resume`, forwards relevant thread events to Newbro, and calls
-  `thread/unsubscribe` when the selected thread is replaced or closed.
+  lifecycle owned by the detached executor node. Each Codex executor node owns
+  one long-lived app-server process and multiplexes `thread/list`,
+  `thread/read`, `thread/turns/list`, `thread/resume`, `thread/start`, and
+  selected-thread event routing through that process. Selected-thread
+  subscription is a node-local interest in events from the shared app-server,
+  not a separate app-server process. The node calls `thread/resume`, forwards
+  relevant thread events to Newbro, and calls `thread/unsubscribe` when the
+  selected thread is replaced or closed.
   `thread/resume` is required before `turn/start` when an imported or
   persisted native thread id is not yet loaded. `thread/start` remains the fresh
   direct-run creation path, while `thread/fork` remains the follow-up fork path.

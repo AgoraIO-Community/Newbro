@@ -262,3 +262,4 @@ Short log of important design decisions and changes for Newbro.
 - Changed Bro Detail selected Codex thread opening to an executor-owned loaded-thread subscription lifecycle: Newbro opens with Codex `thread/resume`, refreshes from selected-thread events, calls `thread/unsubscribe` when leaving, and desktop/mobile panes scroll to the newest turn.
 - Changed Bro Detail imported-thread opening to skip global Codex thread-list refreshes for cached imported threads and start selected-thread subscription outside the HTTP open response path.
 - Changed Bro Detail selected Codex thread history reads to use `thread/read` metadata plus bounded `thread/turns/list` pages instead of full `thread/read includeTurns` payloads.
+- Changed the detached Codex executor node to reuse one long-lived Codex app-server process for thread list/read/start/resume and selected-thread event routing; subscriptions are local event interests instead of separate app-server processes.

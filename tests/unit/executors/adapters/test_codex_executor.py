@@ -538,6 +538,61 @@ def _write_delta_fake_codex(tmp_path):
     return script
 
 
+def _write_counting_fake_codex(tmp_path):
+    script = tmp_path / "fake-codex-counting"
+    launches = tmp_path / "launches.txt"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            #!{sys.executable}
+            import json
+            import sys
+            from pathlib import Path
+
+            Path({str(launches)!r}).write_text(
+                Path({str(launches)!r}).read_text() + "launch\\n"
+                if Path({str(launches)!r}).exists()
+                else "launch\\n"
+            )
+
+            def send(payload):
+                sys.stdout.write(json.dumps(payload) + "\\n")
+                sys.stdout.flush()
+
+            for raw in sys.stdin:
+                if not raw.strip():
+                    continue
+                msg = json.loads(raw)
+                method = msg.get("method")
+                params = msg.get("params", {{}})
+                request_id = msg.get("id")
+                if method == "initialize":
+                    send({{"id": request_id, "result": {{"ok": True}}}})
+                elif method == "initialized":
+                    continue
+                elif method == "account/read":
+                    send({{"id": request_id, "result": {{"account": {{"type": "apiKey"}}, "requiresOpenaiAuth": True}}}})
+                elif method == "thread/list":
+                    send({{"id": request_id, "result": {{"data": [], "nextCursor": None}}}})
+                elif method == "thread/read":
+                    send({{"id": request_id, "result": {{"thread": {{"id": params.get("threadId"), "name": "Shared"}}}}}})
+                elif method == "thread/turns/list":
+                    send({{"id": request_id, "result": {{"data": []}}}})
+                elif method == "thread/resume":
+                    send({{"id": request_id, "result": {{"thread": {{"id": params.get("threadId"), "status": {{"type": "idle"}}}}}}}})
+                elif method == "thread/unsubscribe":
+                    send({{"id": request_id, "result": {{"status": "unsubscribed"}}}})
+                elif method == "thread/start":
+                    send({{"id": request_id, "result": {{"thread": {{"id": "thread-started"}}}}}})
+                else:
+                    send({{"id": request_id, "error": {{"message": f"unknown method: {{method}}"}}}})
+            """
+        )
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script, launches
+
+
 @pytest.mark.anyio
 async def test_codex_executor_completes_task_with_fake_app_server(tmp_path):
     command = _write_fake_codex(tmp_path)
@@ -810,6 +865,23 @@ async def test_codex_executor_reads_thread_history_with_bounded_turns_list(tmp_p
     assert thread["id"] == "thread-open"
     assert thread["name"] == "Open thread"
     assert [turn["id"] for turn in thread["turns"]] == ["turn-old", "turn-new"]
+
+
+@pytest.mark.anyio
+async def test_codex_executor_reuses_one_app_server_for_thread_operations(tmp_path):
+    command, launches = _write_counting_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+
+    session = await executor.create_session(str(tmp_path))
+    await executor.list_threads(str(tmp_path))
+    await executor.read_thread("thread-open")
+    subscription = await executor.subscribe_thread("thread-open", workspace_id=str(tmp_path))
+    response = await executor.unsubscribe_thread(subscription)
+    await session.close()
+    await executor._close_app_session()
+
+    assert response == {"status": "unsubscribed"}
+    assert launches.read_text().splitlines() == ["launch"]
 
 
 @pytest.mark.anyio

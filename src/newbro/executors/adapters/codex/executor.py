@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -44,6 +45,15 @@ class CodexExecutor:
             supports_setup=False,
         )
         self._active_runs: dict[str, CodexExecutorSession] = {}
+        self._app_session: CodexExecutorSession | None = None
+        self._app_lock = asyncio.Lock()
+        self._event_task: asyncio.Task[None] | None = None
+        self._turn_event_queues: dict[str, asyncio.Queue[dict[str, object]]] = {}
+        self._turn_event_backlog: dict[str, list[dict[str, object]]] = {}
+        self._thread_subscription_queues: dict[
+            str,
+            tuple[str, asyncio.Queue[dict[str, object]]],
+        ] = {}
 
     def get_capabilities(self) -> ExecutorCapabilities:
         return self._capabilities
@@ -53,6 +63,28 @@ class CodexExecutor:
 
     async def create_session(self, workspace_id: str | None = None) -> CodexExecutorSession:
         cwd = Path(workspace_id or os.getcwd()).resolve()
+        app_session = await self._ensure_app_session(cwd)
+        session = CodexExecutorSession(
+            session_id=f"codex-session-{uuid4().hex[:8]}",
+            executor_type="codex",
+            metadata={"cwd": str(cwd)},
+        )
+        session.attach_shared(client=app_session.client, cwd=cwd)
+        return session
+
+    async def _ensure_app_session(self, cwd: Path | None = None) -> CodexExecutorSession:
+        async with self._app_lock:
+            if self._app_session is not None and self._app_session.is_alive():
+                self._ensure_event_task(self._app_session)
+                return self._app_session
+            if self._app_session is not None:
+                await self._close_app_session()
+            launch_cwd = Path(cwd or os.getcwd()).resolve()
+            self._app_session = await self._start_app_session(launch_cwd)
+            self._ensure_event_task(self._app_session)
+            return self._app_session
+
+    async def _start_app_session(self, cwd: Path) -> CodexExecutorSession:
         process = await asyncio.create_subprocess_exec(
             self._command,
             "app-server",
@@ -78,6 +110,65 @@ class CodexExecutor:
             await session.close()
             raise RuntimeError("Codex authentication required.")
         return session
+
+    def _ensure_event_task(self, app_session: CodexExecutorSession) -> None:
+        if self._event_task is not None and not self._event_task.done():
+            return
+        self._event_task = asyncio.create_task(self._dispatch_app_events(app_session))
+
+    async def _close_app_session(self) -> None:
+        if self._event_task is not None:
+            self._event_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._event_task
+            self._event_task = None
+        if self._app_session is not None:
+            await self._app_session.close()
+            self._app_session = None
+        self._turn_event_queues.clear()
+        self._turn_event_backlog.clear()
+        self._thread_subscription_queues.clear()
+
+    async def _dispatch_app_events(self, app_session: CodexExecutorSession) -> None:
+        try:
+            while True:
+                event = await app_session.client.next_event()
+                self._route_app_event(event)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning("Codex app-server event dispatcher stopped: %s", exc)
+
+    def _route_app_event(self, event: dict[str, object]) -> None:
+        params = event.get("params")
+        if not isinstance(params, dict):
+            params = {}
+        turn_id = _event_turn_id(params)
+        if turn_id:
+            queue = self._turn_event_queues.get(turn_id)
+            if queue is not None:
+                queue.put_nowait(event)
+            else:
+                backlog = self._turn_event_backlog.setdefault(turn_id, [])
+                backlog.append(event)
+                if len(backlog) > 100:
+                    del backlog[:-100]
+        thread_id = _event_thread_id(params)
+        if thread_id:
+            for subscribed_thread_id, queue in list(self._thread_subscription_queues.values()):
+                if subscribed_thread_id == thread_id:
+                    queue.put_nowait(event)
+
+    def _register_turn_queue(self, turn_id: str) -> asyncio.Queue[dict[str, object]]:
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        self._turn_event_queues[turn_id] = queue
+        for event in self._turn_event_backlog.pop(turn_id, []):
+            queue.put_nowait(event)
+        return queue
+
+    def _unregister_turn_queue(self, turn_id: str, queue: asyncio.Queue[dict[str, object]]) -> None:
+        if self._turn_event_queues.get(turn_id) is queue:
+            self._turn_event_queues.pop(turn_id, None)
 
     async def list_threads(self, workspace_id: str | None = None) -> list[dict[str, object]]:
         last_error: Exception | None = None
@@ -106,61 +197,55 @@ class CodexExecutor:
         threads: list[dict[str, object]] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
-        try:
-            while True:
-                if mode == "legacy":
-                    response = await session.client.thread_list()
-                else:
-                    response = await session.client.thread_list(
-                        cursor=cursor,
-                        limit=THREAD_LIST_PAGE_LIMIT,
-                        sort_key="updated_at" if mode == "sorted_paged" else None,
-                        sort_direction="desc" if mode == "sorted_paged" else None,
-                    )
-                data = response.get("data")
-                if not isinstance(data, list):
-                    raise RuntimeError("Codex thread/list returned an unsupported response shape.")
-                next_cursor = response.get("nextCursor")
-                LOGGER.info(
-                    "Codex thread/list page received",
-                    extra={
-                        "mode": mode,
-                        "cursor_in": cursor,
-                        "cursor_out": next_cursor if isinstance(next_cursor, str) else None,
-                        "page_size": len(data),
-                    },
+        while True:
+            if mode == "legacy":
+                response = await session.client.thread_list()
+            else:
+                response = await session.client.thread_list(
+                    cursor=cursor,
+                    limit=THREAD_LIST_PAGE_LIMIT,
+                    sort_key="updated_at" if mode == "sorted_paged" else None,
+                    sort_direction="desc" if mode == "sorted_paged" else None,
                 )
-                for item in data:
-                    if isinstance(item, dict):
-                        threads.append(dict(item))
-                if (
-                    mode == "legacy"
-                    or not isinstance(next_cursor, str)
-                    or not next_cursor
-                    or next_cursor in seen_cursors
-                ):
-                    break
-                seen_cursors.add(next_cursor)
-                cursor = next_cursor
-        finally:
-            await session.close()
+            data = response.get("data")
+            if not isinstance(data, list):
+                raise RuntimeError("Codex thread/list returned an unsupported response shape.")
+            next_cursor = response.get("nextCursor")
+            LOGGER.info(
+                "Codex thread/list page received",
+                extra={
+                    "mode": mode,
+                    "cursor_in": cursor,
+                    "cursor_out": next_cursor if isinstance(next_cursor, str) else None,
+                    "page_size": len(data),
+                },
+            )
+            for item in data:
+                if isinstance(item, dict):
+                    threads.append(dict(item))
+            if (
+                mode == "legacy"
+                or not isinstance(next_cursor, str)
+                or not next_cursor
+                or next_cursor in seen_cursors
+            ):
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
         return threads
 
     async def read_thread(self, thread_id: str) -> dict[str, object]:
         session = await self.create_session(None)
-        try:
-            response = await session.client.thread_read(
-                thread_id=thread_id,
-                include_turns=False,
-            )
-            turns_response = await session.client.thread_turns_list(
-                thread_id=thread_id,
-                limit=THREAD_READ_TURNS_PAGE_LIMIT,
-                sort_direction="desc",
-                items_view="full",
-            )
-        finally:
-            await session.close()
+        response = await session.client.thread_read(
+            thread_id=thread_id,
+            include_turns=False,
+        )
+        turns_response = await session.client.thread_turns_list(
+            thread_id=thread_id,
+            limit=THREAD_READ_TURNS_PAGE_LIMIT,
+            sort_direction="desc",
+            items_view="full",
+        )
         thread = response.get("thread")
         if not isinstance(thread, dict):
             raise RuntimeError("Codex thread/read returned an unsupported response shape.")
@@ -179,22 +264,34 @@ class CodexExecutor:
         workspace_id: str | None = None,
     ) -> CodexExecutorSession:
         session = await self.create_session(workspace_id)
-        try:
-            await session.client.thread_resume(thread_id=thread_id)
-        except Exception:
-            await session.close()
-            raise
+        await session.client.thread_resume(thread_id=thread_id)
         session.thread_id = thread_id
         session.metadata["codex_thread_resumed"] = True
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        self._thread_subscription_queues[session.session_id] = (thread_id, queue)
         return session
 
     async def unsubscribe_thread(self, session: CodexExecutorSession) -> dict[str, object]:
         if not session.thread_id:
             return {"status": "notLoaded"}
-        try:
-            return await session.client.thread_unsubscribe(thread_id=session.thread_id)
-        finally:
+        self._thread_subscription_queues.pop(session.session_id, None)
+        still_interested = any(
+            subscribed_thread_id == session.thread_id
+            for subscribed_thread_id, _ in self._thread_subscription_queues.values()
+        )
+        if still_interested:
             await session.close()
+            return {"status": "unsubscribed"}
+        response = await session.client.thread_unsubscribe(thread_id=session.thread_id)
+        await session.close()
+        return response
+
+    async def next_thread_event(self, session: CodexExecutorSession) -> dict[str, object]:
+        subscription = self._thread_subscription_queues.get(session.session_id)
+        if subscription is None:
+            raise RuntimeError("Codex selected-thread subscription is not active.")
+        _, queue = subscription
+        return await queue.get()
 
     async def cancel_run(self, run_id: str) -> None:
         session = self._active_runs.pop(run_id, None)
@@ -311,149 +408,152 @@ class CodexExecutor:
         assistant_item_phases: dict[str, str | None] = {}
         assistant_item_text: dict[str, str] = {}
         assistant_item_emitted_text: dict[str, str] = {}
-        while True:
-            event = await session.client.next_event()
-            method = str(event.get("method", ""))
-            params = event.get("params")
-            if not isinstance(params, dict):
-                continue
-
-            if method == "turn/completed":
-                completed_turn = params.get("turn")
-                if isinstance(completed_turn, dict) and completed_turn.get("id") != turn_id:
+        event_queue = self._register_turn_queue(turn_id)
+        try:
+            while True:
+                event = await event_queue.get()
+                method = str(event.get("method", ""))
+                params = event.get("params")
+                if not isinstance(params, dict):
                     continue
-                status = _get_nested(params, "turn", "status")
-                if status == "completed":
-                    if not last_assistant_message:
-                        last_assistant_message = await self._read_final_assistant_message(
-                            session,
-                            turn_id,
-                        )
-                    yield ExecutorEvent(
-                        run_id=run.run_id,
-                        session_id=session.session_id,
-                        event_type=ExecutorEventType.COMPLETED,
-                        message=last_assistant_message or completed_message,
-                        metadata={**extra, "thread_id": session.thread_id or ""},
-                    )
-                    return
-                error_message = _get_nested(params, "turn", "error", "message")
-                yield ExecutorEvent(
-                    run_id=run.run_id,
-                    session_id=session.session_id,
-                    event_type=ExecutorEventType.FAILED,
-                    message=str(error_message or "Codex turn failed."),
-                    metadata={**extra, "thread_id": session.thread_id or ""},
-                )
-                return
 
-            if method == "error":
-                continue
-
-            if method == "item/agentMessage/delta":
-                item_id = params.get("itemId")
-                delta = params.get("delta")
-                if not isinstance(item_id, str) or not isinstance(delta, str) or not delta:
-                    continue
-                if assistant_item_phases.get(item_id) != "commentary":
-                    continue
-                accumulated = assistant_item_text.get(item_id, "") + delta
-                assistant_item_text[item_id] = accumulated
-                candidate = accumulated.strip()
-                previous = assistant_item_emitted_text.get(item_id, "")
-                if candidate and _should_emit_codex_delta_progress(candidate, previous):
-                    assistant_item_emitted_text[item_id] = candidate
-                    yield ExecutorEvent(
-                        run_id=run.run_id,
-                        session_id=session.session_id,
-                        event_type=ExecutorEventType.PROGRESS,
-                        message=candidate,
-                        metadata={
-                            **extra,
-                            "thread_id": session.thread_id or "",
-                            "source": "codex",
-                            "codex_item_id": item_id,
-                            "phase": "commentary",
-                        },
-                    )
-                continue
-
-            if method in {"item/started", "item/completed"}:
-                item = params.get("item")
-                if isinstance(item, dict):
-                    item_type = item.get("type")
-                    if item_type in {"assistantMessage", "agentMessage"}:
-                        item_id = item.get("id")
-                        phase = item.get("phase")
-                        if isinstance(item_id, str):
-                            assistant_item_phases[item_id] = phase if isinstance(phase, str) else None
-                        extracted = _extract_item_text(item)
-                        if extracted:
-                            last_assistant_message = extracted
-                            if (
-                                isinstance(item_id, str)
-                                and assistant_item_emitted_text.get(item_id) == extracted
-                            ):
-                                continue
-                            if phase == "final_answer":
-                                continue
-                            if isinstance(item_id, str):
-                                assistant_item_emitted_text[item_id] = extracted
-                            yield ExecutorEvent(
-                                run_id=run.run_id,
-                                session_id=session.session_id,
-                                event_type=ExecutorEventType.PROGRESS,
-                                message=extracted,
-                                metadata={
-                                    **extra,
-                                    "thread_id": session.thread_id or "",
-                                    "source": "codex",
-                                    "phase": phase if isinstance(phase, str) else "",
-                                },
+                if method == "turn/completed":
+                    completed_turn = params.get("turn")
+                    if isinstance(completed_turn, dict) and completed_turn.get("id") != turn_id:
+                        continue
+                    status = _get_nested(params, "turn", "status")
+                    if status == "completed":
+                        if not last_assistant_message:
+                            last_assistant_message = await self._read_final_assistant_message(
+                                session,
+                                turn_id,
                             )
-                            continue
-                continue
-
-            blocked_request = _extract_blocked_request(
-                request_id=event.get("id"),
-                method=method,
-                params=params,
-            )
-            if blocked_request is not None:
-                session.begin_blocked_wait()
-                yield ExecutorEvent(
-                    run_id=run.run_id,
-                    session_id=session.session_id,
-                    event_type=ExecutorEventType.BLOCKED,
-                    message=blocked_request["message"],
-                    metadata={**extra, **blocked_request["metadata"]},
-                )
-                resolution = await session.wait_for_blocked_resolution(
-                    timeout_seconds=self._blocked_wait_timeout_seconds,
-                )
-                if resolution == "resolved":
-                    continue
-                if resolution == "timed_out":
+                        yield ExecutorEvent(
+                            run_id=run.run_id,
+                            session_id=session.session_id,
+                            event_type=ExecutorEventType.COMPLETED,
+                            message=last_assistant_message or completed_message,
+                            metadata={**extra, "thread_id": session.thread_id or ""},
+                        )
+                        return
+                    error_message = _get_nested(params, "turn", "error", "message")
                     yield ExecutorEvent(
                         run_id=run.run_id,
                         session_id=session.session_id,
                         event_type=ExecutorEventType.FAILED,
-                        message="Timed out waiting for user input.",
-                        metadata={**extra, "thread_id": session.thread_id or ""},
-                    )
-                return
-
-            if method == "thread/status/changed":
-                status_type = _get_nested(params, "status", "type")
-                if status_type == "systemError":
-                    yield ExecutorEvent(
-                        run_id=run.run_id,
-                        session_id=session.session_id,
-                        event_type=ExecutorEventType.FAILED,
-                        message="Codex thread entered systemError state.",
+                        message=str(error_message or "Codex turn failed."),
                         metadata={**extra, "thread_id": session.thread_id or ""},
                     )
                     return
+                if method == "error":
+                    continue
+
+                if method == "item/agentMessage/delta":
+                    item_id = params.get("itemId")
+                    delta = params.get("delta")
+                    if not isinstance(item_id, str) or not isinstance(delta, str) or not delta:
+                        continue
+                    if assistant_item_phases.get(item_id) != "commentary":
+                        continue
+                    accumulated = assistant_item_text.get(item_id, "") + delta
+                    assistant_item_text[item_id] = accumulated
+                    candidate = accumulated.strip()
+                    previous = assistant_item_emitted_text.get(item_id, "")
+                    if candidate and _should_emit_codex_delta_progress(candidate, previous):
+                        assistant_item_emitted_text[item_id] = candidate
+                        yield ExecutorEvent(
+                            run_id=run.run_id,
+                            session_id=session.session_id,
+                            event_type=ExecutorEventType.PROGRESS,
+                            message=candidate,
+                            metadata={
+                                **extra,
+                                "thread_id": session.thread_id or "",
+                                "source": "codex",
+                                "codex_item_id": item_id,
+                                "phase": "commentary",
+                            },
+                        )
+                    continue
+
+                if method in {"item/started", "item/completed"}:
+                    item = params.get("item")
+                    if isinstance(item, dict):
+                        item_type = item.get("type")
+                        if item_type in {"assistantMessage", "agentMessage"}:
+                            item_id = item.get("id")
+                            phase = item.get("phase")
+                            if isinstance(item_id, str):
+                                assistant_item_phases[item_id] = phase if isinstance(phase, str) else None
+                            extracted = _extract_item_text(item)
+                            if extracted:
+                                last_assistant_message = extracted
+                                if (
+                                    isinstance(item_id, str)
+                                    and assistant_item_emitted_text.get(item_id) == extracted
+                                ):
+                                    continue
+                                if phase == "final_answer":
+                                    continue
+                                if isinstance(item_id, str):
+                                    assistant_item_emitted_text[item_id] = extracted
+                                yield ExecutorEvent(
+                                    run_id=run.run_id,
+                                    session_id=session.session_id,
+                                    event_type=ExecutorEventType.PROGRESS,
+                                    message=extracted,
+                                    metadata={
+                                        **extra,
+                                        "thread_id": session.thread_id or "",
+                                        "source": "codex",
+                                        "phase": phase if isinstance(phase, str) else "",
+                                    },
+                                )
+                                continue
+                    continue
+
+                blocked_request = _extract_blocked_request(
+                    request_id=event.get("id"),
+                    method=method,
+                    params=params,
+                )
+                if blocked_request is not None:
+                    session.begin_blocked_wait()
+                    yield ExecutorEvent(
+                        run_id=run.run_id,
+                        session_id=session.session_id,
+                        event_type=ExecutorEventType.BLOCKED,
+                        message=blocked_request["message"],
+                        metadata={**extra, **blocked_request["metadata"]},
+                    )
+                    resolution = await session.wait_for_blocked_resolution(
+                        timeout_seconds=self._blocked_wait_timeout_seconds,
+                    )
+                    if resolution == "resolved":
+                        continue
+                    if resolution == "timed_out":
+                        yield ExecutorEvent(
+                            run_id=run.run_id,
+                            session_id=session.session_id,
+                            event_type=ExecutorEventType.FAILED,
+                            message="Timed out waiting for user input.",
+                            metadata={**extra, "thread_id": session.thread_id or ""},
+                        )
+                    return
+
+                if method == "thread/status/changed":
+                    status_type = _get_nested(params, "status", "type")
+                    if status_type == "systemError":
+                        yield ExecutorEvent(
+                            run_id=run.run_id,
+                            session_id=session.session_id,
+                            event_type=ExecutorEventType.FAILED,
+                            message="Codex thread entered systemError state.",
+                            metadata={**extra, "thread_id": session.thread_id or ""},
+                        )
+                        return
+        finally:
+            self._unregister_turn_queue(turn_id, event_queue)
 
     async def _ensure_thread(self, session: CodexExecutorSession, *, fork_existing: bool = True) -> str:
         if session.thread_id:
@@ -554,6 +654,45 @@ def _direct_bro_detail_input(task: Task) -> str | None:
         return None
     text = task.latest_instruction if isinstance(task.latest_instruction, str) else task.goal
     return text.strip() if text.strip() else task.title.strip()
+
+
+def _event_turn_id(params: dict[str, object]) -> str | None:
+    value = params.get("turnId")
+    if isinstance(value, str) and value:
+        return value
+    turn = params.get("turn")
+    if isinstance(turn, dict):
+        value = turn.get("id") or turn.get("turnId")
+        if isinstance(value, str) and value:
+            return value
+    item = params.get("item")
+    if isinstance(item, dict):
+        value = item.get("turnId")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _event_thread_id(params: dict[str, object]) -> str | None:
+    value = params.get("threadId")
+    if isinstance(value, str) and value:
+        return value
+    thread = params.get("thread")
+    if isinstance(thread, dict):
+        value = thread.get("id") or thread.get("threadId")
+        if isinstance(value, str) and value:
+            return value
+    turn = params.get("turn")
+    if isinstance(turn, dict):
+        value = turn.get("threadId")
+        if isinstance(value, str) and value:
+            return value
+    item = params.get("item")
+    if isinstance(item, dict):
+        value = item.get("threadId")
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def _sort_codex_threads(threads: list[dict[str, object]]) -> list[dict[str, object]]:

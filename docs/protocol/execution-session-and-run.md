@@ -102,9 +102,12 @@ Bro detail continuity:
   Codex `thread/read` for thread metadata plus a bounded `thread/turns/list`
   page with full turn items, then returns the hydrated snapshot and starts the
   selected-thread live layer in the background by loading/subscribing to the
-  native thread with Codex `thread/resume`. The executor node forwards
-  selected-thread events back to Newbro, and Newbro refreshes the public
-  `BroThread` projection from `thread/read` when relevant events arrive.
+  native thread with Codex `thread/resume`. The detached executor node keeps one
+  shared Codex app-server process for these operations; selected-thread
+  subscription records local event interest and must not spawn a separate
+  app-server process. The executor node forwards selected-thread events back to
+  Newbro, and Newbro refreshes the public `BroThread` projection from
+  `thread/read` when relevant events arrive.
   Leaving or replacing the selected thread must call the node's selected-thread
   close path, which in turn calls Codex `thread/unsubscribe`; stale events from
   older subscription ids are ignored. Hydration projects each returned turn into

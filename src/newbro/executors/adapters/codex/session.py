@@ -24,6 +24,7 @@ class CodexExecutorSession(ExecutorSession):
     _turn_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
     _blocked_resolution_event: asyncio.Event | None = PrivateAttr(default=None)
     _blocked_wait_result: Literal["resolved", "aborted"] | None = PrivateAttr(default=None)
+    _owns_client: bool = PrivateAttr(default=True)
 
     def attach(
         self,
@@ -37,7 +38,18 @@ class CodexExecutorSession(ExecutorSession):
         self._peer = peer
         self._client = client
         self._cwd = cwd
+        self._owns_client = True
         self._stderr_task = asyncio.create_task(self._collect_stderr())
+
+    def attach_shared(
+        self,
+        *,
+        client: CodexAppServerClient,
+        cwd: Path,
+    ) -> None:
+        self._client = client
+        self._cwd = cwd
+        self._owns_client = False
 
     @property
     def client(self) -> CodexAppServerClient:
@@ -60,7 +72,9 @@ class CodexExecutorSession(ExecutorSession):
         self._thread_id = value
 
     def is_alive(self) -> bool:
-        return self._process is not None and self._process.returncode is None
+        if self._process is not None:
+            return self._process.returncode is None
+        return self._client is not None
 
     @property
     def turn_lock(self) -> asyncio.Lock:
@@ -68,14 +82,14 @@ class CodexExecutorSession(ExecutorSession):
 
     async def close(self) -> None:
         self.abort_blocked_wait()
-        if self._process is not None and self._process.returncode is None:
+        if self._owns_client and self._process is not None and self._process.returncode is None:
             self._process.terminate()
             try:
                 await asyncio.wait_for(self._process.wait(), timeout=2)
             except asyncio.TimeoutError:
                 self._process.kill()
                 await self._process.wait()
-        if self._client is not None:
+        if self._owns_client and self._client is not None:
             await self._client.close()
         if self._stderr_task is not None:
             self._stderr_task.cancel()

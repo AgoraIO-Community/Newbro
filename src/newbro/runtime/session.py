@@ -750,6 +750,7 @@ class SessionRuntime:
     _last_codex_thread_sync_monotonic: float = field(default=0.0, init=False, repr=False)
     _selected_codex_thread_subscriptions: dict[str, SelectedCodexThreadSubscription] = field(default_factory=dict, init=False, repr=False)
     _selected_codex_thread_subscription_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False, repr=False)
+    _open_bro_thread_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
 
     async def snapshot(self, *, sync_imported_codex_threads: bool = True) -> SessionSnapshot:
         tasks = await self.blackboard.list_tasks()
@@ -949,16 +950,39 @@ class SessionRuntime:
         node_id = selected_session.executor_node_id if selected_session is not None else persona.executor_node_id
         if not node_id:
             raise ValueError("Selected Codex thread is not connected to an executor node.")
+
+        if persona.persona_id not in self._open_bro_thread_locks:
+            self._open_bro_thread_locks[persona.persona_id] = asyncio.Lock()
+        async with self._open_bro_thread_locks[persona.persona_id]:
+            return await self._open_bro_thread_locked(
+                persona=persona,
+                resolved_thread_id=resolved_thread_id,
+                thread_continuity_key=thread_continuity_key,
+                selected_session=selected_session,
+                resume_handle=resume_handle,
+                node_id=node_id,
+            )
+
+    async def _open_bro_thread_locked(
+        self,
+        *,
+        persona,
+        resolved_thread_id: str,
+        thread_continuity_key: str,
+        selected_session,
+        resume_handle,
+        node_id: str,
+    ) -> "SessionSnapshot":
         imported_thread = self._imported_codex_threads.get(resolved_thread_id)
         current_subscription = self._selected_codex_thread_subscriptions.get(persona.persona_id)
-        if (
-            current_subscription is not None
-            and (
-                current_subscription.public_thread_id != resolved_thread_id
-                or current_subscription.codex_thread_id != resume_handle.session_handle
-                or current_subscription.node_id != node_id
+        if current_subscription is not None:
+            same = (
+                current_subscription.public_thread_id == resolved_thread_id
+                and current_subscription.codex_thread_id == resume_handle.session_handle
+                and current_subscription.node_id == node_id
             )
-        ):
+            if same:
+                return await self.publish_snapshot(sync_imported_codex_threads=False)
             await self._stop_selected_codex_thread_subscription(persona_id=persona.persona_id, wait=False)
 
         thread = await self.executor_node_manager.request_codex_thread(
