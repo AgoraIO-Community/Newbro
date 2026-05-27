@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -452,8 +454,12 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
             )
         )
 
+        list_calls = 0
+
         async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+            nonlocal list_calls
             assert node_id == "node-forge"
+            list_calls += 1
             return [
                 CodexThreadListItem(
                     thread_id="codex-imported-newer-history",
@@ -564,6 +570,8 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
 
         subscription_calls: list[tuple[str, str, str]] = []
         unsubscribe_calls: list[tuple[str, str]] = []
+        subscription_started = asyncio.Event()
+        subscription_release = asyncio.Event()
         expected_session_id = session_id
 
         async def fake_subscribe_codex_thread(
@@ -584,6 +592,8 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
             assert thread_id == "codex-imported-native-history"
             assert workspace_id == "/tmp/elsewhere"
             subscription_calls.append((subscription_id, target_thread_id, thread_id))
+            subscription_started.set()
+            await subscription_release.wait()
 
         async def fake_unsubscribe_codex_thread(
             *,
@@ -601,16 +611,24 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
         monkeypatch.setattr(manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
 
         snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
+        assert list_calls == 1
+        runtime_session._last_codex_thread_sync_monotonic = 0
         original_thread_ids = [thread["thread_id"] for thread in snapshot["bro_threads"]]
         imported_thread = next(
             thread
             for thread in snapshot["bro_threads"]
             if thread["diagnostics"]["codex_thread_id"] == "codex-imported-native-history"
         )
-        response = await client.post(
-            f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
-            json={"target_persona_id": "forge"},
+        response = await asyncio.wait_for(
+            client.post(
+                f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
+                json={"target_persona_id": "forge"},
+            ),
+            timeout=0.5,
         )
+        await asyncio.wait_for(subscription_started.wait(), timeout=1.0)
+        subscription_release.set()
+        await asyncio.sleep(0)
         close_response = await client.request(
             "DELETE",
             f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
@@ -619,6 +637,7 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
 
     assert response.status_code == 200
     assert close_response.status_code == 200
+    assert list_calls == 1
     assert len(subscription_calls) == 1
     assert unsubscribe_calls == [(subscription_calls[0][0], "codex-imported-native-history")]
     opened = response.json()

@@ -114,6 +114,7 @@ MAX_TASK_INSTRUCTION_CHARS = 4000
 AUDIO_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "newbro-audio-artifacts"
 AUDIO_ACTIVE_RUN_STATUSES = {RunStatus.ASSIGNED, RunStatus.RUNNING, RunStatus.BLOCKED}
 SELECTED_THREAD_HISTORY_READ_TIMEOUT_SECONDS = 4.0
+SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS = 2.0
 BRO_THREAD_PREFIX = "bro-thread-"
 
 
@@ -748,8 +749,9 @@ class SessionRuntime:
     _codex_thread_sync_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _last_codex_thread_sync_monotonic: float = field(default=0.0, init=False, repr=False)
     _selected_codex_thread_subscriptions: dict[str, SelectedCodexThreadSubscription] = field(default_factory=dict, init=False, repr=False)
+    _selected_codex_thread_subscription_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False, repr=False)
 
-    async def snapshot(self) -> SessionSnapshot:
+    async def snapshot(self, *, sync_imported_codex_threads: bool = True) -> SessionSnapshot:
         tasks = await self.blackboard.list_tasks()
         sessions = await self.blackboard.list_sessions()
         runs = await self.blackboard.list_runs()
@@ -773,9 +775,13 @@ class SessionRuntime:
             if summary is not None
         ]
         personas = await self.blackboard.list_personas()
-        imported_threads = await self._sync_imported_codex_threads(
-            personas=personas,
-            sessions=sessions,
+        imported_threads = (
+            await self._sync_imported_codex_threads(
+                personas=personas,
+                sessions=sessions,
+            )
+            if sync_imported_codex_threads
+            else list(self._imported_codex_threads.values())
         )
         return SessionSnapshot(
             session_id=self.session_id,
@@ -918,10 +924,12 @@ class SessionRuntime:
         if not self.executor_node_manager.is_executor_connected("codex", node_id=persona.executor_node_id):
             raise ValueError("Selected Bro's Codex executor node is not connected.")
 
-        await self._sync_imported_codex_threads(
-            personas=await self.blackboard.list_personas(),
-            sessions=await self.blackboard.list_sessions(),
-        )
+        sessions = await self.blackboard.list_sessions()
+        if await self._codex_thread_open_needs_import_sync(persona=persona, target_thread_id=thread_id):
+            await self._sync_imported_codex_threads(
+                personas=await self.blackboard.list_personas(),
+                sessions=sessions,
+            )
         resolved_thread_id, thread_continuity_key, selected_session, imported_resume_handle = await self._resolve_bro_thread_target(
             persona=persona,
             target_thread_id=thread_id,
@@ -936,7 +944,7 @@ class SessionRuntime:
             or not isinstance(resume_handle.session_handle, str)
             or not resume_handle.session_handle
         ):
-            return await self.publish_snapshot()
+            return await self.publish_snapshot(sync_imported_codex_threads=False)
 
         node_id = selected_session.executor_node_id if selected_session is not None else persona.executor_node_id
         if not node_id:
@@ -951,7 +959,7 @@ class SessionRuntime:
                 or current_subscription.node_id != node_id
             )
         ):
-            await self._stop_selected_codex_thread_subscription(persona_id=persona.persona_id)
+            await self._stop_selected_codex_thread_subscription(persona_id=persona.persona_id, wait=False)
 
         thread = await self.executor_node_manager.request_codex_thread(
             node_id=node_id,
@@ -968,22 +976,26 @@ class SessionRuntime:
             thread=thread,
             fallback_timestamp=imported_thread.updated_at if imported_thread is not None else None,
         )
-        try:
-            await self._replace_selected_codex_thread_subscription(
-                persona=persona,
-                public_thread_id=resolved_thread_id,
-                thread_continuity_key=thread_continuity_key,
-                node_id=node_id,
-                resume_handle=resume_handle,
-                fallback_timestamp=imported_thread.updated_at if imported_thread is not None else None,
-            )
-        except Exception as exc:
-            LOGGER.warning(
-                "Selected Codex thread subscription failed for %s after hydration: %s",
-                resume_handle.session_handle,
-                exc,
-            )
-        return await self.publish_snapshot()
+        self._schedule_selected_codex_thread_subscription(
+            persona=persona,
+            public_thread_id=resolved_thread_id,
+            thread_continuity_key=thread_continuity_key,
+            node_id=node_id,
+            resume_handle=resume_handle,
+            fallback_timestamp=imported_thread.updated_at if imported_thread is not None else None,
+        )
+        return await self.publish_snapshot(sync_imported_codex_threads=False)
+
+    async def _codex_thread_open_needs_import_sync(self, *, persona, target_thread_id: str) -> bool:
+        if await self._find_codex_thread_session_for_persona(persona.persona_id, target_thread_id) is not None:
+            return False
+        imported = self._imported_codex_threads.get(target_thread_id)
+        imported_resume_handle = self._imported_codex_thread_resume_handles.get(target_thread_id)
+        return not (
+            imported is not None
+            and imported.persona_id == persona.persona_id
+            and imported_resume_handle is not None
+        )
 
     async def close_bro_thread(
         self,
@@ -995,7 +1007,7 @@ class SessionRuntime:
             persona_id=target_persona_id,
             public_thread_id=thread_id,
         )
-        return await self.publish_snapshot()
+        return await self.publish_snapshot(sync_imported_codex_threads=False)
 
     async def _replace_selected_codex_thread_subscription(
         self,
@@ -1006,6 +1018,7 @@ class SessionRuntime:
         node_id: str,
         resume_handle: AgentResumeHandle,
         fallback_timestamp: str | None,
+        stop_wait: bool = True,
     ) -> bool:
         codex_thread_id = resume_handle.session_handle
         if not isinstance(codex_thread_id, str) or not codex_thread_id:
@@ -1018,7 +1031,11 @@ class SessionRuntime:
             and current.node_id == node_id
         ):
             return False
-        await self._stop_selected_codex_thread_subscription(persona_id=persona.persona_id)
+        await self._stop_selected_codex_thread_subscription(
+            persona_id=persona.persona_id,
+            wait=stop_wait,
+            cancel_pending=False,
+        )
         subscription_id = f"codex-sub-{uuid4().hex[:12]}"
         workspace_id = None
         cwd = resume_handle.opaque.get("cwd")
@@ -1032,6 +1049,7 @@ class SessionRuntime:
             target_thread_id=public_thread_id,
             thread_id=codex_thread_id,
             workspace_id=workspace_id,
+            timeout_seconds=SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS,
         )
         self._selected_codex_thread_subscriptions[persona.persona_id] = SelectedCodexThreadSubscription(
             subscription_id=subscription_id,
@@ -1045,37 +1063,92 @@ class SessionRuntime:
         )
         return True
 
+    def _schedule_selected_codex_thread_subscription(
+        self,
+        *,
+        persona,
+        public_thread_id: str,
+        thread_continuity_key: str,
+        node_id: str,
+        resume_handle: AgentResumeHandle,
+        fallback_timestamp: str | None,
+    ) -> None:
+        existing = self._selected_codex_thread_subscription_tasks.pop(persona.persona_id, None)
+        if existing is not None and not existing.done():
+            existing.cancel()
+
+        async def subscribe() -> None:
+            try:
+                await self._replace_selected_codex_thread_subscription(
+                    persona=persona,
+                    public_thread_id=public_thread_id,
+                    thread_continuity_key=thread_continuity_key,
+                    node_id=node_id,
+                    resume_handle=resume_handle,
+                    fallback_timestamp=fallback_timestamp,
+                    stop_wait=False,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                LOGGER.warning(
+                    "Selected Codex thread subscription failed for %s after hydration: %s",
+                    resume_handle.session_handle,
+                    exc,
+                )
+            finally:
+                current = self._selected_codex_thread_subscription_tasks.get(persona.persona_id)
+                if current is task:
+                    self._selected_codex_thread_subscription_tasks.pop(persona.persona_id, None)
+
+        task = asyncio.create_task(subscribe())
+        self._selected_codex_thread_subscription_tasks[persona.persona_id] = task
+
     async def _stop_selected_codex_thread_subscription(
         self,
         *,
         persona_id: str,
         public_thread_id: str | None = None,
+        wait: bool = True,
+        cancel_pending: bool = True,
     ) -> None:
+        if cancel_pending:
+            pending = self._selected_codex_thread_subscription_tasks.pop(persona_id, None)
+            if pending is not None and not pending.done():
+                pending.cancel()
         current = self._selected_codex_thread_subscriptions.get(persona_id)
         if current is None:
             return
         if public_thread_id is not None and current.public_thread_id != public_thread_id:
             return
         self._selected_codex_thread_subscriptions.pop(persona_id, None)
-        try:
-            response = await self.executor_node_manager.unsubscribe_codex_thread(
-                node_id=current.node_id,
-                subscription_id=current.subscription_id,
-                thread_id=current.codex_thread_id,
+
+        async def unsubscribe() -> None:
+            try:
+                response = await self.executor_node_manager.unsubscribe_codex_thread(
+                    node_id=current.node_id,
+                    subscription_id=current.subscription_id,
+                    thread_id=current.codex_thread_id,
+                    timeout_seconds=SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS,
+                )
+                status = response.status if response is not None else "node_unavailable"
+            except Exception as exc:
+                status = f"error:{exc}"
+            LOGGER.info(
+                "Stopped selected Codex thread subscription",
+                extra={
+                    "session_id": self.session_id,
+                    "persona_id": persona_id,
+                    "public_thread_id": current.public_thread_id,
+                    "codex_thread_id": current.codex_thread_id,
+                    "unsubscribe_status": status,
+                },
             )
-            status = response.status if response is not None else "node_unavailable"
-        except Exception as exc:
-            status = f"error:{exc}"
-        LOGGER.info(
-            "Stopped selected Codex thread subscription",
-            extra={
-                "session_id": self.session_id,
-                "persona_id": persona_id,
-                "public_thread_id": current.public_thread_id,
-                "codex_thread_id": current.codex_thread_id,
-                "unsubscribe_status": status,
-            },
-        )
+
+        if not wait:
+            asyncio.create_task(unsubscribe())
+            return
+        await unsubscribe()
 
     async def handle_codex_thread_event(self, message: CodexThreadEventMessage) -> None:
         current = self._selected_codex_thread_subscriptions.get(message.target_persona_id)
@@ -1835,8 +1908,8 @@ class SessionRuntime:
         if not self.subscribers and self._snapshot_task is not None:
             self._snapshot_task.cancel()
 
-    async def publish_snapshot(self) -> SessionSnapshot:
-        snapshot = await self.snapshot()
+    async def publish_snapshot(self, *, sync_imported_codex_threads: bool = True) -> SessionSnapshot:
+        snapshot = await self.snapshot(sync_imported_codex_threads=sync_imported_codex_threads)
         await self._broadcast_event(self._snapshot_event(snapshot))
         return snapshot
 

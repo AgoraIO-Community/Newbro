@@ -98,14 +98,16 @@ Current behavior:
   direct text/PTT sends include that target so completed selected Codex threads
   resume through their stored execution-session resume handle. The frontend does
   not call Codex app-server subscription APIs directly: Newbro's open-thread
-  endpoint asks the bound executor node to load/subscribe to the native Codex
-  thread, and the close-thread endpoint releases that subscription when Bro
-  Detail leaves the thread, starts a new pending thread, or unmounts. The
+  endpoint fetches selected-thread history and then asks the bound executor node
+  to load/subscribe to the native Codex thread in the background, and the
+  close-thread endpoint releases that subscription when Bro Detail leaves the
+  thread, starts a new pending thread, or unmounts. The
   snapshot can include Codex threads imported through the connected executor
   node's `thread/list` capability even when Newbro has not created task history
-  for that native thread yet; opening one fetches Codex `thread/read` history
-  before rendering the selected timeline, and later selected-thread events
-  refresh the same snapshot stream. The selected timeline is filtered by the
+  for that native thread yet; opening one reuses the cached imported-thread
+  projection instead of refreshing the global list, fetches Codex `thread/read`
+  history before rendering the selected timeline, and later selected-thread
+  events refresh the same snapshot stream. The selected timeline is filtered by the
   selected thread's `task_ids` before timeline limits are applied. It renders
   both sides of fetched/direct turns: each synced user instruction appears as a
   user bubble, followed by the executor task/progress/assistant output. User
