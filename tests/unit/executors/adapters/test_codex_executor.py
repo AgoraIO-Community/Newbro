@@ -44,6 +44,7 @@ def _write_fake_codex(
                 params = msg.get("params", {{}})
                 request_id = msg.get("id")
                 if method == "initialize":
+                    assert params.get("capabilities", {{}}).get("experimentalApi") is True
                     send({{"id": request_id, "result": {{"ok": True}}}})
                 elif method == "initialized":
                     continue
@@ -453,6 +454,7 @@ def _write_thread_turns_list_fake_codex(tmp_path):
                 params = msg.get("params", {{}})
                 request_id = msg.get("id")
                 if method == "initialize":
+                    assert params.get("capabilities", {{}}).get("experimentalApi") is True
                     send({{"id": request_id, "result": {{"ok": True}}}})
                 elif method == "initialized":
                     continue

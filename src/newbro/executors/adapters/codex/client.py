@@ -18,7 +18,7 @@ class CodexAppServerClient:
                     "version": "0.1",
                 },
                 "capabilities": {
-                    "experimental_api": True,
+                    "experimentalApi": True,
                 },
             },
         )
