@@ -36,7 +36,9 @@ export type BroTaskRecord = {
   progress: number;
   description: string;
   summary: string;
+  timestamp?: string;
   timeLabel?: string;
+  timestampLabel?: string;
 };
 
 export type BroThreadRecord = {

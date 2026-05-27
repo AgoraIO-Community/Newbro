@@ -16,6 +16,7 @@ import {
 import { readThreadIdFromUrl, replaceThreadIdInUrl } from "./lib/session-url";
 import { buildBroCardModels, buildBroTaskRecords, buildBroThreadRecords } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
+import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
 import type { ExecutionRun, ExecutorNodeRecord, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
@@ -39,6 +40,8 @@ type AudioTurn = {
   threadId?: string | null;
   status: AudioTurnStatus;
   durationMs: number;
+  createdAt?: string;
+  timestampLabel?: string;
   error?: string;
   transcript?: string;
 };
@@ -49,6 +52,8 @@ type TextTurn = {
   threadId?: string | null;
   text: string;
   status: TextTurnStatus;
+  createdAt?: string;
+  timestampLabel?: string;
   error?: string;
 };
 
@@ -56,7 +61,16 @@ type ChatMessage = {
   role: "user" | "assistant";
   text: string;
   id: string;
+  createdAt?: string;
 };
+
+type TimelineEntry =
+  | { kind: "text"; id: string; timestamp?: string; turn: TextTurn; index: number }
+  | { kind: "audio"; id: string; timestamp?: string; turn: AudioTurn; index: number }
+  | { kind: "conversation"; id: string; timestamp?: string; message: ChatMessage; index: number }
+  | { kind: "record"; id: string; timestamp?: string; record: BroTaskRecord; index: number };
+
+const THREAD_LIST_PAGE_SIZE = 25;
 
 function turnMatchesThread<T extends { threadId?: string | null }>(turn: T, threadId: string | null): boolean {
   return !threadId || !turn.threadId || turn.threadId === threadId;
@@ -83,6 +97,108 @@ function formatAudioDuration(durationMs: number): string {
   return `${minutes}:${seconds}`;
 }
 
+function formatMessageTimestamp(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return undefined;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
+function timelineTimestamp(value: string | undefined): number {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
+}
+
+function timelineKindOrder(kind: TimelineEntry["kind"]): number {
+  if (kind === "text" || kind === "audio") return 0;
+  if (kind === "record") return 1;
+  return 2;
+}
+
+function buildTimelineEntries({
+  records,
+  textTurns,
+  audioTurns,
+  conversationMessages,
+}: {
+  records: BroTaskRecord[];
+  textTurns: TextTurn[];
+  audioTurns: AudioTurn[];
+  conversationMessages: ChatMessage[];
+}): TimelineEntry[] {
+  const entries: TimelineEntry[] = [
+    ...records.map((record, index) => ({
+      kind: "record" as const,
+      id: `record-${record.taskId}`,
+      timestamp: record.timestamp,
+      record,
+      index,
+    })),
+    ...textTurns.map((turn, index) => ({
+      kind: "text" as const,
+      id: `text-${turn.id}`,
+      timestamp: turn.createdAt,
+      turn,
+      index,
+    })),
+    ...audioTurns.map((turn, index) => ({
+      kind: "audio" as const,
+      id: `audio-${turn.id}`,
+      timestamp: turn.createdAt,
+      turn,
+      index,
+    })),
+    ...conversationMessages.map((message, index) => ({
+      kind: "conversation" as const,
+      id: `conversation-${message.id}`,
+      timestamp: message.createdAt,
+      message,
+      index,
+    })),
+  ];
+  return entries.sort((left, right) => {
+    const timeDelta = timelineTimestamp(left.timestamp) - timelineTimestamp(right.timestamp);
+    if (timeDelta !== 0) return timeDelta;
+    const kindDelta = timelineKindOrder(left.kind) - timelineKindOrder(right.kind);
+    if (kindDelta !== 0) return kindDelta;
+    return left.index - right.index;
+  });
+}
+
+function MessageMeta({
+  label,
+  timestamp,
+  error,
+}: {
+  label: string;
+  timestamp?: string;
+  error?: string;
+}) {
+  return (
+    <>
+      <span>{label}</span>
+      {timestamp ? (
+        <>
+          <span> · </span>
+          <span>{timestamp}</span>
+        </>
+      ) : null}
+      {error ? (
+        <>
+          <span> · </span>
+          <span>{error}</span>
+        </>
+      ) : null}
+    </>
+  );
+}
+
 function audioTurnMeta(turn: AudioTurn): string {
   const duration = formatAudioDuration(turn.durationMs);
   if (turn.status === "recording") return "Recording";
@@ -102,8 +218,11 @@ function AudioTurnBubble({ bro, turn, mobile = false }: { bro: BroCardModel; tur
         <span className="nb-audio-duration">{formatAudioDuration(turn.durationMs)}</span>
       </div>
       <div className={metaClass}>
-        {audioTurnMeta(turn)}
-        {turn.status === "failed" && turn.error ? ` · ${turn.error}` : ""}
+        <MessageMeta
+          label={audioTurnMeta(turn)}
+          timestamp={turn.timestampLabel ?? formatMessageTimestamp(turn.createdAt)}
+          error={turn.status === "failed" ? turn.error : undefined}
+        />
       </div>
       {turn.transcript ? <div className="nb-audio-transcript">{turn.transcript}</div> : null}
       <span className="sr-only">
@@ -121,8 +240,11 @@ function TextTurnBubble({ turn, mobile = false }: { turn: TextTurn; mobile?: boo
     <div className={`${prefix}-turn ${prefix}-turn-you`}>
       <div className={`${prefix}-bubble ${prefix}-bubble-you${turn.status === "failed" ? " ob-bubble-failed" : ""}`}>{turn.text}</div>
       <div className={metaClass}>
-        {meta}
-        {turn.status === "failed" && turn.error ? ` · ${turn.error}` : ""}
+        <MessageMeta
+          label={meta}
+          timestamp={turn.timestampLabel ?? formatMessageTimestamp(turn.createdAt)}
+          error={turn.status === "failed" ? turn.error : undefined}
+        />
       </div>
     </div>
   );
@@ -162,6 +284,7 @@ function SyncedTaskRecordTurn({
             broId: bro.id,
             text: record.userText ?? "",
             status: "sent",
+            timestampLabel: record.timestampLabel,
           }}
           mobile={mobile}
         />
@@ -186,16 +309,21 @@ function TaskRecordCard({ bro, record, mobile = false }: { bro: BroCardModel; re
   const pctClass = mobile ? "thr-status-pct" : "dt-status-pct";
   const barClass = mobile ? "thr-status-bar" : "dt-status-bar";
   const footClass = mobile ? "thr-status-foot" : "dt-status-foot";
+  const bodyText = record.summary || record.description || bro.progressLabel;
   return (
     <div className={`${prefix}-turn ${prefix}-turn-bro`}>
       <div className={`${statusClass}${active ? "" : ` ${doneClass}`}`}>
         <div className={`${statusClass}-head`}>
           {active ? <span className={spinClass} /> : <span className={doneDotClass} />}
           <span className={titleClass}>{record.title}</span>
-          <span className={pctClass}>{record.statusLabel}</span>
+          <span className={pctClass}>
+            <MessageMeta label={record.statusLabel} timestamp={record.timestampLabel} />
+          </span>
         </div>
         <div className={barClass}><i style={{ width: `${Math.max(8, Math.min(100, Math.round(record.progress)))}%` }} /></div>
-        <div className={footClass}>{record.description || record.summary || bro.progressLabel}</div>
+        <div className={`${footClass} ${prefix}-task-body`}>
+          <MarkdownText>{bodyText}</MarkdownText>
+        </div>
       </div>
     </div>
   );
@@ -208,7 +336,9 @@ function ConversationMessageBubble({ bro, message, mobile = false }: { bro: BroC
   return (
     <div className={`${prefix}-turn ${isUser ? `${prefix}-turn-you` : `${prefix}-turn-bro`}`}>
       <div className={`${prefix}-bubble ${isUser ? `${prefix}-bubble-you` : `${prefix}-bubble-bro`}`}>{message.text}</div>
-      <div className={metaClass}>{isUser ? "You" : bro.name}</div>
+      <div className={metaClass}>
+        <MessageMeta label={isUser ? "You" : bro.name} timestamp={formatMessageTimestamp(message.createdAt)} />
+      </div>
     </div>
   );
 }
@@ -339,6 +469,7 @@ function usePushToTalkAudio({
     stream: MediaStream;
     chunks: Blob[];
     startedAt: number;
+    createdAt: string;
     turnId: string;
   } | null>(null);
 
@@ -356,13 +487,14 @@ function usePushToTalkAudio({
         stream,
         chunks: [] as Blob[],
         startedAt: Date.now(),
+        createdAt: new Date().toISOString(),
         turnId,
       };
       recorder.addEventListener("dataavailable", (event) => {
         if (event.data.size > 0) active.chunks.push(event.data);
       });
       activeRef.current = active;
-      onTurn({ id: turnId, broId, threadId: targetThreadId, status: "recording", durationMs: 0 });
+      onTurn({ id: turnId, broId, threadId: targetThreadId, status: "recording", durationMs: 0, createdAt: active.createdAt });
       setPhase("recording");
       recorder.start();
     } catch (error: unknown) {
@@ -379,7 +511,7 @@ function usePushToTalkAudio({
     const blob = await stopRecorder(active);
     try {
       const pcm = await mediaBlobToPcm16(blob);
-      onTurn({ id: active.turnId, broId, threadId: targetThreadId, status: "sending", durationMs: pcm.durationMs || durationMs });
+      onTurn({ id: active.turnId, broId, threadId: targetThreadId, status: "sending", durationMs: pcm.durationMs || durationMs, createdAt: active.createdAt });
       const response = await submitExecutorAudioInstruction(sessionId, {
         targetPersonaId: broId,
         targetThreadId,
@@ -390,11 +522,11 @@ function usePushToTalkAudio({
         samplesPerChannel: pcm.samplesPerChannel,
       });
       onRemoveTurn(active.turnId);
-      onTurn({ id: response.audio_instruction_id, broId, threadId: response.target_thread_id ?? targetThreadId, status: "sent", durationMs: pcm.durationMs || durationMs });
+      onTurn({ id: response.audio_instruction_id, broId, threadId: response.target_thread_id ?? targetThreadId, status: "sent", durationMs: pcm.durationMs || durationMs, createdAt: active.createdAt });
       onSent();
     } catch (error: unknown) {
       const message = describeError(error, "Audio could not be sent.");
-      onTurn({ id: active.turnId, broId, threadId: targetThreadId, status: "failed", durationMs, error: message });
+      onTurn({ id: active.turnId, broId, threadId: targetThreadId, status: "failed", durationMs, createdAt: active.createdAt, error: message });
       onError(message);
     } finally {
       setPhase("idle");
@@ -1128,6 +1260,7 @@ function ThreadPanel({
 }) {
   const shell = useNewbroShell();
   const draftText = shell.draftSession?.current_draft?.text ?? "";
+  const timelineEntries = buildTimelineEntries({ records, textTurns, audioTurns, conversationMessages });
 
   return (
     <>
@@ -1164,18 +1297,22 @@ function ThreadPanel({
           <div className="dt-bubble-meta">Draft · ready to send</div>
         </div>
       ) : null}
-      {textTurns.map((turn) => <TextTurnBubble key={turn.id} turn={turn} />)}
-      {audioTurns.map((turn) => <AudioTurnBubble key={turn.id} bro={bro} turn={turn} />)}
-      {conversationMessages.map((message) => <ConversationMessageBubble key={message.id} bro={bro} message={message} />)}
-      {records.map((record) => (
-        <SyncedTaskRecordTurn
-          key={record.taskId}
-          bro={bro}
-          record={record}
-          textTurns={textTurns}
-          audioTurns={audioTurns}
-        />
-      ))}
+      {timelineEntries.map((entry) => {
+        if (entry.kind === "text") return <TextTurnBubble key={entry.id} turn={entry.turn} />;
+        if (entry.kind === "audio") return <AudioTurnBubble key={entry.id} bro={bro} turn={entry.turn} />;
+        if (entry.kind === "conversation") {
+          return <ConversationMessageBubble key={entry.id} bro={bro} message={entry.message} />;
+        }
+        return (
+          <SyncedTaskRecordTurn
+            key={entry.id}
+            bro={bro}
+            record={entry.record}
+            textTurns={textTurns}
+            audioTurns={audioTurns}
+          />
+        );
+      })}
       {records.length === 0 && textTurns.length === 0 && audioTurns.length === 0 && conversationMessages.length === 0 ? (
         <div className="dt-turn dt-turn-bro">
           <div className="dt-bubble dt-bubble-bro">
@@ -1247,7 +1384,8 @@ function MobileThreadSurface({
     const text = draft.trim();
     if (!text || textDisabled || !shell.activeShellSessionId) return;
     const turnId = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending" });
+    const createdAt = new Date().toISOString();
+    onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending", createdAt });
     setDraft("");
     try {
       const response = await submitExecutorTextInstruction(shell.activeShellSessionId, {
@@ -1257,11 +1395,11 @@ function MobileThreadSurface({
         text,
       });
       onThreadResolved(response.target_thread_id);
-      onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent" });
+      onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent", createdAt });
       await shell.refreshShellSession();
     } catch (error: unknown) {
       const message = describeError(error, "Text could not be sent.");
-      onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", error: message });
+      onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", createdAt, error: message });
       shell.setShellError(message);
     }
   }
@@ -1274,6 +1412,8 @@ function MobileThreadSurface({
       void shell.startMobileVoiceSession(bro.id);
     }
   }
+
+  const timelineEntries = buildTimelineEntries({ records, textTurns, audioTurns, conversationMessages });
 
   return (
     <>
@@ -1318,19 +1458,23 @@ function MobileThreadSurface({
             </div>
           </div>
         ) : null}
-        {textTurns.map((turn) => <TextTurnBubble key={turn.id} turn={turn} mobile />)}
-        {audioTurns.map((turn) => <AudioTurnBubble key={turn.id} bro={bro} turn={turn} mobile />)}
-        {conversationMessages.map((message) => <ConversationMessageBubble key={message.id} bro={bro} message={message} mobile />)}
-        {records.map((record) => (
-          <SyncedTaskRecordTurn
-            key={record.taskId}
-            bro={bro}
-            record={record}
-            textTurns={textTurns}
-            audioTurns={audioTurns}
-            mobile
-          />
-        ))}
+        {timelineEntries.map((entry) => {
+          if (entry.kind === "text") return <TextTurnBubble key={entry.id} turn={entry.turn} mobile />;
+          if (entry.kind === "audio") return <AudioTurnBubble key={entry.id} bro={bro} turn={entry.turn} mobile />;
+          if (entry.kind === "conversation") {
+            return <ConversationMessageBubble key={entry.id} bro={bro} message={entry.message} mobile />;
+          }
+          return (
+            <SyncedTaskRecordTurn
+              key={entry.id}
+              bro={bro}
+              record={entry.record}
+              textTurns={textTurns}
+              audioTurns={audioTurns}
+              mobile
+            />
+          );
+        })}
         {records.length === 0 && textTurns.length === 0 && audioTurns.length === 0 && conversationMessages.length === 0 ? (
           <div className="thr-turn thr-turn-bro">
             <div className="thr-bubble thr-bubble-bro">
@@ -1500,7 +1644,8 @@ function DesktopComposerBar({
     const text = draft.trim();
     if (!text || textDisabled || !shell.activeShellSessionId) return;
     const turnId = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending" });
+    const createdAt = new Date().toISOString();
+    onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending", createdAt });
     setDraft("");
     try {
       const response = await submitExecutorTextInstruction(shell.activeShellSessionId, {
@@ -1510,11 +1655,11 @@ function DesktopComposerBar({
         text,
       });
       onThreadResolved(response.target_thread_id);
-      onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent" });
+      onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent", createdAt });
       await shell.refreshShellSession();
     } catch (error: unknown) {
       const message = describeError(error, "Text could not be sent.");
-      onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", error: message });
+      onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", createdAt, error: message });
       shell.setShellError(message);
     }
   }
@@ -1599,26 +1744,31 @@ function DesktopComposerBar({
 function DesktopActivityRail({
   bro,
   threads,
+  totalThreadCount,
   selectedThreadId,
   pendingNewThread,
   onSelectThread,
   onNewThread,
+  onShowMore,
   offline,
 }: {
   bro: BroCardModel;
   threads: BroThreadRecord[];
+  totalThreadCount: number;
   selectedThreadId: string | null;
   pendingNewThread: boolean;
   onSelectThread: (threadId: string) => void;
   onNewThread: () => void;
+  onShowMore: () => void;
   offline: ExecutorNodeRecord | null;
 }) {
   const threadList = threads ?? [];
+  const hiddenThreadCount = Math.max(0, totalThreadCount - threadList.length);
   return (
     <aside className="dt-activity nb-detail-activity" aria-label={`${bro.name} threads`}>
       <section className="dt-activity-block">
         <div className="dt-activity-block-head">
-          <span className="ob-eyebrow">THREADS WITH {bro.name.toUpperCase()} · {threadList.length + (pendingNewThread ? 1 : 0)}</span>
+          <span className="ob-eyebrow">THREADS WITH {bro.name.toUpperCase()} · {totalThreadCount + (pendingNewThread ? 1 : 0)}</span>
         </div>
         <ul className="dt-threadlist">
           {pendingNewThread ? (
@@ -1647,8 +1797,6 @@ function DesktopActivityRail({
                   <span className="dt-threadlist-title">{thread.title}</span>
                   <span className="dt-threadlist-meta">
                     <span>{thread.timeLabel || thread.statusLabel}</span>
-                    <span className="dt-bro-meta-sep">·</span>
-                    <span>{thread.taskIds.length} task{thread.taskIds.length === 1 ? "" : "s"}</span>
                   </span>
                 </span>
                 <span className={`dt-threadlist-pip${offline ? " dt-threadlist-pip-paused" : ""}`} />
@@ -1656,6 +1804,12 @@ function DesktopActivityRail({
             </li>
           ))}
         </ul>
+        {hiddenThreadCount > 0 ? (
+          <button type="button" className="dt-thread-more" onClick={onShowMore}>
+            <Layers size={12} strokeWidth={2.2} aria-hidden="true" />
+            <span>Show {Math.min(THREAD_LIST_PAGE_SIZE, hiddenThreadCount)} more</span>
+          </button>
+        ) : null}
         <button type="button" className="dt-thread-new" onClick={onNewThread}>
           <Plus size={12} strokeWidth={2.4} aria-hidden="true" />
           <span>New thread with {bro.name}</span>
@@ -1699,6 +1853,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readThreadIdFromUrl());
   const [pendingNewThread, setPendingNewThread] = useState(false);
+  const [threadVisibleCount, setThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const openedThreadRef = useRef<string | null>(null);
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
@@ -1710,6 +1865,10 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     ? threads.find((thread) => thread.threadId === selectedThreadId) ?? threads[0] ?? null
     : null;
   const activeThreadId = pendingNewThread ? null : selectedThread?.threadId ?? null;
+  const visibleThreads = useMemo(
+    () => threads.slice(0, threadVisibleCount),
+    [threadVisibleCount, threads],
+  );
   const records = bro?.source === "runtime"
     ? buildBroTaskRecords(bro.id, {
         activeTaskId: persona?.current_task_id ?? null,
@@ -1730,6 +1889,17 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
       replaceThreadIdInUrl(threads[0].threadId);
     }
   }, [pendingNewThread, selectedThreadId, threads]);
+
+  useEffect(() => {
+    setThreadVisibleCount(THREAD_LIST_PAGE_SIZE);
+  }, [broId]);
+
+  useEffect(() => {
+    if (!activeThreadId) return;
+    const selectedIndex = threads.findIndex((thread) => thread.threadId === activeThreadId);
+    if (selectedIndex < threadVisibleCount) return;
+    setThreadVisibleCount(Math.ceil((selectedIndex + 1) / THREAD_LIST_PAGE_SIZE) * THREAD_LIST_PAGE_SIZE);
+  }, [activeThreadId, threadVisibleCount, threads]);
 
   function selectThread(threadId: string) {
     setPendingNewThread(false);
@@ -1813,11 +1983,13 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
         <div className="dt-detail-v2 nb-detail-runtime">
           <DesktopActivityRail
             bro={bro}
-            threads={threads}
+            threads={visibleThreads}
+            totalThreadCount={threads.length}
             selectedThreadId={activeThreadId}
             pendingNewThread={pendingNewThread}
             onSelectThread={selectThread}
             onNewThread={newThread}
+            onShowMore={() => setThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE)}
             offline={offline}
           />
           <section className="dt-pane">
@@ -1985,6 +2157,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readThreadIdFromUrl());
   const [pendingNewThread, setPendingNewThread] = useState(false);
+  const [drawerThreadVisibleCount, setDrawerThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const openedThreadRef = useRef<string | null>(null);
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const offline = nodeState.kind === "usable_disconnected" ? nodeState.node : null;
@@ -1995,6 +2168,11 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
     ? threads.find((thread) => thread.threadId === selectedThreadId) ?? threads[0] ?? null
     : null;
   const activeThreadId = pendingNewThread ? null : selectedThread?.threadId ?? null;
+  const visibleDrawerThreads = useMemo(
+    () => threads.slice(0, drawerThreadVisibleCount),
+    [drawerThreadVisibleCount, threads],
+  );
+  const hiddenDrawerThreadCount = Math.max(0, threads.length - visibleDrawerThreads.length);
   const records = bro.source === "runtime"
     ? buildBroTaskRecords(bro.id, {
         activeTaskId: persona?.current_task_id ?? null,
@@ -2020,6 +2198,15 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
       replaceThreadIdInUrl(threads[0].threadId);
     }
   }, [pendingNewThread, selectedThreadId, threads]);
+  useEffect(() => {
+    setDrawerThreadVisibleCount(THREAD_LIST_PAGE_SIZE);
+  }, [bro.id]);
+  useEffect(() => {
+    if (!activeThreadId) return;
+    const selectedIndex = threads.findIndex((thread) => thread.threadId === activeThreadId);
+    if (selectedIndex < drawerThreadVisibleCount) return;
+    setDrawerThreadVisibleCount(Math.ceil((selectedIndex + 1) / THREAD_LIST_PAGE_SIZE) * THREAD_LIST_PAGE_SIZE);
+  }, [activeThreadId, drawerThreadVisibleCount, threads]);
   function selectThread(threadId: string) {
     setPendingNewThread(false);
     setSelectedThreadId(threadId);
@@ -2145,7 +2332,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
                 </button>
               </li>
             ) : null}
-            {threads.map((thread) => (
+            {visibleDrawerThreads.map((thread) => (
               <li key={thread.threadId}>
                 <button
                   type="button"
@@ -2157,8 +2344,12 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
                   <span className="thr-drawer-item-title">{thread.title}</span>
                   <span className="thr-drawer-item-meta">
                     <span className="thr-drawer-item-state">{thread.statusLabel}</span>
-                    <span className="thr-drawer-item-sep">·</span>
-                    <span className="thr-drawer-item-when">{thread.timeLabel || `${thread.taskIds.length} task${thread.taskIds.length === 1 ? "" : "s"}`}</span>
+                    {thread.timeLabel ? (
+                      <>
+                        <span className="thr-drawer-item-sep">·</span>
+                        <span className="thr-drawer-item-when">{thread.timeLabel}</span>
+                      </>
+                    ) : null}
                   </span>
                 </span>
                 {!pendingNewThread && activeThreadId === thread.threadId ? (
@@ -2170,6 +2361,16 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
               </li>
             ))}
           </ul>
+          {hiddenDrawerThreadCount > 0 ? (
+            <button
+              type="button"
+              className="thr-drawer-more"
+              onClick={() => setDrawerThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE)}
+            >
+              <Layers size={14} strokeWidth={2.2} />
+              <span>Show {Math.min(THREAD_LIST_PAGE_SIZE, hiddenDrawerThreadCount)} more</span>
+            </button>
+          ) : null}
           <button type="button" className="thr-drawer-new" onClick={newThread}>
             <Plus size={14} strokeWidth={2.2} />
             <span>New thread with {bro.name}</span>

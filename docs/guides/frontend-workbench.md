@@ -103,7 +103,15 @@ Current behavior:
   rendering the selected timeline. The selected timeline is filtered by the
   selected thread's `task_ids` before timeline limits are applied. It renders
   both sides of fetched/direct turns: each synced user instruction appears as a
-  user bubble, followed by the executor task/progress/assistant output.
+  user bubble, followed by the executor task/progress/assistant output. User
+  bubbles, assistant/conversation bubbles, audio turns, and task output cards
+  display timestamps from the originating turn or message. The selected thread
+  timeline is rendered oldest-to-newest so the latest message appears last.
+  Task output cards render the original markdown-like assistant/task summary
+  structure instead of the flattened one-line preview used for compact records.
+  Desktop and mobile thread pickers render long thread lists in pages of 25 and
+  expose an inline show-more control while auto-expanding enough to keep a
+  URL-selected thread visible.
 - `New thread` is a pending UI target and creates no Codex thread until the
   first direct send.
 - Bro Detail push-to-talk mic input records local browser audio only while

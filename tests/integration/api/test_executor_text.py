@@ -170,6 +170,7 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
             json={"target_persona_id": "forge", "text": "start directly"},
         )
         conversation = (await client.get(f"/api/sessions/{session_id}/conversation")).json()
+        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
 
     assert response.status_code == 200
     assert response.json()["status"] == "accepted"
@@ -185,6 +186,15 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
     assert task.metadata["source_kind"] == "bro_detail_text"
     assert task.metadata["persona_id"] == "forge"
     assert task.metadata["suppress_communication_notifications"] is True
+    projected_thread = next(
+        thread for thread in snapshot["bro_threads"] if thread["thread_id"] == response.json()["target_thread_id"]
+    )
+    assert projected_thread["execution_session_id"] is None
+    assert projected_thread["status"] == "queued"
+    assert projected_thread["task_ids"] == [task.task_id]
+    assert projected_thread["latest_task_id"] == task.task_id
+    assert projected_thread["active_task_id"] == task.task_id
+    assert projected_thread["diagnostics"]["pending_execution_session"] is True
     persona = await runtime_session.blackboard.get_persona("forge")
     assert persona is not None
     assert persona.current_task_id == task.task_id
@@ -369,7 +379,11 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
         monkeypatch.setattr(type(runtime_session), "schedule_execution", mark_scheduled)
 
         snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
-        imported_thread = snapshot["bro_threads"][0]
+        imported_thread = next(
+            thread
+            for thread in snapshot["bro_threads"]
+            if thread["diagnostics"]["codex_thread_id"] == "codex-imported-native-1"
+        )
         response = await client.post(
             f"/api/sessions/{session_id}/executor-text-instructions",
             json={
@@ -442,6 +456,18 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
             assert node_id == "node-forge"
             return [
                 CodexThreadListItem(
+                    thread_id="codex-imported-newer-history",
+                    session_id="codex-imported-newer-history",
+                    preview="Task: Newer imported history",
+                    status="notLoaded",
+                    cwd="/tmp/newer",
+                    path="/tmp/codex-newer-history.jsonl",
+                    created_at=1779850200,
+                    updated_at=1779850300,
+                    cli_version="0.133.0",
+                    source="vscode",
+                ),
+                CodexThreadListItem(
                     thread_id="codex-imported-native-history",
                     session_id="codex-imported-native-history",
                     preview="Task: Imported history",
@@ -508,6 +534,7 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
                     },
                     {
                         "id": "turn-history-3",
+                        "createdAt": "2026-05-28T12:00:00+00:00",
                         "items": [
                             {
                                 "type": "event_msg",
@@ -539,7 +566,12 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
         monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
 
         snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
-        imported_thread = snapshot["bro_threads"][0]
+        original_thread_ids = [thread["thread_id"] for thread in snapshot["bro_threads"]]
+        imported_thread = next(
+            thread
+            for thread in snapshot["bro_threads"]
+            if thread["diagnostics"]["codex_thread_id"] == "codex-imported-native-history"
+        )
         response = await client.post(
             f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
             json={"target_persona_id": "forge"},
@@ -547,8 +579,10 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
 
     assert response.status_code == 200
     opened = response.json()
-    hydrated_thread = opened["bro_threads"][0]
+    assert [thread["thread_id"] for thread in opened["bro_threads"]] == original_thread_ids
+    hydrated_thread = next(thread for thread in opened["bro_threads"] if thread["thread_id"] == imported_thread["thread_id"])
     assert hydrated_thread["thread_id"] == imported_thread["thread_id"]
+    assert hydrated_thread["title"] == imported_thread["title"]
     assert hydrated_thread["task_ids"]
     assert hydrated_thread["diagnostics"]["history_hydrated"] is True
     assert hydrated_thread["diagnostics"]["codex_cwd"] == "/tmp/elsewhere"

@@ -247,3 +247,11 @@ Short log of important design decisions and changes for Newbro.
 - Added open-thread hydration for Bro Detail: selecting a Codex-backed thread calls the executor node's Codex `thread/read` path and projects returned turns into typed task/timeline history before rendering that selected thread.
 - Changed Bro Detail selected-thread rendering so hydrated/direct task history also replays the synced user instruction as a user bubble before the executor task/output card.
 - Changed Bro Detail selected-thread rendering to filter by the selected thread's `task_ids` before applying timeline limits, so older imported Codex threads can replay all hydrated user turns instead of only the most recent Bro-wide task records.
+- Preserved imported Codex thread titles after open-thread hydration by storing the thread-list display title in the Codex resume handle and preferring it over hydrated task titles in BroThread projection.
+- Added timestamps to Bro Detail user/assistant timeline rendering; conversation snapshots and stream events now expose `created_at`, while direct text/audio turns stamp the client-side send time immediately.
+- Preserved imported Codex thread list order during read-only hydration by keeping the Codex `thread/list` updated time as the BroThread sort key until an actual follow-up/direct send occurs.
+- Changed Bro Detail thread projection to include newly queued direct text/PTT tasks before their backing `ExecutionSession` exists, so the current thread appears in the picker immediately after send.
+- Changed Codex thread import to page through `thread/list` with `nextCursor`, request updated-time descending order where supported, sort imported results locally, and retry older compatible request shapes instead of projecting zero threads when an installed Codex app-server rejects newer paging/sort params.
+- Added client-side paging to desktop and mobile Bro Detail thread pickers: 25 threads render initially, show-more expands by page, and URL-selected threads auto-expand into view.
+- Changed Bro Detail selected-thread timelines to render oldest-to-newest across synced task records, local text/audio turns, and conversation messages so the latest message appears last.
+- Changed Bro Detail task output cards to render the original markdown-like task/assistant summary structure instead of the flattened compact preview string.

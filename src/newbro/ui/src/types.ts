@@ -337,6 +337,7 @@ export interface ConversationHistoryEntry {
   role: string;
   text: string;
   message_id: string;
+  created_at: string;
 }
 
 export interface SessionSnapshot {
@@ -451,6 +452,7 @@ export interface UserMessageAppendedStreamEvent extends StreamEventBase {
   role: "user";
   text: string;
   source: "user" | "connector";
+  created_at: string;
 }
 
 export interface AssistantResponseStartedStreamEvent extends StreamEventBase {
@@ -471,6 +473,7 @@ export interface AssistantResponseCompletedStreamEvent extends StreamEventBase {
   reply_text: string;
   conversational_act: string;
   affected_task_ids: string[];
+  created_at: string;
 }
 
 export interface AssistantResponseFailedStreamEvent extends StreamEventBase {
@@ -509,6 +512,7 @@ export interface ConversationAppendedStreamEvent extends StreamEventBase {
   role: "assistant";
   text: string;
   source: "notification" | "system_fallback";
+  created_at: string;
 }
 
 export type SessionStreamEvent =

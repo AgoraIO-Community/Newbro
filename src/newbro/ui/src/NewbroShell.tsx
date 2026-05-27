@@ -265,7 +265,7 @@ function useNewbroShellState() {
   const [shellWarning, setShellWarning] = useState<string | null>(null);
   const [threadOpenError, setThreadOpenError] = useState<string | null>(null);
   const [openingThreadId, setOpeningThreadId] = useState<string | null>(null);
-  const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string; id: string }>>([]);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string; id: string; createdAt?: string }>>([]);
   const [draftSession, setDraftSession] = useState<DraftSession | null>(null);
   const [latestDraftOutputEvent, setLatestDraftOutputEvent] = useState<DraftOutputEvent | null>(null);
   const mountedRef = useRef(false);
@@ -325,6 +325,7 @@ function useNewbroShellState() {
         role: entry.role as "user" | "assistant",
         text: entry.text,
         id: entry.message_id,
+        createdAt: entry.created_at,
       }));
       setChatMessages(hydrated);
     });
@@ -483,7 +484,7 @@ function useNewbroShellState() {
               if (prev.some((m) => m.id === event.message_id)) return prev;
               return [
                 ...prev,
-                { role: "user" as const, text: event.text, id: event.message_id },
+                { role: "user" as const, text: event.text, id: event.message_id, createdAt: event.created_at },
               ];
             });
           });
@@ -495,7 +496,7 @@ function useNewbroShellState() {
               if (prev.some((m) => m.id === event.message_id)) return prev;
               return [
                 ...prev,
-                { role: "assistant" as const, text: event.reply_text, id: event.message_id },
+                { role: "assistant" as const, text: event.reply_text, id: event.message_id, createdAt: event.created_at },
               ];
             });
           });
@@ -508,7 +509,7 @@ function useNewbroShellState() {
               if (prev.some((m) => m.id === event.message_id)) return prev;
               return [
                 ...prev,
-                { role: "assistant" as const, text: event.text, id: event.message_id },
+                { role: "assistant" as const, text: event.text, id: event.message_id, createdAt: event.created_at },
               ];
             });
           });

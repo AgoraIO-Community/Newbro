@@ -26,6 +26,7 @@ class ConversationHistoryEntryModel(BaseModel):
     role: str
     text: str
     message_id: str
+    created_at: str
 
 
 class SessionSnapshot(BaseModel):
@@ -82,6 +83,7 @@ class UserMessageAppendedStreamEvent(SessionStreamEventBase):
     role: Literal["user"] = "user"
     text: str
     source: Literal["user", "connector"]
+    created_at: str
 
 
 class AssistantResponseStartedStreamEvent(SessionStreamEventBase):
@@ -102,6 +104,7 @@ class AssistantResponseCompletedStreamEvent(SessionStreamEventBase):
     reply_text: str
     conversational_act: str
     affected_task_ids: list[str] = Field(default_factory=list)
+    created_at: str
 
 
 class AssistantResponseFailedStreamEvent(SessionStreamEventBase):
@@ -140,3 +143,4 @@ class ConversationAppendedStreamEvent(SessionStreamEventBase):
     role: Literal["assistant"]
     text: str
     source: Literal["notification", "system_fallback"]
+    created_at: str

@@ -10,7 +10,13 @@ from newbro.executors.adapters.codex import CodexExecutor
 from newbro.protocol import ExecutionRun, ExecutorTextInstruction, Task
 
 
-def _write_fake_codex(tmp_path, *, auth_ok: bool = True, account_type: str = "apiKey"):
+def _write_fake_codex(
+    tmp_path,
+    *,
+    auth_ok: bool = True,
+    account_type: str = "apiKey",
+    reject_sorted_thread_list: bool = False,
+):
     script = tmp_path / "fake-codex"
     script.write_text(
         textwrap.dedent(
@@ -23,6 +29,7 @@ def _write_fake_codex(tmp_path, *, auth_ok: bool = True, account_type: str = "ap
             turn_counter = 0
             auth_ok = {str(auth_ok)}
             account_type = {account_type!r}
+            reject_sorted_thread_list = {str(reject_sorted_thread_list)}
             turns_by_thread = {{}}
 
             def send(payload):
@@ -86,6 +93,39 @@ def _write_fake_codex(tmp_path, *, auth_ok: bool = True, account_type: str = "ap
                         }}
                     )
                 elif method == "thread/list":
+                    if reject_sorted_thread_list and params.get("sortKey"):
+                        send({{"id": request_id, "error": {{"message": "unsupported sort"}}}})
+                        continue
+                    if params:
+                        assert params.get("limit") == 100
+                    if params.get("sortKey") is not None:
+                        assert params.get("sortKey") == "updated_at"
+                        assert params.get("sortDirection") == "desc"
+                    cursor = params.get("cursor")
+                    if cursor == "page-2":
+                        send(
+                            {{
+                                "id": request_id,
+                                "result": {{
+                                    "data": [
+                                        {{
+                                            "id": "import-thread-2",
+                                            "sessionId": "import-thread-2",
+                                            "preview": "Task: Imported follow-up",
+                                            "createdAt": 1779850200,
+                                            "updatedAt": 1779850300,
+                                            "status": {{"type": "notLoaded"}},
+                                            "cwd": "/tmp/imported-workspace",
+                                            "path": "/tmp/import-thread-2.jsonl",
+                                            "cliVersion": "0.133.0",
+                                            "source": "vscode",
+                                        }}
+                                    ],
+                                    "nextCursor": None,
+                                }},
+                            }}
+                        )
+                        continue
                     send(
                         {{
                             "id": request_id,
@@ -103,7 +143,8 @@ def _write_fake_codex(tmp_path, *, auth_ok: bool = True, account_type: str = "ap
                                         "cliVersion": "0.133.0",
                                         "source": "vscode",
                                     }}
-                                ]
+                                ],
+                                "nextCursor": "page-2",
                             }},
                         }}
                     )
@@ -783,6 +824,18 @@ async def test_codex_executor_lists_threads_from_app_server(tmp_path):
 
     assert threads == [
         {
+            "id": "import-thread-2",
+            "sessionId": "import-thread-2",
+            "preview": "Task: Imported follow-up",
+            "createdAt": 1779850200,
+            "updatedAt": 1779850300,
+            "status": {"type": "notLoaded"},
+            "cwd": "/tmp/imported-workspace",
+            "path": "/tmp/import-thread-2.jsonl",
+            "cliVersion": "0.133.0",
+            "source": "vscode",
+        },
+        {
             "id": "import-thread-1",
             "sessionId": "import-thread-1",
             "preview": "Task: Imported work",
@@ -793,5 +846,15 @@ async def test_codex_executor_lists_threads_from_app_server(tmp_path):
             "path": "/tmp/import-thread-1.jsonl",
             "cliVersion": "0.133.0",
             "source": "vscode",
-        }
+        },
     ]
+
+
+@pytest.mark.anyio
+async def test_codex_executor_falls_back_when_sorted_thread_list_is_unsupported(tmp_path):
+    command = _write_fake_codex(tmp_path, reject_sorted_thread_list=True)
+    executor = CodexExecutor(command=str(command))
+
+    threads = await executor.list_threads(str(tmp_path))
+
+    assert [thread["id"] for thread in threads] == ["import-thread-2", "import-thread-1"]

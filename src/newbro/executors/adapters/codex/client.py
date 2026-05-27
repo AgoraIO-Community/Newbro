@@ -96,8 +96,24 @@ class CodexAppServerClient:
         )
         return _as_dict(result)
 
-    async def thread_list(self) -> dict[str, object]:
-        result = await self._peer.request("thread/list", {})
+    async def thread_list(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+        sort_key: str | None = None,
+        sort_direction: str | None = None,
+    ) -> dict[str, object]:
+        params: dict[str, object] = {}
+        if cursor is not None:
+            params["cursor"] = cursor
+        if limit is not None:
+            params["limit"] = limit
+        if sort_key is not None:
+            params["sortKey"] = sort_key
+        if sort_direction is not None:
+            params["sortDirection"] = sort_direction
+        result = await self._peer.request("thread/list", params)
         return _as_dict(result)
 
     async def turn_start(

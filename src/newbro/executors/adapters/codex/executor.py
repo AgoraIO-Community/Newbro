@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +16,11 @@ from newbro.protocol import AgentResumeHandle, ExecutionRun, ExecutorTextInstruc
 from .client import CodexAppServerClient
 from .jsonrpc import JsonRpcPeer
 from .session import CodexExecutorSession
+
+
+LOGGER = logging.getLogger(__name__)
+CODEX_APP_SERVER_STREAM_LIMIT = 16 * 1024 * 1024
+THREAD_LIST_PAGE_LIMIT = 100
 
 
 class CodexExecutor:
@@ -53,6 +59,7 @@ class CodexExecutor:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=CODEX_APP_SERVER_STREAM_LIMIT,
         )
         if process.stdin is None or process.stdout is None:
             raise RuntimeError("Codex app-server did not expose stdio pipes.")
@@ -72,18 +79,70 @@ class CodexExecutor:
         return session
 
     async def list_threads(self, workspace_id: str | None = None) -> list[dict[str, object]]:
+        last_error: Exception | None = None
+        for mode in ("sorted_paged", "paged", "legacy"):
+            try:
+                threads = await self._list_threads_once(workspace_id, mode=mode)
+                return _sort_codex_threads(threads)
+            except Exception as exc:
+                last_error = exc
+                LOGGER.warning(
+                    "Codex thread/list %s request failed; retrying compatibility path: %s",
+                    mode,
+                    exc,
+                )
+        if last_error is not None:
+            raise last_error
+        return []
+
+    async def _list_threads_once(
+        self,
+        workspace_id: str | None,
+        *,
+        mode: str,
+    ) -> list[dict[str, object]]:
         session = await self.create_session(workspace_id)
+        threads: list[dict[str, object]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
         try:
-            response = await session.client.thread_list()
+            while True:
+                if mode == "legacy":
+                    response = await session.client.thread_list()
+                else:
+                    response = await session.client.thread_list(
+                        cursor=cursor,
+                        limit=THREAD_LIST_PAGE_LIMIT,
+                        sort_key="updated_at" if mode == "sorted_paged" else None,
+                        sort_direction="desc" if mode == "sorted_paged" else None,
+                    )
+                data = response.get("data")
+                if not isinstance(data, list):
+                    raise RuntimeError("Codex thread/list returned an unsupported response shape.")
+                next_cursor = response.get("nextCursor")
+                LOGGER.info(
+                    "Codex thread/list page received",
+                    extra={
+                        "mode": mode,
+                        "cursor_in": cursor,
+                        "cursor_out": next_cursor if isinstance(next_cursor, str) else None,
+                        "page_size": len(data),
+                    },
+                )
+                for item in data:
+                    if isinstance(item, dict):
+                        threads.append(dict(item))
+                if (
+                    mode == "legacy"
+                    or not isinstance(next_cursor, str)
+                    or not next_cursor
+                    or next_cursor in seen_cursors
+                ):
+                    break
+                seen_cursors.add(next_cursor)
+                cursor = next_cursor
         finally:
             await session.close()
-        data = response.get("data")
-        if not isinstance(data, list):
-            raise RuntimeError("Codex thread/list returned an unsupported response shape.")
-        threads: list[dict[str, object]] = []
-        for item in data:
-            if isinstance(item, dict):
-                threads.append(dict(item))
         return threads
 
     async def read_thread(self, thread_id: str) -> dict[str, object]:
@@ -445,6 +504,19 @@ def _get_nested(value: object, *keys: str) -> object:
             return None
         current = current.get(key)
     return current
+
+
+def _sort_codex_threads(threads: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(threads, key=_codex_thread_sort_key, reverse=True)
+
+
+def _codex_thread_sort_key(thread: dict[str, object]) -> tuple[float, str]:
+    timestamp = thread.get("updatedAt")
+    if not isinstance(timestamp, int | float):
+        timestamp = thread.get("createdAt")
+    normalized_timestamp = float(timestamp) if isinstance(timestamp, int | float) else 0.0
+    thread_id = thread.get("id") or thread.get("sessionId") or ""
+    return (normalized_timestamp, str(thread_id))
 
 
 def _extract_item_text(item: dict[str, object]) -> str | None:

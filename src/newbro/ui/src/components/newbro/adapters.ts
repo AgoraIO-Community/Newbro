@@ -168,11 +168,28 @@ function formatRelativeTime(value: string): string | undefined {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(timestamp));
 }
 
-function taskRecordTimeLabel(task: Task): string | undefined {
-  const value =
+function formatTimestampLabel(value: string): string | undefined {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return undefined;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
+function taskRecordTimestamp(task: Task): string | undefined {
+  return (
     metadataString(task.metadata, "updated_at")
     ?? metadataString(task.metadata, "completed_at")
-    ?? metadataString(task.metadata, "created_at");
+    ?? metadataString(task.metadata, "created_at")
+    ?? undefined
+  );
+}
+
+function taskRecordTimeLabel(task: Task): string | undefined {
+  const value = taskRecordTimestamp(task);
   return value ? formatRelativeTime(value) : undefined;
 }
 
@@ -214,6 +231,7 @@ function buildTaskRecord(
     : sourceKind === "bro_detail_text" || sourceKind === "bro_detail_ptt"
       ? (task.latest_instruction?.trim() || task.goal.trim() || task.title.trim())
       : "";
+  const timestamp = taskRecordTimestamp(task);
   return {
     taskId: task.task_id,
     title: task.title,
@@ -223,7 +241,9 @@ function buildTaskRecord(
     progress: taskStatusProgress(status),
     description: taskRecordDescription(recordSummary),
     summary: recordSummary,
+    timestamp,
     timeLabel: taskRecordTimeLabel(task),
+    timestampLabel: timestamp ? formatTimestampLabel(timestamp) : undefined,
   };
 }
 
@@ -292,40 +312,30 @@ export function buildBroTaskRecords(
   const tasks = allowedTaskIds
     ? (options.tasks ?? []).filter((task) => allowedTaskIds.has(task.task_id))
     : options.tasks ?? [];
-  const records: BroTaskRecord[] = [];
-  const activeTask = options.activeTaskId
-    ? tasks.find((task) => task.task_id === options.activeTaskId && taskBelongsToBro(task, broId, options.activeTaskId))
-    : null;
-  if (
-    activeTask
-    && (
-      !options.broDetailSessionId
-      || activeTask.metadata.bro_detail_session_id === options.broDetailSessionId
-    )
-  ) {
-    records.push(
-      buildTaskRecord(
-        activeTask,
-        runsByTaskId.get(activeTask.task_id),
-        summaryByTaskId.get(activeTask.task_id),
-      ),
-    );
-  }
-  for (const task of [...tasks].reverse()) {
-    if (task.task_id === activeTask?.task_id) continue;
-    if (!taskBelongsToBro(task, broId, options.activeTaskId)) continue;
+  const records = tasks.flatMap((task, index) => {
+    if (!taskBelongsToBro(task, broId, options.activeTaskId)) return [];
     if (
       options.broDetailSessionId
       && task.metadata.bro_detail_session_id !== options.broDetailSessionId
     ) {
-      continue;
+      return [];
     }
     const run = runsByTaskId.get(task.task_id);
     const summary = summaryByTaskId.get(task.task_id);
-    records.push(buildTaskRecord(task, run, summary));
-    if (records.length >= (options.limit ?? 5)) break;
-  }
-  return records;
+    return [{ record: buildTaskRecord(task, run, summary), index }];
+  });
+  const sorted = records.sort((left, right) => {
+    const leftTime = left.record.timestamp ? Date.parse(left.record.timestamp) : Number.NaN;
+    const rightTime = right.record.timestamp ? Date.parse(right.record.timestamp) : Number.NaN;
+    if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    if (!Number.isNaN(leftTime) !== !Number.isNaN(rightTime)) {
+      return Number.isNaN(leftTime) ? -1 : 1;
+    }
+    return left.index - right.index;
+  });
+  return sorted.slice(Math.max(0, sorted.length - (options.limit ?? 5))).map((item) => item.record);
 }
 
 export function buildBroCardModels(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from uuid import uuid4
 
 
@@ -12,6 +13,7 @@ class ConversationEntry:
     focused_task_ids: list[str] = field(default_factory=list)
     affected_task_ids: list[str] = field(default_factory=list)
     message_id: str = field(default_factory=lambda: f"msg-{uuid4().hex[:8]}")
+    created_at: str = field(default_factory=lambda: datetime.now(tz=UTC).isoformat())
 
 
 class InMemoryConversationHistory:

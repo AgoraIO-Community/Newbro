@@ -642,6 +642,44 @@ describe("Newbro artboard shell", () => {
     expect(screen.getAllByText("Sent").length).toBeGreaterThanOrEqual(1);
   });
 
+  it("pages the desktop thread rail and expands on demand", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = Array.from({ length: 30 }, (_, index) => {
+      const number = String(index + 1).padStart(2, "0");
+      return {
+        thread_id: `thread-${number}`,
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "completed",
+        title: `Paged thread ${number}`,
+        preview: `History ${number}`,
+        progress: 100,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: `2026-05-26T20:${number}:00+00:00`,
+        diagnostics: { codex_thread_id: `codex-${number}` },
+      };
+    }) as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Paged thread 01")).toBeInTheDocument();
+    expect(screen.getByText("Paged thread 25")).toBeInTheDocument();
+    expect(screen.queryByText("Paged thread 26")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show 5 more" }));
+
+    expect(await screen.findByText("Paged thread 30")).toBeInTheDocument();
+  });
+
   it("keeps New thread pending until the first desktop send", async () => {
     clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing"));
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
@@ -930,7 +968,7 @@ describe("buildBroCardModels", () => {
 });
 
 describe("buildBroTaskRecords", () => {
-  it("keeps the active Bro task first so live progress can render", () => {
+  it("keeps active Bro progress in chronological order so latest renders last", () => {
     const records = buildBroTaskRecords("forge", {
       activeTaskId: "task-active",
       broDetailSessionId: "detail-forge",
@@ -949,7 +987,11 @@ describe("buildBroTaskRecords", () => {
           session_affinity: null,
           task_revision: 1,
           latest_instruction: null,
-          metadata: { persona_id: "forge", bro_detail_session_id: "detail-forge" },
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            updated_at: "2026-05-27T08:00:00Z",
+          },
         },
         {
           task_id: "task-active",
@@ -965,7 +1007,11 @@ describe("buildBroTaskRecords", () => {
           session_affinity: null,
           task_revision: 1,
           latest_instruction: null,
-          metadata: { persona_id: "forge", bro_detail_session_id: "detail-forge" },
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            updated_at: "2026-05-27T09:00:00Z",
+          },
         },
       ],
       executionRuns: [
@@ -987,7 +1033,8 @@ describe("buildBroTaskRecords", () => {
       summaries: [],
     });
 
-    expect(records[0]).toMatchObject({
+    expect(records.map((record) => record.taskId)).toEqual(["task-old", "task-active"]);
+    expect(records.at(-1)).toMatchObject({
       taskId: "task-active",
       status: "running",
       progress: 60,

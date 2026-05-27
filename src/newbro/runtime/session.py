@@ -178,6 +178,25 @@ def _task_metadata_string(task: Task | None, key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _task_thread_public_id(task: Task) -> str | None:
+    return _task_metadata_string(task, "target_thread_id") or _task_metadata_string(task, "bro_thread_id")
+
+
+def _task_updated_at(task: Task | None) -> str | None:
+    return (
+        _task_metadata_string(task, "updated_at")
+        or _task_metadata_string(task, "completed_at")
+        or _task_metadata_string(task, "created_at")
+    )
+
+
+def _resume_handle_string(handle: AgentResumeHandle | None, key: str) -> str | None:
+    if handle is None:
+        return None
+    value = handle.opaque.get(key)
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def _thread_status(task: Task | None, run: ExecutionRun | None) -> str:
     status = run.status if run is not None else (task.status if task is not None else None)
     if status in {RunStatus.COMPLETED, TaskStatus.COMPLETED}:
@@ -419,11 +438,10 @@ def _build_bro_thread_projection(
             if latest_task is not None
             else None
         )
-        updated_at = (
-            _task_metadata_string(latest_task, "updated_at")
-            or _task_metadata_string(latest_task, "completed_at")
-            or _task_metadata_string(latest_task, "created_at")
-        )
+        latest_task_updated_at = _task_updated_at(latest_task)
+        updated_at = latest_task_updated_at
+        if _task_metadata_string(latest_task, "source_kind") == "codex_thread_history":
+            updated_at = _resume_handle_string(resume_handle, "listUpdatedAt") or latest_task_updated_at
         diagnostics: dict[str, object] = {
             "has_codex_resume_handle": has_resume_handle,
         }
@@ -441,6 +459,11 @@ def _build_bro_thread_projection(
             and latest_run.status in AUDIO_ACTIVE_RUN_STATUSES
         ):
             active_task_id = latest_run.task_id
+        display_title = (
+            _resume_handle_string(resume_handle, "title")
+            or _resume_handle_string(resume_handle, "displayTitle")
+            or (latest_task.title if latest_task is not None else "Current session")
+        )
         threads.append(
             BroThread(
                 thread_id=_public_thread_id(session),
@@ -449,7 +472,7 @@ def _build_bro_thread_projection(
                 executor_node_id=session.executor_node_id,
                 execution_session_id=session.execution_session_id,
                 status=status,  # type: ignore[arg-type]
-                title=latest_task.title if latest_task is not None else "Current session",
+                title=display_title,
                 preview=preview,
                 progress=_thread_progress(status),
                 task_ids=task_ids,
@@ -500,7 +523,7 @@ def _build_bro_thread_projection(
                     "task_ids": imported_task_ids,
                     "latest_task_id": imported_task_ids[-1],
                     "preview": preview,
-                    "updated_at": _task_metadata_string(latest_task, "updated_at") or imported.updated_at,
+                    "updated_at": _task_updated_at(latest_task) or imported.updated_at,
                     "diagnostics": {
                         **imported.diagnostics,
                         "history_hydrated": True,
@@ -508,6 +531,67 @@ def _build_bro_thread_projection(
                 }
             )
         threads.append(imported)
+
+    existing_thread_ids = {thread.thread_id for thread in threads}
+    task_thread_groups: dict[tuple[str, str], list[Task]] = {}
+    for task in tasks:
+        public_thread_id = _task_thread_public_id(task)
+        if public_thread_id is None or public_thread_id in existing_thread_ids:
+            continue
+        persona_id = _task_metadata_string(task, "persona_id") or _task_metadata_string(task, "assigned_bro_id")
+        if persona_id is None or persona_id not in persona_by_id:
+            continue
+        task_thread_groups.setdefault((persona_id, public_thread_id), []).append(task)
+
+    for (persona_id, public_thread_id), thread_tasks in task_thread_groups.items():
+        sorted_tasks = sorted(thread_tasks, key=lambda task: _task_updated_at(task) or task.task_id)
+        latest_task = sorted_tasks[-1]
+        task_ids = [task.task_id for task in sorted_tasks]
+        latest_run = None
+        for run in reversed(runs):
+            if run.task_id == latest_task.task_id:
+                latest_run = run
+                break
+        summary = summary_by_task_id.get(latest_task.task_id)
+        status = _thread_status(latest_task, latest_run)
+        preview = (
+            summary.conversational_summary
+            if summary is not None and summary.conversational_summary
+            else summary.operational_summary
+            if summary is not None and summary.operational_summary
+            else latest_run.output_summary
+            if latest_run is not None and latest_run.output_summary
+            else latest_run.latest_progress_message
+            if latest_run is not None and latest_run.latest_progress_message
+            else latest_task.goal
+        )
+        has_resume_handle = bool(_task_metadata_string(latest_task, "codex_import_thread_id"))
+        diagnostics: dict[str, object] = {"pending_execution_session": True}
+        codex_thread_id = _task_metadata_string(latest_task, "codex_import_thread_id")
+        if codex_thread_id is not None:
+            diagnostics["has_codex_resume_handle"] = True
+            diagnostics["codex_thread_id"] = codex_thread_id
+        executor_node_id = _task_metadata_string(latest_task, "executor_node_id") or persona_by_id[persona_id].executor_node_id
+        active_task_id = latest_task.task_id if status in {"queued", "running", "blocked"} else None
+        threads.append(
+            BroThread(
+                thread_id=public_thread_id,
+                persona_id=persona_id,
+                persona_name=persona_by_id[persona_id].name,
+                executor_node_id=executor_node_id,
+                execution_session_id=None,
+                status=status,  # type: ignore[arg-type]
+                title=latest_task.title or "Current session",
+                preview=preview,
+                progress=_thread_progress(status),
+                task_ids=task_ids,
+                active_task_id=active_task_id,
+                latest_task_id=latest_task.task_id,
+                has_resume_handle=has_resume_handle,
+                updated_at=_task_updated_at(latest_task),
+                diagnostics=diagnostics,
+            )
+        )
     return sorted(
         threads,
         key=lambda thread: (
@@ -758,6 +842,8 @@ class SessionRuntime:
                     for persona in node_personas:
                         public_thread_id = _imported_bro_thread_id(persona.persona_id, codex_thread.thread_id)
                         status = _codex_thread_status(codex_thread.status)
+                        thread_title = _title_from_codex_thread(codex_thread)
+                        thread_updated_at = _iso_from_epoch_seconds(codex_thread.updated_at or codex_thread.created_at)
                         resume_handle = AgentResumeHandle(
                             executor_id="codex",
                             session_handle=codex_thread.thread_id,
@@ -765,6 +851,8 @@ class SessionRuntime:
                                 "cwd": codex_thread.cwd or "",
                                 "path": codex_thread.path or "",
                                 "cliVersion": codex_thread.cli_version or "",
+                                "title": thread_title,
+                                "listUpdatedAt": thread_updated_at or "",
                             },
                         )
                         diagnostics = {
@@ -785,14 +873,14 @@ class SessionRuntime:
                             executor_node_id=node_id,
                             execution_session_id=None,
                             status=status,  # type: ignore[arg-type]
-                            title=_title_from_codex_thread(codex_thread),
+                            title=thread_title,
                             preview=codex_thread.preview,
                             progress=_thread_progress(status),
                             task_ids=[],
                             active_task_id=None,
                             latest_task_id=None,
                             has_resume_handle=True,
-                            updated_at=_iso_from_epoch_seconds(codex_thread.updated_at or codex_thread.created_at),
+                            updated_at=thread_updated_at,
                             diagnostics=diagnostics,
                         )
                         imported_resume_handles[public_thread_id] = resume_handle
@@ -1445,6 +1533,7 @@ class SessionRuntime:
                 role=entry.role,
                 text=entry.text,
                 message_id=entry.message_id,
+                created_at=entry.created_at,
             )
             for entry in self.history.get_recent(self.session_id, limit=50)
         ]
@@ -3168,6 +3257,7 @@ class SessionRuntime:
                             role="assistant",
                             text=FALLBACK_ASSISTANT_ERROR_MESSAGE,
                             source="system_fallback",
+                            created_at=assistant_entry.created_at,
                         )
                     )
                     await self._broadcast_event(
@@ -3186,6 +3276,7 @@ class SessionRuntime:
                             reply_text=result.reply_text,
                             conversational_act=result.conversational_act,
                             affected_task_ids=result.affected_task_ids,
+                            created_at=self._conversation_message_created_at(result.message_id),
                         )
                     )
                 await self.publish_snapshot()
@@ -3332,8 +3423,15 @@ class SessionRuntime:
                 role="assistant",
                 text=text,
                 source="notification" if source == "notification" else "system_fallback",
+                created_at=self._conversation_message_created_at(message_id),
             )
         )
+
+    def _conversation_message_created_at(self, message_id: str) -> str:
+        for entry in reversed(self.history.get_recent(self.session_id, limit=200)):
+            if entry.message_id == message_id:
+                return entry.created_at
+        return datetime.now(tz=UTC).isoformat()
 
     async def _broadcast_user_message_append(
         self,
@@ -3348,6 +3446,7 @@ class SessionRuntime:
                 message_id=message_id,
                 text=text,
                 source=source,
+                created_at=self._conversation_message_created_at(message_id),
             )
         )
 
