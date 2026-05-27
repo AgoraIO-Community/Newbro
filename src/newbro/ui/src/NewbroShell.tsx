@@ -271,6 +271,7 @@ function useNewbroShellState() {
   const [latestDraftOutputEvent, setLatestDraftOutputEvent] = useState<DraftOutputEvent | null>(null);
   const mountedRef = useRef(false);
   const shellLoadSequenceRef = useRef(0);
+  const threadOpenSequenceRef = useRef(0);
   const socketRef = useRef<WebSocket | null>(null);
 
   function applySnapshot(snapshot: SessionSnapshot) {
@@ -353,18 +354,19 @@ function useNewbroShellState() {
     if (!activeShellSessionId) {
       return;
     }
+    const openSequence = ++threadOpenSequenceRef.current;
     setOpeningThreadId(threadId);
     setThreadOpenError(null);
     try {
       const snapshot = await openBroThread(activeShellSessionId, { targetPersonaId, threadId });
-      if (!mountedRef.current) {
+      if (!mountedRef.current || threadOpenSequenceRef.current !== openSequence) {
         return;
       }
       startTransition(() => {
         applySnapshot(snapshot);
       });
     } catch (error) {
-      if (!mountedRef.current) {
+      if (!mountedRef.current || threadOpenSequenceRef.current !== openSequence) {
         return;
       }
       setThreadOpenError(describeApiFailure(error, "Unable to open this thread."));

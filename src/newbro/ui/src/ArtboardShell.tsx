@@ -1935,9 +1935,6 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     setSelectedThreadId(threadId);
     replaceThreadIdInUrl(threadId);
     openedThreadRef.current = null;
-    if (bro?.source === "runtime") {
-      void shell.openRuntimeBroThread(bro.id, threadId);
-    }
   }
 
   function newThread() {
@@ -2265,9 +2262,6 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
     setSelectedThreadId(threadId);
     replaceThreadIdInUrl(threadId);
     openedThreadRef.current = null;
-    if (bro.source === "runtime") {
-      void shell.openRuntimeBroThread(bro.id, threadId);
-    }
     setPickerOpen(false);
   }
   function newThread() {

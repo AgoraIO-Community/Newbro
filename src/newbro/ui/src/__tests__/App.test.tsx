@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RouterProvider } from "@tanstack/react-router";
 import App from "../App";
 import { buildBroCardModels } from "../components/newbro";
@@ -640,6 +640,160 @@ describe("Newbro artboard shell", () => {
     });
     expect(screen.getByText("Fetched history response.")).toBeInTheDocument();
     expect(screen.getAllByText("Sent").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps the latest selected imported thread history when an earlier open resolves late", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    const importedThreads = [
+      {
+        thread_id: "codex-import-first",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "completed",
+        title: "First imported thread",
+        preview: "Remote first history",
+        progress: 100,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-26T22:00:00+00:00",
+        diagnostics: { codex_thread_id: "codex-native-first" },
+      },
+      {
+        thread_id: "codex-import-second",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "completed",
+        title: "Second imported thread",
+        preview: "Remote second history",
+        progress: 100,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-26T21:00:00+00:00",
+        diagnostics: { codex_thread_id: "codex-native-second" },
+      },
+    ] as any[];
+    (snapshot as any).bro_threads = importedThreads;
+    const hydratedFirst = {
+      ...snapshot,
+      tasks: [
+        {
+          task_id: "task-history-first",
+          root_task_id: "task-history-first",
+          parent_task_id: null,
+          title: "First imported request",
+          goal: "First imported request",
+          status: "completed",
+          priority: 5,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: "/tmp/first",
+          task_revision: 0,
+          latest_instruction: "First imported request",
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            bro_thread_id: "codex-import-first",
+            target_thread_id: "codex-import-first",
+            source_kind: "codex_thread_history",
+          },
+        },
+      ],
+      bro_threads: [
+        { ...importedThreads[0], task_ids: ["task-history-first"], latest_task_id: "task-history-first" },
+        importedThreads[1],
+      ],
+      summaries: [
+        {
+          task_id: "task-history-first",
+          operational_summary: "First fetched response.",
+          conversational_summary: "First fetched response.",
+          latest_user_visible_status: "First fetched response.",
+          needs_user_input: false,
+        },
+      ],
+    };
+    const hydratedSecond = {
+      ...snapshot,
+      tasks: [
+        {
+          task_id: "task-history-second",
+          root_task_id: "task-history-second",
+          parent_task_id: null,
+          title: "Second imported request",
+          goal: "Second imported request",
+          status: "completed",
+          priority: 5,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: "/tmp/second",
+          task_revision: 0,
+          latest_instruction: "Second imported request",
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            bro_thread_id: "codex-import-second",
+            target_thread_id: "codex-import-second",
+            source_kind: "codex_thread_history",
+          },
+        },
+      ],
+      bro_threads: [
+        importedThreads[0],
+        { ...importedThreads[1], task_ids: ["task-history-second"], latest_task_id: "task-history-second" },
+      ],
+      summaries: [
+        {
+          task_id: "task-history-second",
+          operational_summary: "Second fetched response.",
+          conversational_summary: "Second fetched response.",
+          latest_user_visible_status: "Second fetched response.",
+          needs_user_input: false,
+        },
+      ],
+    };
+    let resolveFirstOpen: ((value: typeof hydratedFirst) => void) | null = null;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockImplementation(async (_sessionId: string, body: any) => {
+      if (body.threadId === "codex-import-first") {
+        return await new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        });
+      }
+      return hydratedSecond;
+    });
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("First imported thread")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Second imported thread/ }));
+
+    await waitFor(() => {
+      expect(clientMock.openBroThread).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        threadId: "codex-import-second",
+      });
+    });
+    expect(await screen.findByText("Second fetched response.")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirstOpen?.(hydratedFirst);
+    });
+
+    expect(screen.getByText("Second fetched response.")).toBeInTheDocument();
+    expect(screen.queryByText("First fetched response.")).not.toBeInTheDocument();
   });
 
   it("pages the desktop thread rail and expands on demand", async () => {
