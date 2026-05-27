@@ -432,6 +432,62 @@ def _write_lifecycle_only_fake_codex(tmp_path):
     return script
 
 
+def _write_thread_turns_list_fake_codex(tmp_path):
+    script = tmp_path / "fake-codex-thread-turns-list"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            #!{sys.executable}
+            import json
+            import sys
+
+            def send(payload):
+                sys.stdout.write(json.dumps(payload) + "\\n")
+                sys.stdout.flush()
+
+            for raw in sys.stdin:
+                if not raw.strip():
+                    continue
+                msg = json.loads(raw)
+                method = msg.get("method")
+                params = msg.get("params", {{}})
+                request_id = msg.get("id")
+                if method == "initialize":
+                    send({{"id": request_id, "result": {{"ok": True}}}})
+                elif method == "initialized":
+                    continue
+                elif method == "account/read":
+                    send({{"id": request_id, "result": {{"account": {{"type": "apiKey"}}, "requiresOpenaiAuth": True}}}})
+                elif method == "thread/read":
+                    assert params.get("threadId") == "thread-open"
+                    assert params.get("includeTurns") is False
+                    send({{"id": request_id, "result": {{"thread": {{"id": "thread-open", "name": "Open thread"}}}}}})
+                elif method == "thread/turns/list":
+                    assert params.get("threadId") == "thread-open"
+                    assert params.get("limit") == 100
+                    assert params.get("sortDirection") == "desc"
+                    assert params.get("itemsView") == "full"
+                    send(
+                        {{
+                            "id": request_id,
+                            "result": {{
+                                "data": [
+                                    {{"id": "turn-new", "items": [{{"type": "agentMessage", "text": "New response"}}]}},
+                                    {{"id": "turn-old", "items": [{{"type": "event_msg", "payload": {{"type": "user_message", "message": "Old prompt"}}}}]}},
+                                ],
+                                "nextCursor": "older-turns",
+                            }},
+                        }}
+                    )
+                else:
+                    send({{"id": request_id, "error": {{"message": "unknown method " + str(method)}}}})
+            """
+        )
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 def _write_delta_fake_codex(tmp_path):
     script = tmp_path / "fake-codex-delta"
     script.write_text(
@@ -740,6 +796,18 @@ async def test_codex_executor_reads_final_text_from_thread_when_no_live_assistan
     assert events[-1].event_type.value == "completed"
     assert events[-1].message == "Final text from thread read."
     await session.close()
+
+
+@pytest.mark.anyio
+async def test_codex_executor_reads_thread_history_with_bounded_turns_list(tmp_path):
+    command = _write_thread_turns_list_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+
+    thread = await executor.read_thread("thread-open")
+
+    assert thread["id"] == "thread-open"
+    assert thread["name"] == "Open thread"
+    assert [turn["id"] for turn in thread["turns"]] == ["turn-old", "turn-new"]
 
 
 @pytest.mark.anyio

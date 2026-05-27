@@ -105,9 +105,10 @@ Current behavior:
   snapshot can include Codex threads imported through the connected executor
   node's `thread/list` capability even when Newbro has not created task history
   for that native thread yet; opening one reuses the cached imported-thread
-  projection instead of refreshing the global list, fetches Codex `thread/read`
-  history before rendering the selected timeline, and later selected-thread
-  events refresh the same snapshot stream. The selected timeline is filtered by the
+  projection instead of refreshing the global list, fetches selected history with
+  Codex `thread/read` metadata plus a bounded `thread/turns/list` page before
+  rendering the selected timeline, and later selected-thread events refresh the
+  same snapshot stream. The selected timeline is filtered by the
   selected thread's `task_ids` before timeline limits are applied. It renders
   both sides of fetched/direct turns: each synced user instruction appears as a
   user bubble, followed by the executor task/progress/assistant output. User

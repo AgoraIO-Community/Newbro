@@ -21,6 +21,7 @@ from .session import CodexExecutorSession
 LOGGER = logging.getLogger(__name__)
 CODEX_APP_SERVER_STREAM_LIMIT = 16 * 1024 * 1024
 THREAD_LIST_PAGE_LIMIT = 100
+THREAD_READ_TURNS_PAGE_LIMIT = 100
 
 
 class CodexExecutor:
@@ -150,14 +151,26 @@ class CodexExecutor:
         try:
             response = await session.client.thread_read(
                 thread_id=thread_id,
-                include_turns=True,
+                include_turns=False,
+            )
+            turns_response = await session.client.thread_turns_list(
+                thread_id=thread_id,
+                limit=THREAD_READ_TURNS_PAGE_LIMIT,
+                sort_direction="desc",
+                items_view="full",
             )
         finally:
             await session.close()
         thread = response.get("thread")
         if not isinstance(thread, dict):
             raise RuntimeError("Codex thread/read returned an unsupported response shape.")
-        return dict(thread)
+        turns_data = turns_response.get("data")
+        if not isinstance(turns_data, list):
+            raise RuntimeError("Codex thread/turns/list returned an unsupported response shape.")
+        turns = [dict(item) for item in turns_data if isinstance(item, dict)]
+        thread = dict(thread)
+        thread["turns"] = list(reversed(turns))
+        return thread
 
     async def subscribe_thread(
         self,

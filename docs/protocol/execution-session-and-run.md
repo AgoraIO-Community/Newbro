@@ -99,7 +99,8 @@ Bro detail continuity:
   opening uses the cached `thread/list` projection and resume handle instead of
   refreshing the global Codex thread list on the open request path. Newbro asks
   the detached executor node to read initial history through non-subscribing
-  Codex `thread/read`, then returns the hydrated snapshot and starts the
+  Codex `thread/read` for thread metadata plus a bounded `thread/turns/list`
+  page with full turn items, then returns the hydrated snapshot and starts the
   selected-thread live layer in the background by loading/subscribing to the
   native thread with Codex `thread/resume`. The executor node forwards
   selected-thread events back to Newbro, and Newbro refreshes the public

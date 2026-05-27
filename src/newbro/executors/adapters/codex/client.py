@@ -96,6 +96,24 @@ class CodexAppServerClient:
         )
         return _as_dict(result)
 
+    async def thread_turns_list(
+        self,
+        *,
+        thread_id: str,
+        limit: int | None = None,
+        sort_direction: str | None = None,
+        items_view: str | None = None,
+    ) -> dict[str, object]:
+        params: dict[str, object] = {"threadId": thread_id}
+        if limit is not None:
+            params["limit"] = limit
+        if sort_direction is not None:
+            params["sortDirection"] = sort_direction
+        if items_view is not None:
+            params["itemsView"] = items_view
+        result = await self._peer.request("thread/turns/list", params)
+        return _as_dict(result)
+
     async def thread_unsubscribe(
         self,
         *,
