@@ -129,6 +129,25 @@ export interface ExecutionSession {
   queued_run_request: QueuedRunRequest | null;
 }
 
+export interface BroThread {
+  thread_id: string;
+  persona_id: string;
+  persona_name: string | null;
+  executor_id: string;
+  executor_node_id: string | null;
+  execution_session_id: string | null;
+  status: "pending" | "queued" | "running" | "blocked" | "completed" | "failed" | "cancelled";
+  title: string;
+  preview: string | null;
+  progress: number;
+  task_ids: string[];
+  active_task_id: string | null;
+  latest_task_id: string | null;
+  has_resume_handle: boolean;
+  updated_at: string | null;
+  diagnostics: Record<string, unknown>;
+}
+
 export interface ExecutionRun {
   run_id: string;
   task_id: string;
@@ -293,6 +312,7 @@ export interface ExecutorCapability {
   availability_reason?: string | null;
   supports_follow_up: boolean;
   supports_audio_instruction?: boolean;
+  supports_thread_list?: boolean;
 }
 
 export interface ExecutorNodeRecord {
@@ -329,6 +349,7 @@ export interface SessionSnapshot {
   bindings: SessionBinding[];
   summaries: TaskSummary[];
   notification_candidates: NotificationCandidate[];
+  bro_threads: BroThread[];
   personas: Persona[];
   interaction_requests: InteractionRequest[];
   attention_items: AttentionItem[];

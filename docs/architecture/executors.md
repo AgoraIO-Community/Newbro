@@ -61,10 +61,19 @@ Executor-node note:
   audio and produce a usable executor instruction. Whisper language defaults to
   automatic detection; foreground executor runs can override language and model
   with inline CLI arguments.
+- Codex executor nodes also advertise `supports_thread_list` when they can call
+  Codex app-server `thread/list`. Newbro uses that node-local capability to
+  import real global Codex threads into Bro Detail without exposing raw
+  native thread ids as normal UI labels.
 
 Adapter direction:
 
 - Codex is one real adapter family
+- Codex app-server `thread/list` is the source for imported Codex dialog
+  threads; `thread/read` is the required per-thread hydration path when a user
+  opens/selects a thread, and `thread/resume` is required before `turn/start`
+  when an imported or persisted native thread id is not yet loaded.
+  `thread/start`/`thread/fork` remain run creation paths.
 - Codex `agentMessage` commentary deltas are normalized into progress
   `ExecutorEvent`s so execution runs expose live user-facing progress through
   `latest_progress_message` snapshots without leaking Codex-native event

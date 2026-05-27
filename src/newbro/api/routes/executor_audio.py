@@ -15,6 +15,7 @@ ALLOWED_AUDIO_MIME_TYPES = {"audio/pcm", "audio/x-pcm", "application/octet-strea
 class ExecutorAudioInstructionResponse(BaseModel):
     audio_instruction_id: str
     target_persona_id: str
+    target_thread_id: str | None = None
     status: str
     duration_ms: int
     size_bytes: int
@@ -28,6 +29,7 @@ async def submit_executor_audio_instruction(
     session_id: str,
     request: Request,
     target_persona_id: str = Query(min_length=1),
+    target_thread_id: str | None = Query(default=None, min_length=1),
     duration_ms: int = Query(gt=0, le=MAX_AUDIO_DURATION_MS),
     sample_rate: int = Query(ge=8000, le=96000),
     num_channels: int = Query(ge=1, le=2),
@@ -55,6 +57,7 @@ async def submit_executor_audio_instruction(
     try:
         audio = await session.submit_executor_audio_instruction(
             target_persona_id=target_persona_id,
+            target_thread_id=target_thread_id,
             pcm16=body,
             mime_type=mime_type,
             duration_ms=duration_ms,
@@ -67,6 +70,7 @@ async def submit_executor_audio_instruction(
     return ExecutorAudioInstructionResponse(
         audio_instruction_id=audio.audio_instruction_id,
         target_persona_id=audio.target_persona_id,
+        target_thread_id=audio.target_thread_id,
         status="accepted",
         duration_ms=audio.duration_ms,
         size_bytes=audio.size_bytes,

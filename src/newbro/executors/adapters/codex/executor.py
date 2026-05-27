@@ -31,6 +31,7 @@ class CodexExecutor:
             supports_resume=True,
             supports_follow_up=True,
             supports_audio_instruction=False,
+            supports_thread_list=True,
             supports_pause=True,
             supports_cancel=True,
             supports_setup=False,
@@ -70,6 +71,35 @@ class CodexExecutor:
             raise RuntimeError("Codex authentication required.")
         return session
 
+    async def list_threads(self, workspace_id: str | None = None) -> list[dict[str, object]]:
+        session = await self.create_session(workspace_id)
+        try:
+            response = await session.client.thread_list()
+        finally:
+            await session.close()
+        data = response.get("data")
+        if not isinstance(data, list):
+            raise RuntimeError("Codex thread/list returned an unsupported response shape.")
+        threads: list[dict[str, object]] = []
+        for item in data:
+            if isinstance(item, dict):
+                threads.append(dict(item))
+        return threads
+
+    async def read_thread(self, thread_id: str) -> dict[str, object]:
+        session = await self.create_session(None)
+        try:
+            response = await session.client.thread_read(
+                thread_id=thread_id,
+                include_turns=True,
+            )
+        finally:
+            await session.close()
+        thread = response.get("thread")
+        if not isinstance(thread, dict):
+            raise RuntimeError("Codex thread/read returned an unsupported response shape.")
+        return dict(thread)
+
     async def cancel_run(self, run_id: str) -> None:
         session = self._active_runs.pop(run_id, None)
         if session is not None:
@@ -91,7 +121,10 @@ class CodexExecutor:
         try:
             async with session.turn_lock:
                 prompt = self._build_prompt(task)
-                thread_id = await self._ensure_thread(session)
+                thread_id = await self._ensure_thread(
+                    session,
+                    fork_existing=task.metadata.get("codex_thread_mode") != "resume",
+                )
                 turn = await session.client.turn_start(thread_id=thread_id, prompt=prompt)
                 turn_id = _get_nested(turn, "turn", "id")
                 if not isinstance(turn_id, str):
@@ -326,8 +359,13 @@ class CodexExecutor:
                     )
                     return
 
-    async def _ensure_thread(self, session: CodexExecutorSession) -> str:
+    async def _ensure_thread(self, session: CodexExecutorSession, *, fork_existing: bool = True) -> str:
         if session.thread_id:
+            if not fork_existing:
+                if not session.metadata.get("codex_thread_resumed"):
+                    await session.client.thread_resume(thread_id=session.thread_id)
+                    session.metadata["codex_thread_resumed"] = True
+                return session.thread_id
             try:
                 result = await session.client.thread_fork(
                     thread_id=session.thread_id,
@@ -341,6 +379,7 @@ class CodexExecutor:
         if not isinstance(thread_id, str):
             raise RuntimeError("Codex did not return a thread id.")
         session.thread_id = thread_id
+        session.metadata["codex_thread_resumed"] = True
         return thread_id
 
     def build_resume_handle(self, session: CodexExecutorSession) -> AgentResumeHandle | None:

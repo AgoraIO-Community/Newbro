@@ -24,6 +24,9 @@ Default policy:
 - one session runs one active task at a time in the first version
 - multi-task concurrency is achieved primarily through multiple sessions
 - task follow-ups reuse the current session when possible
+- Bro Detail direct text and push-to-talk routes may select a user-facing
+  `BroThread`, which maps to an `ExecutionSession` continuity lineage and lets a
+  completed Codex dialog continue with new task/run history
 - retries append new runs
 - completed tasks can be reopened without creating duplicate tasks
 - executor-family handoff creates a new execution session under the same task

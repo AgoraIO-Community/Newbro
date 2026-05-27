@@ -169,6 +169,21 @@ export async function getSessionSnapshot(sessionId: string): Promise<SessionSnap
   return (await ensureOk(response)).json();
 }
 
+export async function openBroThread(
+  sessionId: string,
+  payload: {
+    targetPersonaId: string;
+    threadId: string;
+  },
+): Promise<SessionSnapshot> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/open`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target_persona_id: payload.targetPersonaId }),
+  });
+  return (await ensureOk(response)).json();
+}
+
 export interface MessageResponse {
   message_id: string;
   reply_text: string;
@@ -211,6 +226,7 @@ export async function submitAgoraVoiceEvent(
 export interface ExecutorAudioInstructionResponse {
   audio_instruction_id: string;
   target_persona_id: string;
+  target_thread_id: string | null;
   status: string;
   duration_ms: number;
   size_bytes: number;
@@ -220,6 +236,7 @@ export async function submitExecutorAudioInstruction(
   sessionId: string,
   payload: {
     targetPersonaId: string;
+    targetThreadId?: string | null;
     pcm16: Blob;
     durationMs: number;
     sampleRate: number;
@@ -234,6 +251,9 @@ export async function submitExecutorAudioInstruction(
     num_channels: String(payload.numChannels),
     samples_per_channel: String(payload.samplesPerChannel),
   });
+  if (payload.targetThreadId) {
+    query.set("target_thread_id", payload.targetThreadId);
+  }
   const response = await fetch(
     buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/executor-audio-instructions?${query.toString()}`),
     {
@@ -249,14 +269,18 @@ export async function submitExecutorTextInstruction(
   sessionId: string,
   payload: {
     targetPersonaId: string;
+    targetThreadId?: string | null;
+    createNewThread?: boolean;
     text: string;
   },
-): Promise<{ instruction_id: string; target_persona_id: string; status: string }> {
+): Promise<{ instruction_id: string; target_persona_id: string; target_thread_id: string | null; status: string }> {
   const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/executor-text-instructions`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       target_persona_id: payload.targetPersonaId,
+      target_thread_id: payload.targetThreadId ?? null,
+      create_new_thread: payload.createNewThread ?? false,
       text: payload.text,
     }),
   });

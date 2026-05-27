@@ -75,6 +75,83 @@ async def test_session_manager_reuses_session_for_same_continuity_key_across_tas
 
 
 @pytest.mark.anyio
+async def test_session_manager_prefers_explicit_bro_thread_continuity():
+    store = InMemoryBlackboard()
+    manager = SessionManager()
+    executor = MockExecutor()
+    task_one = Task(
+        task_id="task_1",
+        root_task_id="task_1",
+        title="First task",
+        goal="First task",
+        metadata={
+            "bro_detail_session_id": "bro-detail-1",
+            "bro_thread_id": "bro-thread-selected",
+        },
+    )
+    task_two = Task(
+        task_id="task_2",
+        root_task_id="task_2",
+        title="Second task",
+        goal="Second task",
+        metadata={
+            "bro_detail_session_id": "bro-detail-1",
+            "bro_thread_id": "bro-thread-selected",
+        },
+    )
+
+    session_one, _, _ = await manager.ensure_session(
+        store,
+        executor,
+        task_one,
+        SessionBinding(task_id="task_1", claimed_by="worker-1"),
+    )
+    session_two, _, _ = await manager.ensure_session(
+        store,
+        executor,
+        task_two,
+        SessionBinding(task_id="task_2", claimed_by="worker-1"),
+    )
+
+    assert session_one.execution_session_id == session_two.execution_session_id
+    assert session_one.continuity_key == "bro-thread-selected"
+
+
+@pytest.mark.anyio
+async def test_session_manager_hydrates_imported_codex_thread_resume_handle():
+    store = InMemoryBlackboard()
+    manager = SessionManager()
+    executor = MockExecutor()
+    task = Task(
+        task_id="task_1",
+        root_task_id="task_1",
+        title="Imported Codex thread",
+        goal="Resume imported Codex thread",
+        metadata={
+            "bro_thread_id": "codex-import-selected",
+            "codex_thread_mode": "resume",
+            "codex_import_thread_id": "codex-native-thread-1",
+            "codex_import_cwd": "/tmp/imported-cwd",
+        },
+    )
+
+    session, _, executor_session = await manager.ensure_session(
+        store,
+        executor,
+        task,
+        SessionBinding(task_id="task_1", claimed_by="worker-1"),
+    )
+
+    assert session.continuity_key == "codex-import-selected"
+    assert session.latest_resume_handle is not None
+    assert session.latest_resume_handle.executor_id == "codex"
+    assert session.latest_resume_handle.session_handle == "codex-native-thread-1"
+    assert session.latest_resume_handle.opaque["cwd"] == "/tmp/imported-cwd"
+    assert executor_session.metadata["latest_resume_handle"]["session_handle"] == "codex-native-thread-1"
+    assert executor_session.metadata["latest_resume_handle"]["opaque"]["cwd"] == "/tmp/imported-cwd"
+
+
+@pytest.mark.anyio
 async def test_session_manager_does_not_reuse_after_continuity_key_or_node_changes():
     store = InMemoryBlackboard()
     manager = SessionManager()

@@ -4,6 +4,7 @@ Key objects:
 
 - `ExecutorConfig`
 - `AgentResumeHandle`
+- `BroThread`
 - `QueuedRunRequest`
 - `ExecutionSession`
 - `ExecutionRun`
@@ -17,6 +18,9 @@ Responsibilities:
   - normalized executor identity and per-run override
 - `AgentResumeHandle`
   - opaque executor-native continuity handle
+- `BroThread`
+  - user-facing Bro Detail dialog projection backed by Newbro execution session
+    state and, for Codex, a stored `AgentResumeHandle`
 - `QueuedRunRequest`
   - one queued follow-up request for an active lineage
 - `ExecutionSession`
@@ -70,6 +74,31 @@ Bro detail continuity:
 
 - draft-created tasks assigned to the same Bro detail generation reuse the same
   executor session when executor family and `executor_node_id` also match
+- direct Bro Detail text and push-to-talk inputs can target a selected
+  `BroThread`; follow-up tasks created for that selection reuse the thread's
+  execution-session continuity and Codex resume handle
+- Newbro imports global Codex threads through the detached executor node's
+  Codex app-server `thread/list` capability. Imported threads become typed
+  `BroThread` projections with Newbro-owned public ids and diagnostic raw
+  Codex ids; once the user sends into an imported thread, the created task
+  stores the imported Codex thread id and Codex-reported cwd as a resume handle
+  seed so the first Newbro `ExecutionSession` starts the node-local app-server
+  in the original cwd, calls Codex `thread/resume`, and continues that native
+  Codex thread.
+- Opening a `BroThread` is an explicit hydration operation. Newbro resolves the
+  public thread id to a Codex resume handle, asks the detached executor node to
+  call Codex `thread/read`, and projects each returned turn into typed task,
+  summary, and run history for the selected thread. For each hydrated turn, the
+  task `goal` / `latest_instruction` carries that turn's synced user-side text
+  when Codex reported one, while summaries and runs carry executor output.
+  Clients must filter by the selected thread's `task_ids` before applying
+  timeline limits; they must not infer the selected timeline from task cards
+  that happened to be loaded earlier.
+- push-to-talk audio transcription is emitted by the executor node as a run
+  progress event; Newbro turns the transcript into a queued direct Codex task in
+  the selected `BroThread` rather than attaching it to the already-running turn
+- `BroThread.thread_id` is Newbro-owned UI/API identity; raw executor-native
+  thread ids stay diagnostic data, not primary UI labels
 - rebinding a Bro to a different executor node rotates the Bro detail generation,
   so future tasks create a new execution session
 - old tasks remain durable history; clients filter recent Bro detail tasks by

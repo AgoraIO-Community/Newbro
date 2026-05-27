@@ -5,11 +5,15 @@ import contextlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from newbro.executors.core import ExecutorEvent, ExecutorEventType
 from newbro.protocol import (
     AckMessage,
     CancelRunCommand,
+    CodexThreadListItem,
+    CodexThreadReadMessage,
+    CodexThreadsListedMessage,
     DispatchAudioInstructionCommand,
     DispatchRunCommand,
     DispatchTextInstructionCommand,
@@ -18,6 +22,8 @@ from newbro.protocol import (
     ExecutorNodeExecutor,
     ExecutorNodeRecord,
     InteractionRequest,
+    ListCodexThreadsCommand,
+    ReadCodexThreadCommand,
     RegisterNodeMessage,
     RunEventMessage,
     SupplyInteractionResponseCommand,
@@ -69,6 +75,8 @@ class ExecutorNodeManager:
         self._connections_lock = asyncio.Lock()
         self._run_queues: dict[str, asyncio.Queue[NodeRunEnvelope]] = {}
         self._run_states: dict[str, RunDispatchState] = {}
+        self._codex_thread_list_requests: dict[str, asyncio.Future[CodexThreadsListedMessage]] = {}
+        self._codex_thread_read_requests: dict[str, asyncio.Future[CodexThreadReadMessage]] = {}
 
     @property
     def detached_executor_types(self) -> tuple[str, ...]:
@@ -109,6 +117,13 @@ class ExecutorNodeManager:
             return False
         executor = state.executors.get(executor_type)
         return executor is not None and executor.supports_follow_up
+
+    def executor_supports_thread_list(self, executor_type: str, *, node_id: str) -> bool:
+        state = self._connections_by_node.get(node_id)
+        if state is None:
+            return False
+        executor = state.executors.get(executor_type)
+        return executor is not None and executor.supports_thread_list
 
     def executor_availability(self, executor_type: str, *, node_id: str | None = None) -> dict[str, object]:
         if not self.is_detached_executor(executor_type):
@@ -364,6 +379,75 @@ class ExecutorNodeManager:
             await self.disconnect(websocket=connection.websocket, reason="text_instruction_failed")
             return False
         return True
+
+    async def request_codex_threads(
+        self,
+        *,
+        node_id: str,
+        workspace_id: str | None = None,
+        timeout_seconds: float = 8.0,
+    ) -> list[CodexThreadListItem]:
+        connection = await self._connection_for_node(node_id)
+        if connection is None or "codex" not in connection.executors:
+            return []
+        executor = connection.executors["codex"]
+        if not executor.supports_thread_list:
+            return []
+        request_id = f"codex-thread-list-{uuid4().hex[:12]}"
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[CodexThreadsListedMessage] = loop.create_future()
+        self._codex_thread_list_requests[request_id] = future
+        command = ListCodexThreadsCommand(request_id=request_id, workspace_id=workspace_id)
+        try:
+            await self._send_json(connection, command.model_dump(mode="json"))
+            response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except Exception:
+            self._codex_thread_list_requests.pop(request_id, None)
+            raise
+        if not response.ok:
+            raise RuntimeError(response.error or "Codex thread/list failed.")
+        return response.threads
+
+    def publish_codex_threads_listed(self, message: CodexThreadsListedMessage) -> AckMessage:
+        future = self._codex_thread_list_requests.pop(message.request_id, None)
+        if future is None:
+            return AckMessage(message_type=message.type, ok=False, detail="unknown_request")
+        if not future.done():
+            future.set_result(message)
+        return AckMessage(message_type=message.type, detail="queued")
+
+    async def request_codex_thread(
+        self,
+        *,
+        node_id: str,
+        thread_id: str,
+        timeout_seconds: float = 8.0,
+    ) -> dict[str, object]:
+        connection = await self._connection_for_node(node_id)
+        if connection is None or "codex" not in connection.executors:
+            raise RuntimeError("Codex executor node is not connected.")
+        request_id = f"codex-thread-read-{uuid4().hex[:12]}"
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[CodexThreadReadMessage] = loop.create_future()
+        self._codex_thread_read_requests[request_id] = future
+        command = ReadCodexThreadCommand(request_id=request_id, thread_id=thread_id)
+        try:
+            await self._send_json(connection, command.model_dump(mode="json"))
+            response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except Exception:
+            self._codex_thread_read_requests.pop(request_id, None)
+            raise
+        if not response.ok:
+            raise RuntimeError(response.error or "Codex thread/read failed.")
+        return response.thread
+
+    def publish_codex_thread_read(self, message: CodexThreadReadMessage) -> AckMessage:
+        future = self._codex_thread_read_requests.pop(message.request_id, None)
+        if future is None:
+            return AckMessage(message_type=message.type, ok=False, detail="unknown_request")
+        if not future.done():
+            future.set_result(message)
+        return AckMessage(message_type=message.type, detail="queued")
 
     async def supply_interaction_response(
         self,

@@ -5,6 +5,8 @@ from pydantic import ValidationError
 
 from newbro.protocol import (
     AckMessage,
+    CodexThreadReadMessage,
+    CodexThreadsListedMessage,
     NodeStatusMessage,
     InteractionStateMessage,
     RegisterNodeMessage,
@@ -53,7 +55,12 @@ async def _handle_control_message(container, websocket: WebSocket, payload: obje
             message = RunEventMessage.model_validate(payload)
         except ValidationError:
             return AckMessage(message_type="run_event", ok=False, detail="invalid_payload")
-        return await container.executor_node_manager.publish_run_event(websocket, message)
+        ack = await container.executor_node_manager.publish_run_event(websocket, message)
+        if ack.ok:
+            session = await container.find_session_by_run(message.run_id)
+            if session is not None:
+                await session.handle_executor_audio_transcript_event(message.run_id, dict(message.metadata))
+        return ack
     if message_type == "interaction_state":
         try:
             InteractionStateMessage.model_validate(payload)
@@ -66,4 +73,16 @@ async def _handle_control_message(container, websocket: WebSocket, payload: obje
         except ValidationError:
             return AckMessage(message_type="node_status", ok=False, detail="invalid_payload")
         return AckMessage(message_type="node_status", detail="ok")
+    if message_type == "codex_threads_listed":
+        try:
+            message = CodexThreadsListedMessage.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="codex_threads_listed", ok=False, detail="invalid_payload")
+        return container.executor_node_manager.publish_codex_threads_listed(message)
+    if message_type == "codex_thread_read":
+        try:
+            message = CodexThreadReadMessage.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="codex_thread_read", ok=False, detail="invalid_payload")
+        return container.executor_node_manager.publish_codex_thread_read(message)
     return AckMessage(message_type=str(message_type or "unknown"), ok=False, detail="unknown_message_type")

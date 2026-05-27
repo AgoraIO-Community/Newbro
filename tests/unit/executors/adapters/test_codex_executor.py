@@ -68,6 +68,10 @@ def _write_fake_codex(tmp_path, *, auth_ok: bool = True, account_type: str = "ap
                                 "result": {{"thread": {{"id": forked}}}},
                             }}
                         )
+                elif method == "thread/resume":
+                    thread_id = params.get("threadId")
+                    turns_by_thread.setdefault(thread_id, [])
+                    send({{"id": request_id, "result": {{"thread": {{"id": thread_id, "status": {{"type": "idle"}}}}}}}})
                 elif method == "thread/read":
                     thread_id = params.get("threadId")
                     send(
@@ -78,6 +82,28 @@ def _write_fake_codex(tmp_path, *, auth_ok: bool = True, account_type: str = "ap
                                     "id": thread_id,
                                     "turns": turns_by_thread.get(thread_id, []),
                                 }}
+                            }},
+                        }}
+                    )
+                elif method == "thread/list":
+                    send(
+                        {{
+                            "id": request_id,
+                            "result": {{
+                                "data": [
+                                    {{
+                                        "id": "import-thread-1",
+                                        "sessionId": "import-thread-1",
+                                        "preview": "Task: Imported work",
+                                        "createdAt": 1779850000,
+                                        "updatedAt": 1779850100,
+                                        "status": {{"type": "notLoaded"}},
+                                        "cwd": "/tmp/imported-workspace",
+                                        "path": "/tmp/import-thread-1.jsonl",
+                                        "cliVersion": "0.133.0",
+                                        "source": "vscode",
+                                    }}
+                                ]
                             }},
                         }}
                     )
@@ -506,6 +532,34 @@ async def test_codex_executor_forks_existing_thread_on_follow_up(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_codex_executor_reuses_existing_thread_for_direct_thread_resume(tmp_path):
+    command = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+    session = await executor.create_session(str(tmp_path))
+    session.thread_id = "thread-1"
+    task = Task(
+        task_id="task-1",
+        root_task_id="task-1",
+        title="Resume selected thread",
+        goal="Say hello in the same thread",
+        metadata={"codex_thread_mode": "resume", "target_thread_id": "exec-1"},
+    )
+    run = ExecutionRun(
+        run_id="run-resume",
+        task_id="task-1",
+        execution_session_id="exec-1",
+        executor_type="codex",
+    )
+
+    events = [event async for event in executor.run_task(run, task, session)]
+
+    assert events[-1].event_type.value == "completed"
+    assert session.thread_id == "thread-1"
+    assert events[-1].metadata["thread_id"] == "thread-1"
+    await session.close()
+
+
+@pytest.mark.anyio
 async def test_codex_executor_blocks_when_user_input_is_requested(tmp_path):
     command = _write_fake_codex(tmp_path)
     executor = CodexExecutor(command=str(command))
@@ -718,3 +772,26 @@ async def test_codex_executor_drops_low_value_item_lifecycle_progress(tmp_path):
     assert events[0].message == "Useful answer from Codex."
     assert events[1].message == "Useful answer from Codex."
     await session.close()
+
+
+@pytest.mark.anyio
+async def test_codex_executor_lists_threads_from_app_server(tmp_path):
+    command = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+
+    threads = await executor.list_threads(str(tmp_path))
+
+    assert threads == [
+        {
+            "id": "import-thread-1",
+            "sessionId": "import-thread-1",
+            "preview": "Task: Imported work",
+            "createdAt": 1779850000,
+            "updatedAt": 1779850100,
+            "status": {"type": "notLoaded"},
+            "cwd": "/tmp/imported-workspace",
+            "path": "/tmp/import-thread-1.jsonl",
+            "cliVersion": "0.133.0",
+            "source": "vscode",
+        }
+    ]

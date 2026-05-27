@@ -6,7 +6,16 @@ from httpx import ASGITransport, AsyncClient
 from newbro.api.app import create_app
 from newbro.api.public_auth import PublicAuthStore
 from newbro.blackboard.store import BlackboardWriteEvent, BlackboardWriteKind
-from newbro.protocol import ExecutionRun, ExecutionSession, ExecutorNodeExecutor, Persona, RunStatus, Task, TaskStatus
+from newbro.protocol import (
+    AgentResumeHandle,
+    ExecutionRun,
+    ExecutionSession,
+    ExecutorNodeExecutor,
+    Persona,
+    RunStatus,
+    Task,
+    TaskStatus,
+)
 from newbro.runtime.executor_node_manager import NodeConnectionState
 
 
@@ -325,3 +334,113 @@ async def test_executor_audio_instruction_dispatches_to_executor_without_message
     assert websocket.sent[0]["type"] == "dispatch_audio_instruction"
     assert websocket.sent[0]["task_id"] == "task-current"
     assert websocket.sent[0]["audio"]["target_persona_id"] == "forge"
+
+
+@pytest.mark.anyio
+async def test_executor_audio_instruction_targets_selected_codex_thread_without_message_route(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-audio-thread")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        manager = app.state.runtime_container.executor_node_manager
+        manager._connections_by_node["node-forge"] = NodeConnectionState(
+            websocket=websocket,
+            node_id="node-forge",
+            connected_at="2026-05-26T00:00:00+00:00",
+            executors={
+                "codex": ExecutorNodeExecutor(
+                    executor_type="codex",
+                    supports_resume=True,
+                    supports_follow_up=True,
+                    supports_audio_instruction=True,
+                )
+            },
+        )
+        await runtime_session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id="node-forge",
+                bro_detail_session_id="detail-forge",
+                status="busy",
+                current_task_id="task-current",
+            )
+        )
+        await runtime_session.blackboard.put_task(
+            Task(
+                task_id="task-current",
+                root_task_id="task-current",
+                title="Current selected thread task",
+                goal="Keep working",
+                status=TaskStatus.RUNNING,
+                preferred_executor="codex",
+                metadata={"persona_id": "forge", "bro_thread_id": "bro-thread-selected"},
+            )
+        )
+        await runtime_session.blackboard.put_session(
+            ExecutionSession(
+                execution_session_id="exec-selected",
+                task_id="task-current",
+                base_executor_id="codex",
+                executor_node_id="node-forge",
+                continuity_key="bro-thread-selected",
+                active_run_id="run-current",
+                latest_run_id="run-current",
+                run_ids=["run-current"],
+                latest_resume_handle=AgentResumeHandle(
+                    executor_id="codex",
+                    session_handle="codex-thread-selected",
+                ),
+            )
+        )
+        await runtime_session.blackboard.put_run(
+            ExecutionRun(
+                run_id="run-current",
+                task_id="task-current",
+                execution_session_id="exec-selected",
+                executor_type="codex",
+                status=RunStatus.RUNNING,
+            )
+        )
+
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-audio-instructions",
+            params={
+                "target_persona_id": "forge",
+                "target_thread_id": "bro-thread-selected",
+                "duration_ms": 1,
+                "sample_rate": 24000,
+                "num_channels": 1,
+                "samples_per_channel": 24,
+            },
+            content=b"\x00\x00" * 24,
+            headers={"Content-Type": "audio/pcm"},
+        )
+        run = await runtime_session.blackboard.get_run("run-current")
+        assert run is not None
+        await runtime_session.blackboard.put_run(
+            run.model_copy(update={"status": RunStatus.COMPLETED, "output_summary": "Done from selected audio."})
+        )
+        await runtime_session.notification_manager.handle_blackboard_write(
+            BlackboardWriteEvent(kind=BlackboardWriteKind.RUN, entity_id="run-current")
+        )
+        conversation = (await client.get(f"/api/sessions/{session_id}/conversation")).json()
+
+    assert response.status_code == 200
+    assert response.json()["target_thread_id"] == "bro-thread-selected"
+    assert conversation["conversation_history"] == []
+    assert await runtime_session.blackboard.list_notification_candidates() == []
+    task = await runtime_session.blackboard.get_task("task-current")
+    assert task is not None
+    assert task.metadata["target_thread_id"] == "bro-thread-selected"
+    assert task.metadata["bro_thread_id"] == "bro-thread-selected"
+    assert task.metadata["direct_executor_input_sources"] == ["bro_detail_ptt"]
+    assert len(websocket.sent) == 1
+    assert websocket.sent[0]["type"] == "dispatch_audio_instruction"
+    assert websocket.sent[0]["execution_session_id"] == "exec-selected"
+    assert websocket.sent[0]["audio"]["target_thread_id"] == "bro-thread-selected"

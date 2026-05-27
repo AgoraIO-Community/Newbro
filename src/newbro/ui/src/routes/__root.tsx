@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { HeadContent, Outlet, createRootRoute } from "@tanstack/react-router";
 import type { DetailedHTMLProps, LinkHTMLAttributes } from "react";
-import { normalizeSessionIdParam } from "../lib/session-url";
+import { normalizeSessionIdParam, normalizeThreadIdParam } from "../lib/session-url";
 import { NewbroShellProvider } from "../NewbroShell";
 
 const externalFontLinks: Array<
@@ -20,7 +20,8 @@ const externalFontLinks: Array<
 export const Route = createRootRoute({
   validateSearch: (search: Record<string, unknown>) => {
     const sid = normalizeSessionIdParam(search.sid);
-    return sid ? { sid } : {};
+    const thread = normalizeThreadIdParam(search.thread);
+    return { ...(sid ? { sid } : {}), ...(thread ? { thread } : {}) };
   },
   head: () => ({
     meta: [

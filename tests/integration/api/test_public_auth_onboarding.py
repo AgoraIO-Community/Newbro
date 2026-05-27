@@ -74,17 +74,59 @@ async def test_fixed_code_signup_creates_authenticated_user(tmp_path, monkeypatc
 
 
 @pytest.mark.anyio
-async def test_fixed_code_signup_creates_new_user_for_duplicate_email(tmp_path, monkeypatch):
+async def test_fixed_code_signup_reuses_existing_user_for_duplicate_email(tmp_path, monkeypatch):
     monkeypatch.setenv("NEWBRO_SIGNUP_INVITE_CODE", "open-sesame")
     app = _build_app(tmp_path)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as first:
         first_user_id = await _signup(first, email="user@example.com", code="open-sesame")
+        await app.state.public_auth_store.create_persona(
+            user_id=first_user_id,
+            name="atlas",
+            avatar="bro",
+            base_prompt=DEFAULT_BRO_BASE_PROMPT,
+        )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as second:
-        second_user_id = await _signup(second, email="user@example.com", code="open-sesame")
+        second_user_id = await _signup(second, email="User@Example.com", code="open-sesame")
+        bootstrap = await second.get("/api/me/bootstrap")
+        snapshot = await second.get(f"/api/sessions/{bootstrap.json()['session_id']}")
 
-    assert first_user_id != second_user_id
+    assert second_user_id == first_user_id
+    assert bootstrap.status_code == 200
+    assert snapshot.status_code == 200
+    assert [persona["name"] for persona in snapshot.json()["personas"]] == ["atlas"]
+
+
+@pytest.mark.anyio
+async def test_fixed_code_signup_prefers_duplicate_user_that_already_owns_bros(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEWBRO_SIGNUP_INVITE_CODE", "open-sesame")
+    app = _build_app(tmp_path)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        empty_user_id = await _signup(client, email="user@example.com", code="open-sesame")
+        with app.state.public_auth_store._connect() as conn:
+            conn.execute(
+                "INSERT INTO users (user_id, email, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                ("user-with-bro", "user@example.com", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            )
+        await app.state.public_auth_store.create_persona(
+            user_id="user-with-bro",
+            name="atlas",
+            avatar="bro",
+            base_prompt=DEFAULT_BRO_BASE_PROMPT,
+        )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        selected_user_id = await _signup(client, email="user@example.com", code="open-sesame")
+        bootstrap = await client.get("/api/me/bootstrap")
+        snapshot = await client.get(f"/api/sessions/{bootstrap.json()['session_id']}")
+
+    assert selected_user_id == "user-with-bro"
+    assert selected_user_id != empty_user_id
+    assert bootstrap.status_code == 200
+    assert snapshot.status_code == 200
+    assert [persona["name"] for persona in snapshot.json()["personas"]] == ["atlas"]
 
 
 @pytest.mark.anyio

@@ -48,6 +48,23 @@ class FakeExecutor:
             },
         )
 
+    async def list_threads(self, workspace_id):
+        assert workspace_id == "ws-forge"
+        return [
+            {
+                "id": "codex-native-thread-1",
+                "sessionId": "codex-native-thread-1",
+                "preview": "Task: Imported thread",
+                "status": {"type": "notLoaded"},
+                "cwd": "/tmp/workspace",
+                "path": "/tmp/thread.jsonl",
+                "createdAt": 1779850000,
+                "updatedAt": 1779850100,
+                "cliVersion": "0.133.0",
+                "source": "vscode",
+            }
+        ]
+
 
 class FakeAudioTranscriber:
     @property
@@ -253,6 +270,7 @@ async def test_dispatch_audio_instruction_forwards_to_active_executor(monkeypatc
         audio=ExecutorAudioInstruction(
             audio_instruction_id="aud-1",
             target_persona_id="forge",
+            target_thread_id="bro-thread-1",
             artifact_path="/tmp/audio.pcm",
             mime_type="audio/pcm",
             duration_ms=1000,
@@ -269,10 +287,13 @@ async def test_dispatch_audio_instruction_forwards_to_active_executor(monkeypatc
         with pytest.raises(asyncio.CancelledError):
             await background_task
 
-    assert websocket.sent[-1]["type"] == "run_event"
-    assert websocket.sent[-1]["event_type"] == "progress"
-    assert websocket.sent[-1]["metadata"]["source_audio_instruction_id"] == "aud-1"
-    assert websocket.sent[-1]["metadata"]["text"] == "Please continue from the audio."
+    assert websocket.sent[0]["type"] == "run_event"
+    assert websocket.sent[0]["event_type"] == "progress"
+    assert websocket.sent[0]["message"] == "Audio instruction transcribed."
+    assert websocket.sent[0]["metadata"]["source_audio_instruction_id"] == "aud-1"
+    assert websocket.sent[0]["metadata"]["target_thread_id"] == "bro-thread-1"
+    assert websocket.sent[0]["metadata"]["transcript_text"] == "Please continue from the audio."
+    assert len(websocket.sent) == 1
 
 
 @pytest.mark.anyio
@@ -312,3 +333,51 @@ async def test_dispatch_text_instruction_forwards_to_active_executor(monkeypatch
     assert websocket.sent[-1]["event_type"] == "progress"
     assert websocket.sent[-1]["metadata"]["instruction_id"] == "txt-1"
     assert websocket.sent[-1]["metadata"]["text"] == "Continue directly."
+
+
+@pytest.mark.anyio
+async def test_list_codex_threads_returns_normalized_thread_list(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    websocket = FakeWebSocket([])
+
+    await service._list_codex_threads(
+        websocket,
+        service_module.ListCodexThreadsCommand(request_id="req-1", workspace_id="ws-forge"),
+    )
+
+    assert websocket.sent == [
+        {
+            "type": "codex_threads_listed",
+            "request_id": "req-1",
+            "node_id": "node-1",
+            "executor_type": "codex",
+            "ok": True,
+            "error": None,
+            "threads": [
+                {
+                    "thread_id": "codex-native-thread-1",
+                    "session_id": "codex-native-thread-1",
+                    "preview": "Task: Imported thread",
+                    "title": None,
+                    "cwd": "/tmp/workspace",
+                    "path": "/tmp/thread.jsonl",
+                    "status": "notLoaded",
+                    "created_at": 1779850000,
+                    "updated_at": 1779850100,
+                    "cli_version": "0.133.0",
+                    "source": "vscode",
+                    "diagnostics": {
+                        "forked_from_id": None,
+                        "ephemeral": None,
+                        "model_provider": None,
+                        "thread_source": None,
+                        "agent_nickname": None,
+                        "agent_role": None,
+                        "git_info": None,
+                    },
+                }
+            ],
+        }
+    ]

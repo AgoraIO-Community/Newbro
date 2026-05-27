@@ -113,12 +113,16 @@ class SessionManager:
                 return reusable, active_binding, cached
 
         executor_session = await executor.create_session(task.session_affinity)
+        imported_resume_handle = _task_imported_resume_handle(task)
+        if imported_resume_handle is not None:
+            _hydrate_resume_handle(executor_session, imported_resume_handle)
         execution_session = ExecutionSession(
             execution_session_id=f"exec-session-{uuid4().hex[:8]}",
             task_id=task.task_id,
             base_executor_id=executor_type,
             executor_node_id=executor_node_id,
             continuity_key=continuity_key,
+            latest_resume_handle=imported_resume_handle,
         )
         self._live_sessions[execution_session.execution_session_id] = executor_session
         updated_binding = binding.model_copy(
@@ -158,8 +162,27 @@ def _hydrate_resume_handle(
 
 
 def _task_continuity_key(task: Task) -> str | None:
+    thread_value = task.metadata.get("bro_thread_id")
+    if isinstance(thread_value, str) and thread_value:
+        return thread_value
     value = task.metadata.get("bro_detail_session_id")
     return value if isinstance(value, str) and value else None
+
+
+def _task_imported_resume_handle(task: Task) -> AgentResumeHandle | None:
+    if task.metadata.get("codex_thread_mode") != "resume":
+        return None
+    value = task.metadata.get("codex_import_thread_id")
+    if not isinstance(value, str) or not value:
+        return None
+    opaque: dict[str, object] = {}
+    cwd = task.metadata.get("codex_import_cwd")
+    if isinstance(cwd, str) and cwd:
+        opaque["cwd"] = cwd
+    path = task.metadata.get("codex_import_path")
+    if isinstance(path, str) and path:
+        opaque["path"] = path
+    return AgentResumeHandle(executor_id="codex", session_handle=value, opaque=opaque)
 
 
 async def _find_reusable_session(

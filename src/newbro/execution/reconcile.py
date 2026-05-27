@@ -173,6 +173,8 @@ class ReconcileLoop:
         persona = await self._store.get_persona(persona_id)
         if persona is None:
             return
+        if persona.current_task_id != task.task_id:
+            return
         await self._store.put_persona(
             persona.model_copy(update={"status": "idle", "current_task_id": None})
         )

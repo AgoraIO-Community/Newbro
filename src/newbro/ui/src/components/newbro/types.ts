@@ -1,4 +1,4 @@
-import type { ExecutorNodeRecord, Persona, TaskStatus } from "../../types";
+import type { BroThread, ExecutorNodeRecord, Persona, TaskStatus } from "../../types";
 
 export type NavItem = {
   label: string;
@@ -30,10 +30,26 @@ export type BroCardModel = {
 export type BroTaskRecord = {
   taskId: string;
   title: string;
+  userText?: string;
   status: TaskStatus;
   statusLabel: string;
+  progress: number;
   description: string;
   summary: string;
+  timeLabel?: string;
+};
+
+export type BroThreadRecord = {
+  threadId: string;
+  title: string;
+  status: BroThread["status"];
+  statusLabel: string;
+  preview: string;
+  progress: number;
+  taskIds: string[];
+  activeTaskId: string | null;
+  latestTaskId: string | null;
+  hasResumeHandle: boolean;
   timeLabel?: string;
 };
 

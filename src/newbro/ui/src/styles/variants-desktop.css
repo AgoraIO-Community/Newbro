@@ -1770,6 +1770,8 @@
   border-radius: var(--nb-radius-lg);
   font-family: inherit;
   text-align: left;
+  color: inherit;
+  text-decoration: none;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
@@ -2473,6 +2475,8 @@
   cursor: pointer;
   font-family: inherit;
   text-align: left;
+  color: inherit;
+  text-decoration: none;
   transition: transform 0.16s, border-color 0.16s, box-shadow 0.16s;
 }
 .dt-bro-card:hover {
@@ -2701,6 +2705,12 @@
   border: 2px solid rgba(59,130,246,0.25);
   border-top-color: var(--nb-info);
   animation: ob-spin 0.9s linear infinite;
+}
+.dt-status-done-dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--nb-info);
+  box-shadow: inset 0 0 0 4px var(--nb-info-soft);
 }
 .dt-status-title {
   flex: 1;

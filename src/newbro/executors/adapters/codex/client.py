@@ -68,6 +68,19 @@ class CodexAppServerClient:
         )
         return _as_dict(result)
 
+    async def thread_resume(
+        self,
+        *,
+        thread_id: str,
+    ) -> dict[str, object]:
+        result = await self._peer.request(
+            "thread/resume",
+            {
+                "threadId": thread_id,
+            },
+        )
+        return _as_dict(result)
+
     async def thread_read(
         self,
         *,
@@ -81,6 +94,10 @@ class CodexAppServerClient:
                 "includeTurns": include_turns,
             },
         )
+        return _as_dict(result)
+
+    async def thread_list(self) -> dict[str, object]:
+        result = await self._peer.request("thread/list", {})
         return _as_dict(result)
 
     async def turn_start(

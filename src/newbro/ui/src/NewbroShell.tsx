@@ -18,6 +18,7 @@ import {
   getCurrentUser,
   getSessionSnapshot,
   logoutPublicUser,
+  openBroThread,
   openSessionStream,
   sendSocketDraftAsrTurn,
   sendSocketMessage,
@@ -39,6 +40,7 @@ import type {
   ExecutionRun,
   ExecutorNodeRecord,
   AgentEvent,
+  BroThread,
   Persona,
   SessionSnapshot,
   Task,
@@ -249,6 +251,7 @@ function useNewbroShellState() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [executionSessions, setExecutionSessions] = useState<ExecutionSession[]>([]);
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
+  const [broThreads, setBroThreads] = useState<BroThread[]>([]);
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [activeShellSessionId, setActiveShellSessionId] = useState<string | null>(null);
@@ -260,6 +263,8 @@ function useNewbroShellState() {
   const [hasLoadedShellSnapshot, setHasLoadedShellSnapshot] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
   const [shellWarning, setShellWarning] = useState<string | null>(null);
+  const [threadOpenError, setThreadOpenError] = useState<string | null>(null);
+  const [openingThreadId, setOpeningThreadId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string; id: string }>>([]);
   const [draftSession, setDraftSession] = useState<DraftSession | null>(null);
   const [latestDraftOutputEvent, setLatestDraftOutputEvent] = useState<DraftOutputEvent | null>(null);
@@ -273,6 +278,7 @@ function useNewbroShellState() {
     setTasks(snapshot.tasks ?? []);
     setExecutionSessions(snapshot.execution_sessions ?? []);
     setExecutionRuns(snapshot.execution_runs ?? []);
+    setBroThreads(snapshot.bro_threads ?? []);
     setTaskSummaries(snapshot.summaries ?? []);
     setAgentEvents(snapshot.agent_events ?? []);
     setDraftSession(snapshot.draft_session ?? null);
@@ -286,6 +292,7 @@ function useNewbroShellState() {
     setTasks([]);
     setExecutionSessions([]);
     setExecutionRuns([]);
+    setBroThreads([]);
     setTaskSummaries([]);
     setAgentEvents([]);
     setActiveShellSessionId(null);
@@ -294,6 +301,8 @@ function useNewbroShellState() {
     setHasLoadedShellSnapshot(false);
     setShellError(null);
     setShellWarning(null);
+    setThreadOpenError(null);
+    setOpeningThreadId(null);
     setChatMessages([]);
     setDraftSession(null);
     setLatestDraftOutputEvent(null);
@@ -336,6 +345,32 @@ function useNewbroShellState() {
       return;
     }
     await loadShellSession(activeShellSessionId);
+  });
+
+  const openRuntimeBroThread = useEffectEvent(async (targetPersonaId: string, threadId: string) => {
+    if (!activeShellSessionId) {
+      return;
+    }
+    setOpeningThreadId(threadId);
+    setThreadOpenError(null);
+    try {
+      const snapshot = await openBroThread(activeShellSessionId, { targetPersonaId, threadId });
+      if (!mountedRef.current) {
+        return;
+      }
+      startTransition(() => {
+        applySnapshot(snapshot);
+      });
+    } catch (error) {
+      if (!mountedRef.current) {
+        return;
+      }
+      setThreadOpenError(describeApiFailure(error, "Unable to open this thread."));
+    } finally {
+      if (mountedRef.current) {
+        setOpeningThreadId((current) => (current === threadId ? null : current));
+      }
+    }
   });
 
   useEffect(() => {
@@ -645,10 +680,13 @@ function useNewbroShellState() {
     tasks,
     executionSessions,
     executionRuns,
+    broThreads,
     taskSummaries,
     agentEvents,
     shellError,
     shellWarning,
+    threadOpenError,
+    openingThreadId,
     setShellError,
     clearGlobalMessage,
     startVoiceSession: start,
@@ -661,6 +699,7 @@ function useNewbroShellState() {
     signupWithCode,
     logout,
     refreshShellSession,
+    openRuntimeBroThread,
     draftSession,
     latestDraftOutputEvent,
     chatMessages,

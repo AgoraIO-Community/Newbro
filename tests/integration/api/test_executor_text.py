@@ -6,7 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from newbro.api.app import create_app
 from newbro.api.public_auth import PublicAuthStore
 from newbro.blackboard.store import BlackboardWriteEvent, BlackboardWriteKind
-from newbro.protocol import ExecutionRun, ExecutionSession, ExecutorNodeExecutor, Persona, RunStatus, Task, TaskStatus
+from newbro.protocol import AgentResumeHandle, CodexThreadListItem, ExecutionRun, ExecutionSession, ExecutorNodeExecutor, Persona, RunStatus, Task, TaskStatus
 from newbro.runtime.executor_node_manager import NodeConnectionState
 
 
@@ -189,6 +189,462 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
     assert persona is not None
     assert persona.current_task_id == task.task_id
     assert persona.status == "busy"
+
+
+@pytest.mark.anyio
+async def test_executor_text_instruction_targets_selected_completed_codex_thread(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-thread")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        manager = app.state.runtime_container.executor_node_manager
+        manager._connections_by_node["node-forge"] = NodeConnectionState(
+            websocket=websocket,
+            node_id="node-forge",
+            connected_at="2026-05-26T00:00:00+00:00",
+            executors={
+                "codex": ExecutorNodeExecutor(
+                    executor_type="codex",
+                    supports_resume=True,
+                    supports_follow_up=True,
+                    supports_audio_instruction=True,
+                )
+            },
+        )
+        await runtime_session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id="node-forge",
+                bro_detail_session_id="detail-forge",
+                status="idle",
+                current_task_id=None,
+            )
+        )
+        await runtime_session.blackboard.put_task(
+            Task(
+                task_id="task-done",
+                root_task_id="task-done",
+                title="Completed task",
+                goal="First instruction",
+                status=TaskStatus.COMPLETED,
+                preferred_executor="codex",
+                metadata={"persona_id": "forge", "bro_detail_session_id": "detail-forge"},
+            )
+        )
+        await runtime_session.blackboard.put_session(
+            ExecutionSession(
+                execution_session_id="exec-1",
+                task_id="task-done",
+                base_executor_id="codex",
+                executor_node_id="node-forge",
+                continuity_key="detail-forge",
+                active_run_id=None,
+                latest_run_id="run-done",
+                run_ids=["run-done"],
+                latest_resume_handle=AgentResumeHandle(
+                    executor_id="codex",
+                    session_handle="codex-thread-1",
+                ),
+            )
+        )
+        await runtime_session.blackboard.put_run(
+            ExecutionRun(
+                run_id="run-done",
+                task_id="task-done",
+                execution_session_id="exec-1",
+                executor_type="codex",
+                status=RunStatus.COMPLETED,
+                output_summary="Done from Codex.",
+            )
+        )
+        scheduled = False
+
+        def mark_scheduled(self) -> None:
+            nonlocal scheduled
+            scheduled = True
+
+        monkeypatch.setattr(type(runtime_session), "schedule_execution", mark_scheduled)
+
+        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-text-instructions",
+            json={
+                "target_persona_id": "forge",
+                "target_thread_id": "exec-1",
+                "text": "resume this exact thread",
+            },
+        )
+
+    assert snapshot["bro_threads"][0]["thread_id"] == "exec-1"
+    assert snapshot["bro_threads"][0]["has_resume_handle"] is True
+    assert snapshot["bro_threads"][0]["diagnostics"]["codex_thread_id"] == "codex-thread-1"
+    assert snapshot["bro_threads"][0]["active_task_id"] is None
+    assert response.status_code == 200
+    assert response.json()["target_thread_id"] == "exec-1"
+    assert scheduled
+    assert websocket.sent == []
+    tasks = await runtime_session.blackboard.list_tasks()
+    created = [task for task in tasks if task.task_id != "task-done"]
+    assert len(created) == 1
+    task = created[0]
+    assert task.metadata["target_thread_id"] == "exec-1"
+    assert task.metadata["bro_thread_id"] == "detail-forge"
+    assert task.metadata["codex_thread_mode"] == "resume"
+    assert task.metadata["suppress_communication_notifications"] is True
+
+
+@pytest.mark.anyio
+async def test_executor_text_instruction_targets_imported_codex_thread(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-import-thread")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        manager = app.state.runtime_container.executor_node_manager
+        manager._connections_by_node["node-forge"] = NodeConnectionState(
+            websocket=websocket,
+            node_id="node-forge",
+            connected_at="2026-05-26T00:00:00+00:00",
+            executors={
+                "codex": ExecutorNodeExecutor(
+                    executor_type="codex",
+                    supports_resume=True,
+                    supports_follow_up=True,
+                    supports_audio_instruction=True,
+                    supports_thread_list=True,
+                )
+            },
+        )
+        await runtime_session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id="node-forge",
+                bro_detail_session_id="detail-forge",
+                status="idle",
+                current_task_id=None,
+            )
+        )
+
+        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+            assert node_id == "node-forge"
+            return [
+                CodexThreadListItem(
+                    thread_id="codex-imported-native-1",
+                    session_id="codex-imported-native-1",
+                    preview="Task: Imported outside Newbro\nGoal: keep context",
+                    status="notLoaded",
+                    cwd="/Users/zhangqianze/Documents/Synopse",
+                    path="/Users/zhangqianze/.codex/sessions/import.jsonl",
+                    created_at=1779850000,
+                    updated_at=1779850100,
+                    cli_version="0.133.0",
+                    source="vscode",
+                )
+            ]
+
+        monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
+        scheduled = False
+
+        def mark_scheduled(self) -> None:
+            nonlocal scheduled
+            scheduled = True
+
+        monkeypatch.setattr(type(runtime_session), "schedule_execution", mark_scheduled)
+
+        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
+        imported_thread = snapshot["bro_threads"][0]
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-text-instructions",
+            json={
+                "target_persona_id": "forge",
+                "target_thread_id": imported_thread["thread_id"],
+                "text": "continue imported context",
+            },
+        )
+        conversation = (await client.get(f"/api/sessions/{session_id}/conversation")).json()
+
+    assert imported_thread["thread_id"].startswith("codex-import-")
+    assert imported_thread["execution_session_id"] is None
+    assert imported_thread["title"] == "Imported outside Newbro"
+    assert imported_thread["has_resume_handle"] is True
+    assert imported_thread["diagnostics"]["codex_thread_id"] == "codex-imported-native-1"
+    assert response.status_code == 200
+    assert response.json()["target_thread_id"] == imported_thread["thread_id"]
+    assert conversation["conversation_history"] == []
+    assert scheduled
+    tasks = await runtime_session.blackboard.list_tasks()
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.metadata["target_thread_id"] == imported_thread["thread_id"]
+    assert task.metadata["bro_thread_id"] == imported_thread["thread_id"]
+    assert task.metadata["codex_thread_mode"] == "resume"
+    assert task.metadata["codex_import_thread_id"] == "codex-imported-native-1"
+    assert task.metadata["codex_import_cwd"] == "/Users/zhangqianze/Documents/Synopse"
+    assert task.session_affinity == "/Users/zhangqianze/Documents/Synopse"
+    assert task.metadata["suppress_communication_notifications"] is True
+
+
+@pytest.mark.anyio
+async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-open-thread")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        manager = app.state.runtime_container.executor_node_manager
+        manager._connections_by_node["node-forge"] = NodeConnectionState(
+            websocket=websocket,
+            node_id="node-forge",
+            connected_at="2026-05-26T00:00:00+00:00",
+            executors={
+                "codex": ExecutorNodeExecutor(
+                    executor_type="codex",
+                    supports_resume=True,
+                    supports_follow_up=True,
+                    supports_audio_instruction=True,
+                    supports_thread_list=True,
+                )
+            },
+        )
+        await runtime_session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id="node-forge",
+                bro_detail_session_id="detail-forge",
+                status="idle",
+                current_task_id=None,
+            )
+        )
+
+        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+            assert node_id == "node-forge"
+            return [
+                CodexThreadListItem(
+                    thread_id="codex-imported-native-history",
+                    session_id="codex-imported-native-history",
+                    preview="Task: Imported history",
+                    status="notLoaded",
+                    cwd="/tmp/elsewhere",
+                    path="/tmp/codex-history.jsonl",
+                    created_at=1779850000,
+                    updated_at=1779850100,
+                    cli_version="0.133.0",
+                    source="vscode",
+                )
+            ]
+
+        async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
+            assert node_id == "node-forge"
+            assert thread_id == "codex-imported-native-history"
+            return {
+                "id": thread_id,
+                "turns": [
+                    {
+                        "id": "turn-history-1",
+                        "items": [
+                            {
+                                "type": "event_msg",
+                                "payload": {
+                                    "type": "user_message",
+                                    "message": "summarize the imported repo",
+                                },
+                            },
+                            {
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "output_text",
+                                            "text": "Imported history response from Codex.",
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                        "status": "completed",
+                    },
+                    {
+                        "id": "turn-history-2",
+                        "items": [
+                            {
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "output_text",
+                                            "text": "Assistant-only imported status.",
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                        "status": "completed",
+                    },
+                    {
+                        "id": "turn-history-3",
+                        "items": [
+                            {
+                                "type": "event_msg",
+                                "payload": {
+                                    "type": "user_message",
+                                    "message": "then inspect the mobile layout",
+                                },
+                            },
+                            {
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "output_text",
+                                            "text": "Second imported response from Codex.",
+                                        }
+                                    ],
+                                },
+                            },
+                        ],
+                        "status": "completed",
+                    },
+                ],
+            }
+
+        monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
+        monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+
+        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
+        imported_thread = snapshot["bro_threads"][0]
+        response = await client.post(
+            f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
+            json={"target_persona_id": "forge"},
+        )
+
+    assert response.status_code == 200
+    opened = response.json()
+    hydrated_thread = opened["bro_threads"][0]
+    assert hydrated_thread["thread_id"] == imported_thread["thread_id"]
+    assert hydrated_thread["task_ids"]
+    assert hydrated_thread["diagnostics"]["history_hydrated"] is True
+    assert hydrated_thread["diagnostics"]["codex_cwd"] == "/tmp/elsewhere"
+    task_id = hydrated_thread["task_ids"][0]
+    task = next(task for task in opened["tasks"] if task["task_id"] == task_id)
+    assert task["title"] == "summarize the imported repo"
+    assert task["latest_instruction"] == "summarize the imported repo"
+    assert task["metadata"]["source_kind"] == "codex_thread_history"
+    assert task["metadata"]["target_thread_id"] == imported_thread["thread_id"]
+    assert task["metadata"]["codex_import_thread_id"] == "codex-imported-native-history"
+    assert task["metadata"]["created_at"] == imported_thread["updated_at"]
+    assert task["metadata"]["updated_at"] == imported_thread["updated_at"]
+    assistant_only = next(
+        task for task in opened["tasks"] if task["metadata"].get("codex_history_turn_id") == "turn-history-2"
+    )
+    assert assistant_only["latest_instruction"] is None
+    second_user = next(
+        task for task in opened["tasks"] if task["metadata"].get("codex_history_turn_id") == "turn-history-3"
+    )
+    assert second_user["latest_instruction"] == "then inspect the mobile layout"
+    assert second_user["metadata"]["bro_thread_id"] == imported_thread["thread_id"]
+    summary = next(summary for summary in opened["summaries"] if summary["task_id"] == task_id)
+    assert summary["conversational_summary"] == "Imported history response from Codex."
+
+
+@pytest.mark.anyio
+async def test_open_imported_codex_thread_reports_recoverable_read_timeout(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-open-thread-timeout")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        manager = app.state.runtime_container.executor_node_manager
+        manager._connections_by_node["node-forge"] = NodeConnectionState(
+            websocket=websocket,
+            node_id="node-forge",
+            connected_at="2026-05-26T00:00:00+00:00",
+            executors={
+                "codex": ExecutorNodeExecutor(
+                    executor_type="codex",
+                    supports_resume=True,
+                    supports_follow_up=True,
+                    supports_audio_instruction=True,
+                    supports_thread_list=True,
+                )
+            },
+        )
+        await runtime_session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id="node-forge",
+                bro_detail_session_id="detail-forge",
+                status="idle",
+                current_task_id=None,
+            )
+        )
+
+        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+            return [
+                CodexThreadListItem(
+                    thread_id="codex-timeout-history",
+                    session_id="codex-timeout-history",
+                    preview="Task: Timeout history",
+                    status="notLoaded",
+                    cwd="/tmp/elsewhere",
+                    path="/tmp/codex-timeout.jsonl",
+                    created_at=1779850000,
+                    updated_at=1779850100,
+                    cli_version="0.133.0",
+                    source="vscode",
+                )
+            ]
+
+        async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
+            raise TimeoutError("Codex thread/read timed out.")
+
+        monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
+        monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+
+        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
+        imported_thread = snapshot["bro_threads"][0]
+        response = await client.post(
+            f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
+            json={"target_persona_id": "forge"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Codex thread/read timed out."
 
 
 @pytest.mark.anyio

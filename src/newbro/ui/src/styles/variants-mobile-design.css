@@ -1508,6 +1508,13 @@
   border-right-color: transparent;
   animation: con-spin 0.9s linear infinite;
 }
+.thr-status-done-dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--nb-info);
+  box-shadow: inset 0 0 0 4px var(--nb-info-soft);
+  flex: 0 0 auto;
+}
 .thr-status-title { font-size: 13px; font-weight: 600; color: var(--nb-info-ink); flex: 1; }
 .thr-status-pct { font-family: var(--nb-font-mono); font-size: 11.5px; color: var(--nb-info-ink); }
 .thr-status-bar { height: 4px; border-radius: 2px; background: rgba(59,130,246,0.18); overflow: hidden; }

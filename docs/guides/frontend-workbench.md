@@ -25,7 +25,7 @@ The current frontend stack is:
 - home page: design workspace with top voice control, runtime Bro grid,
   runtime/node rail, and an explicit empty workspace card when no personas
   exist
-- Bro detail page: design-style activity rail plus main pane, preserving the
+- Bro detail page: design-style real thread rail plus main pane, preserving the
   Draft/STT/send/talk controls and disconnected-node warning behavior
 - setup/connect state: design cards and first-run sheet for creating or
   revealing the current Bro's local node command before Bro Detail unlocks
@@ -92,10 +92,25 @@ Current behavior:
   idle, or sends a typed executor-node text instruction to the selected Bro's
   active executor session when Codex is already running, instead of calling
   session messages, draft ASR, or draft Send endpoints
+- Bro Detail desktop left rail and mobile drawer render real Codex-backed
+  `bro_threads` from the runtime snapshot, not task records. Selecting a thread
+  calls the open-thread hydration endpoint, writes `thread` into the URL, and
+  direct text/PTT sends include that target so completed selected Codex threads
+  resume through their stored execution-session resume handle. The snapshot can
+  include Codex threads imported through the connected executor node's
+  `thread/list` capability even when Newbro has not created task history for
+  that native thread yet; opening one fetches Codex `thread/read` history before
+  rendering the selected timeline. The selected timeline is filtered by the
+  selected thread's `task_ids` before timeline limits are applied. It renders
+  both sides of fetched/direct turns: each synced user instruction appears as a
+  user bubble, followed by the executor task/progress/assistant output.
+- `New thread` is a pending UI target and creates no Codex thread until the
+  first direct send.
 - Bro Detail push-to-talk mic input records local browser audio only while
   pressed, converts it to raw PCM, and uploads it to Newbro for dispatch to the
   selected Bro's executor node; the node transcribes with local Whisper and
-  forwards transcript text to the active executor session
+  Newbro creates a queued direct Codex task from that transcript in the selected
+  Bro thread after the current active turn releases the session
 - The composer shows the audio bubble immediately, then displays the Whisper
   transcript under that same bubble after executor-node transcription succeeds
 - the mic is disabled until the selected Bro has an active Codex session, a

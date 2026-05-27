@@ -26,6 +26,7 @@ class HostedExecutor:
         supports_resume: bool,
         supports_follow_up: bool,
         supports_pause: bool,
+        supports_thread_list: bool = False,
         supports_cancel: bool = True,
     ) -> None:
         self._manager = manager
@@ -33,6 +34,7 @@ class HostedExecutor:
             executor_type=executor_type,
             supports_resume=supports_resume,
             supports_follow_up=supports_follow_up,
+            supports_thread_list=supports_thread_list,
             supports_pause=supports_pause,
             supports_cancel=supports_cancel,
             supports_setup=False,

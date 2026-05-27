@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RouterProvider } from "@tanstack/react-router";
 import App from "../App";
 import { buildBroCardModels } from "../components/newbro";
+import { buildBroTaskRecords, buildBroThreadRecords } from "../components/newbro/adapters";
 import { getRouter } from "../router";
 
 const socketHarness = vi.hoisted(() => {
@@ -75,6 +76,7 @@ const clientMock = vi.hoisted(() => ({
   logoutPublicUser: vi.fn(),
   getSessionSnapshot: vi.fn(),
   getConversationSnapshot: vi.fn(),
+  openBroThread: vi.fn(),
   openSessionStream: vi.fn((_sessionId: string, handlers: any) => {
     socketHarness.handlers = handlers;
     return socketHarness.socket as any;
@@ -202,6 +204,7 @@ function emptySessionSnapshot(sessionId: string) {
     bindings: [],
     summaries: [],
     notification_candidates: [],
+    bro_threads: [],
     personas: [],
     interaction_requests: [],
     attention_items: [],
@@ -276,6 +279,26 @@ function activeForgeSnapshot(sessionId: string, node = usableExecutorNode()) {
         queued_run_request: null,
       },
     ],
+    bro_threads: [
+      {
+        thread_id: "exec-1",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: node.node_id,
+        execution_session_id: "exec-1",
+        status: "running",
+        title: "Active Codex task",
+        preview: "Keep working",
+        progress: 60,
+        task_ids: ["task-1"],
+        active_task_id: "task-1",
+        latest_task_id: "task-1",
+        has_resume_handle: false,
+        updated_at: null,
+        diagnostics: {},
+      },
+    ],
     execution_runs: [
       {
         run_id: "run-1",
@@ -321,6 +344,7 @@ describe("Newbro artboard shell", () => {
       session_id: sessionId,
       conversation_history: [],
     }));
+    clientMock.openBroThread.mockImplementation(async () => activeForgeSnapshot("session-existing"));
     clientMock.createExecutorNode.mockResolvedValue({
       node: usableExecutorNode({
         node_id: "node-1",
@@ -339,6 +363,7 @@ describe("Newbro artboard shell", () => {
     clientMock.submitExecutorTextInstruction.mockResolvedValue({
       instruction_id: "txt-1",
       target_persona_id: "forge",
+      target_thread_id: "exec-1",
       status: "accepted",
     });
     clientMock.updatePersona.mockResolvedValue({});
@@ -431,6 +456,22 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "forge"));
   });
 
+  it("opens Bro detail from the desktop home card", async () => {
+    clientMock.bootstrapPublicUser.mockResolvedValueOnce({
+      user: { user_id: "user-1" },
+      session_id: "session-existing",
+      default_persona_id: "forge",
+      default_bro_detail_session_id: "detail-forge",
+    });
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByTestId("bro-card-forge"));
+
+    await waitFor(() => expect(window.location.pathname).toBe("/bros/forge"));
+    expect(screen.getByRole("heading", { name: "Forge" })).toBeInTheDocument();
+  });
+
   it("sends desktop typed Bro detail input directly to the executor node", async () => {
     clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing"));
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
@@ -446,12 +487,181 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => {
       expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
         targetPersonaId: "forge",
+        targetThreadId: "exec-1",
+        createNewThread: false,
         text: "Run the desktop direct send path",
       });
     });
     expect(clientMock.sendSocketMessage).not.toHaveBeenCalled();
     expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
     expect(clientMock.sendDraft).not.toHaveBeenCalled();
+  });
+
+  it("routes desktop typed input to the selected Codex thread from the URL", async () => {
+    const snapshot = activeForgeSnapshot("session-existing");
+    snapshot.tasks.push({
+      ...snapshot.tasks[0],
+      task_id: "task-old",
+      root_task_id: "task-old",
+      title: "Older Codex thread",
+      goal: "Previous work",
+      status: "completed",
+      metadata: { persona_id: "forge" },
+    });
+    snapshot.bro_threads.push({
+      thread_id: "exec-old",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: "exec-old",
+      status: "completed",
+      title: "Older Codex thread",
+      preview: "Previous work",
+      progress: 100,
+      task_ids: ["task-old"],
+      active_task_id: null,
+      latest_task_id: "task-old",
+      has_resume_handle: true,
+      updated_at: null,
+      diagnostics: { codex_thread_id: "codex-thread-old" },
+    } as any);
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValueOnce(snapshot);
+    clientMock.submitExecutorTextInstruction.mockResolvedValueOnce({
+      instruction_id: "txt-old",
+      target_persona_id: "forge",
+      target_thread_id: "exec-old",
+      status: "accepted",
+    });
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-old");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Older Codex thread")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "continue the older thread" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        targetThreadId: "exec-old",
+        createNewThread: false,
+        text: "continue the older thread",
+      });
+    });
+    expect(window.location.search).toContain("thread=exec-old");
+  });
+
+  it("opens a selected imported thread and renders fetched history", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = [
+      {
+        thread_id: "codex-import-history",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "completed",
+        title: "Imported Codex thread",
+        preview: "Remote history",
+        progress: 100,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-26T22:00:00+00:00",
+        diagnostics: { codex_thread_id: "codex-native-history" },
+      },
+    ] as any;
+    const importedThread = snapshot.bro_threads[0] as any;
+    const hydrated = {
+      ...snapshot,
+      tasks: [
+        {
+          task_id: "task-history",
+          root_task_id: "task-history",
+          parent_task_id: null,
+          title: "Imported request",
+          goal: "Imported request",
+          status: "completed",
+          priority: 5,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: "/tmp/elsewhere",
+          task_revision: 0,
+          latest_instruction: "Imported request",
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            bro_thread_id: "codex-import-history",
+            target_thread_id: "codex-import-history",
+            source_kind: "codex_thread_history",
+          },
+        },
+      ],
+      bro_threads: [
+        {
+          ...importedThread,
+          task_ids: ["task-history"],
+          latest_task_id: "task-history",
+          diagnostics: { codex_thread_id: "codex-native-history", history_hydrated: true },
+        },
+      ],
+      summaries: [
+        {
+          task_id: "task-history",
+          operational_summary: "Fetched history response.",
+          conversational_summary: "Fetched history response.",
+          latest_user_visible_status: "Fetched history response.",
+          needs_user_input: false,
+        },
+      ],
+    };
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValueOnce(hydrated);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-history");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Imported Codex thread")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(clientMock.openBroThread).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        threadId: "codex-import-history",
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText("Imported request").length).toBeGreaterThanOrEqual(2);
+    });
+    expect(screen.getByText("Fetched history response.")).toBeInTheDocument();
+    expect(screen.getAllByText("Sent").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps New thread pending until the first desktop send", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing"));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "New thread with Forge" }));
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "start a separate thread" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        targetThreadId: null,
+        createNewThread: true,
+        text: "start a separate thread",
+      });
+    });
   });
 
   it("enables desktop typed send for a connected idle Bro", async () => {
@@ -466,6 +676,8 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => {
       expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
         targetPersonaId: "forge",
+        targetThreadId: null,
+        createNewThread: false,
         text: "start from idle bro",
       });
     });
@@ -512,6 +724,8 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => {
       expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
         targetPersonaId: "forge",
+        targetThreadId: "exec-1",
+        createNewThread: false,
         text: "retry queued task",
       });
     });
@@ -586,6 +800,8 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => {
       expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
         targetPersonaId: "forge",
+        targetThreadId: "exec-1",
+        createNewThread: false,
         text: "continue directly",
       });
     });
@@ -632,6 +848,8 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => {
       expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
         targetPersonaId: "forge",
+        targetThreadId: "exec-1",
+        createNewThread: false,
         text: "Please draft the launch note",
       });
     });
@@ -708,5 +926,309 @@ describe("buildBroCardModels", () => {
       source: "runtime",
       liveState: "live",
     });
+  });
+});
+
+describe("buildBroTaskRecords", () => {
+  it("keeps the active Bro task first so live progress can render", () => {
+    const records = buildBroTaskRecords("forge", {
+      activeTaskId: "task-active",
+      broDetailSessionId: "detail-forge",
+      tasks: [
+        {
+          task_id: "task-old",
+          root_task_id: "task-old",
+          parent_task_id: null,
+          title: "Previous task",
+          goal: "Previous work",
+          status: "completed",
+          priority: 0,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 1,
+          latest_instruction: null,
+          metadata: { persona_id: "forge", bro_detail_session_id: "detail-forge" },
+        },
+        {
+          task_id: "task-active",
+          root_task_id: "task-active",
+          parent_task_id: null,
+          title: "Active task",
+          goal: "Current work",
+          status: "running",
+          priority: 0,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 1,
+          latest_instruction: null,
+          metadata: { persona_id: "forge", bro_detail_session_id: "detail-forge" },
+        },
+      ],
+      executionRuns: [
+        {
+          run_id: "run-active",
+          task_id: "task-active",
+          execution_session_id: "exec-active",
+          executor_type: "codex",
+          status: "running",
+          claimed_by: null,
+          run_revision: 1,
+          latest_progress_message: "Checking files now.",
+          output_summary: null,
+          block_reason: null,
+          failure_reason: null,
+          metadata: {},
+        },
+      ],
+      summaries: [],
+    });
+
+    expect(records[0]).toMatchObject({
+      taskId: "task-active",
+      status: "running",
+      progress: 60,
+      description: "Checking files now.",
+    });
+  });
+
+  it("marks completed Bro task records at full progress", () => {
+    const records = buildBroTaskRecords("forge", {
+      broDetailSessionId: "detail-forge",
+      tasks: [
+        {
+          task_id: "task-done",
+          root_task_id: "task-done",
+          parent_task_id: null,
+          title: "Completed task",
+          goal: "Done work",
+          status: "completed",
+          priority: 0,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 1,
+          latest_instruction: null,
+          metadata: { persona_id: "forge", bro_detail_session_id: "detail-forge" },
+        },
+      ],
+      executionRuns: [],
+      summaries: [],
+    });
+
+    expect(records[0]).toMatchObject({
+      taskId: "task-done",
+      status: "completed",
+      statusLabel: "completed",
+      progress: 100,
+    });
+  });
+
+  it("does not render assistant-only imported Codex history as a synced user message", () => {
+    const records = buildBroTaskRecords("forge", {
+      broDetailSessionId: "detail-forge",
+      tasks: [
+        {
+          task_id: "task-assistant-history",
+          root_task_id: "task-assistant-history",
+          parent_task_id: null,
+          title: "Assistant-only answer",
+          goal: "Assistant-only answer",
+          status: "completed",
+          priority: 0,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 1,
+          latest_instruction: null,
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            source_kind: "codex_thread_history",
+          },
+        },
+      ],
+      executionRuns: [],
+      summaries: [
+        {
+          task_id: "task-assistant-history",
+          operational_summary: "Assistant response from imported history.",
+          conversational_summary: "Assistant response from imported history.",
+          latest_user_visible_status: "Assistant response from imported history.",
+          needs_user_input: false,
+        },
+      ],
+    });
+
+    expect(records[0]).toMatchObject({
+      taskId: "task-assistant-history",
+      description: "Assistant response from imported history.",
+    });
+    expect(records[0].userText).toBeUndefined();
+  });
+
+  it("keeps direct Bro detail text visible as a synced user message", () => {
+    const records = buildBroTaskRecords("forge", {
+      broDetailSessionId: "detail-forge",
+      tasks: [
+        {
+          task_id: "task-direct-text",
+          root_task_id: "task-direct-text",
+          parent_task_id: null,
+          title: "Direct user request",
+          goal: "Direct user request",
+          status: "completed",
+          priority: 0,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 1,
+          latest_instruction: null,
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            source_kind: "bro_detail_text",
+          },
+        },
+      ],
+      executionRuns: [],
+      summaries: [],
+    });
+
+    expect(records[0].userText).toBe("Direct user request");
+  });
+
+  it("filters selected thread tasks before applying the timeline limit", () => {
+    const records = buildBroTaskRecords("forge", {
+      broDetailSessionId: "detail-forge",
+      taskIds: ["task-selected-old"],
+      limit: 1,
+      tasks: [
+        {
+          task_id: "task-selected-old",
+          root_task_id: "task-selected-old",
+          parent_task_id: null,
+          title: "Older selected request",
+          goal: "Older selected request",
+          status: "completed",
+          priority: 0,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 1,
+          latest_instruction: "Older selected request",
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            source_kind: "codex_thread_history",
+          },
+        },
+        {
+          task_id: "task-other-new",
+          root_task_id: "task-other-new",
+          parent_task_id: null,
+          title: "Newer other thread",
+          goal: "Newer other thread",
+          status: "completed",
+          priority: 0,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 1,
+          latest_instruction: "Newer other thread",
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            source_kind: "codex_thread_history",
+          },
+        },
+      ],
+      executionRuns: [],
+      summaries: [],
+    });
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      taskId: "task-selected-old",
+      userText: "Older selected request",
+    });
+  });
+});
+
+describe("buildBroThreadRecords", () => {
+  it("maps runtime Codex thread projection into selectable thread records", () => {
+    const records = buildBroThreadRecords("forge", [
+      {
+        thread_id: "bro-thread-1",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: "exec-1",
+        status: "completed",
+        title: "Existing thread",
+        preview: "Done already",
+        progress: 100,
+        task_ids: ["task-1", "task-2"],
+        active_task_id: null,
+        latest_task_id: "task-2",
+        has_resume_handle: true,
+        updated_at: null,
+        diagnostics: { codex_thread_id: "codex-thread-1" },
+      },
+    ]);
+
+    expect(records).toEqual([
+      expect.objectContaining({
+        threadId: "bro-thread-1",
+        title: "Existing thread",
+        statusLabel: "completed",
+        taskIds: ["task-1", "task-2"],
+        hasResumeHandle: true,
+      }),
+    ]);
+  });
+
+  it("maps imported Codex threads without task history", () => {
+    const records = buildBroThreadRecords("forge", [
+      {
+        thread_id: "codex-import-abc123",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "completed",
+        title: "Imported outside Newbro",
+        preview: "Task: Imported outside Newbro",
+        progress: 100,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-26T22:00:00+00:00",
+        diagnostics: {
+          codex_thread_id: "019e67f5-2e79-77c1-8334-5b04b8c81432",
+          imported_from_codex_thread_list: true,
+        },
+      },
+    ]);
+
+    expect(records).toEqual([
+      expect.objectContaining({
+        threadId: "codex-import-abc123",
+        title: "Imported outside Newbro",
+        taskIds: [],
+        hasResumeHandle: true,
+      }),
+    ]);
   });
 });

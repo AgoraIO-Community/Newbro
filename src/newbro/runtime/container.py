@@ -60,6 +60,12 @@ class RuntimeContainer:
                 return session
         return None
 
+    async def find_session_by_run(self, run_id: str) -> SessionRuntime | None:
+        for session in self._sessions.values():
+            if await session.blackboard.get_run(run_id) is not None:
+                return session
+        return None
+
     async def handle_executor_node_connected(self) -> list[str]:
         updated_task_ids: list[str] = []
         for session in self._sessions.values():

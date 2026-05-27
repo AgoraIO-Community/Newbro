@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from .enums import BindingStatus
@@ -31,6 +33,25 @@ class ExecutionSession(BaseModel):
     latest_run_id: str | None = None
     latest_resume_handle: AgentResumeHandle | None = None
     queued_run_request: QueuedRunRequest | None = None
+
+
+class BroThread(BaseModel):
+    thread_id: str
+    persona_id: str
+    persona_name: str | None = None
+    executor_id: str = "codex"
+    executor_node_id: str | None = None
+    execution_session_id: str | None = None
+    status: Literal["pending", "queued", "running", "blocked", "completed", "failed", "cancelled"] = "pending"
+    title: str
+    preview: str | None = None
+    progress: int = 0
+    task_ids: list[str] = Field(default_factory=list)
+    active_task_id: str | None = None
+    latest_task_id: str | None = None
+    has_resume_handle: bool = False
+    updated_at: str | None = None
+    diagnostics: dict[str, object] = Field(default_factory=dict)
 
 
 class SessionBinding(BaseModel):

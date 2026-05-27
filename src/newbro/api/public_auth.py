@@ -182,16 +182,22 @@ class PublicAuthStore:
                     )
                     public_user = _user_from_row(user)
                 else:
-                    user_id = f"user-{uuid4().hex[:12]}"
-                    conn.execute(
-                        "INSERT INTO users (user_id, email, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
-                        (user_id, invite["email"], now, now),
-                    )
+                    user = _find_existing_user_for_email(conn, email=invite["email"])
+                    if user is not None:
+                        user_id = str(user["user_id"])
+                        conn.execute("UPDATE users SET last_seen_at = ? WHERE user_id = ?", (now, user_id))
+                        public_user = _user_from_row(user)
+                    else:
+                        user_id = f"user-{uuid4().hex[:12]}"
+                        conn.execute(
+                            "INSERT INTO users (user_id, email, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                            (user_id, invite["email"], now, now),
+                        )
+                        public_user = PublicUser(user_id=user_id, email=invite["email"])
                     conn.execute(
                         "UPDATE invites SET redeemed_by = ?, redeemed_at = ? WHERE code_hash = ?",
                         (user_id, now, code_hash),
                     )
-                    public_user = PublicUser(user_id=user_id, email=invite["email"])
                 raw_token = secrets.token_urlsafe(32)
                 conn.execute(
                     "INSERT INTO browser_sessions (token_hash, user_id, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
@@ -202,12 +208,20 @@ class PublicAuthStore:
     def _create_user_session(self, *, email: str | None) -> RedeemedSession:
         with self._connect() as conn:
             now = _timestamp()
-            user_id = f"user-{uuid4().hex[:12]}"
-            public_user = PublicUser(user_id=user_id, email=email)
-            conn.execute(
-                "INSERT INTO users (user_id, email, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
-                (user_id, email, now, now),
-            )
+            user = _find_existing_user_for_email(conn, email=email)
+            if user is not None:
+                public_user = _user_from_row(user)
+                conn.execute(
+                    "UPDATE users SET last_seen_at = ? WHERE user_id = ?",
+                    (now, public_user.user_id),
+                )
+            else:
+                user_id = f"user-{uuid4().hex[:12]}"
+                public_user = PublicUser(user_id=user_id, email=email)
+                conn.execute(
+                    "INSERT INTO users (user_id, email, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                    (user_id, email, now, now),
+                )
             raw_token = secrets.token_urlsafe(32)
             conn.execute(
                 "INSERT INTO browser_sessions (token_hash, user_id, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
@@ -509,6 +523,36 @@ def _timestamp() -> str:
 def _normalize_email(value: str | None) -> str | None:
     cleaned = value.strip().lower() if value else ""
     return cleaned or None
+
+
+def _find_existing_user_for_email(conn: sqlite3.Connection, *, email: str | None) -> sqlite3.Row | None:
+    normalized_email = _normalize_email(email)
+    if not normalized_email:
+        return None
+    return conn.execute(
+        """
+        SELECT users.*
+        FROM users
+        LEFT JOIN (
+            SELECT user_id, COUNT(*) AS persona_count
+            FROM personas
+            GROUP BY user_id
+        ) persona_counts ON persona_counts.user_id = users.user_id
+        LEFT JOIN (
+            SELECT user_id, COUNT(*) AS node_count
+            FROM executor_node_owners
+            GROUP BY user_id
+        ) node_counts ON node_counts.user_id = users.user_id
+        WHERE lower(users.email) = ?
+        ORDER BY
+            (COALESCE(persona_counts.persona_count, 0) + COALESCE(node_counts.node_count, 0)) DESC,
+            users.last_seen_at DESC,
+            users.created_at DESC,
+            users.user_id ASC
+        LIMIT 1
+        """,
+        (normalized_email,),
+    ).fetchone()
 
 
 def _user_from_row(row: sqlite3.Row) -> PublicUser:

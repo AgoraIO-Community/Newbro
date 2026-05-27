@@ -12,6 +12,7 @@ class ExecutorNodeExecutor(BaseModel):
     supports_resume: bool = False
     supports_follow_up: bool = False
     supports_audio_instruction: bool = False
+    supports_thread_list: bool = False
     supports_pause: bool = False
     supports_cancel: bool = True
 
@@ -78,6 +79,55 @@ class NodeStatusMessage(BaseModel):
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
+class CodexThreadListItem(BaseModel):
+    thread_id: str
+    session_id: str | None = None
+    preview: str | None = None
+    title: str | None = None
+    cwd: str | None = None
+    path: str | None = None
+    status: str | None = None
+    created_at: int | None = None
+    updated_at: int | None = None
+    cli_version: str | None = None
+    source: str | None = None
+    diagnostics: dict[str, object] = Field(default_factory=dict)
+
+
+class ListCodexThreadsCommand(BaseModel):
+    type: Literal["list_codex_threads"] = "list_codex_threads"
+    request_id: str
+    executor_type: Literal["codex"] = "codex"
+    workspace_id: str | None = None
+
+
+class CodexThreadsListedMessage(BaseModel):
+    type: Literal["codex_threads_listed"] = "codex_threads_listed"
+    request_id: str
+    node_id: str
+    executor_type: Literal["codex"] = "codex"
+    ok: bool = True
+    error: str | None = None
+    threads: list[CodexThreadListItem] = Field(default_factory=list)
+
+
+class ReadCodexThreadCommand(BaseModel):
+    type: Literal["read_codex_thread"] = "read_codex_thread"
+    request_id: str
+    executor_type: Literal["codex"] = "codex"
+    thread_id: str
+
+
+class CodexThreadReadMessage(BaseModel):
+    type: Literal["codex_thread_read"] = "codex_thread_read"
+    request_id: str
+    node_id: str
+    executor_type: Literal["codex"] = "codex"
+    ok: bool = True
+    error: str | None = None
+    thread: dict[str, object] = Field(default_factory=dict)
+
+
 class DispatchRunCommand(BaseModel):
     type: Literal["dispatch_run"] = "dispatch_run"
     run_id: str
@@ -95,6 +145,7 @@ class DispatchRunCommand(BaseModel):
 class ExecutorAudioInstruction(BaseModel):
     audio_instruction_id: str
     target_persona_id: str
+    target_thread_id: str | None = None
     artifact_path: str
     mime_type: str
     duration_ms: int
@@ -108,6 +159,7 @@ class ExecutorAudioInstruction(BaseModel):
 class ExecutorTextInstruction(BaseModel):
     instruction_id: str
     target_persona_id: str
+    target_thread_id: str | None = None
     text: str
     source_audio_instruction_id: str | None = None
     metadata: dict[str, object] = Field(default_factory=dict)

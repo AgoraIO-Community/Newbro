@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { ArrowUp, Check, ChevronLeft, Copy, FileText, Layers, LogOut, MessageSquare, Mic, Plus, Radio, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorRunCommand,
@@ -13,11 +13,12 @@ import {
   submitExecutorTextInstruction,
   updatePersona,
 } from "./lib/session-client";
-import { buildBroCardModels, buildBroTaskRecords } from "./components/newbro/adapters";
+import { readThreadIdFromUrl, replaceThreadIdInUrl } from "./lib/session-url";
+import { buildBroCardModels, buildBroTaskRecords, buildBroThreadRecords } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { useNewbroShell } from "./NewbroShell";
 import type { ExecutionRun, ExecutorNodeRecord, Persona, Task } from "./types";
-import type { BroCardModel, BroTaskRecord } from "./components/newbro/types";
+import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
 type RuntimePage = "home" | "detail";
 type HomeBroState = "working" | "idle" | "offline";
@@ -35,6 +36,7 @@ type TextTurnStatus = "sending" | "sent" | "failed";
 type AudioTurn = {
   id: string;
   broId: string;
+  threadId?: string | null;
   status: AudioTurnStatus;
   durationMs: number;
   error?: string;
@@ -44,6 +46,7 @@ type AudioTurn = {
 type TextTurn = {
   id: string;
   broId: string;
+  threadId?: string | null;
   text: string;
   status: TextTurnStatus;
   error?: string;
@@ -54,6 +57,10 @@ type ChatMessage = {
   text: string;
   id: string;
 };
+
+function turnMatchesThread<T extends { threadId?: string | null }>(turn: T, threadId: string | null): boolean {
+  return !threadId || !turn.threadId || turn.threadId === threadId;
+}
 
 type ActiveCodexAudioState = {
   enabled: boolean;
@@ -116,6 +123,79 @@ function TextTurnBubble({ turn, mobile = false }: { turn: TextTurn; mobile?: boo
       <div className={metaClass}>
         {meta}
         {turn.status === "failed" && turn.error ? ` · ${turn.error}` : ""}
+      </div>
+    </div>
+  );
+}
+
+function normalizeUserTurnText(value: string | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function syncedUserTextAlreadyVisible(record: BroTaskRecord, textTurns: TextTurn[], audioTurns: AudioTurn[]): boolean {
+  const userText = normalizeUserTurnText(record.userText);
+  if (!userText) return true;
+  return textTurns.some((turn) => normalizeUserTurnText(turn.text) === userText)
+    || audioTurns.some((turn) => normalizeUserTurnText(turn.transcript) === userText);
+}
+
+function SyncedTaskRecordTurn({
+  bro,
+  record,
+  textTurns,
+  audioTurns,
+  mobile = false,
+}: {
+  bro: BroCardModel;
+  record: BroTaskRecord;
+  textTurns: TextTurn[];
+  audioTurns: AudioTurn[];
+  mobile?: boolean;
+}) {
+  const showUserTurn = Boolean(record.userText) && !syncedUserTextAlreadyVisible(record, textTurns, audioTurns);
+  return (
+    <>
+      {showUserTurn ? (
+        <TextTurnBubble
+          turn={{
+            id: `synced-user-${record.taskId}`,
+            broId: bro.id,
+            text: record.userText ?? "",
+            status: "sent",
+          }}
+          mobile={mobile}
+        />
+      ) : null}
+      <TaskRecordCard bro={bro} record={record} mobile={mobile} />
+    </>
+  );
+}
+
+function taskRecordIsActive(record: BroTaskRecord): boolean {
+  return !["completed", "failed", "cancelled", "paused"].includes(record.status);
+}
+
+function TaskRecordCard({ bro, record, mobile = false }: { bro: BroCardModel; record: BroTaskRecord; mobile?: boolean }) {
+  const active = taskRecordIsActive(record);
+  const prefix = mobile ? "thr" : "dt";
+  const statusClass = mobile ? "thr-status" : "dt-status";
+  const doneClass = mobile ? "thr-status-done" : "dt-status-done";
+  const spinClass = mobile ? "thr-status-spin" : "dt-status-spin";
+  const doneDotClass = mobile ? "thr-status-done-dot" : "dt-status-done-dot";
+  const titleClass = mobile ? "thr-status-title" : "dt-status-title";
+  const pctClass = mobile ? "thr-status-pct" : "dt-status-pct";
+  const barClass = mobile ? "thr-status-bar" : "dt-status-bar";
+  const footClass = mobile ? "thr-status-foot" : "dt-status-foot";
+  return (
+    <div className={`${prefix}-turn ${prefix}-turn-bro`}>
+      <div className={`${statusClass}${active ? "" : ` ${doneClass}`}`}>
+        <div className={`${statusClass}-head`}>
+          {active ? <span className={spinClass} /> : <span className={doneDotClass} />}
+          <span className={titleClass}>{record.title}</span>
+          <span className={pctClass}>{record.statusLabel}</span>
+        </div>
+        <div className={barClass}><i style={{ width: `${Math.max(8, Math.min(100, Math.round(record.progress)))}%` }} /></div>
+        <div className={footClass}>{record.description || record.summary || bro.progressLabel}</div>
       </div>
     </div>
   );
@@ -237,6 +317,7 @@ function activeCodexTextState(
 function usePushToTalkAudio({
   sessionId,
   broId,
+  targetThreadId,
   disabled,
   onTurn,
   onRemoveTurn,
@@ -245,6 +326,7 @@ function usePushToTalkAudio({
 }: {
   sessionId: string | null;
   broId: string;
+  targetThreadId: string | null;
   disabled: boolean;
   onTurn: (turn: AudioTurn) => void;
   onRemoveTurn: (turnId: string) => void;
@@ -280,7 +362,7 @@ function usePushToTalkAudio({
         if (event.data.size > 0) active.chunks.push(event.data);
       });
       activeRef.current = active;
-      onTurn({ id: turnId, broId, status: "recording", durationMs: 0 });
+      onTurn({ id: turnId, broId, threadId: targetThreadId, status: "recording", durationMs: 0 });
       setPhase("recording");
       recorder.start();
     } catch (error: unknown) {
@@ -297,9 +379,10 @@ function usePushToTalkAudio({
     const blob = await stopRecorder(active);
     try {
       const pcm = await mediaBlobToPcm16(blob);
-      onTurn({ id: active.turnId, broId, status: "sending", durationMs: pcm.durationMs || durationMs });
+      onTurn({ id: active.turnId, broId, threadId: targetThreadId, status: "sending", durationMs: pcm.durationMs || durationMs });
       const response = await submitExecutorAudioInstruction(sessionId, {
         targetPersonaId: broId,
+        targetThreadId,
         pcm16: pcm.blob,
         durationMs: pcm.durationMs || durationMs,
         sampleRate: pcm.sampleRate,
@@ -307,11 +390,11 @@ function usePushToTalkAudio({
         samplesPerChannel: pcm.samplesPerChannel,
       });
       onRemoveTurn(active.turnId);
-      onTurn({ id: response.audio_instruction_id, broId, status: "sent", durationMs: pcm.durationMs || durationMs });
+      onTurn({ id: response.audio_instruction_id, broId, threadId: response.target_thread_id ?? targetThreadId, status: "sent", durationMs: pcm.durationMs || durationMs });
       onSent();
     } catch (error: unknown) {
       const message = describeError(error, "Audio could not be sent.");
-      onTurn({ id: active.turnId, broId, status: "failed", durationMs, error: message });
+      onTurn({ id: active.turnId, broId, threadId: targetThreadId, status: "failed", durationMs, error: message });
       onError(message);
     } finally {
       setPhase("idle");
@@ -452,6 +535,42 @@ function homeBroLast(bro: BroCardModel, state: HomeBroState): string {
   return bro.liveState === "live" ? "ready now" : "standing by";
 }
 
+function homeBroSortRank(bro: BroCardModel): number {
+  const state = homeBroState(bro);
+  if (state === "working") return 0;
+  if (bro.liveState === "live") return 1;
+  if (state === "offline") return 3;
+  return 2;
+}
+
+function compareHomeBros(a: BroCardModel, b: BroCardModel): number {
+  const rankDelta = homeBroSortRank(a) - homeBroSortRank(b);
+  if (rankDelta !== 0) return rankDelta;
+  return a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.id.localeCompare(b.id);
+}
+
+function broDetailHref(broId: string): string {
+  if (typeof window === "undefined") return `/bros/${encodeURIComponent(broId)}`;
+  const sid = new URLSearchParams(window.location.search).get("sid");
+  const query = sid ? `?sid=${encodeURIComponent(sid)}` : "";
+  return `/bros/${encodeURIComponent(broId)}${query}`;
+}
+
+function openBroFromHome(event: MouseEvent<HTMLAnchorElement>, broId: string, onOpen: (id: string) => void): void {
+  if (
+    event.defaultPrevented
+    || event.button !== 0
+    || event.metaKey
+    || event.altKey
+    || event.ctrlKey
+    || event.shiftKey
+  ) {
+    return;
+  }
+  event.preventDefault();
+  onOpen(broId);
+}
+
 function taskTimeLabel(task: Task): string {
   const value = ["updated_at", "completed_at", "created_at"]
     .map((key) => task.metadata[key])
@@ -578,7 +697,7 @@ function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; 
   const tone = homeBroTone(state);
   const progress = Math.max(5, Math.min(100, Math.round(bro.progress)));
   return (
-    <button type="button" data-testid={`bro-card-${bro.id}`} className={`dt-bro-card dt-bro-card-${tone}${featured ? " dt-bro-card-featured" : ""}`} onClick={() => onOpen(bro.id)}>
+    <a data-testid={`bro-card-${bro.id}`} className={`dt-bro-card dt-bro-card-${tone}${featured ? " dt-bro-card-featured" : ""}`} href={broDetailHref(bro.id)} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
       <div className={`dt-bro-card-avatar dt-bro-card-avatar-${tone}`}>
         <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={state} size={42} />
         <span className={`dt-bro-card-pip dt-bro-card-pip-${tone}`} />
@@ -605,20 +724,20 @@ function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; 
         ) : null}
       </div>
       <span className="dt-bro-card-arrow">›</span>
-    </button>
+    </a>
   );
 }
 
 function DesktopRosterRow({ bro, onOpen }: { bro: BroCardModel; onOpen: (id: string) => void }) {
   const state = homeBroState(bro);
   return (
-    <button type="button" data-testid={`bro-card-${bro.id}`} className={`dt-roster-row dt-roster-row-${state}`} onClick={() => onOpen(bro.id)}>
+    <a data-testid={`bro-card-${bro.id}`} className={`dt-roster-row dt-roster-row-${state}`} href={broDetailHref(bro.id)} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
       <div className={`dt-roster-avatar dt-roster-avatar-${state}`}>
         <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={state} size={26} />
       </div>
       <span className="dt-roster-name">{bro.name}</span>
       <span className="dt-roster-last">{homeBroLast(bro, state)}</span>
-    </button>
+    </a>
   );
 }
 
@@ -654,8 +773,9 @@ function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
 function DesktopHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
   const shell = useNewbroShell();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const workingBros = shell.bros.filter((bro) => homeBroState(bro) === "working");
-  const standingByBros = shell.bros.filter((bro) => homeBroState(bro) !== "working");
+  const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
+  const workingBros = homeBros.filter((bro) => homeBroState(bro) === "working");
+  const standingByBros = homeBros.filter((bro) => homeBroState(bro) !== "working");
   const recents = buildHomeRecents(shell.tasks, shell.runtimePersonas);
   const hasBros = shell.runtimePersonas.length > 0;
 
@@ -1008,7 +1128,6 @@ function ThreadPanel({
 }) {
   const shell = useNewbroShell();
   const draftText = shell.draftSession?.current_draft?.text ?? "";
-  const activeRecord = records[0] ?? null;
 
   return (
     <>
@@ -1022,6 +1141,22 @@ function ThreadPanel({
           </div>
         </div>
       ) : null}
+      {shell.openingThreadId ? (
+        <div className="dt-turn dt-turn-sys">
+          <div className="dt-sys-event">
+            <span className="dt-sys-event-dot" />
+            <span>Fetching thread history...</span>
+          </div>
+        </div>
+      ) : null}
+      {shell.threadOpenError ? (
+        <div className="dt-turn dt-turn-sys">
+          <div className="dt-sys-event">
+            <span className="dt-sys-event-dot" />
+            <span>{shell.threadOpenError}</span>
+          </div>
+        </div>
+      ) : null}
       <div className="dt-thread-day"><span>Current session</span></div>
       {draftText ? (
         <div className="dt-turn dt-turn-you">
@@ -1032,19 +1167,16 @@ function ThreadPanel({
       {textTurns.map((turn) => <TextTurnBubble key={turn.id} turn={turn} />)}
       {audioTurns.map((turn) => <AudioTurnBubble key={turn.id} bro={bro} turn={turn} />)}
       {conversationMessages.map((message) => <ConversationMessageBubble key={message.id} bro={bro} message={message} />)}
-      {activeRecord ? (
-        <div className="dt-turn dt-turn-bro">
-          <div className="dt-status">
-            <div className="dt-status-head">
-              <span className="dt-status-spin" />
-              <span className="dt-status-title">{activeRecord.title}</span>
-              <span className="dt-status-pct">{activeRecord.statusLabel}</span>
-            </div>
-            <div className="dt-status-bar"><i style={{ width: `${Math.max(8, Math.min(100, Math.round(bro.progress || 64)))}%` }} /></div>
-            <div className="dt-status-foot">{activeRecord.description || activeRecord.summary || bro.progressLabel}</div>
-          </div>
-        </div>
-      ) : textTurns.length === 0 && audioTurns.length === 0 && conversationMessages.length === 0 ? (
+      {records.map((record) => (
+        <SyncedTaskRecordTurn
+          key={record.taskId}
+          bro={bro}
+          record={record}
+          textTurns={textTurns}
+          audioTurns={audioTurns}
+        />
+      ))}
+      {records.length === 0 && textTurns.length === 0 && audioTurns.length === 0 && conversationMessages.length === 0 ? (
         <div className="dt-turn dt-turn-bro">
           <div className="dt-bubble dt-bubble-bro">
             {disabled ? "I am paused until the node reconnects." : "No thread yet. Tell me what to build."}
@@ -1052,12 +1184,6 @@ function ThreadPanel({
           <div className="dt-bubble-meta">{bro.name} · standby</div>
         </div>
       ) : null}
-      {records.slice(1).map((record) => (
-        <div key={record.taskId} className="dt-turn dt-turn-bro">
-          <div className="dt-bubble dt-bubble-bro">{record.description || record.summary || record.title}</div>
-          <div className="dt-bubble-meta">{bro.name} · {record.statusLabel}</div>
-        </div>
-      ))}
     </>
   );
 }
@@ -1065,30 +1191,35 @@ function ThreadPanel({
 function MobileThreadSurface({
   bro,
   records,
+  selectedThreadId,
+  createNewThread,
   textTurns,
   audioTurns,
   conversationMessages,
   onTextTurn,
   onAudioTurn,
   onRemoveAudioTurn,
+  onThreadResolved,
   disabled,
   disabledReason,
 }: {
   bro: BroCardModel;
   records: BroTaskRecord[];
+  selectedThreadId: string | null;
+  createNewThread: boolean;
   textTurns: TextTurn[];
   audioTurns: AudioTurn[];
   conversationMessages: ChatMessage[];
   onTextTurn: (turn: TextTurn) => void;
   onAudioTurn: (turn: AudioTurn) => void;
   onRemoveAudioTurn: (turnId: string) => void;
+  onThreadResolved: (threadId: string | null) => void;
   disabled?: boolean;
   disabledReason?: string | null;
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
   const draftText = draft;
-  const activeRecord = records[0] ?? null;
   const connected = shell.voiceSession.phase === "connected";
   const loading = shell.voiceSession.phase === "loading";
   const [inputMode, setInputMode] = useState<"ptt" | "free">("ptt");
@@ -1099,6 +1230,7 @@ function MobileThreadSurface({
   const recorder = usePushToTalkAudio({
     sessionId: shell.activeShellSessionId,
     broId: bro.id,
+    targetThreadId: selectedThreadId,
     disabled: micDisabled,
     onTurn: onAudioTurn,
     onRemoveTurn: onRemoveAudioTurn,
@@ -1115,18 +1247,21 @@ function MobileThreadSurface({
     const text = draft.trim();
     if (!text || textDisabled || !shell.activeShellSessionId) return;
     const turnId = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    onTextTurn({ id: turnId, broId: bro.id, text, status: "sending" });
+    onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending" });
     setDraft("");
     try {
-      await submitExecutorTextInstruction(shell.activeShellSessionId, {
+      const response = await submitExecutorTextInstruction(shell.activeShellSessionId, {
         targetPersonaId: bro.id,
+        targetThreadId: selectedThreadId,
+        createNewThread,
         text,
       });
-      onTextTurn({ id: turnId, broId: bro.id, text, status: "sent" });
+      onThreadResolved(response.target_thread_id);
+      onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent" });
       await shell.refreshShellSession();
     } catch (error: unknown) {
       const message = describeError(error, "Text could not be sent.");
-      onTextTurn({ id: turnId, broId: bro.id, text, status: "failed", error: message });
+      onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", error: message });
       shell.setShellError(message);
     }
   }
@@ -1167,22 +1302,36 @@ function MobileThreadSurface({
             </div>
           </div>
         ) : null}
+        {shell.openingThreadId ? (
+          <div className="thr-turn thr-turn-sys">
+            <div className="ob-sys-event">
+              <span className="ob-sys-event-dot" />
+              <span>Fetching thread history...</span>
+            </div>
+          </div>
+        ) : null}
+        {shell.threadOpenError ? (
+          <div className="thr-turn thr-turn-sys">
+            <div className="ob-sys-event">
+              <span className="ob-sys-event-dot" />
+              <span>{shell.threadOpenError}</span>
+            </div>
+          </div>
+        ) : null}
         {textTurns.map((turn) => <TextTurnBubble key={turn.id} turn={turn} mobile />)}
         {audioTurns.map((turn) => <AudioTurnBubble key={turn.id} bro={bro} turn={turn} mobile />)}
         {conversationMessages.map((message) => <ConversationMessageBubble key={message.id} bro={bro} message={message} mobile />)}
-        {activeRecord ? (
-          <div className="thr-turn thr-turn-bro">
-            <div className="thr-status">
-              <div className="thr-status-head">
-                <span className="thr-status-spin" />
-                <span className="thr-status-title">{activeRecord.title}</span>
-                <span className="thr-status-pct">{activeRecord.statusLabel}</span>
-              </div>
-              <div className="thr-status-bar"><i style={{ width: `${Math.max(8, Math.min(100, Math.round(bro.progress || 64)))}%` }} /></div>
-              <div className="thr-status-foot">{activeRecord.description || activeRecord.summary || bro.progressLabel}</div>
-            </div>
-          </div>
-        ) : textTurns.length === 0 && audioTurns.length === 0 && conversationMessages.length === 0 ? (
+        {records.map((record) => (
+          <SyncedTaskRecordTurn
+            key={record.taskId}
+            bro={bro}
+            record={record}
+            textTurns={textTurns}
+            audioTurns={audioTurns}
+            mobile
+          />
+        ))}
+        {records.length === 0 && textTurns.length === 0 && audioTurns.length === 0 && conversationMessages.length === 0 ? (
           <div className="thr-turn thr-turn-bro">
             <div className="thr-bubble thr-bubble-bro">
               {disabled ? "I am paused until the node reconnects." : "No thread yet. Tell me what to build."}
@@ -1190,12 +1339,6 @@ function MobileThreadSurface({
             <div className="thr-meta">{bro.name} · standby</div>
           </div>
         ) : null}
-        {records.slice(1).map((record) => (
-          <div key={record.taskId} className="thr-turn thr-turn-bro">
-            <div className="thr-bubble thr-bubble-bro">{record.description || record.summary || record.title}</div>
-            <div className="thr-meta">{bro.name} · {record.statusLabel}</div>
-          </div>
-        ))}
       </main>
       <form className={`thr-composer nb-mobile-thread-composer${disabled ? " ob-composer-disabled" : ""}`} onSubmit={submitText}>
         {!disabled ? (
@@ -1316,16 +1459,22 @@ function MobileThreadSurface({
 
 function DesktopComposerBar({
   bro,
+  selectedThreadId,
+  createNewThread,
   disabled,
   onTextTurn,
   onAudioTurn,
   onRemoveAudioTurn,
+  onThreadResolved,
 }: {
   bro: BroCardModel;
+  selectedThreadId: string | null;
+  createNewThread: boolean;
   disabled: boolean;
   onTextTurn: (turn: TextTurn) => void;
   onAudioTurn: (turn: AudioTurn) => void;
   onRemoveAudioTurn: (turnId: string) => void;
+  onThreadResolved: (threadId: string | null) => void;
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
@@ -1338,6 +1487,7 @@ function DesktopComposerBar({
   const recorder = usePushToTalkAudio({
     sessionId: shell.activeShellSessionId,
     broId: bro.id,
+    targetThreadId: selectedThreadId,
     disabled: micDisabled,
     onTurn: onAudioTurn,
     onRemoveTurn: onRemoveAudioTurn,
@@ -1350,18 +1500,21 @@ function DesktopComposerBar({
     const text = draft.trim();
     if (!text || textDisabled || !shell.activeShellSessionId) return;
     const turnId = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    onTextTurn({ id: turnId, broId: bro.id, text, status: "sending" });
+    onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending" });
     setDraft("");
     try {
-      await submitExecutorTextInstruction(shell.activeShellSessionId, {
+      const response = await submitExecutorTextInstruction(shell.activeShellSessionId, {
         targetPersonaId: bro.id,
+        targetThreadId: selectedThreadId,
+        createNewThread,
         text,
       });
-      onTextTurn({ id: turnId, broId: bro.id, text, status: "sent" });
+      onThreadResolved(response.target_thread_id);
+      onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent" });
       await shell.refreshShellSession();
     } catch (error: unknown) {
       const message = describeError(error, "Text could not be sent.");
-      onTextTurn({ id: turnId, broId: bro.id, text, status: "failed", error: message });
+      onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", error: message });
       shell.setShellError(message);
     }
   }
@@ -1445,52 +1598,65 @@ function DesktopComposerBar({
 
 function DesktopActivityRail({
   bro,
-  records,
+  threads,
+  selectedThreadId,
+  pendingNewThread,
+  onSelectThread,
+  onNewThread,
   offline,
 }: {
   bro: BroCardModel;
-  records: BroTaskRecord[];
+  threads: BroThreadRecord[];
+  selectedThreadId: string | null;
+  pendingNewThread: boolean;
+  onSelectThread: (threadId: string) => void;
+  onNewThread: () => void;
   offline: ExecutorNodeRecord | null;
 }) {
-  const live = !offline;
-  const threads = records.slice(0, 4);
-  const threadCount = Math.max(1, threads.length);
+  const threadList = threads ?? [];
   return (
-    <aside className="dt-activity nb-detail-activity" aria-label={`${bro.name} activity`}>
+    <aside className="dt-activity nb-detail-activity" aria-label={`${bro.name} threads`}>
       <section className="dt-activity-block">
         <div className="dt-activity-block-head">
-          <span className="ob-eyebrow">THREADS WITH {bro.name.toUpperCase()} · {threadCount}</span>
+          <span className="ob-eyebrow">THREADS WITH {bro.name.toUpperCase()} · {threadList.length + (pendingNewThread ? 1 : 0)}</span>
         </div>
         <ul className="dt-threadlist">
-          <li>
-            <button type="button" className="dt-threadlist-row dt-threadlist-row-on">
-              <span className="dt-threadlist-body">
-                <span className="dt-threadlist-title">{records[0]?.title || "Current session"}</span>
-                <span className="dt-threadlist-meta">
-                  <span>{offline ? "paused" : live ? "live" : "today"}</span>
-                  <span className="dt-bro-meta-sep">·</span>
-                  <span>{Math.max(1, records.length)} turns</span>
-                </span>
-              </span>
-              <span className={`dt-threadlist-pip${offline ? " dt-threadlist-pip-paused" : ""}`} />
-            </button>
-          </li>
-          {threads.slice(1).map((record) => (
-            <li key={record.taskId}>
-              <button type="button" className="dt-threadlist-row">
+          {pendingNewThread ? (
+            <li>
+              <button type="button" className="dt-threadlist-row dt-threadlist-row-on">
                 <span className="dt-threadlist-body">
-                  <span className="dt-threadlist-title">{record.title}</span>
+                  <span className="dt-threadlist-title">New thread</span>
                   <span className="dt-threadlist-meta">
-                    <span>{record.timeLabel || record.statusLabel}</span>
+                    <span>pending</span>
                     <span className="dt-bro-meta-sep">·</span>
-                    <span>{record.statusLabel}</span>
+                    <span>created on first send</span>
                   </span>
                 </span>
+                <span className="dt-threadlist-pip" />
+              </button>
+            </li>
+          ) : null}
+          {threadList.map((thread) => (
+            <li key={thread.threadId}>
+              <button
+                type="button"
+                className={`dt-threadlist-row${!pendingNewThread && selectedThreadId === thread.threadId ? " dt-threadlist-row-on" : ""}`}
+                onClick={() => onSelectThread(thread.threadId)}
+              >
+                <span className="dt-threadlist-body">
+                  <span className="dt-threadlist-title">{thread.title}</span>
+                  <span className="dt-threadlist-meta">
+                    <span>{thread.timeLabel || thread.statusLabel}</span>
+                    <span className="dt-bro-meta-sep">·</span>
+                    <span>{thread.taskIds.length} task{thread.taskIds.length === 1 ? "" : "s"}</span>
+                  </span>
+                </span>
+                <span className={`dt-threadlist-pip${offline ? " dt-threadlist-pip-paused" : ""}`} />
               </button>
             </li>
           ))}
         </ul>
-        <button type="button" className="dt-thread-new">
+        <button type="button" className="dt-thread-new" onClick={onNewThread}>
           <Plus size={12} strokeWidth={2.4} aria-hidden="true" />
           <span>New thread with {bro.name}</span>
         </button>
@@ -1531,11 +1697,19 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const shell = useNewbroShell();
   const [textTurns, setTextTurns] = useState<TextTurn[]>([]);
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readThreadIdFromUrl());
+  const [pendingNewThread, setPendingNewThread] = useState(false);
+  const openedThreadRef = useRef<string | null>(null);
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const needsConnect = bro?.source === "runtime" && nodeStateNeedsConnect(nodeState);
   const offline = nodeState.kind === "usable_disconnected" ? nodeState.node : null;
   const persona = bro?.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
+  const threads = bro?.source === "runtime" ? buildBroThreadRecords(bro.id, shell.broThreads) : [];
+  const selectedThread = !pendingNewThread
+    ? threads.find((thread) => thread.threadId === selectedThreadId) ?? threads[0] ?? null
+    : null;
+  const activeThreadId = pendingNewThread ? null : selectedThread?.threadId ?? null;
   const records = bro?.source === "runtime"
     ? buildBroTaskRecords(bro.id, {
         activeTaskId: persona?.current_task_id ?? null,
@@ -1543,8 +1717,50 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
         tasks: shell.tasks,
         executionRuns: shell.executionRuns,
         summaries: shell.taskSummaries,
+        taskIds: selectedThread?.taskIds ?? null,
+        limit: 20,
       })
     : [];
+
+  useEffect(() => {
+    if (pendingNewThread || threads.length === 0) return;
+    const exists = selectedThreadId ? threads.some((thread) => thread.threadId === selectedThreadId) : false;
+    if (!exists) {
+      setSelectedThreadId(threads[0].threadId);
+      replaceThreadIdInUrl(threads[0].threadId);
+    }
+  }, [pendingNewThread, selectedThreadId, threads]);
+
+  function selectThread(threadId: string) {
+    setPendingNewThread(false);
+    setSelectedThreadId(threadId);
+    replaceThreadIdInUrl(threadId);
+    openedThreadRef.current = null;
+    if (bro?.source === "runtime") {
+      void shell.openRuntimeBroThread(bro.id, threadId);
+    }
+  }
+
+  function newThread() {
+    setPendingNewThread(true);
+    setSelectedThreadId(null);
+    replaceThreadIdInUrl(null);
+  }
+
+  function resolveThread(threadId: string | null) {
+    if (!threadId) return;
+    setPendingNewThread(false);
+    setSelectedThreadId(threadId);
+    replaceThreadIdInUrl(threadId);
+    openedThreadRef.current = null;
+  }
+
+  useEffect(() => {
+    if (pendingNewThread || needsConnect || !bro || bro.source !== "runtime" || !activeThreadId) return;
+    if (openedThreadRef.current === activeThreadId) return;
+    openedThreadRef.current = activeThreadId;
+    void shell.openRuntimeBroThread(bro.id, activeThreadId);
+  }, [activeThreadId, bro?.id, bro?.source, needsConnect, pendingNewThread]);
 
   useEffect(() => {
     if (!shell.hasLoadedShellSnapshot || !shell.activeShellSessionId || !bro || needsConnect) return undefined;
@@ -1561,8 +1777,8 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   if (!bro) return <DesktopHome onOpenBro={() => undefined} />;
 
   const disabledReason = offline ? `${offline.name} is not connected.` : null;
-  const visibleTextTurns = textTurns.filter((turn) => turn.broId === bro.id);
-  const visibleAudioTurns = audioTurns.filter((turn) => turn.broId === bro.id);
+  const visibleTextTurns = textTurns.filter((turn) => turn.broId === bro.id && turnMatchesThread(turn, activeThreadId));
+  const visibleAudioTurns = audioTurns.filter((turn) => turn.broId === bro.id && turnMatchesThread(turn, activeThreadId));
   const visibleConversationMessages = shell.chatMessages.slice(-8);
   const upsertTextTurn = (turn: TextTurn) => {
     setTextTurns((current) => {
@@ -1595,7 +1811,15 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
       ) : null}
       {!needsConnect ? (
         <div className="dt-detail-v2 nb-detail-runtime">
-          <DesktopActivityRail bro={bro} records={records} offline={offline} />
+          <DesktopActivityRail
+            bro={bro}
+            threads={threads}
+            selectedThreadId={activeThreadId}
+            pendingNewThread={pendingNewThread}
+            onSelectThread={selectThread}
+            onNewThread={newThread}
+            offline={offline}
+          />
           <section className="dt-pane">
             <div className="dt-pane-scroll">
               <div className="dt-pane-content">
@@ -1613,10 +1837,13 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
             </div>
             <DesktopComposerBar
               bro={bro}
+              selectedThreadId={activeThreadId}
+              createNewThread={pendingNewThread}
               disabled={Boolean(offline)}
               onTextTurn={upsertTextTurn}
               onAudioTurn={upsertAudioTurn}
               onRemoveAudioTurn={removeAudioTurn}
+              onThreadResolved={resolveThread}
             />
           </section>
         </div>
@@ -1656,8 +1883,9 @@ function MobileStage({ children }: { children: React.ReactNode }) {
 function MobileHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
   const shell = useNewbroShell();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const working = shell.bros.filter((bro) => homeBroState(bro) === "working");
-  const standing = shell.bros.filter((bro) => homeBroState(bro) !== "working");
+  const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
+  const working = homeBros.filter((bro) => homeBroState(bro) === "working");
+  const standing = homeBros.filter((bro) => homeBroState(bro) !== "working");
   const recents = buildHomeRecents(shell.tasks, shell.runtimePersonas);
   if (!shell.hasLoadedShellSnapshot) return null;
   return (
@@ -1755,10 +1983,18 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   const [pickerOpen, setPickerOpen] = useState(false);
   const [textTurns, setTextTurns] = useState<TextTurn[]>([]);
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readThreadIdFromUrl());
+  const [pendingNewThread, setPendingNewThread] = useState(false);
+  const openedThreadRef = useRef<string | null>(null);
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const offline = nodeState.kind === "usable_disconnected" ? nodeState.node : null;
   const needsConnect = bro.source === "runtime" && nodeStateNeedsConnect(nodeState) && nodeState.kind !== "no_bound_node";
   const persona = bro.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
+  const threads = bro.source === "runtime" ? buildBroThreadRecords(bro.id, shell.broThreads) : [];
+  const selectedThread = !pendingNewThread
+    ? threads.find((thread) => thread.threadId === selectedThreadId) ?? threads[0] ?? null
+    : null;
+  const activeThreadId = pendingNewThread ? null : selectedThread?.threadId ?? null;
   const records = bro.source === "runtime"
     ? buildBroTaskRecords(bro.id, {
         activeTaskId: persona?.current_task_id ?? null,
@@ -1766,14 +2002,53 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
         tasks: shell.tasks,
         executionRuns: shell.executionRuns,
         summaries: shell.taskSummaries,
+        taskIds: selectedThread?.taskIds ?? null,
+        limit: 20,
     })
     : [];
-  const visibleTextTurns = textTurns.filter((turn) => turn.broId === bro.id);
-  const visibleAudioTurns = audioTurns.filter((turn) => turn.broId === bro.id);
+  const visibleTextTurns = textTurns.filter((turn) => turn.broId === bro.id && turnMatchesThread(turn, activeThreadId));
+  const visibleAudioTurns = audioTurns.filter((turn) => turn.broId === bro.id && turnMatchesThread(turn, activeThreadId));
   const visibleConversationMessages = shell.chatMessages.slice(-8);
   useEffect(() => {
     setAudioTurns((current) => applyAudioTranscripts(current, shell.executionRuns));
   }, [shell.executionRuns]);
+  useEffect(() => {
+    if (pendingNewThread || threads.length === 0) return;
+    const exists = selectedThreadId ? threads.some((thread) => thread.threadId === selectedThreadId) : false;
+    if (!exists) {
+      setSelectedThreadId(threads[0].threadId);
+      replaceThreadIdInUrl(threads[0].threadId);
+    }
+  }, [pendingNewThread, selectedThreadId, threads]);
+  function selectThread(threadId: string) {
+    setPendingNewThread(false);
+    setSelectedThreadId(threadId);
+    replaceThreadIdInUrl(threadId);
+    openedThreadRef.current = null;
+    if (bro.source === "runtime") {
+      void shell.openRuntimeBroThread(bro.id, threadId);
+    }
+    setPickerOpen(false);
+  }
+  function newThread() {
+    setPendingNewThread(true);
+    setSelectedThreadId(null);
+    replaceThreadIdInUrl(null);
+    setPickerOpen(false);
+  }
+  function resolveThread(threadId: string | null) {
+    if (!threadId) return;
+    setPendingNewThread(false);
+    setSelectedThreadId(threadId);
+    replaceThreadIdInUrl(threadId);
+    openedThreadRef.current = null;
+  }
+  useEffect(() => {
+    if (pendingNewThread || needsConnect || bro.source !== "runtime" || !activeThreadId) return;
+    if (openedThreadRef.current === activeThreadId) return;
+    openedThreadRef.current = activeThreadId;
+    void shell.openRuntimeBroThread(bro.id, activeThreadId);
+  }, [activeThreadId, bro.id, bro.source, needsConnect, pendingNewThread]);
   const upsertAudioTurn = (turn: AudioTurn) => {
     setAudioTurns((current) => {
       const existing = current.findIndex((candidate) => candidate.id === turn.id);
@@ -1852,39 +2127,50 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
             </button>
           </header>
           <ul className="thr-drawer-list">
-            <li>
-              <button type="button" className={`thr-drawer-item ${bro.status === "busy" ? "thr-drawer-item-working" : "thr-drawer-item-open"} thr-drawer-item-on`} onClick={() => setPickerOpen(false)}>
-                <span className="thr-drawer-item-dot" aria-hidden="true" />
-                <span className="thr-drawer-item-body">
-                  <span className="thr-drawer-item-title">{bro.taskTitle || "Waiting for assignment"}</span>
-                  <span className="thr-drawer-item-meta">
-                    <span className="thr-drawer-item-state">{bro.status === "busy" ? "working" : "open"}</span>
-                    <span className="thr-drawer-item-sep">·</span>
-                    <span className="thr-drawer-item-when">now</span>
-                  </span>
-                </span>
-                <span className="thr-drawer-item-check" aria-hidden="true">
-                  <Check size={14} strokeWidth={2.2} />
-                </span>
-              </button>
-            </li>
-            {records.slice(0, 3).map((record) => (
-              <li key={record.taskId}>
-                <button type="button" className="thr-drawer-item thr-drawer-item-open" onClick={() => setPickerOpen(false)}>
+            {pendingNewThread ? (
+              <li>
+                <button type="button" className="thr-drawer-item thr-drawer-item-open thr-drawer-item-on" onClick={() => setPickerOpen(false)}>
                   <span className="thr-drawer-item-dot" aria-hidden="true" />
                   <span className="thr-drawer-item-body">
-                    <span className="thr-drawer-item-title">{record.title}</span>
+                    <span className="thr-drawer-item-title">New thread</span>
                     <span className="thr-drawer-item-meta">
-                      <span className="thr-drawer-item-state">{record.statusLabel}</span>
+                      <span className="thr-drawer-item-state">pending</span>
                       <span className="thr-drawer-item-sep">·</span>
-                      <span className="thr-drawer-item-when">{record.timeLabel || "now"}</span>
+                      <span className="thr-drawer-item-when">first send</span>
                     </span>
                   </span>
+                  <span className="thr-drawer-item-check" aria-hidden="true">
+                    <Check size={14} strokeWidth={2.2} />
+                  </span>
+                </button>
+              </li>
+            ) : null}
+            {threads.map((thread) => (
+              <li key={thread.threadId}>
+                <button
+                  type="button"
+                  className={`thr-drawer-item ${thread.status === "running" ? "thr-drawer-item-working" : "thr-drawer-item-open"}${!pendingNewThread && activeThreadId === thread.threadId ? " thr-drawer-item-on" : ""}`}
+                  onClick={() => selectThread(thread.threadId)}
+                >
+                <span className="thr-drawer-item-dot" aria-hidden="true" />
+                <span className="thr-drawer-item-body">
+                  <span className="thr-drawer-item-title">{thread.title}</span>
+                  <span className="thr-drawer-item-meta">
+                    <span className="thr-drawer-item-state">{thread.statusLabel}</span>
+                    <span className="thr-drawer-item-sep">·</span>
+                    <span className="thr-drawer-item-when">{thread.timeLabel || `${thread.taskIds.length} task${thread.taskIds.length === 1 ? "" : "s"}`}</span>
+                  </span>
+                </span>
+                {!pendingNewThread && activeThreadId === thread.threadId ? (
+                  <span className="thr-drawer-item-check" aria-hidden="true">
+                    <Check size={14} strokeWidth={2.2} />
+                  </span>
+                ) : null}
                 </button>
               </li>
             ))}
           </ul>
-          <button type="button" className="thr-drawer-new" onClick={() => setPickerOpen(false)}>
+          <button type="button" className="thr-drawer-new" onClick={newThread}>
             <Plus size={14} strokeWidth={2.2} />
             <span>New thread with {bro.name}</span>
           </button>
@@ -1893,12 +2179,15 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
         <MobileThreadSurface
           bro={bro}
           records={records}
+          selectedThreadId={activeThreadId}
+          createNewThread={pendingNewThread}
           textTurns={visibleTextTurns}
           audioTurns={visibleAudioTurns}
           conversationMessages={visibleConversationMessages}
           onTextTurn={upsertTextTurn}
           onAudioTurn={upsertAudioTurn}
           onRemoveAudioTurn={removeAudioTurn}
+          onThreadResolved={resolveThread}
           disabled={Boolean(offline)}
           disabledReason={offline ? `${offline.name} is not connected.` : null}
         />

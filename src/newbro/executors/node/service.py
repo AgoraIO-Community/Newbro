@@ -19,11 +19,16 @@ from newbro.executors.core import ExecutorEvent, ExecutorEventType, ExecutorSess
 from newbro.protocol import (
     AckMessage,
     CancelRunCommand,
+    CodexThreadListItem,
+    CodexThreadReadMessage,
+    CodexThreadsListedMessage,
     DispatchAudioInstructionCommand,
     DispatchRunCommand,
     DispatchTextInstructionCommand,
     ExecutorNodeExecutor,
     ExecutorTextInstruction,
+    ListCodexThreadsCommand,
+    ReadCodexThreadCommand,
     RegisterNodeMessage,
     ReleaseRunCommand,
     RunEventMessage,
@@ -174,6 +179,14 @@ class ExecutorNodeService:
             command = DispatchTextInstructionCommand.model_validate(payload)
             await self._dispatch_text_instruction(websocket, command)
             return
+        if message_type == "list_codex_threads":
+            command = ListCodexThreadsCommand.model_validate(payload)
+            await self._list_codex_threads(websocket, command)
+            return
+        if message_type == "read_codex_thread":
+            command = ReadCodexThreadCommand.model_validate(payload)
+            await self._read_codex_thread(websocket, command)
+            return
         if message_type == "cancel_run":
             command = CancelRunCommand.model_validate(payload)
             await self._cancel_run(command)
@@ -258,6 +271,77 @@ class ExecutorNodeService:
             if not _session_is_alive(session):
                 self._live_sessions.pop(command.execution_session_id, None)
 
+    async def _list_codex_threads(self, websocket: Any, command: ListCodexThreadsCommand) -> None:
+        executor = self._executors.get(command.executor_type)
+        list_threads = getattr(executor, "list_threads", None)
+        if list_threads is None:
+            await self._send_json(
+                websocket,
+                CodexThreadsListedMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    ok=False,
+                    error="Codex executor does not support thread/list.",
+                ).model_dump(mode="json"),
+            )
+            return
+        try:
+            raw_threads = await list_threads(command.workspace_id)
+            threads = [_codex_thread_list_item(item) for item in raw_threads]
+            await self._send_json(
+                websocket,
+                CodexThreadsListedMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    threads=threads,
+                ).model_dump(mode="json"),
+            )
+        except Exception as exc:
+            await self._send_json(
+                websocket,
+                CodexThreadsListedMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    ok=False,
+                    error=str(exc),
+                ).model_dump(mode="json"),
+            )
+
+    async def _read_codex_thread(self, websocket: Any, command: ReadCodexThreadCommand) -> None:
+        executor = self._executors.get(command.executor_type)
+        read_thread = getattr(executor, "read_thread", None)
+        if read_thread is None:
+            await self._send_json(
+                websocket,
+                CodexThreadReadMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    ok=False,
+                    error="Codex executor does not support thread/read.",
+                ).model_dump(mode="json"),
+            )
+            return
+        try:
+            thread = await read_thread(command.thread_id)
+            await self._send_json(
+                websocket,
+                CodexThreadReadMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    thread=thread,
+                ).model_dump(mode="json"),
+            )
+        except Exception as exc:
+            await self._send_json(
+                websocket,
+                CodexThreadReadMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    ok=False,
+                    error=str(exc),
+                ).model_dump(mode="json"),
+            )
+
     async def _cancel_run(self, command: CancelRunCommand) -> None:
         context = self._active_runs.get(command.run_id)
         if context is None:
@@ -315,21 +399,29 @@ class ExecutorNodeService:
                         metadata={"audio_instruction_id": command.audio.audio_instruction_id},
                     )
                     return
-                instruction = ExecutorTextInstruction(
-                    instruction_id=f"txt-{command.audio.audio_instruction_id}",
-                    target_persona_id=command.audio.target_persona_id,
-                    text=transcript,
-                    source_audio_instruction_id=command.audio.audio_instruction_id,
-                    metadata={
-                        "source": "executor_node_whisper",
-                        "transcript_text": transcript,
-                        "transcription_language": transcription.language or "",
-                        "transcription_duration_seconds": transcription.duration_seconds or 0,
-                        **(transcription.metadata or {}),
-                    },
+                transcription_metadata = {
+                    "source": "executor_node_whisper",
+                    "source_audio_instruction_id": command.audio.audio_instruction_id,
+                    "target_thread_id": command.audio.target_thread_id or "",
+                    "transcript_text": transcript,
+                    "transcription_language": transcription.language or "",
+                    "transcription_duration_seconds": transcription.duration_seconds or 0,
+                    **(transcription.metadata or {}),
+                }
+                await self._send_json(
+                    websocket,
+                    RunEventMessage(
+                        run_id=command.run_id,
+                        execution_session_id=command.execution_session_id,
+                        executor_type=command.executor_type,
+                        session_id=session.session_id,
+                        event_type=ExecutorEventType.PROGRESS.value,
+                        message="Audio instruction transcribed.",
+                        metadata=transcription_metadata,
+                        latest_resume_handle=_build_resume_handle(context.executor, session),
+                    ).model_dump(mode="json"),
                 )
-                handler = text_handler
-                event_source = instruction
+                return
             elif native_audio_handler is not None:
                 handler = native_audio_handler
                 event_source = command.audio
@@ -544,6 +636,7 @@ class ExecutorNodeService:
             supports_follow_up=capabilities.supports_follow_up,
             supports_audio_instruction=capabilities.supports_audio_instruction
             or (capabilities.supports_follow_up and self._audio_transcriber.available),
+            supports_thread_list=bool(executor_type == "codex" and hasattr(executor, "list_threads")),
             supports_pause=capabilities.supports_pause,
             supports_cancel=capabilities.supports_cancel,
         )
@@ -609,6 +702,40 @@ def _build_resume_handle(executor: Any, session: ExecutorSession):
         except Exception:
             return None
     return None
+
+
+def _codex_thread_list_item(item: dict[str, object]) -> CodexThreadListItem:
+    thread_id = item.get("id") or item.get("threadId") or item.get("sessionId")
+    if not isinstance(thread_id, str) or not thread_id:
+        raise RuntimeError("Codex thread/list returned a thread without an id.")
+    status_value = item.get("status")
+    if isinstance(status_value, dict):
+        status = status_value.get("type")
+    else:
+        status = status_value
+    name = item.get("name")
+    return CodexThreadListItem(
+        thread_id=thread_id,
+        session_id=str(item.get("sessionId")) if item.get("sessionId") is not None else None,
+        preview=str(item.get("preview")) if item.get("preview") is not None else None,
+        title=str(name) if isinstance(name, str) and name.strip() else None,
+        cwd=str(item.get("cwd")) if item.get("cwd") is not None else None,
+        path=str(item.get("path")) if item.get("path") is not None else None,
+        status=str(status) if status is not None else None,
+        created_at=item.get("createdAt") if isinstance(item.get("createdAt"), int) else None,
+        updated_at=item.get("updatedAt") if isinstance(item.get("updatedAt"), int) else None,
+        cli_version=str(item.get("cliVersion")) if item.get("cliVersion") is not None else None,
+        source=str(item.get("source")) if item.get("source") is not None else None,
+        diagnostics={
+            "forked_from_id": item.get("forkedFromId"),
+            "ephemeral": item.get("ephemeral"),
+            "model_provider": item.get("modelProvider"),
+            "thread_source": item.get("threadSource"),
+            "agent_nickname": item.get("agentNickname"),
+            "agent_role": item.get("agentRole"),
+            "git_info": item.get("gitInfo"),
+        },
+    )
 
 
 def _format_executor_types(executor_types: list[str]) -> str:
