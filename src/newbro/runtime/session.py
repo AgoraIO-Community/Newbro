@@ -113,6 +113,7 @@ LOGGER = logging.getLogger(__name__)
 MAX_TASK_INSTRUCTION_CHARS = 4000
 AUDIO_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "newbro-audio-artifacts"
 AUDIO_ACTIVE_RUN_STATUSES = {RunStatus.ASSIGNED, RunStatus.RUNNING, RunStatus.BLOCKED}
+SELECTED_THREAD_HISTORY_READ_TIMEOUT_SECONDS = 4.0
 BRO_THREAD_PREFIX = "bro-thread-"
 
 
@@ -955,6 +956,7 @@ class SessionRuntime:
         thread = await self.executor_node_manager.request_codex_thread(
             node_id=node_id,
             thread_id=resume_handle.session_handle,
+            timeout_seconds=SELECTED_THREAD_HISTORY_READ_TIMEOUT_SECONDS,
         )
         await self._hydrate_opened_codex_thread_history(
             persona=persona,

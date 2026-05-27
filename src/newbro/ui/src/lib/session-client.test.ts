@@ -342,6 +342,7 @@ describe("session-client HTTP error formatting", () => {
     [JSON.stringify({ detail: "Not found." }), "Not found."],
     [JSON.stringify({ detail: JSON.stringify({ detail: "core: db failed, task not found", reason: "TaskNotFound" }) }), "core: db failed, task not found"],
     [JSON.stringify({ reason: "TaskNotFound" }), "TaskNotFound"],
+    [JSON.stringify({ detail: "" }), "Request failed with status 404"],
     ["plain failure", "plain failure"],
   ])("formats failed response body %s", async (body, expected) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 404 })));

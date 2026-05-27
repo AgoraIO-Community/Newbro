@@ -456,6 +456,9 @@ class ExecutorNodeManager:
         try:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except TimeoutError as exc:
+            self._codex_thread_list_requests.pop(request_id, None)
+            raise TimeoutError("Timed out listing Codex threads.") from exc
         except Exception:
             self._codex_thread_list_requests.pop(request_id, None)
             raise
@@ -489,6 +492,9 @@ class ExecutorNodeManager:
         try:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except TimeoutError as exc:
+            self._codex_thread_read_requests.pop(request_id, None)
+            raise TimeoutError("Timed out reading Codex thread history.") from exc
         except Exception:
             self._codex_thread_read_requests.pop(request_id, None)
             raise
@@ -535,6 +541,9 @@ class ExecutorNodeManager:
         try:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except TimeoutError as exc:
+            self._codex_thread_subscribe_requests.pop(request_id, None)
+            raise TimeoutError("Timed out subscribing to Codex thread updates.") from exc
         except Exception:
             self._codex_thread_subscribe_requests.pop(request_id, None)
             raise
@@ -573,6 +582,9 @@ class ExecutorNodeManager:
         try:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except TimeoutError as exc:
+            self._codex_thread_unsubscribe_requests.pop(request_id, None)
+            raise TimeoutError("Timed out unsubscribing from Codex thread updates.") from exc
         except Exception:
             self._codex_thread_unsubscribe_requests.pop(request_id, None)
             raise

@@ -369,7 +369,7 @@ function useNewbroShellState() {
       if (!mountedRef.current || threadOpenSequenceRef.current !== openSequence) {
         return;
       }
-      setThreadOpenError(describeApiFailure(error, "Unable to open this thread."));
+      setThreadOpenError(describeApiFailure(error, "Thread history could not be fetched. Try selecting the thread again."));
     } finally {
       if (mountedRef.current) {
         setOpeningThreadId((current) => (current === threadId ? null : current));

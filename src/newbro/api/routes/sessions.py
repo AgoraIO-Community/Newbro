@@ -122,6 +122,11 @@ class OpenBroThreadRequest(BaseModel):
     target_persona_id: str
 
 
+def _conflict_detail(exc: Exception, fallback: str) -> str:
+    detail = str(exc).strip()
+    return detail or fallback
+
+
 @router.post("/sessions/{session_id}/bro-threads/{thread_id}/open")
 async def open_bro_thread(
     session_id: str,
@@ -140,8 +145,13 @@ async def open_bro_thread(
             target_persona_id=body.target_persona_id,
             thread_id=thread_id,
         )
-    except (TimeoutError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=_conflict_detail(exc, "Timed out reading Codex thread history."),
+        ) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=_conflict_detail(exc, "Unable to open this thread.")) from exc
     if user is None:
         return snapshot
     return await scope_session_snapshot_for_user(
@@ -169,8 +179,13 @@ async def close_bro_thread(
             target_persona_id=body.target_persona_id,
             thread_id=thread_id,
         )
-    except (TimeoutError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=_conflict_detail(exc, "Timed out closing Codex thread history."),
+        ) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=_conflict_detail(exc, "Unable to close this thread.")) from exc
     if user is None:
         return snapshot
     return await scope_session_snapshot_for_user(

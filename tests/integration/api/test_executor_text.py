@@ -708,7 +708,7 @@ async def test_open_imported_codex_thread_reports_recoverable_read_timeout(
             ]
 
         async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
-            raise TimeoutError("Codex thread/read timed out.")
+            raise TimeoutError()
 
         subscription_calls: list[str] = []
         unsubscribe_calls: list[tuple[str, str]] = []
@@ -748,7 +748,7 @@ async def test_open_imported_codex_thread_reports_recoverable_read_timeout(
         )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Codex thread/read timed out."
+    assert response.json()["detail"] == "Timed out reading Codex thread history."
     assert subscription_calls == []
     assert unsubscribe_calls == []
 

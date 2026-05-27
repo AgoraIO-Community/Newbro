@@ -190,3 +190,34 @@ async def test_selected_codex_thread_subscription_request_round_trip(tmp_path):
     )
     response = await task
     assert response.status == "unsubscribed"
+
+
+@pytest.mark.anyio
+async def test_codex_thread_read_timeout_has_user_visible_message(tmp_path):
+    manager = ExecutorNodeManager(
+        detached_executor_types=("codex",),
+        registry=ExecutorNodeRegistry(path=tmp_path / "executor_nodes.yaml"),
+    )
+    issue = await manager.create_node(name="Node One", enabled_executors=["codex"])
+    sent_event = asyncio.Event()
+
+    class CapturingSocket:
+        async def send_json(self, payload: dict[str, object]) -> None:
+            sent_event.set()
+
+    await manager.register_connection(
+        CapturingSocket(),
+        RegisterNodeMessage(
+            node_id=issue.node.node_id,
+            token=issue.token,
+            executors=[ExecutorNodeExecutor(executor_type="codex", supports_thread_list=True)],
+        ),
+    )
+
+    with pytest.raises(TimeoutError, match="Timed out reading Codex thread history."):
+        await manager.request_codex_thread(
+            node_id=issue.node.node_id,
+            thread_id="codex-thread-1",
+            timeout_seconds=0.01,
+        )
+    assert sent_event.is_set()

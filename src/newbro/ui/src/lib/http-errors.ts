@@ -26,6 +26,7 @@ export function formatHttpErrorBody(body: string): string {
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       const message = extractMessageFromObject(parsed as Record<string, unknown>);
       if (message) return message;
+      return "";
     }
   } catch {}
   return text;
