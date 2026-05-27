@@ -51,6 +51,7 @@ from newbro.protocol import (
     AgentResumeHandle,
     AttentionItemKind,
     BroThread,
+    CodexThreadEventMessage,
     CodexThreadListItem,
     DispatchGateOutcome,
     BindingStatus,
@@ -691,6 +692,18 @@ class LiveTranscriptWork:
 
 
 @dataclass(slots=True)
+class SelectedCodexThreadSubscription:
+    subscription_id: str
+    persona_id: str
+    public_thread_id: str
+    thread_continuity_key: str
+    node_id: str
+    codex_thread_id: str
+    resume_handle: AgentResumeHandle
+    fallback_timestamp: str | None = None
+
+
+@dataclass(slots=True)
 class SessionRuntime:
     session_id: str
     blackboard: InMemoryBlackboard
@@ -733,6 +746,7 @@ class SessionRuntime:
     _imported_codex_thread_resume_handles: dict[str, AgentResumeHandle] = field(default_factory=dict, init=False, repr=False)
     _codex_thread_sync_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _last_codex_thread_sync_monotonic: float = field(default=0.0, init=False, repr=False)
+    _selected_codex_thread_subscriptions: dict[str, SelectedCodexThreadSubscription] = field(default_factory=dict, init=False, repr=False)
 
     async def snapshot(self) -> SessionSnapshot:
         tasks = await self.blackboard.list_tasks()
@@ -927,21 +941,184 @@ class SessionRuntime:
         if not node_id:
             raise ValueError("Selected Codex thread is not connected to an executor node.")
         imported_thread = self._imported_codex_threads.get(resolved_thread_id)
-        thread = await self.executor_node_manager.request_codex_thread(
-            node_id=node_id,
-            thread_id=resume_handle.session_handle,
-        )
-        await self._hydrate_opened_codex_thread_history(
+        subscribed_selected_thread = await self._replace_selected_codex_thread_subscription(
             persona=persona,
             public_thread_id=resolved_thread_id,
             thread_continuity_key=thread_continuity_key,
-            resume_handle=resume_handle,
-            selected_session=selected_session,
             node_id=node_id,
-            thread=thread,
+            resume_handle=resume_handle,
             fallback_timestamp=imported_thread.updated_at if imported_thread is not None else None,
         )
+        try:
+            thread = await self.executor_node_manager.request_codex_thread(
+                node_id=node_id,
+                thread_id=resume_handle.session_handle,
+            )
+            await self._hydrate_opened_codex_thread_history(
+                persona=persona,
+                public_thread_id=resolved_thread_id,
+                thread_continuity_key=thread_continuity_key,
+                resume_handle=resume_handle,
+                selected_session=selected_session,
+                node_id=node_id,
+                thread=thread,
+                fallback_timestamp=imported_thread.updated_at if imported_thread is not None else None,
+            )
+        except Exception:
+            if subscribed_selected_thread:
+                await self._stop_selected_codex_thread_subscription(
+                    persona_id=persona.persona_id,
+                    public_thread_id=resolved_thread_id,
+                )
+            raise
         return await self.publish_snapshot()
+
+    async def close_bro_thread(
+        self,
+        *,
+        target_persona_id: str,
+        thread_id: str | None = None,
+    ) -> SessionSnapshot:
+        await self._stop_selected_codex_thread_subscription(
+            persona_id=target_persona_id,
+            public_thread_id=thread_id,
+        )
+        return await self.publish_snapshot()
+
+    async def _replace_selected_codex_thread_subscription(
+        self,
+        *,
+        persona,
+        public_thread_id: str,
+        thread_continuity_key: str,
+        node_id: str,
+        resume_handle: AgentResumeHandle,
+        fallback_timestamp: str | None,
+    ) -> bool:
+        codex_thread_id = resume_handle.session_handle
+        if not isinstance(codex_thread_id, str) or not codex_thread_id:
+            return False
+        current = self._selected_codex_thread_subscriptions.get(persona.persona_id)
+        if (
+            current is not None
+            and current.public_thread_id == public_thread_id
+            and current.codex_thread_id == codex_thread_id
+            and current.node_id == node_id
+        ):
+            return False
+        await self._stop_selected_codex_thread_subscription(persona_id=persona.persona_id)
+        subscription_id = f"codex-sub-{uuid4().hex[:12]}"
+        workspace_id = None
+        cwd = resume_handle.opaque.get("cwd")
+        if isinstance(cwd, str) and cwd:
+            workspace_id = cwd
+        await self.executor_node_manager.subscribe_codex_thread(
+            node_id=node_id,
+            subscription_id=subscription_id,
+            session_id=self.session_id,
+            target_persona_id=persona.persona_id,
+            target_thread_id=public_thread_id,
+            thread_id=codex_thread_id,
+            workspace_id=workspace_id,
+        )
+        self._selected_codex_thread_subscriptions[persona.persona_id] = SelectedCodexThreadSubscription(
+            subscription_id=subscription_id,
+            persona_id=persona.persona_id,
+            public_thread_id=public_thread_id,
+            thread_continuity_key=thread_continuity_key,
+            node_id=node_id,
+            codex_thread_id=codex_thread_id,
+            resume_handle=resume_handle,
+            fallback_timestamp=fallback_timestamp,
+        )
+        return True
+
+    async def _stop_selected_codex_thread_subscription(
+        self,
+        *,
+        persona_id: str,
+        public_thread_id: str | None = None,
+    ) -> None:
+        current = self._selected_codex_thread_subscriptions.get(persona_id)
+        if current is None:
+            return
+        if public_thread_id is not None and current.public_thread_id != public_thread_id:
+            return
+        self._selected_codex_thread_subscriptions.pop(persona_id, None)
+        try:
+            response = await self.executor_node_manager.unsubscribe_codex_thread(
+                node_id=current.node_id,
+                subscription_id=current.subscription_id,
+                thread_id=current.codex_thread_id,
+            )
+            status = response.status if response is not None else "node_unavailable"
+        except Exception as exc:
+            status = f"error:{exc}"
+        LOGGER.info(
+            "Stopped selected Codex thread subscription",
+            extra={
+                "session_id": self.session_id,
+                "persona_id": persona_id,
+                "public_thread_id": current.public_thread_id,
+                "codex_thread_id": current.codex_thread_id,
+                "unsubscribe_status": status,
+            },
+        )
+
+    async def handle_codex_thread_event(self, message: CodexThreadEventMessage) -> None:
+        current = self._selected_codex_thread_subscriptions.get(message.target_persona_id)
+        if current is None:
+            return
+        if (
+            current.subscription_id != message.subscription_id
+            or current.public_thread_id != message.target_thread_id
+            or current.codex_thread_id != message.thread_id
+            or current.node_id != message.node_id
+        ):
+            return
+        if message.method not in {
+            "turn/completed",
+            "item/completed",
+            "thread/status/changed",
+            "thread/closed",
+        }:
+            return
+        persona = await self.blackboard.get_persona(current.persona_id)
+        if persona is None:
+            return
+        if message.method == "thread/closed":
+            await self._stop_selected_codex_thread_subscription(
+                persona_id=current.persona_id,
+                public_thread_id=current.public_thread_id,
+            )
+            return
+        try:
+            thread = await self.executor_node_manager.request_codex_thread(
+                node_id=current.node_id,
+                thread_id=current.codex_thread_id,
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "Failed to refresh selected Codex thread %s after %s: %s",
+                current.codex_thread_id,
+                message.method,
+                exc,
+            )
+            return
+        await self._hydrate_opened_codex_thread_history(
+            persona=persona,
+            public_thread_id=current.public_thread_id,
+            thread_continuity_key=current.thread_continuity_key,
+            resume_handle=current.resume_handle,
+            selected_session=await self._find_codex_thread_session_for_persona(
+                persona.persona_id,
+                current.public_thread_id,
+            ),
+            node_id=current.node_id,
+            thread=thread,
+            fallback_timestamp=current.fallback_timestamp,
+        )
+        await self.publish_snapshot()
 
     async def _hydrate_opened_codex_thread_history(
         self,
@@ -958,18 +1135,8 @@ class SessionRuntime:
         turns = _codex_thread_turns(thread)
         if not turns:
             return
-        existing_tasks = [
-            task
-            for task in await self.blackboard.list_tasks()
-            if task.metadata.get("bro_thread_id") == thread_continuity_key
-            and (
-                task.metadata.get("persona_id") == persona.persona_id
-                or task.metadata.get("assigned_bro_id") == persona.persona_id
-            )
-            and not task.metadata.get("codex_history_hydrated")
-        ]
-        if existing_tasks:
-            return
+        existing_task_ids = {task.task_id for task in await self.blackboard.list_tasks()}
+        existing_run_ids = {run.run_id for run in await self.blackboard.list_runs()}
 
         execution_session = selected_session
         if execution_session is None:
@@ -997,6 +1164,10 @@ class SessionRuntime:
             turn_id = _codex_turn_id(turn, index)
             task_id = _history_identity("task-codexhist", persona.persona_id, public_thread_id, turn_id)
             run_id = _history_identity("run-codexhist", persona.persona_id, public_thread_id, turn_id)
+            if task_id in existing_task_ids or run_id in existing_run_ids:
+                continue
+            existing_task_ids.add(task_id)
+            existing_run_ids.add(run_id)
             user_text = _codex_turn_user_text(turn)
             assistant_text = _codex_turn_assistant_text(turn)
             summary_text = assistant_text or _text_from_codex_value(turn) or "Codex thread history."

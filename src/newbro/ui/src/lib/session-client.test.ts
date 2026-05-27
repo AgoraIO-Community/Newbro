@@ -266,6 +266,42 @@ describe("session-client transport base URL handling", () => {
     });
   });
 
+  it("closes a bro thread through the selected-thread endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
+      okJsonResponse({
+        session_id: "session-1",
+        tasks: [],
+        execution_sessions: [],
+        execution_runs: [],
+        execution_modes: [],
+        bindings: [],
+        summaries: [],
+        notification_candidates: [],
+        bro_threads: [],
+        personas: [],
+        interaction_requests: [],
+        attention_items: [],
+        agent_events: [],
+        executor_capabilities: [],
+        executor_nodes: [],
+        draft_session: null,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./session-client");
+    await client.closeBroThread("session-1", {
+      targetPersonaId: "forge",
+      threadId: "codex-import-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/session-1/bro-threads/codex-import-1/open", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_persona_id: "forge" }),
+    });
+  });
+
   it("submits task commands to the session commands endpoint", async () => {
     const fetchMock = vi.fn(async () =>
       okJsonResponse({

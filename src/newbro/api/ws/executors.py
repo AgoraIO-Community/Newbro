@@ -6,8 +6,11 @@ from pydantic import ValidationError
 from newbro.protocol import (
     AckMessage,
     AudioInstructionTranscribedMessage,
+    CodexThreadEventMessage,
     CodexThreadReadMessage,
+    CodexThreadSubscribedMessage,
     CodexThreadsListedMessage,
+    CodexThreadUnsubscribedMessage,
     NodeStatusMessage,
     InteractionStateMessage,
     RegisterNodeMessage,
@@ -86,6 +89,31 @@ async def _handle_control_message(container, websocket: WebSocket, payload: obje
         except ValidationError:
             return AckMessage(message_type="codex_thread_read", ok=False, detail="invalid_payload")
         return container.executor_node_manager.publish_codex_thread_read(message)
+    if message_type == "codex_thread_subscribed":
+        try:
+            message = CodexThreadSubscribedMessage.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="codex_thread_subscribed", ok=False, detail="invalid_payload")
+        return container.executor_node_manager.publish_codex_thread_subscribed(message)
+    if message_type == "codex_thread_unsubscribed":
+        try:
+            message = CodexThreadUnsubscribedMessage.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="codex_thread_unsubscribed", ok=False, detail="invalid_payload")
+        return container.executor_node_manager.publish_codex_thread_unsubscribed(message)
+    if message_type == "codex_thread_event":
+        try:
+            message = CodexThreadEventMessage.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="codex_thread_event", ok=False, detail="invalid_payload")
+        ack = await container.executor_node_manager.publish_codex_thread_event(websocket, message)
+        if ack.ok:
+            try:
+                session = container.get_session(message.session_id)
+            except KeyError:
+                return AckMessage(message_type=message.type, ok=False, detail="unknown_session")
+            await session.handle_codex_thread_event(message)
+        return ack
     if message_type == "audio_instruction_transcribed":
         try:
             message = AudioInstructionTranscribedMessage.model_validate(payload)

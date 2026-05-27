@@ -151,6 +151,35 @@ async def open_bro_thread(
     )
 
 
+@router.delete("/sessions/{session_id}/bro-threads/{thread_id}/open")
+async def close_bro_thread(
+    session_id: str,
+    thread_id: str,
+    body: OpenBroThreadRequest,
+    request: Request,
+):
+    user = await require_session_owner_or_internal(request, session_id)
+    container = request.app.state.runtime_container
+    try:
+        session = container.get_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        snapshot = await session.close_bro_thread(
+            target_persona_id=body.target_persona_id,
+            thread_id=thread_id,
+        )
+    except (TimeoutError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if user is None:
+        return snapshot
+    return await scope_session_snapshot_for_user(
+        request.app.state.public_auth_store,
+        user,
+        snapshot,
+    )
+
+
 @router.put("/sessions/{session_id}/voice-target")
 async def set_voice_target(
     session_id: str,

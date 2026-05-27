@@ -562,8 +562,43 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
                 ],
             }
 
+        subscription_calls: list[tuple[str, str, str]] = []
+        unsubscribe_calls: list[tuple[str, str]] = []
+        expected_session_id = session_id
+
+        async def fake_subscribe_codex_thread(
+            *,
+            node_id: str,
+            subscription_id: str,
+            session_id: str,
+            target_persona_id: str,
+            target_thread_id: str,
+            thread_id: str,
+            workspace_id=None,
+            timeout_seconds: float = 8.0,
+        ):
+            assert node_id == "node-forge"
+            assert session_id == expected_session_id
+            assert target_persona_id == "forge"
+            assert target_thread_id == imported_thread["thread_id"]
+            assert thread_id == "codex-imported-native-history"
+            assert workspace_id == "/tmp/elsewhere"
+            subscription_calls.append((subscription_id, target_thread_id, thread_id))
+
+        async def fake_unsubscribe_codex_thread(
+            *,
+            node_id: str,
+            subscription_id: str,
+            thread_id: str,
+            timeout_seconds: float = 8.0,
+        ):
+            assert node_id == "node-forge"
+            unsubscribe_calls.append((subscription_id, thread_id))
+
         monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
         monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+        monkeypatch.setattr(manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
+        monkeypatch.setattr(manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
 
         snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
         original_thread_ids = [thread["thread_id"] for thread in snapshot["bro_threads"]]
@@ -576,8 +611,16 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
             f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
             json={"target_persona_id": "forge"},
         )
+        close_response = await client.request(
+            "DELETE",
+            f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
+            json={"target_persona_id": "forge"},
+        )
 
     assert response.status_code == 200
+    assert close_response.status_code == 200
+    assert len(subscription_calls) == 1
+    assert unsubscribe_calls == [(subscription_calls[0][0], "codex-imported-native-history")]
     opened = response.json()
     assert [thread["thread_id"] for thread in opened["bro_threads"]] == original_thread_ids
     hydrated_thread = next(thread for thread in opened["bro_threads"] if thread["thread_id"] == imported_thread["thread_id"])
@@ -667,8 +710,35 @@ async def test_open_imported_codex_thread_reports_recoverable_read_timeout(
         async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
             raise TimeoutError("Codex thread/read timed out.")
 
+        subscription_calls: list[str] = []
+        unsubscribe_calls: list[tuple[str, str]] = []
+
+        async def fake_subscribe_codex_thread(
+            *,
+            node_id: str,
+            subscription_id: str,
+            session_id: str,
+            target_persona_id: str,
+            target_thread_id: str,
+            thread_id: str,
+            workspace_id=None,
+            timeout_seconds: float = 8.0,
+        ):
+            subscription_calls.append(subscription_id)
+
+        async def fake_unsubscribe_codex_thread(
+            *,
+            node_id: str,
+            subscription_id: str,
+            thread_id: str,
+            timeout_seconds: float = 8.0,
+        ):
+            unsubscribe_calls.append((subscription_id, thread_id))
+
         monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
         monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+        monkeypatch.setattr(manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
+        monkeypatch.setattr(manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
 
         snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
         imported_thread = snapshot["bro_threads"][0]
@@ -679,6 +749,8 @@ async def test_open_imported_codex_thread_reports_recoverable_read_timeout(
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Codex thread/read timed out."
+    assert len(subscription_calls) == 1
+    assert unsubscribe_calls == [(subscription_calls[0], "codex-timeout-history")]
 
 
 @pytest.mark.anyio

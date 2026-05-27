@@ -184,6 +184,21 @@ export async function openBroThread(
   return (await ensureOk(response)).json();
 }
 
+export async function closeBroThread(
+  sessionId: string,
+  payload: {
+    targetPersonaId: string;
+    threadId: string;
+  },
+): Promise<SessionSnapshot> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/open`), {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target_persona_id: payload.targetPersonaId }),
+  });
+  return (await ensureOk(response)).json();
+}
+
 export interface MessageResponse {
   message_id: string;
   reply_text: string;

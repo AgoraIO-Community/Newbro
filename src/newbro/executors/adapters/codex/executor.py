@@ -159,6 +159,30 @@ class CodexExecutor:
             raise RuntimeError("Codex thread/read returned an unsupported response shape.")
         return dict(thread)
 
+    async def subscribe_thread(
+        self,
+        thread_id: str,
+        *,
+        workspace_id: str | None = None,
+    ) -> CodexExecutorSession:
+        session = await self.create_session(workspace_id)
+        try:
+            await session.client.thread_resume(thread_id=thread_id)
+        except Exception:
+            await session.close()
+            raise
+        session.thread_id = thread_id
+        session.metadata["codex_thread_resumed"] = True
+        return session
+
+    async def unsubscribe_thread(self, session: CodexExecutorSession) -> dict[str, object]:
+        if not session.thread_id:
+            return {"status": "notLoaded"}
+        try:
+            return await session.client.thread_unsubscribe(thread_id=session.thread_id)
+        finally:
+            await session.close()
+
     async def cancel_run(self, run_id: str) -> None:
         session = self._active_runs.pop(run_id, None)
         if session is not None:

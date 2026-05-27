@@ -1365,6 +1365,7 @@ function MobileThreadSurface({
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
+  const threadBodyRef = useRef<HTMLElement | null>(null);
   const draftText = draft;
   const connected = shell.voiceSession.phase === "connected";
   const loading = shell.voiceSession.phase === "loading";
@@ -1423,10 +1424,24 @@ function MobileThreadSurface({
   }
 
   const timelineEntries = buildTimelineEntries({ records, textTurns, audioTurns, conversationMessages });
+  const threadScrollVersion = [
+    selectedThreadId ?? "new",
+    records.map((record) => `${record.taskId}:${record.status}:${record.timestamp ?? ""}:${record.summary ?? ""}`).join("|"),
+    textTurns.map((turn) => `${turn.id}:${turn.status}`).join("|"),
+    audioTurns.map((turn) => `${turn.id}:${turn.status}:${turn.transcript ?? ""}`).join("|"),
+  ].join("::");
+
+  useEffect(() => {
+    const element = threadBodyRef.current;
+    if (!element) return;
+    requestAnimationFrame(() => {
+      element.scrollTop = element.scrollHeight;
+    });
+  }, [threadScrollVersion]);
 
   return (
     <>
-      <main className="thr-thread nb-mobile-thread-body" aria-label={`${bro.name} thread`}>
+      <main ref={threadBodyRef} className="thr-thread nb-mobile-thread-body" aria-label={`${bro.name} thread`}>
         <h1 className="sr-only">{bro.name}</h1>
         <span className="sr-only">Current draft</span>
         <div className="thr-day"><span>Current session</span></div>
@@ -1861,6 +1876,8 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const [pendingNewThread, setPendingNewThread] = useState(false);
   const [threadVisibleCount, setThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const openedThreadRef = useRef<string | null>(null);
+  const activeThreadRef = useRef<string | null>(null);
+  const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const needsConnect = bro?.source === "runtime" && nodeStateNeedsConnect(nodeState);
@@ -1886,6 +1903,12 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
         limit: 20,
       })
     : [];
+  const threadScrollVersion = [
+    activeThreadId ?? "new",
+    records.map((record) => `${record.taskId}:${record.status}:${record.timestamp ?? ""}:${record.summary ?? ""}`).join("|"),
+    textTurns.filter((turn) => turn.broId === broId && turnMatchesThread(turn, activeThreadId)).map((turn) => `${turn.id}:${turn.status}`).join("|"),
+    audioTurns.filter((turn) => turn.broId === broId && turnMatchesThread(turn, activeThreadId)).map((turn) => `${turn.id}:${turn.status}:${turn.transcript ?? ""}`).join("|"),
+  ].join("::");
 
   useEffect(() => {
     if (pendingNewThread || threads.length === 0) return;
@@ -1918,6 +1941,9 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   }
 
   function newThread() {
+    if (bro?.source === "runtime") {
+      void shell.closeRuntimeBroThread(bro.id, activeThreadId);
+    }
     setPendingNewThread(true);
     setSelectedThreadId(null);
     replaceThreadIdInUrl(null);
@@ -1937,6 +1963,26 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     openedThreadRef.current = activeThreadId;
     void shell.openRuntimeBroThread(bro.id, activeThreadId);
   }, [activeThreadId, bro?.id, bro?.source, needsConnect, pendingNewThread]);
+
+  useEffect(() => {
+    activeThreadRef.current = activeThreadId;
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    return () => {
+      if (bro?.source === "runtime") {
+        void shell.closeRuntimeBroThread(bro.id, activeThreadRef.current);
+      }
+    };
+  }, [bro?.id, bro?.source]);
+
+  useEffect(() => {
+    const element = threadScrollRef.current;
+    if (!element) return;
+    requestAnimationFrame(() => {
+      element.scrollTop = element.scrollHeight;
+    });
+  }, [threadScrollVersion]);
 
   useEffect(() => {
     if (!shell.hasLoadedShellSnapshot || !shell.activeShellSessionId || !bro || needsConnect) return undefined;
@@ -1999,7 +2045,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
             offline={offline}
           />
           <section className="dt-pane">
-            <div className="dt-pane-scroll">
+            <div className="dt-pane-scroll" ref={threadScrollRef}>
               <div className="dt-pane-content">
                 {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
                 <ThreadPanel
@@ -2165,6 +2211,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   const [pendingNewThread, setPendingNewThread] = useState(false);
   const [drawerThreadVisibleCount, setDrawerThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const openedThreadRef = useRef<string | null>(null);
+  const activeThreadRef = useRef<string | null>(null);
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const offline = nodeState.kind === "usable_disconnected" ? nodeState.node : null;
   const needsConnect = bro.source === "runtime" && nodeStateNeedsConnect(nodeState) && nodeState.kind !== "no_bound_node";
@@ -2224,6 +2271,9 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
     setPickerOpen(false);
   }
   function newThread() {
+    if (bro.source === "runtime") {
+      void shell.closeRuntimeBroThread(bro.id, activeThreadId);
+    }
     setPendingNewThread(true);
     setSelectedThreadId(null);
     replaceThreadIdInUrl(null);
@@ -2242,6 +2292,16 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
     openedThreadRef.current = activeThreadId;
     void shell.openRuntimeBroThread(bro.id, activeThreadId);
   }, [activeThreadId, bro.id, bro.source, needsConnect, pendingNewThread]);
+  useEffect(() => {
+    activeThreadRef.current = activeThreadId;
+  }, [activeThreadId]);
+  useEffect(() => {
+    return () => {
+      if (bro.source === "runtime") {
+        void shell.closeRuntimeBroThread(bro.id, activeThreadRef.current);
+      }
+    };
+  }, [bro.id, bro.source]);
   const upsertAudioTurn = (turn: AudioTurn) => {
     setAudioTurns((current) => {
       const existing = current.findIndex((candidate) => candidate.id === turn.id);

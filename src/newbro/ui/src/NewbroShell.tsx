@@ -18,6 +18,7 @@ import {
   getCurrentUser,
   getSessionSnapshot,
   logoutPublicUser,
+  closeBroThread,
   openBroThread,
   openSessionStream,
   sendSocketDraftAsrTurn,
@@ -374,6 +375,24 @@ function useNewbroShellState() {
     }
   });
 
+  const closeRuntimeBroThread = useEffectEvent(async (targetPersonaId: string, threadId: string | null) => {
+    if (!activeShellSessionId || !threadId) {
+      return;
+    }
+    try {
+      const snapshot = await closeBroThread(activeShellSessionId, { targetPersonaId, threadId });
+      if (!mountedRef.current) {
+        return;
+      }
+      startTransition(() => {
+        applySnapshot(snapshot);
+      });
+    } catch {
+      // Closing a selected thread is cleanup; stale-event suppression on the
+      // backend still protects the newly selected thread if this request fails.
+    }
+  });
+
   useEffect(() => {
     mountedRef.current = true;
 
@@ -701,6 +720,7 @@ function useNewbroShellState() {
     logout,
     refreshShellSession,
     openRuntimeBroThread,
+    closeRuntimeBroThread,
     draftSession,
     latestDraftOutputEvent,
     chatMessages,

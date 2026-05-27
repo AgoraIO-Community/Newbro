@@ -96,17 +96,24 @@ Bro detail continuity:
   compatible request shapes instead of projecting an empty thread list.
 - Opening a `BroThread` is an explicit hydration operation. Newbro resolves the
   public thread id to a Codex resume handle, asks the detached executor node to
-  call Codex `thread/read`, and projects each returned turn into typed task,
-  summary, and run history for the selected thread. For each hydrated turn, the
-  task `goal` / `latest_instruction` carries that turn's synced user-side text
-  when Codex reported one, while summaries and runs carry executor output.
-  Clients must filter by the selected thread's `task_ids` before applying
-  timeline limits; they must not infer the selected timeline from task cards
-  that happened to be loaded earlier. Imported Codex thread titles are stable
-  thread-list display labels and must not be replaced by hydrated task titles
-  after the thread is opened. Opening an imported thread for read-only hydration
-  must also preserve the Codex `thread/list` updated time as the list sort key;
-  only a real follow-up/direct send should make the thread look newly active.
+  load and subscribe to the native thread with Codex `thread/resume`, then reads
+  initial history through Codex `thread/read`. The executor node forwards
+  selected-thread events back to Newbro, and Newbro refreshes the public
+  `BroThread` projection from `thread/read` when relevant events arrive.
+  Leaving or replacing the selected thread must call the node's selected-thread
+  close path, which in turn calls Codex `thread/unsubscribe`; stale events from
+  older subscription ids are ignored. Hydration projects each returned turn into
+  typed task, summary, and run history for the selected thread. For each
+  hydrated turn, the task `goal` / `latest_instruction` carries that turn's
+  synced user-side text when Codex reported one, while summaries and runs carry
+  executor output. Clients must filter by the selected thread's `task_ids`
+  before applying timeline limits; they must not infer the selected timeline
+  from task cards that happened to be loaded earlier. Imported Codex thread
+  titles are stable thread-list display labels and must not be replaced by
+  hydrated task titles after the thread is opened. Opening an imported thread
+  for read-only hydration must also preserve the Codex `thread/list` updated
+  time as the list sort key; only a real follow-up/direct send should make the
+  thread look newly active.
 - push-to-talk audio is transcribed by the executor node. When a matching active
   Codex run exists, the transcript is emitted as a run progress event and Newbro
   turns it into a queued direct Codex task in the selected `BroThread`; when the

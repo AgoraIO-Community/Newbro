@@ -128,6 +128,69 @@ class CodexThreadReadMessage(BaseModel):
     thread: dict[str, object] = Field(default_factory=dict)
 
 
+class SubscribeCodexThreadCommand(BaseModel):
+    type: Literal["subscribe_codex_thread"] = "subscribe_codex_thread"
+    request_id: str
+    subscription_id: str
+    session_id: str
+    target_persona_id: str
+    target_thread_id: str
+    executor_type: Literal["codex"] = "codex"
+    thread_id: str
+    workspace_id: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class CodexThreadSubscribedMessage(BaseModel):
+    type: Literal["codex_thread_subscribed"] = "codex_thread_subscribed"
+    request_id: str
+    subscription_id: str
+    node_id: str
+    session_id: str
+    target_persona_id: str
+    target_thread_id: str
+    executor_type: Literal["codex"] = "codex"
+    thread_id: str
+    ok: bool = True
+    error: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class UnsubscribeCodexThreadCommand(BaseModel):
+    type: Literal["unsubscribe_codex_thread"] = "unsubscribe_codex_thread"
+    request_id: str
+    subscription_id: str
+    executor_type: Literal["codex"] = "codex"
+    thread_id: str
+
+
+class CodexThreadUnsubscribedMessage(BaseModel):
+    type: Literal["codex_thread_unsubscribed"] = "codex_thread_unsubscribed"
+    request_id: str
+    subscription_id: str
+    node_id: str
+    executor_type: Literal["codex"] = "codex"
+    thread_id: str
+    ok: bool = True
+    error: str | None = None
+    status: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class CodexThreadEventMessage(BaseModel):
+    type: Literal["codex_thread_event"] = "codex_thread_event"
+    subscription_id: str
+    node_id: str
+    session_id: str
+    target_persona_id: str
+    target_thread_id: str
+    executor_type: Literal["codex"] = "codex"
+    thread_id: str
+    method: str
+    params: dict[str, object] = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
 class DispatchRunCommand(BaseModel):
     type: Literal["dispatch_run"] = "dispatch_run"
     run_id: str

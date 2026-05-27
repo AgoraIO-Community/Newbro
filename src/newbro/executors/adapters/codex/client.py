@@ -96,6 +96,19 @@ class CodexAppServerClient:
         )
         return _as_dict(result)
 
+    async def thread_unsubscribe(
+        self,
+        *,
+        thread_id: str,
+    ) -> dict[str, object]:
+        result = await self._peer.request(
+            "thread/unsubscribe",
+            {
+                "threadId": thread_id,
+            },
+        )
+        return _as_dict(result)
+
     async def thread_list(
         self,
         *,

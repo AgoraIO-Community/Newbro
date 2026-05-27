@@ -1,263 +1,235 @@
-# Newbro Real Codex Thread Sync And Resume Spec
+# Newbro Selected Thread Live Subscribe And Auto Scroll Spec
 
 ## Goal
 
-Make the Bro Detail left rail and mobile drawer show real Codex-backed dialog
-threads, not task activity records. A user must be able to select a thread,
-fetch that thread's `Task` records plus execution-run/timeline history, refresh
-the page, and continue a text or push-to-talk dialog against the same Codex
-executor thread.
+When a user selects or opens a Bro Detail thread, Newbro should keep that
+selected thread live by subscribing to Codex app-server changes through the
+executor node and should keep the visible thread pane pinned to the latest
+message when new selected-thread output arrives.
 
-The request is end-to-end behavior, not a partial backend projection or UI
-mock. The goal is complete only when real text and push-to-talk sends can resume
-the selected Codex thread through the running Newbro backend, connected executor
-node, and browser UI.
+The feature covers both desktop Bro Detail and mobile Bro Detail. Opening a
+thread should hydrate the existing history, scroll to the bottom, start the
+selected-thread live update path, and scroll again when new selected-thread
+assistant/task output arrives. Updates for non-selected threads must not move
+the current scroll position.
 
 This is a planning goal only until the compiled `GOAL.md` is explicitly run.
 
+## Current Understanding
+
+- The browser already subscribes to Newbro session snapshots through
+  `WS /api/sessions/{session_id}/stream`.
+- The UI currently opens a thread through
+  `POST /api/sessions/{session_id}/bro-threads/{thread_id}/open`.
+- The Codex adapter already consumes app-server events while a turn is active
+  through `CodexAppServerClient.next_event()`.
+- Official Codex app-server docs say `thread/read` reads stored thread data
+  without resuming or subscribing to it. It is suitable for history hydration,
+  but not for selected-thread live updates.
+- Official Codex app-server docs expose `thread/start` for fresh threads,
+  `thread/resume` for continuing a stored thread, loaded-thread status/events,
+  `thread/loaded/list`, and `thread/unsubscribe` for removing the current
+  connection's subscription to a loaded thread.
+- Thread list and open hydration currently appear request-based through
+  `thread/list` and `thread/read`; selected-thread live behavior should be
+  implemented by loading/subscribing the selected thread through
+  `thread/start` for new Codex threads or `thread/resume` for existing Codex
+  threads, then consuming app-server events from that connection.
+
 ## Product Decisions
 
-- Left rail entries are user-facing dialog threads, not tasks.
-- The thread rail must use Codex app-server `thread/list` to import/list global
-  Codex threads returned by the local Codex app-server, not only threads for
-  the current cwd and not only threads Newbro created earlier. Imported threads
-  become Newbro-visible thread records while still keeping Codex as the source
-  for their underlying `thread_id`.
-- Global imported threads must be sorted by recency descending, using
-  `updatedAt` first and `createdAt` as the fallback. Cwd must not be used as a
-  visibility filter.
-- Local verification against `codex-cli 0.133.0` confirms `thread/list` exists
-  and returns global thread metadata. This goal should implement that method
-  directly; if the installed Codex app-server later lacks `thread/list`, stop
-  as blocked with version/capability evidence instead of falling back.
-- Newbro-owned threads remain backed by a real Codex `thread_id` through
-  `ExecutionSession.latest_resume_handle`.
-- Raw Codex ids stay hidden from normal UI and may appear only in diagnostics,
-  logs, or debug metadata.
-- Refresh preserves the selected thread in the URL, for example
-  `?sid=...&thread=...`.
-- Opening/selecting a thread must fetch and hydrate that thread's `Task`
-  records, execution runs, progress, and assistant-output timeline from
-  backend/Codex state. The selected-thread timeline must not depend only on task
-  cards that happened to be loaded before the click.
-- Sending text or push-to-talk audio into a selected completed thread resumes
-  the same Codex thread by using the stored resume handle and creates the
-  needed task/run history under that selected thread.
-- `New thread` is explicit. It should select a pending fresh-thread target and
-  create the real Codex thread on first send, avoiding empty Codex clutter.
-- Three sends into the same selected thread should produce one left-rail thread
-  with multiple task/progress entries in the main timeline, not three left-rail
-  threads.
-- Browser refresh continuity is in scope. Backend-restart persistence is not
-  required unless the existing runtime persistence already provides it without
-  broadening the implementation.
+- The executor node, not the browser, owns Codex app-server subscription.
+- The browser continues to consume Newbro session stream snapshots/events.
+- Do not solve selected-thread freshness with browser polling.
+- Use Codex app-server's loaded-thread subscription lifecycle:
+  `thread/start` for a newly created selected Codex thread, `thread/resume` for
+  an existing selected Codex thread, and `thread/unsubscribe` when leaving or
+  replacing the selected thread.
+- Do not use `thread/read` as the selected-thread live subscription mechanism;
+  it is explicitly non-subscribing.
+- If Newbro already has this loaded-thread app-server event path wired for
+  selected-thread behavior, keep it and prove it with tests/logs.
+- If the installed Codex app-server does not support `thread/resume` /
+  `thread/unsubscribe` and loaded-thread events as documented, stop as blocked
+  with capability evidence instead of shipping a polling-only substitute.
+- Auto-scroll should force-scroll to the bottom when a thread is opened and
+  when new selected-thread output arrives, even if the user had manually
+  scrolled up.
+- Auto-scroll must apply to both desktop and mobile Bro Detail.
 
 ## Source Of Truth
 
 - `AGENTS.md`
-- `docs/architecture/sessions-and-runs.md`
 - `docs/architecture/execution-brain.md`
 - `docs/architecture/executors.md`
-- `docs/architecture/communication-brain.md`
+- `docs/architecture/blackboard.md`
+- `docs/protocol/session-stream.md`
 - `docs/protocol/execution-session-and-run.md`
-- `docs/protocol/task.md`
 - `docs/guides/frontend-workbench.md`
-- `src/newbro/protocol/session.py`
-- `src/newbro/protocol/task.py`
-- `src/newbro/runtime/models.py`
-- `src/newbro/runtime/session.py`
-- `src/newbro/execution/session_manager.py`
 - `src/newbro/executors/adapters/codex/client.py`
 - `src/newbro/executors/adapters/codex/executor.py`
+- `src/newbro/executors/adapters/codex/jsonrpc.py`
+- `src/newbro/executors/node/service.py`
+- `src/newbro/api/ws/executors.py`
+- `src/newbro/runtime/executor_node_manager.py`
+- `src/newbro/runtime/session.py`
 - `src/newbro/ui/src/ArtboardShell.tsx`
-- `src/newbro/ui/src/components/newbro/adapters.ts`
-- `src/newbro/ui/src/components/newbro/types.ts`
 - `src/newbro/ui/src/lib/session-client.ts`
 - `src/newbro/ui/src/__tests__/App.test.tsx`
 
 ## In Scope
 
-- A typed runtime/API projection for real Codex-backed Bro threads.
-- Thread projection derived from Newbro execution/session state and backed by
-  Codex resume handles, not browser-local fake data.
-- Codex thread hydration using `thread/read` when a connected Codex session can
-  provide additional title/preview/status details and `Task` plus
-  execution-run/timeline history.
-- Codex app-server `thread/list` integration, including typed response parsing,
-  global recency sorting, and import into the Newbro thread projection so the
-  UI can show all Codex threads returned by the local app-server, including
-  threads from other cwd values and threads not originally created by Newbro.
-- Selected-thread routing for direct text and push-to-talk audio.
-- Resume behavior for selected completed threads.
-- Desktop left rail and mobile drawer rendering based on thread projection.
-- URL persistence for selected thread across browser refresh.
-- Backend/API support for opening a thread and returning the fetched `Task`,
-  execution-run, progress, and assistant-output timeline for that thread.
-- Unified main timeline rendering for task/progress/assistant output inside the
-  selected thread.
-- Focused backend and frontend tests for the exact regression.
-- Stable docs and `docs/memories.md` updates for adopted runtime behavior.
+- Discovering and documenting the Codex app-server loaded-thread event
+  mechanism used after `thread/start` / `thread/resume`.
+- Executor-node support for starting, replacing, and stopping the selected
+  Codex loaded-thread subscription, including `thread/unsubscribe` cleanup.
+- Backend/runtime plumbing that maps selected thread changes into typed Newbro
+  state updates and session stream snapshots/events.
+- Desktop Bro Detail auto-scroll on thread open and selected-thread updates.
+- Mobile Bro Detail auto-scroll on thread open and selected-thread updates.
+- Focused tests for subscription command flow, selected-thread update handling,
+  and auto-scroll behavior.
+- Stable docs and `docs/memories.md` updates if adopted runtime behavior
+  changes.
 
 ## Non-Goals
 
-- Do not reintroduce task records as fake threads.
-- Do not store thread truth only in localStorage or browser-only state.
-- Do not route direct text or composer push-to-talk through Communication Brain,
-  Draft Brain, Agora, or connector voice paths.
-- Do not create a new thread for every direct send into the same selected
-  thread.
-- Do not expose raw Codex thread ids as the primary user-facing label.
-- Do not require backend-restart persistence unless it falls out of the existing
-  blackboard/session persistence model.
-- Do not implement general multi-executor thread sync beyond Codex-first typed
-  contracts that stay compatible with future executors.
-- Do not change visual design beyond what is required to make desktop and
-  mobile show the correct real thread model.
+- Do not redesign thread sync, thread import, or resume semantics beyond what is
+  required for selected-thread live updates.
+- Do not replace Newbro's browser session websocket with a browser-to-Codex
+  connection.
+- Do not add frontend polling loops for selected-thread freshness.
+- Do not auto-scroll for non-selected thread updates.
+- Do not change Communication Brain, Draft Brain, Agora, or connector voice
+  behavior.
+- Do not change visual design except for stable refs or attributes required for
+  scrolling/tests.
 
 ## Architecture
 
 ```text
-Bro Detail selected thread
-  -> typed Newbro thread id
-  -> ExecutionSession / latest_resume_handle
-  -> Codex thread_id
-  -> direct text or PTT transcript turn
-  -> normalized task/run/progress events
-  -> unified selected-thread timeline
+User selects BroThread
+  -> UI writes selected thread to URL
+  -> UI calls Newbro open-thread API
+  -> Newbro hydrates thread history
+  -> Newbro asks bound executor node to load/subscribe selected Codex thread
+  -> executor node uses thread/start for new or thread/resume for existing
+  -> executor node streams loaded-thread Codex app-server changes
+  -> executor node forwards typed selected-thread events to Newbro
+  -> Newbro updates blackboard/session state
+  -> browser receives session stream update
+  -> selected desktop/mobile thread pane scrolls to bottom
 ```
 
-The thread projection belongs to Newbro runtime/protocol state. Tasks remain
-durable work items and execution sessions remain executor-side lineage; the
-thread projection groups the user-visible dialog around Codex continuity
-without collapsing these concepts.
+The executor node should own the Codex app-server lifecycle because it already
+owns local Codex app-server access, cwd, auth, and executor capabilities.
+Newbro runtime should own selected-thread state and publish durable typed
+updates over the existing session stream. The browser should not infer updates
+from raw Codex payloads and should not poll Codex or Newbro for new messages.
 
-The sync flow calls Codex app-server `thread/list` through the connected Codex
-adapter. Newbro imports all Codex threads from that response, sorts them by
-recency descending, and projects them into typed Newbro thread records. It may
-hydrate individual details with `thread/read` where needed. If the local Codex
-app-server does not expose `thread/list`, the goal is blocked; do not ship a
-reduced Newbro-known-only sync path.
+Selecting a new thread replaces the prior selected-thread subscription for that
+Bro/session. Leaving Bro Detail, selecting `New thread`, disconnecting the node,
+or switching to a different Bro must call `thread/unsubscribe` for the previous
+loaded Codex thread when there is a live app-server connection and thread id.
+If the app-server reports `notSubscribed` or `notLoaded`, treat cleanup as
+complete but record enough diagnostic state for debugging. Stale events must
+still be suppressed by selected-thread correlation.
 
-Opening a thread is a separate hydration operation. The backend must resolve
-the selected Newbro thread to its Codex `thread_id` or resume handle, fetch the
-thread's available `Task` records plus execution-run/timeline history from
-Newbro state and Codex thread state, and return a typed selected-thread
-timeline. The UI should show loading and recoverable error states for this open
-operation instead of silently showing stale tasks from the previously selected
-thread.
-
-When the selected thread already has a Codex resume handle, new direct text and
-PTT transcript sends must target that thread. If the selected thread has no
-Codex thread yet, the first send creates it and stores the returned resume
-handle before the UI treats it as a real thread.
-
-The transport layer stays thin. APIs validate selected Bro, node/session
-availability, and thread target, then dispatch typed direct executor
-instructions. They do not classify user intent or call Communication Brain.
-
-The UI consumes a runtime thread projection and selected-thread state. It must
-not infer thread identity by grouping visible task cards.
+Auto-scroll belongs in the UI. The scroll target should be the actual scrollable
+thread pane, not the whole page. It should run after thread hydration/open and
+after selected-thread records, visible text turns, visible audio turns, or
+selected-thread conversation/task output changes.
 
 ## Edge Cases
 
-- Selected thread id in URL is missing or stale: select the most recent
-  valid thread for that Bro, or a pending fresh-thread target if no real thread
-  exists.
-- User clicks `New thread` and refreshes before sending: no empty Codex thread
-  should be created; the UI can keep or clear the pending state.
-- Selected Codex thread cannot be hydrated with `thread/read`: keep the Newbro
-  projection and show a recoverable diagnostic, but do not fabricate a new
-  thread.
-- Selected Codex thread's `Task` records or execution-run/timeline history
-  cannot be fetched on open: keep the selected thread intact, show a
-  recoverable error/loading state, and do not display stale tasks from another
-  thread.
-- Codex app-server `thread/list` is missing or returns an unsupported shape:
-  stop the goal as blocked and document the Codex version/capability mismatch;
-  do not implement a fallback that hydrates only known Newbro-backed resume
-  handles.
-- Imported Codex thread has a cwd different from the current Newbro process cwd:
-  still show it in global recency order. Preserve the Codex-reported cwd as
-  resume metadata so sending into that thread starts Codex in the correct cwd.
-- Imported Codex thread has no Newbro task history: show it as a selectable
-  thread with Codex-derived title/preview/status, fetch any Codex-available
-  history on open, and create Newbro task/run history only when the user sends
-  into it.
-- Connected node disappears before send: reject the direct instruction and keep
-  the selected thread intact.
-- User sends while another run in the selected thread is active: use the
-  existing active-session follow-up path or queue behavior already supported by
-  the runtime; do not create a duplicate thread.
-- User switches between open-channel mode and push-to-talk mode: rendering stays
-  unified, while only the input route changes.
+- Selected thread has no Codex backing yet: do not start a Codex subscription
+  until first send creates the real thread through `thread/start`; still scroll
+  the empty/pending thread view appropriately.
+- User quickly switches threads: stale subscription events for the old thread
+  must not mutate or scroll the newly selected thread.
+- Node disconnects while subscribed: stop the subscription, keep selected thread
+  intact, and surface the existing offline state.
+- Codex app-server `thread/resume` or `thread/start` fails: keep hydrated
+  thread history visible and show/log a recoverable diagnostic; do not silently
+  fall back to polling.
+- Codex app-server `thread/unsubscribe` fails while leaving a thread: suppress
+  stale events locally and surface/log the cleanup failure so it can be retried
+  or diagnosed.
+- Thread open returns old history and then live updates arrive: append or merge
+  without duplicating turns, and scroll only after the selected thread changes.
+- User manually scrolls up: approved behavior is to force-scroll to bottom on
+  selected-thread open and new selected-thread output.
+- Mobile drawer opens/closes: drawer scroll state must not prevent the thread
+  body from scrolling to bottom after selection.
 
 ## Verification
 
+Required discovery/proof:
+
+- Inspect the installed Codex app-server methods/events and document the
+  selected-thread loaded-thread surface used: `thread/start`, `thread/resume`,
+  loaded-thread notifications, and `thread/unsubscribe`.
+- If the documented loaded-thread lifecycle is unavailable in the installed
+  Codex app-server, stop as blocked with the Codex version and app-server
+  capability evidence.
+
 Required backend checks:
 
-- `.venv/bin/python -m pytest tests/unit/execution/test_session_manager.py`
 - `.venv/bin/python -m pytest tests/unit/executors/adapters/test_codex_executor.py`
+- `.venv/bin/python -m pytest tests/unit/executors/node/test_service.py`
+- `.venv/bin/python -m pytest tests/integration/api/test_executor_nodes.py`
 - `.venv/bin/python -m pytest tests/integration/api/test_executor_text.py`
-- `.venv/bin/python -m pytest tests/integration/api/test_executor_audio.py`
-- `.venv/bin/python -m pytest`
 
 Required frontend checks:
 
 - `cd src/newbro/ui && bun run test --run src/__tests__/App.test.tsx`
-- `cd src/newbro/ui && bun run test`
 - `cd src/newbro/ui && bun run build`
 
 Manual checks:
 
-- Desktop Bro Detail left rail shows real Codex-backed threads, not task
-  activity records.
-- Codex `thread/list` returns global threads from multiple cwd values, and the
-  left rail includes them sorted by recency descending without cwd filtering.
-- Mobile Bro Detail drawer shows the same real thread model.
-- Select a thread, refresh the browser, and confirm the same thread remains
-  selected.
-- Open an imported Codex thread with existing history and confirm Newbro fetches
-  and renders that thread's `Task` records plus execution-run/timeline entries
-  before any new send.
-- Send three text messages into one selected thread across page refreshes and
-  confirm the left rail still shows one thread while the main timeline shows
-  all related task/progress/assistant output.
-- Send push-to-talk audio into the selected thread and confirm it routes through
-  the same direct executor path after transcription.
-- Confirm direct text and PTT do not create Communication Brain conversation
-  turns.
-- Capture desktop and mobile browser screenshots plus relevant backend/frontend
-  logs as proof.
+- Start backend/frontend and connect a Codex executor node.
+- Open desktop Bro Detail, select an existing thread, and confirm the
+  backend/executor calls `thread/resume` and starts consuming loaded-thread
+  Codex events.
+- Leave or switch away from that thread and confirm the backend/executor calls
+  `thread/unsubscribe` for the previous Codex thread id.
+- Confirm opening the thread scrolls the desktop thread pane to the bottom.
+- Produce a new selected-thread response and confirm desktop scrolls to bottom.
+- Produce or simulate an update for a non-selected thread and confirm desktop
+  does not scroll.
+- Repeat open/update/non-selected checks on mobile Bro Detail.
 
 ## Done When
 
-- `SPEC.md` and `GOAL.md` describe this real Codex thread sync/resume contract
-  with measurable verification criteria.
-- Runtime exposes a typed thread projection for Codex-backed Bro threads.
-- The projection calls Codex app-server `thread/list` and imports/lists all
-  global Codex threads returned by the connected Codex app-server.
-- Imported global Codex threads are sorted by recency descending using
-  `updatedAt` then `createdAt`, and cwd is not used to filter visibility.
-- Imported threads appear in desktop and mobile thread lists even when they
-  were not originally created by Newbro.
-- If `thread/list` is missing or incompatible in the installed Codex app-server,
-  the implementation is not accepted and the goal must be marked blocked with
-  proof of the version/capability mismatch.
-- Desktop and mobile render threads from that projection instead of task cards.
-- Selected thread persists across browser refresh.
-- Opening/selecting a thread fetches that thread's `Task` records plus
-  execution-run/timeline history and renders it without showing stale tasks from
-  another selected thread.
-- Direct text and PTT audio route to the selected Codex thread and bypass
-  Communication Brain.
-- Sending into a completed selected thread resumes the same Codex thread with
-  new task/run history instead of creating a new left-rail thread.
-- `New thread` is explicit and does not create empty Codex threads before first
-  send.
-- Tests cover thread projection, open-thread `Task` and execution-run/timeline
-  fetching, selected-thread routing, refresh restore, desktop/mobile rendering,
-  and no Communication Brain leakage.
-- Manual proof shows one selected Codex thread continuing across multiple sends
-  and refreshes.
-- The implementation is not considered complete if only tests pass; desktop and
-  mobile manual E2E checks against a connected Codex executor must also pass.
+- `SPEC.md` and `GOAL.md` describe this selected-thread subscribe and
+  auto-scroll contract with measurable verification criteria.
+- Implementation verifies the installed Codex app-server supports the
+  documented loaded-thread lifecycle for selected-thread updates.
+- Executor node uses `thread/start` for new selected Codex threads,
+  `thread/resume` for existing selected Codex threads, and loaded-thread events
+  for selected/opened thread updates; if this lifecycle does not exist, the goal
+  is blocked with evidence rather than completed with polling.
+- Selecting/opening a real Codex-backed thread starts or refreshes the
+  selected-thread live update path through the executor node using
+  `thread/resume`.
+- Switching selected threads or leaving Bro Detail calls `thread/unsubscribe`
+  for the previous selected Codex thread, or records a benign `notSubscribed` /
+  `notLoaded` cleanup result.
+- New selected-thread assistant/task output reaches the browser through Newbro
+  session stream state/events, not through browser polling.
+- Desktop Bro Detail scrolls its message pane to bottom when a thread is
+  opened.
+- Desktop Bro Detail scrolls to bottom when new output for the selected thread
+  arrives.
+- Mobile Bro Detail scrolls its message pane to bottom when a thread is opened.
+- Mobile Bro Detail scrolls to bottom when new output for the selected thread
+  arrives.
+- Non-selected thread updates do not scroll the current desktop or mobile
+  thread pane.
+- Tests cover selected-thread `thread/start` / `thread/resume` /
+  `thread/unsubscribe` command flow, stale subscription suppression,
+  selected-thread update delivery, and desktop/mobile auto-scroll.
+- `cd src/newbro/ui && bun run test --run src/__tests__/App.test.tsx` passes.
+- `cd src/newbro/ui && bun run build` passes.
+- Focused backend tests for the executor subscription/update path pass.
+- Stable docs and `docs/memories.md` are updated if runtime behavior changes.

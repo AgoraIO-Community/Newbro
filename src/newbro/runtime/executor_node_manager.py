@@ -12,9 +12,12 @@ from newbro.protocol import (
     AckMessage,
     AudioInstructionTranscribedMessage,
     CancelRunCommand,
+    CodexThreadEventMessage,
     CodexThreadListItem,
     CodexThreadReadMessage,
+    CodexThreadSubscribedMessage,
     CodexThreadsListedMessage,
+    CodexThreadUnsubscribedMessage,
     DispatchAudioInstructionCommand,
     DispatchRunCommand,
     DispatchTextInstructionCommand,
@@ -27,8 +30,10 @@ from newbro.protocol import (
     ReadCodexThreadCommand,
     RegisterNodeMessage,
     RunEventMessage,
+    SubscribeCodexThreadCommand,
     SupplyInteractionResponseCommand,
     TranscribeAudioInstructionCommand,
+    UnsubscribeCodexThreadCommand,
 )
 from newbro.executors.node.registry import (
     ExecutorNodeConnectionView,
@@ -80,6 +85,9 @@ class ExecutorNodeManager:
         self._audio_transcription_requests: dict[str, asyncio.Future[AudioInstructionTranscribedMessage]] = {}
         self._codex_thread_list_requests: dict[str, asyncio.Future[CodexThreadsListedMessage]] = {}
         self._codex_thread_read_requests: dict[str, asyncio.Future[CodexThreadReadMessage]] = {}
+        self._codex_thread_subscribe_requests: dict[str, asyncio.Future[CodexThreadSubscribedMessage]] = {}
+        self._codex_thread_unsubscribe_requests: dict[str, asyncio.Future[CodexThreadUnsubscribedMessage]] = {}
+        self._codex_thread_event_queue: asyncio.Queue[CodexThreadEventMessage] = asyncio.Queue()
 
     @property
     def detached_executor_types(self) -> tuple[str, ...]:
@@ -127,6 +135,9 @@ class ExecutorNodeManager:
             return False
         executor = state.executors.get(executor_type)
         return executor is not None and executor.supports_thread_list
+
+    def codex_thread_events(self) -> asyncio.Queue[CodexThreadEventMessage]:
+        return self._codex_thread_event_queue
 
     def executor_availability(self, executor_type: str, *, node_id: str | None = None) -> dict[str, object]:
         if not self.is_detached_executor(executor_type):
@@ -491,6 +502,99 @@ class ExecutorNodeManager:
             return AckMessage(message_type=message.type, ok=False, detail="unknown_request")
         if not future.done():
             future.set_result(message)
+        return AckMessage(message_type=message.type, detail="queued")
+
+    async def subscribe_codex_thread(
+        self,
+        *,
+        node_id: str,
+        subscription_id: str,
+        session_id: str,
+        target_persona_id: str,
+        target_thread_id: str,
+        thread_id: str,
+        workspace_id: str | None,
+        timeout_seconds: float = 8.0,
+    ) -> CodexThreadSubscribedMessage:
+        connection = await self._connection_for_node(node_id)
+        if connection is None or "codex" not in connection.executors:
+            raise RuntimeError("Codex executor node is not connected.")
+        request_id = f"codex-thread-sub-{uuid4().hex[:12]}"
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[CodexThreadSubscribedMessage] = loop.create_future()
+        self._codex_thread_subscribe_requests[request_id] = future
+        command = SubscribeCodexThreadCommand(
+            request_id=request_id,
+            subscription_id=subscription_id,
+            session_id=session_id,
+            target_persona_id=target_persona_id,
+            target_thread_id=target_thread_id,
+            thread_id=thread_id,
+            workspace_id=workspace_id,
+        )
+        try:
+            await self._send_json(connection, command.model_dump(mode="json"))
+            response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except Exception:
+            self._codex_thread_subscribe_requests.pop(request_id, None)
+            raise
+        if not response.ok:
+            raise RuntimeError(response.error or "Codex thread subscription failed.")
+        return response
+
+    def publish_codex_thread_subscribed(self, message: CodexThreadSubscribedMessage) -> AckMessage:
+        future = self._codex_thread_subscribe_requests.pop(message.request_id, None)
+        if future is None:
+            return AckMessage(message_type=message.type, ok=False, detail="unknown_request")
+        if not future.done():
+            future.set_result(message)
+        return AckMessage(message_type=message.type, detail="queued")
+
+    async def unsubscribe_codex_thread(
+        self,
+        *,
+        node_id: str,
+        subscription_id: str,
+        thread_id: str,
+        timeout_seconds: float = 8.0,
+    ) -> CodexThreadUnsubscribedMessage | None:
+        connection = await self._connection_for_node(node_id)
+        if connection is None or "codex" not in connection.executors:
+            return None
+        request_id = f"codex-thread-unsub-{uuid4().hex[:12]}"
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[CodexThreadUnsubscribedMessage] = loop.create_future()
+        self._codex_thread_unsubscribe_requests[request_id] = future
+        command = UnsubscribeCodexThreadCommand(
+            request_id=request_id,
+            subscription_id=subscription_id,
+            thread_id=thread_id,
+        )
+        try:
+            await self._send_json(connection, command.model_dump(mode="json"))
+            response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except Exception:
+            self._codex_thread_unsubscribe_requests.pop(request_id, None)
+            raise
+        if not response.ok:
+            raise RuntimeError(response.error or "Codex thread unsubscribe failed.")
+        return response
+
+    def publish_codex_thread_unsubscribed(self, message: CodexThreadUnsubscribedMessage) -> AckMessage:
+        future = self._codex_thread_unsubscribe_requests.pop(message.request_id, None)
+        if future is None:
+            return AckMessage(message_type=message.type, ok=False, detail="unknown_request")
+        if not future.done():
+            future.set_result(message)
+        return AckMessage(message_type=message.type, detail="queued")
+
+    async def publish_codex_thread_event(self, websocket: Any, message: CodexThreadEventMessage) -> AckMessage:
+        node_id = await self._node_id_for_websocket(websocket)
+        if node_id != message.node_id:
+            return AckMessage(message_type=message.type, ok=False, detail="unauthorized_node")
+        await self._codex_thread_event_queue.put(message)
+        if node_id is not None:
+            await self._registry.note_seen(node_id)
         return AckMessage(message_type=message.type, detail="queued")
 
     async def supply_interaction_response(

@@ -5,7 +5,12 @@ import asyncio
 import pytest
 
 from newbro.executors.node.registry import ExecutorNodeRegistry
-from newbro.protocol import ExecutorNodeExecutor, RegisterNodeMessage
+from newbro.protocol import (
+    CodexThreadSubscribedMessage,
+    CodexThreadUnsubscribedMessage,
+    ExecutorNodeExecutor,
+    RegisterNodeMessage,
+)
 from newbro.runtime.executor_node_manager import ExecutorNodeManager, RunDispatchState
 
 
@@ -100,3 +105,88 @@ async def test_sends_to_one_node_do_not_block_another(tmp_path):
     await asyncio.wait_for(second_sent.wait(), timeout=1.0)
     first_release.set()
     await asyncio.gather(first_task, second_task)
+
+
+@pytest.mark.anyio
+async def test_selected_codex_thread_subscription_request_round_trip(tmp_path):
+    manager = ExecutorNodeManager(
+        detached_executor_types=("codex",),
+        registry=ExecutorNodeRegistry(path=tmp_path / "executor_nodes.yaml"),
+    )
+    issue = await manager.create_node(name="Node One", enabled_executors=["codex"])
+    sent_event = asyncio.Event()
+
+    class CapturingSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict[str, object]] = []
+
+        async def send_json(self, payload: dict[str, object]) -> None:
+            self.sent.append(payload)
+            sent_event.set()
+
+    socket = CapturingSocket()
+    await manager.register_connection(
+        socket,
+        RegisterNodeMessage(
+            node_id=issue.node.node_id,
+            token=issue.token,
+            executors=[ExecutorNodeExecutor(executor_type="codex", supports_thread_list=True)],
+        ),
+    )
+
+    task = asyncio.create_task(
+        manager.subscribe_codex_thread(
+            node_id=issue.node.node_id,
+            subscription_id="sub-1",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            thread_id="codex-thread-1",
+            workspace_id="/tmp/workspace",
+        )
+    )
+    await asyncio.wait_for(sent_event.wait(), timeout=1.0)
+    command = socket.sent[-1]
+    assert command["type"] == "subscribe_codex_thread"
+    assert command["subscription_id"] == "sub-1"
+    assert command["thread_id"] == "codex-thread-1"
+    assert command["workspace_id"] == "/tmp/workspace"
+
+    manager.publish_codex_thread_subscribed(
+        CodexThreadSubscribedMessage(
+            request_id=str(command["request_id"]),
+            subscription_id="sub-1",
+            node_id=issue.node.node_id,
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            thread_id="codex-thread-1",
+        )
+    )
+    response = await task
+    assert response.subscription_id == "sub-1"
+
+    sent_event.clear()
+    task = asyncio.create_task(
+        manager.unsubscribe_codex_thread(
+            node_id=issue.node.node_id,
+            subscription_id="sub-1",
+            thread_id="codex-thread-1",
+        )
+    )
+    await asyncio.wait_for(sent_event.wait(), timeout=1.0)
+    command = socket.sent[-1]
+    assert command["type"] == "unsubscribe_codex_thread"
+    assert command["subscription_id"] == "sub-1"
+
+    manager.publish_codex_thread_unsubscribed(
+        CodexThreadUnsubscribedMessage(
+            request_id=str(command["request_id"]),
+            subscription_id="sub-1",
+            node_id=issue.node.node_id,
+            thread_id="codex-thread-1",
+            status="unsubscribed",
+        )
+    )
+    response = await task
+    assert response.status == "unsubscribed"

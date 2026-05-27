@@ -79,6 +79,8 @@ def _write_fake_codex(
                     thread_id = params.get("threadId")
                     turns_by_thread.setdefault(thread_id, [])
                     send({{"id": request_id, "result": {{"thread": {{"id": thread_id, "status": {{"type": "idle"}}}}}}}})
+                elif method == "thread/unsubscribe":
+                    send({{"id": request_id, "result": {{"status": "unsubscribed"}}}})
                 elif method == "thread/read":
                     thread_id = params.get("threadId")
                     send(
@@ -616,6 +618,19 @@ async def test_codex_executor_reuses_existing_thread_for_direct_thread_resume(tm
     assert session.thread_id == "thread-1"
     assert events[-1].metadata["thread_id"] == "thread-1"
     await session.close()
+
+
+@pytest.mark.anyio
+async def test_codex_executor_subscribes_and_unsubscribes_selected_thread(tmp_path):
+    command = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+
+    session = await executor.subscribe_thread("thread-1", workspace_id=str(tmp_path))
+    response = await executor.unsubscribe_thread(session)
+
+    assert session.thread_id == "thread-1"
+    assert session.metadata["codex_thread_resumed"] is True
+    assert response == {"status": "unsubscribed"}
 
 
 @pytest.mark.anyio

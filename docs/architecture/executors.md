@@ -72,9 +72,13 @@ Adapter direction:
 - Codex is one real adapter family
 - Codex app-server `thread/list` is the source for imported Codex dialog
   threads; `thread/read` is the required per-thread hydration path when a user
-  opens/selects a thread, and `thread/resume` is required before `turn/start`
-  when an imported or persisted native thread id is not yet loaded.
-  `thread/start`/`thread/fork` remain run creation paths.
+  opens/selects a thread. Opening a selected thread is also a loaded-thread
+  lifecycle owned by the detached executor node: the node calls
+  `thread/resume`, forwards relevant thread events to Newbro, and calls
+  `thread/unsubscribe` when the selected thread is replaced or closed.
+  `thread/resume` is required before `turn/start` when an imported or
+  persisted native thread id is not yet loaded. `thread/start` remains the fresh
+  direct-run creation path, while `thread/fork` remains the follow-up fork path.
 - Codex `agentMessage` commentary deltas are normalized into progress
   `ExecutorEvent`s so execution runs expose live user-facing progress through
   `latest_progress_message` snapshots without leaking Codex-native event

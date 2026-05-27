@@ -96,18 +96,24 @@ Current behavior:
   `bro_threads` from the runtime snapshot, not task records. Selecting a thread
   calls the open-thread hydration endpoint, writes `thread` into the URL, and
   direct text/PTT sends include that target so completed selected Codex threads
-  resume through their stored execution-session resume handle. The snapshot can
-  include Codex threads imported through the connected executor node's
-  `thread/list` capability even when Newbro has not created task history for
-  that native thread yet; opening one fetches Codex `thread/read` history before
-  rendering the selected timeline. The selected timeline is filtered by the
+  resume through their stored execution-session resume handle. The frontend does
+  not call Codex app-server subscription APIs directly: Newbro's open-thread
+  endpoint asks the bound executor node to load/subscribe to the native Codex
+  thread, and the close-thread endpoint releases that subscription when Bro
+  Detail leaves the thread, starts a new pending thread, or unmounts. The
+  snapshot can include Codex threads imported through the connected executor
+  node's `thread/list` capability even when Newbro has not created task history
+  for that native thread yet; opening one fetches Codex `thread/read` history
+  before rendering the selected timeline, and later selected-thread events
+  refresh the same snapshot stream. The selected timeline is filtered by the
   selected thread's `task_ids` before timeline limits are applied. It renders
   both sides of fetched/direct turns: each synced user instruction appears as a
   user bubble, followed by the executor task/progress/assistant output. User
   bubbles, assistant/conversation bubbles, audio turns, and task output cards
   display timestamps from the originating turn or message. The selected thread
-  timeline is rendered oldest-to-newest so the latest message appears last.
-  Task output cards render the original markdown-like assistant/task summary
+  timeline is rendered oldest-to-newest and desktop/mobile panes scroll to the
+  bottom when opening a thread or receiving new selected-thread content. Task
+  output cards render the original markdown-like assistant/task summary
   structure instead of the flattened one-line preview used for compact records.
   Desktop and mobile thread pickers render long thread lists in pages of 25 and
   expose an inline show-more control while auto-expanding enough to keep a

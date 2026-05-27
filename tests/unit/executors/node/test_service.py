@@ -18,8 +18,10 @@ from newbro.protocol import (
     DispatchTextInstructionCommand,
     ExecutorAudioInstruction,
     ExecutorTextInstruction,
+    SubscribeCodexThreadCommand,
     SupplyInteractionResponseCommand,
     TranscribeAudioInstructionCommand,
+    UnsubscribeCodexThreadCommand,
 )
 
 
@@ -79,6 +81,36 @@ class FakeAudioTranscriber:
             duration_seconds=1.0,
             metadata={"whisper_model": "fake"},
         )
+
+
+class FakeCodexThreadClient:
+    def __init__(self) -> None:
+        self.events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+
+    async def next_event(self) -> dict[str, object]:
+        return await self.events.get()
+
+    async def close(self) -> None:
+        return None
+
+
+class FakeThreadSubscribingExecutor(FakeExecutor):
+    def __init__(self) -> None:
+        self.subscribed: list[tuple[str, str | None]] = []
+        self.unsubscribed: list[str] = []
+        self.client = FakeCodexThreadClient()
+
+    async def subscribe_thread(self, thread_id: str, *, workspace_id: str | None = None) -> CodexExecutorSession:
+        self.subscribed.append((thread_id, workspace_id))
+        session = CodexExecutorSession(session_id="codex-sub-session-1", executor_type="codex")
+        session.thread_id = thread_id
+        session._client = self.client
+        return session
+
+    async def unsubscribe_thread(self, session: CodexExecutorSession) -> dict[str, object]:
+        self.unsubscribed.append(session.thread_id or "")
+        await session.close()
+        return {"status": "unsubscribed"}
 
 
 class FakeWebSocket:
@@ -428,3 +460,58 @@ async def test_list_codex_threads_returns_normalized_thread_list(monkeypatch: py
             ],
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_subscribe_codex_thread_streams_events_and_unsubscribes(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    executor = FakeThreadSubscribingExecutor()
+    service._executors["codex"] = executor
+    websocket = FakeWebSocket([])
+    command = SubscribeCodexThreadCommand(
+        request_id="req-sub-1",
+        subscription_id="sub-1",
+        session_id="session-1",
+        target_persona_id="forge",
+        target_thread_id="public-thread-1",
+        thread_id="codex-thread-1",
+        workspace_id="/tmp/workspace",
+    )
+
+    await service._subscribe_codex_thread(websocket, command)
+    assert executor.subscribed == [("codex-thread-1", "/tmp/workspace")]
+    assert websocket.sent[0]["type"] == "codex_thread_subscribed"
+    assert websocket.sent[0]["metadata"] == {"source": "thread/resume"}
+
+    await executor.client.events.put(
+        {
+            "method": "turn/completed",
+            "params": {
+                "thread": {"id": "codex-thread-1"},
+                "turn": {"id": "turn-1"},
+            },
+        }
+    )
+    for _ in range(20):
+        if len(websocket.sent) > 1:
+            break
+        await asyncio.sleep(0)
+    assert websocket.sent[1]["type"] == "codex_thread_event"
+    assert websocket.sent[1]["subscription_id"] == "sub-1"
+    assert websocket.sent[1]["thread_id"] == "codex-thread-1"
+    assert websocket.sent[1]["method"] == "turn/completed"
+
+    await service._unsubscribe_codex_thread(
+        websocket,
+        UnsubscribeCodexThreadCommand(
+            request_id="req-unsub-1",
+            subscription_id="sub-1",
+            thread_id="codex-thread-1",
+        ),
+    )
+    assert executor.unsubscribed == ["codex-thread-1"]
+    assert websocket.sent[-1]["type"] == "codex_thread_unsubscribed"
+    assert websocket.sent[-1]["status"] == "unsubscribed"
+    assert service._codex_thread_subscriptions == {}

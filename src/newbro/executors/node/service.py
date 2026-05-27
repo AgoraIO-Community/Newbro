@@ -19,10 +19,13 @@ from newbro.executors.core import ExecutorEvent, ExecutorEventType, ExecutorSess
 from newbro.protocol import (
     AckMessage,
     AudioInstructionTranscribedMessage,
+    CodexThreadEventMessage,
     CancelRunCommand,
     CodexThreadListItem,
     CodexThreadReadMessage,
+    CodexThreadSubscribedMessage,
     CodexThreadsListedMessage,
+    CodexThreadUnsubscribedMessage,
     DispatchAudioInstructionCommand,
     DispatchRunCommand,
     DispatchTextInstructionCommand,
@@ -33,8 +36,10 @@ from newbro.protocol import (
     RegisterNodeMessage,
     ReleaseRunCommand,
     RunEventMessage,
+    SubscribeCodexThreadCommand,
     SupplyInteractionResponseCommand,
     TranscribeAudioInstructionCommand,
+    UnsubscribeCodexThreadCommand,
 )
 
 from .audio import AudioTranscriber, build_audio_transcriber
@@ -47,6 +52,14 @@ LOGGER = logging.getLogger(__name__)
 class LocalRunContext:
     executor: Any
     execution_session_id: str
+    background_task: asyncio.Task[None]
+
+
+@dataclass(slots=True)
+class CodexThreadSubscriptionContext:
+    executor: Any
+    session: CodexExecutorSession
+    command: SubscribeCodexThreadCommand
     background_task: asyncio.Task[None]
 
 
@@ -105,6 +118,7 @@ class ExecutorNodeService:
         self._audio_transcriber = audio_transcriber or build_audio_transcriber(audio_config)
         self._live_sessions: dict[str, ExecutorSession] = {}
         self._active_runs: dict[str, LocalRunContext] = {}
+        self._codex_thread_subscriptions: dict[str, CodexThreadSubscriptionContext] = {}
         self._send_lock = asyncio.Lock()
         self._reporter = reporter or ExecutorNodeLifecycleReporter()
 
@@ -164,6 +178,7 @@ class ExecutorNodeService:
                         error=exc,
                     )
                 await self._cancel_active_runs()
+                await self._cancel_codex_thread_subscriptions()
                 self._reporter.retrying(delay_seconds=retry_delay_seconds)
                 await asyncio.sleep(retry_delay_seconds)
 
@@ -192,6 +207,14 @@ class ExecutorNodeService:
         if message_type == "read_codex_thread":
             command = ReadCodexThreadCommand.model_validate(payload)
             await self._read_codex_thread(websocket, command)
+            return
+        if message_type == "subscribe_codex_thread":
+            command = SubscribeCodexThreadCommand.model_validate(payload)
+            await self._subscribe_codex_thread(websocket, command)
+            return
+        if message_type == "unsubscribe_codex_thread":
+            command = UnsubscribeCodexThreadCommand.model_validate(payload)
+            await self._unsubscribe_codex_thread(websocket, command)
             return
         if message_type == "cancel_run":
             command = CancelRunCommand.model_validate(payload)
@@ -346,6 +369,142 @@ class ExecutorNodeService:
                     ok=False,
                     error=str(exc),
                 ).model_dump(mode="json"),
+            )
+
+    async def _subscribe_codex_thread(self, websocket: Any, command: SubscribeCodexThreadCommand) -> None:
+        await self._stop_codex_thread_subscription(command.subscription_id)
+        executor = self._executors.get(command.executor_type)
+        subscribe_thread = getattr(executor, "subscribe_thread", None)
+        if subscribe_thread is None:
+            await self._send_json(
+                websocket,
+                CodexThreadSubscribedMessage(
+                    request_id=command.request_id,
+                    subscription_id=command.subscription_id,
+                    node_id=self._settings.node_id,
+                    session_id=command.session_id,
+                    target_persona_id=command.target_persona_id,
+                    target_thread_id=command.target_thread_id,
+                    thread_id=command.thread_id,
+                    ok=False,
+                    error="Codex executor does not support selected-thread subscription.",
+                ).model_dump(mode="json"),
+            )
+            return
+        try:
+            session = await subscribe_thread(command.thread_id, workspace_id=command.workspace_id)
+        except Exception as exc:
+            await self._send_json(
+                websocket,
+                CodexThreadSubscribedMessage(
+                    request_id=command.request_id,
+                    subscription_id=command.subscription_id,
+                    node_id=self._settings.node_id,
+                    session_id=command.session_id,
+                    target_persona_id=command.target_persona_id,
+                    target_thread_id=command.target_thread_id,
+                    thread_id=command.thread_id,
+                    ok=False,
+                    error=str(exc),
+                ).model_dump(mode="json"),
+            )
+            return
+        task = asyncio.create_task(self._stream_codex_thread_events(websocket, session, command))
+        self._codex_thread_subscriptions[command.subscription_id] = CodexThreadSubscriptionContext(
+            executor=executor,
+            session=session,
+            command=command,
+            background_task=task,
+        )
+        await self._send_json(
+            websocket,
+            CodexThreadSubscribedMessage(
+                request_id=command.request_id,
+                subscription_id=command.subscription_id,
+                node_id=self._settings.node_id,
+                session_id=command.session_id,
+                target_persona_id=command.target_persona_id,
+                target_thread_id=command.target_thread_id,
+                thread_id=command.thread_id,
+                metadata={"source": "thread/resume"},
+            ).model_dump(mode="json"),
+        )
+
+    async def _unsubscribe_codex_thread(self, websocket: Any, command: UnsubscribeCodexThreadCommand) -> None:
+        status = await self._stop_codex_thread_subscription(command.subscription_id)
+        await self._send_json(
+            websocket,
+            CodexThreadUnsubscribedMessage(
+                request_id=command.request_id,
+                subscription_id=command.subscription_id,
+                node_id=self._settings.node_id,
+                thread_id=command.thread_id,
+                status=status,
+            ).model_dump(mode="json"),
+        )
+
+    async def _stop_codex_thread_subscription(self, subscription_id: str) -> str:
+        context = self._codex_thread_subscriptions.pop(subscription_id, None)
+        if context is None:
+            return "notSubscribed"
+        status = "unsubscribed"
+        unsubscribe_thread = getattr(context.executor, "unsubscribe_thread", None)
+        try:
+            if unsubscribe_thread is not None:
+                response = await unsubscribe_thread(context.session)
+                response_status = response.get("status") if isinstance(response, dict) else None
+                if isinstance(response_status, str) and response_status:
+                    status = response_status
+            else:
+                await context.session.close()
+        except Exception as exc:
+            status = f"error:{exc}"
+            with contextlib.suppress(Exception):
+                await context.session.close()
+        context.background_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await context.background_task
+        return status
+
+    async def _stream_codex_thread_events(
+        self,
+        websocket: Any,
+        session: CodexExecutorSession,
+        command: SubscribeCodexThreadCommand,
+    ) -> None:
+        try:
+            while True:
+                event = await session.client.next_event()
+                method = str(event.get("method") or "")
+                if not method:
+                    continue
+                params = event.get("params")
+                if not isinstance(params, dict):
+                    params = {}
+                event_thread_id = _event_thread_id(params) or command.thread_id
+                if event_thread_id != command.thread_id:
+                    continue
+                await self._send_json(
+                    websocket,
+                    CodexThreadEventMessage(
+                        subscription_id=command.subscription_id,
+                        node_id=self._settings.node_id,
+                        session_id=command.session_id,
+                        target_persona_id=command.target_persona_id,
+                        target_thread_id=command.target_thread_id,
+                        thread_id=command.thread_id,
+                        method=method,
+                        params=params,
+                    ).model_dump(mode="json"),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning(
+                "Selected Codex thread subscription stopped subscription_id=%s thread_id=%s: %s",
+                command.subscription_id,
+                command.thread_id,
+                exc,
             )
 
     async def _transcribe_audio_instruction(
@@ -708,6 +867,11 @@ class ExecutorNodeService:
             with contextlib.suppress(Exception):
                 await context.executor.cancel_run(run_id)
 
+    async def _cancel_codex_thread_subscriptions(self) -> None:
+        subscription_ids = list(self._codex_thread_subscriptions)
+        for subscription_id in subscription_ids:
+            await self._stop_codex_thread_subscription(subscription_id)
+
     async def _send_json(self, websocket: Any, payload: dict[str, object]) -> None:
         async with self._send_lock:
             await websocket.send(json.dumps(payload))
@@ -793,6 +957,28 @@ def _codex_thread_list_item(item: dict[str, object]) -> CodexThreadListItem:
             "git_info": item.get("gitInfo"),
         },
     )
+
+
+def _event_thread_id(params: dict[str, object]) -> str | None:
+    value = params.get("threadId")
+    if isinstance(value, str) and value:
+        return value
+    thread = params.get("thread")
+    if isinstance(thread, dict):
+        value = thread.get("id") or thread.get("threadId")
+        if isinstance(value, str) and value:
+            return value
+    turn = params.get("turn")
+    if isinstance(turn, dict):
+        value = turn.get("threadId")
+        if isinstance(value, str) and value:
+            return value
+    item = params.get("item")
+    if isinstance(item, dict):
+        value = item.get("threadId")
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def _format_executor_types(executor_types: list[str]) -> str:
