@@ -15,6 +15,9 @@ Important rules:
   objects when the runtime needs an explicit user action rather than passive
   awareness
 - only emitted proactive messages enter user-visible conversation history
+- Bro Detail direct typed and push-to-talk audio tasks suppress proactive
+  notification candidates; their executor output is surfaced through task/run
+  state instead of Communication Brain conversation updates
 - digest-first delivery is preferred over one-event-one-message
 - notification policy decides whether to send, merge, or defer before any wording is generated
 - selected notification facts may be rendered into final natural wording later, but delivery policy itself should stay rule-driven

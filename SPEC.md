@@ -1,147 +1,166 @@
-# Newbro Desktop And Mobile Design Alignment Spec
+# Newbro Push-To-Talk Audio With Executor-Node Whisper Spec
 
 ## Goal
 
-Make the active Newbro UI follow `design/Voice Interaction.html` closely for the core runtime surfaces: Home, Create & Connect a Bro, and Bro Detail. The goal covers both desktop and mobile, with desktop treated as the first and strictest acceptance gate because the current desktop implementation is visibly farthest from the checked-in design.
+Make Bro Detail composer push-to-talk audio client-agnostic. Browser, mobile,
+Agora gateway, and future clients may upload raw recorded audio to Newbro. The
+selected Bro's bound executor node owns local Whisper transcription, then sends
+the transcript as a normal text follow-up to the active executor session.
 
-This is an alignment and verification goal, not a product rewrite. Keep the runtime behavior that already works, and reshape the UI around the design prototype.
+Codex is the first adapter to be changed to this design. Codex must no longer
+depend on native realtime audio ingestion for PTT. Hermes and future adapters
+can participate by supporting text follow-up; they do not need native raw audio
+support.
+
+## Product Decisions
+
+- Clients send raw audio and do not run STT.
+- Executor nodes transcribe with local Whisper by default when audio
+  dependencies are installed.
+- `newbro-cli` includes the local Whisper runtime dependencies so a downloaded
+  CLI can run composer PTT audio without an extra audio extra install.
+- Whisper language defaults to automatic detection; executor run commands can
+  override language and model inline.
+- UI renders the audio bubble immediately and adds the transcript under that
+  bubble after executor-node Whisper succeeds.
+- Agents receive transcript text follow-ups, not PCM.
+- Codex PTT uses the normal text instruction path, not Codex realtime audio.
+- Hermes support should use the same node-level Whisper path once a Hermes
+  adapter exists.
+- The composer PTT path still does not create/update a Draft and still does not
+  require Send/Confirm.
+- Agora live/free voice remains separate from composer PTT.
 
 ## Source Of Truth
 
-Primary design source:
-
-- `design/Voice Interaction.html`
-- `design/app.jsx`
-- `design/tokens.css`
-- `design/variants-desktop.jsx`
-- `design/variants-desktop.css`
-- `design/variants-mobile.jsx`
-- `design/variants-mobile.css`
-- `design/variants-channel-mobile.jsx`
-- `design/variants-channel-mobile.css`
-- `design/variants-onboarding.jsx`
-- `design/variants-onboarding.css`
-- `design/bro-characters.jsx`
-- `design/bro-characters.css`
-- `design/assets/`
-- `design/screenshots/`
-
-Current implementation to align:
-
+- `AGENTS.md`
+- `docs/architecture/communication-brain.md`
+- `docs/architecture/executors.md`
+- `docs/protocol/draft-to-execute.md`
+- `docs/guides/frontend-workbench.md`
+- `src/newbro/protocol/executor_node.py`
+- `src/newbro/runtime/session.py`
+- `src/newbro/runtime/executor_node_manager.py`
+- `src/newbro/executors/node/service.py`
+- `src/newbro/executors/node/config.py`
+- `src/newbro/executors/adapters/codex/`
+- `src/newbro/api/routes/executor_audio.py`
 - `src/newbro/ui/src/ArtboardShell.tsx`
-- `src/newbro/ui/src/styles/variants-desktop.css`
-- `src/newbro/ui/src/styles/variants-mobile.css`
-- `src/newbro/ui/src/styles/variants-onboarding.css`
-- `src/newbro/ui/src/styles/app.css`
-- `src/newbro/ui/src/components/newbro/`
-- `src/newbro/ui/src/NewbroShell.tsx`
 - `src/newbro/ui/src/lib/session-client.ts`
-- `src/newbro/ui/src/lib/connector-client.ts`
-- `src/newbro/ui/src/lib/voice-runtime.ts`
 - `src/newbro/ui/src/__tests__/App.test.tsx`
 
 ## In Scope
 
-Desktop must be aligned first:
-
-- Empty Home: `FirstRunHomeDesktop` / `dt-empty-home`
-- Populated Home: `HomeDesktop` / `dt-home`
-- Create & Connect modal: `CreateBroModal` and `CreateBroDesktop` / `dt-create-bro`
-- Bro Detail active thread: `BroDetailActiveDesktop` / `dt-thread`
-- Bro Detail offline/send blocked, if current runtime state reaches it: `BroDetailOfflineDesktop` / `dt-bro-offline`
-
-Mobile must be aligned after desktop is stable:
-
-- Mobile empty Home
-- Mobile populated Home
-- Mobile Create & Connect
-- Mobile Bro Detail / threads
-- Mobile Bro offline/send blocked, if current runtime state reaches it
-
-The sign-in/invitation UI may be adjusted only if shared tokens, shell styling, or viewport behavior make it visibly inconsistent with the same design source. It is not the main acceptance target for this goal.
+- Executor-node local Whisper transcription service for uploaded PCM audio.
+- Executor-node capability advertisement for audio instructions based on:
+  - executor supports text follow-up
+  - local audio transcriber is available
+  - or future native audio support is explicitly implemented
+- Typed protocol model for text instructions produced from audio.
+- Codex adapter text-follow-up handler for transcribed audio.
+- Remove Codex realtime-audio/API-key-auth gating from the PTT path.
+- Config support for local Whisper model/language/device settings.
+- CLI support for inline Whisper language/model overrides on executor-node
+  runs.
+- UI disabled copy that points to local Whisper on the executor node instead of
+  Codex API-key realtime audio.
+- UI audio transcript display under the original voice-note bubble after the
+  node reports a successful transcription.
+- Tests for node transcription dispatch and Codex text follow-up.
+- Stable docs and `docs/memories.md` updates.
 
 ## Non-Goals
 
-- Do not redesign the product beyond the checked-in design prototype.
-- Do not remove functional runtime routes solely because they are not part of this alignment pass.
-- Do not replace runtime state with static design mock data.
-- Do not change backend behavior, auth semantics, executor node semantics, persona creation rules, draft contracts, or voice connector contracts.
-- Do not implement new management pages, settings pages, node admin pages, onboarding copy, or marketing screens.
-- Do not claim pixel-perfect completion without screenshot evidence.
+- Do not implement a Hermes adapter in this goal.
+- Do not make clients depend on Whisper, ffmpeg, or provider-specific STT.
+- Do not use Agora STT/ConvoAI/RTC/RTM for composer PTT.
+- Do not create/update Drafts from composer PTT.
+- Do not require Send/Confirm for composer PTT.
+- Do not render the transcript as a separate user chat turn; it belongs under
+  the original voice-note bubble.
+- Do not keep the Codex realtime audio path as the primary PTT implementation.
 
-## User-Visible Behavior
+## Architecture
 
-At desktop `1440x900`, the live UI should visually match the design prototype for the desktop target states. The most important desktop fixes are expected around global shell placement, page padding, header height, modal size/position, shadows, card spacing, activity rail placement, thread pane sizing, and composer position.
+```text
+client/gateway raw audio
+  -> Newbro upload API
+  -> typed ExecutorAudioInstruction
+  -> selected Bro's executor node
+  -> local Whisper transcription
+  -> typed ExecutorTextInstruction
+  -> Codex/Hermes/future adapter text follow-up
+```
 
-At mobile `440x920`, the live UI should match the corresponding mobile design states. At `390x820`, the same states must remain usable without clipped primary controls, broken scroll, horizontal overflow, or incoherent overlap.
+The upload API remains transport-thin. It validates auth, selected Bro, bound
+node, active execution session, MIME, duration, and size, then dispatches the
+typed audio instruction to the node. It must not transcribe.
 
-Runtime data can differ from the static design content, but layout, visual hierarchy, typography, spacing, borders, shadows, button treatment, command block treatment, avatars, chips, and interaction states should come from the design.
+The executor node owns local audio semantics. `supports_audio_instruction=True`
+means the node can accept raw audio and deliver a text instruction to the active
+executor, either through local Whisper plus text follow-up or through explicit
+future native audio support.
 
-## Implementation Constraints
+Codex owns only text follow-up. It receives `ExecutorTextInstruction` and starts
+a normal Codex text turn in the existing thread.
 
-- Read stable docs before implementation and preserve Newbro runtime boundaries from `AGENTS.md`.
-- Use the design files as the visual source of truth. Port or reuse design CSS/class structure where practical.
-- Preserve existing runtime wiring for auth bootstrap, `?sid` session handling, session snapshots, websocket updates, personas, executor nodes, create/connect, command copy, Bro Detail, voice start/stop, STT/draft, draft send, and offline blocking.
-- Keep the browser UI transport thin. The UI may call typed client APIs and render state; it must not invent business policy or semantic transcript shortcuts.
-- Prefer aligning the active `ArtboardShell` and style files over building a second disconnected prototype.
-- Use icons from the existing icon system where the active app already uses them; do not introduce hand-drawn replacement icons unless the design asset requires it.
-- Preserve mobile behavior while doing desktop work. Desktop-first does not mean mobile regressions are acceptable.
+The UI owns voice-note presentation. It creates the voice-note bubble before the
+upload completes, then patches the transcript under that same bubble from the
+executor run progress metadata once local Whisper finishes.
 
 ## Edge Cases
 
-- Empty workspace must render the design empty state when there are no runtime personas.
-- Create/connect must keep the real executor-node command flow and first-connection gating.
-- Completed create/connect state must have a meaningful close/confirm action, not disabled decorative buttons.
-- Long node commands must not overflow the modal.
-- Long Bro names and task titles must wrap or truncate like the design without resizing fixed controls.
-- Offline usable nodes must keep Bro Detail visible, show the offline/send-blocked treatment, and block talk/send.
-- Active voice state must not push the desktop thread pane or mobile controls out of frame.
-- Mobile browser chrome / small viewport height must not hide the primary create/connect or voice controls.
+- Local Whisper dependencies missing: node advertises no audio instruction
+  support; UI disables PTT before recording.
+- Whisper returns empty transcript: node emits a failed run event and does not
+  call the adapter.
+- Node disconnects while recording/uploading: API rejects or dispatch fails.
+- Active Codex run/session is missing: API rejects before artifact dispatch.
+- Upload too large or too long: API rejects with existing limits.
+- Unsupported MIME: API rejects before node dispatch.
 
 ## Verification
 
-Required commands:
+Required backend checks:
 
-- `cd src/newbro/ui && bun run test src/__tests__/App.test.tsx`
+- `.venv/bin/python -m pytest tests/unit/executors/node/test_service.py`
+- `.venv/bin/python -m pytest tests/unit/executors/adapters/test_codex_executor.py`
+- `.venv/bin/python -m pytest tests/integration/api/test_executor_audio.py`
+- `.venv/bin/python -m pytest`
+
+Required frontend checks:
+
+- `cd src/newbro/ui && bun run test --run src/__tests__/App.test.tsx`
 - `cd src/newbro/ui && bun run test`
 - `cd src/newbro/ui && bun run build`
 
-Required screenshot evidence:
+Manual checks:
 
-- Desktop design references at `1440x900` for empty Home, populated Home, Create & Connect, Bro Detail active, and Bro Detail offline if implemented.
-- Desktop live screenshots at `1440x900` for the same states.
-- Desktop live spot checks at `1280x800` and `1024x768` for Home, Create & Connect, and Bro Detail.
-- Mobile design references at `440x920` for empty Home, populated Home, Create & Connect, Bro Detail/threads, and offline if implemented.
-- Mobile live screenshots at `440x920` for the same states.
-- Mobile live spot checks at `390x820` for empty Home, Create & Connect, and Bro Detail.
-
-Suggested artifact naming:
-
-- `/tmp/newbro-design-desktop-empty-home-1440x900.png`
-- `/tmp/newbro-live-desktop-empty-home-1440x900.png`
-- `/tmp/newbro-design-desktop-create-bro-1440x900.png`
-- `/tmp/newbro-live-desktop-create-bro-1440x900.png`
-- `/tmp/newbro-design-desktop-home-1440x900.png`
-- `/tmp/newbro-live-desktop-home-1440x900.png`
-- `/tmp/newbro-design-desktop-detail-1440x900.png`
-- `/tmp/newbro-live-desktop-detail-1440x900.png`
-- `/tmp/newbro-design-mobile-*.png`
-- `/tmp/newbro-live-mobile-*.png`
+- Connected node with local Whisper available advertises audio support.
+- Connected node without local Whisper disables composer PTT before recording.
+- Desktop and mobile PTT work end to end: hold/release records audio, uploads
+  exactly one instruction, the executor node transcribes it with local Whisper,
+  Codex receives the transcript as a text follow-up, Codex visibly acts on it,
+  and the UI renders the audio bubble followed by its transcript.
+- `newbro executor run --audio-language ... --whisper-model ...` overrides the
+  automatic language/default model settings for the executor node.
+- Capture a browser screenshot and relevant log artifact as proof for the E2E
+  PTT audio smoke.
+- No composer PTT call uses Agora, Draft ASR, Draft Send, or Codex realtime
+  audio.
 
 ## Done When
 
-- Desktop empty Home matches the design at `1440x900`.
-- Desktop populated Home matches the design at `1440x900`.
-- Desktop Create & Connect matches the design at `1440x900`.
-- Desktop Bro Detail active matches the design at `1440x900`.
-- Desktop Bro Detail offline/send blocked matches the design if that state is reachable in the active runtime.
-- Desktop Home, Create & Connect, and Bro Detail have no horizontal overflow, incoherent overlap, or clipped primary controls at `1440x900`, `1280x800`, and `1024x768`.
-- Mobile empty Home, populated Home, Create & Connect, and Bro Detail/threads match the design at `440x920`.
-- Mobile offline/send blocked matches the design if that state is reachable in the active runtime.
-- Mobile target states remain usable at `390x820` with no clipped primary controls, broken scroll, or horizontal overflow.
-- Existing runtime behavior still works for empty workspace, create/connect, one Bro creation after first successful connection, connected Bro Home, Bro Detail, voice start/stop, draft/message send, and offline blocking.
-- `cd src/newbro/ui && bun run test src/__tests__/App.test.tsx` passes.
-- `cd src/newbro/ui && bun run test` passes.
-- `cd src/newbro/ui && bun run build` passes.
-- Screenshot QA evidence exists for the required state and viewport matrix.
-- Any remaining visual deltas are documented with concrete reason and follow-up path.
+- `GOAL.md` describes the executor-node Whisper contract and measurable
+  completion criteria.
+- Protocol includes typed audio and text instruction models.
+- Executor node transcribes `ExecutorAudioInstruction` with local Whisper and
+  forwards `ExecutorTextInstruction` to adapters.
+- Codex handles transcribed PTT as a text follow-up and no longer gates PTT on
+  Codex realtime audio/API-key auth.
+- UI disabled state references local Whisper executor-node readiness.
+- UI shows the voice-note bubble first and its transcript underneath after
+  Whisper transcription succeeds.
+- Tests and stable docs are updated for the adopted design.
+- The goal is not complete until a real end-to-end push-to-talk audio check
+  works with local Whisper, a connected executor node, and an active Codex task.

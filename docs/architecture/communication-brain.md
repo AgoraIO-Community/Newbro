@@ -20,7 +20,8 @@ It does not own:
 Core communication policy:
 
 - typed voice/ASR runtime input follows the v1 path: utterance -> structured Draft -> Dispatch Plan -> Dispatch Gate -> Task
-- desktop Bro Detail typed input in push-to-talk mode is a direct targeted Communication Brain message to the selected Bro, not a Draft preparation/confirmation surface
+- Bro Detail typed input in push-to-talk mode bypasses Communication Brain and Draft Brain; if the selected Bro is idle it starts a direct Codex task, and if the Bro is already running Codex it sends a typed executor-node text instruction to the active executor session; direct tasks and direct follow-ups suppress Communication Brain notification candidates so executor output stays on the executor/task surface
+- Bro Detail composer mic input in push-to-talk mode bypasses Communication Brain and Draft Brain after local recording; clients upload raw audio, the selected Bro's executor node transcribes it with local Whisper, and the resulting text is delivered as a typed follow-up instruction to the active executor session; direct audio marks the task to suppress Communication Brain notification candidates
 - the dispatch gate is deterministic and is the final authority for starting execution
 - the default execution mode for draft-created work is read-only/proposal-first; code modification and side effects require explicit confirmation
 - free-form utterance meaning is produced by the Communication Brain interaction-classifier boundary, not by runtime transcript keyword checks

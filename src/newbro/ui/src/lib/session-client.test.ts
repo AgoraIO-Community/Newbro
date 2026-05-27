@@ -105,9 +105,11 @@ describe("session-client transport base URL handling", () => {
       client.buildExecutorRunCommand("node-1", "tok'en", {
         enabledExecutors: ["acpx"],
         acpxAgent: "openclaw",
+        audioLanguage: "zh",
+        whisperModel: "small",
       }),
     ).toBe(
-      "newbro executor run --base-url 'https://api.example.com/runtime' --node-id 'node-1' --token 'tok'\"'\"'en' --enabled-executor 'acpx' --acpx-agent 'openclaw'",
+      "newbro executor run --base-url 'https://api.example.com/runtime' --node-id 'node-1' --token 'tok'\"'\"'en' --enabled-executor 'acpx' --acpx-agent 'openclaw' --audio-language 'zh' --whisper-model 'small'",
     );
   });
 
@@ -159,6 +161,32 @@ describe("session-client transport base URL handling", () => {
       text: "Run this",
       target_persona_id: "forge",
     }));
+  });
+
+  it("submits executor text instructions through the HTTP executor endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
+      okJsonResponse({
+        instruction_id: "txt-1",
+        target_persona_id: "forge",
+        status: "accepted",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./session-client");
+    await client.submitExecutorTextInstruction("session-1", {
+      targetPersonaId: "forge",
+      text: "continue directly",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/session-1/executor-text-instructions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_persona_id: "forge",
+        text: "continue directly",
+      }),
+    });
   });
 
   it("submits task commands to the session commands endpoint", async () => {

@@ -60,6 +60,34 @@ def test_frontend_dev_command_passes_explicit_vite_config_for_npm(monkeypatch):
     ]
 
 
+def test_executor_node_command_passes_audio_overrides():
+    assert cli_main.executor_node_command(
+        Path("/tmp/newbro/.venv/bin/python"),
+        base_url="http://127.0.0.1:8000",
+        node_id="node-1",
+        token="token-1",
+        enabled_executors=["codex"],
+        audio_language="zh",
+        whisper_model="small",
+    ) == [
+        "/tmp/newbro/.venv/bin/python",
+        "-m",
+        "newbro.executors.node",
+        "--base-url",
+        "http://127.0.0.1:8000",
+        "--node-id",
+        "node-1",
+        "--token",
+        "token-1",
+        "--enabled-executor",
+        "codex",
+        "--audio-language",
+        "zh",
+        "--whisper-model",
+        "small",
+    ]
+
+
 def configure_repo_paths(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(cli_main, "ROOT", root)
     monkeypatch.setattr(cli_main, "FRONTEND", root / "src" / "newbro" / "ui")

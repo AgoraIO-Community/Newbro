@@ -45,7 +45,6 @@ When developing Newbro, apply these project skills before changing code:
 - **Keep transport thin.** Agora ConvoAI, browser UI, and compatibility endpoints should translate typed events and return `RuntimeDecision`; they should not own business policy.
 - **Diagnose from real state.** Before claiming a fix works, inspect the active session snapshot, diagnostics timeline, task list, draft session, dispatch plan, and running process/reload state.
 - **Design quiet voice behavior explicitly.** Partial live updates should be UI-first and silent. Speech should be gated by `RuntimeDecision.should_speak`, with prompts only for meaningful confirmation, clarification, blocked/completed/urgent status, or explicit user status requests.
-- **Protect dispatch.** Never send raw speech directly to an executor. Dispatch only from a current Draft revision, through a Dispatch Plan and gate, and reject stale revisions.
 - **Test the failure mode.** Add focused tests for the exact regression, including classifier prompt contract, runtime decision output, UI state cleanup, and API behavior when those boundaries are involved.
 - **Verify activation.** After changes, confirm tests pass and the running backend/frontend picked up the code before judging a manual run.
 - **Update memory deliberately.** For adopted runtime behavior changes, update stable docs and add a short factual note to `docs/memories.md`; do not update memories for tiny refactors or test-only changes.

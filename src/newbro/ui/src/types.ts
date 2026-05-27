@@ -292,6 +292,7 @@ export interface ExecutorCapability {
   node_id?: string | null;
   availability_reason?: string | null;
   supports_follow_up: boolean;
+  supports_audio_instruction?: boolean;
 }
 
 export interface ExecutorNodeRecord {
@@ -300,6 +301,7 @@ export interface ExecutorNodeRecord {
   enabled_executors: string[];
   acpx_agent?: string | null;
   connected_executors: string[];
+  connected_executor_capabilities?: ExecutorCapability[];
   connection_status: "connected" | "disconnected";
   token_hint: string | null;
   last_connected_at: string | null;

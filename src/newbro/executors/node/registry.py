@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterable
@@ -13,7 +13,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, ValidationError
 
 from newbro.config_home import SYNAPSE_HOME_DIR
-from newbro.protocol import ExecutorNodeCredentialIssue, ExecutorNodeRecord
+from newbro.protocol import ExecutorNodeCredentialIssue, ExecutorNodeExecutor, ExecutorNodeRecord
 from newbro.yaml_support import YAMLParseError, load_yaml_file
 
 
@@ -40,6 +40,7 @@ class StoredExecutorNodeRecord(BaseModel):
 class ExecutorNodeConnectionView:
     connected: bool
     executors: list[str]
+    executor_capabilities: list[ExecutorNodeExecutor] = field(default_factory=list)
 
 
 class ExecutorNodeRegistry:
@@ -275,6 +276,11 @@ def _public_record(
         token_hint=record.token_hint,
         last_connected_at=record.last_connected_at,
         last_seen_at=record.last_seen_at,
+        connected_executor_capabilities=(
+            [executor.model_copy(deep=True) for executor in connection.executor_capabilities]
+            if connection is not None
+            else []
+        ),
     )
 
 

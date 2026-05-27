@@ -87,12 +87,26 @@ Current behavior:
   unique generated channel only if no Newbro session id is available
 - pressing `Stop` tears down only the live voice session and retains the last
   transcript until the next live session replaces it
-- Bro Detail draft input uses a separate connector-managed Agora STT path: the
-  page first prepares a fresh Agora-safe channel and browser RTC token, then
-  starts the ASR bot after the browser joins RTC with the microphone disabled
-- Desktop Bro Detail typed input in push-to-talk mode bypasses the Draft card:
-  submitting the composer sends a targeted session message directly to the
-  selected Bro instead of calling draft ASR or draft Send endpoints
+- Bro Detail push-to-talk typed input bypasses Communication Brain and the
+  Draft card: submitting the composer starts a direct Codex task when the Bro is
+  idle, or sends a typed executor-node text instruction to the selected Bro's
+  active executor session when Codex is already running, instead of calling
+  session messages, draft ASR, or draft Send endpoints
+- Bro Detail push-to-talk mic input records local browser audio only while
+  pressed, converts it to raw PCM, and uploads it to Newbro for dispatch to the
+  selected Bro's executor node; the node transcribes with local Whisper and
+  forwards transcript text to the active executor session
+- The composer shows the audio bubble immediately, then displays the Whisper
+  transcript under that same bubble after executor-node transcription succeeds
+- the mic is disabled until the selected Bro has an active Codex session, a
+  connected bound node, and that node advertises audio-instruction support
+- The Bro Detail push-to-talk mic path must not prepare or activate Agora,
+  join RTC/RTM, call ConvoAI/STT, create draft ASR turns, or require Send
+  confirmation
+- Bro Detail draft/free voice input uses a separate connector-managed Agora STT
+  path: the page first prepares a fresh Agora-safe channel and browser RTC
+  token, then starts the ASR bot after the browser joins RTC with the microphone
+  disabled
 - Bro Detail does not use the shell `session_id` as the Agora channel name;
   each page start receives a unique channel from the connector to avoid channel
   conflicts

@@ -22,6 +22,12 @@ from newbro.protocol import Persona
 PUBLIC_AUTH_DB = SYNAPSE_HOME_DIR / "public_auth.sqlite3"
 SESSION_COOKIE_NAME = "newbro_session"
 SIGNUP_INVITE_CODE_ENV = "NEWBRO_SIGNUP_INVITE_CODE"
+LEGACY_DRAFT_BASE_PROMPT = "Help turn voice instructions into clear executable drafts."
+DEFAULT_BRO_BASE_PROMPT = (
+    "You are the selected local execution Bro. Execute the user's direct typed "
+    "or push-to-talk instructions in the connected workspace, and ask only when "
+    "you need a concrete decision to continue."
+)
 
 
 class PublicUser(BaseModel):
@@ -113,6 +119,14 @@ class PublicAuthStore:
                 );
                 """
             )
+            try:
+                conn.execute(
+                    "UPDATE personas SET base_prompt = ? WHERE base_prompt = ?",
+                    (DEFAULT_BRO_BASE_PROMPT, LEGACY_DRAFT_BASE_PROMPT),
+                )
+            except sqlite3.OperationalError as exc:
+                if "readonly" not in str(exc).lower():
+                    raise
 
     async def create_invite(self, code: str, *, email: str | None = None) -> None:
         async with self._lock:
@@ -303,7 +317,19 @@ class PublicAuthStore:
                         (user_id, record.executor_node_id),
                     ).fetchone()
                     if existing is not None:
-                        return _persona_from_row(existing).to_persona()
+                        existing_record = _persona_from_row(existing)
+                        if existing_record.base_prompt == LEGACY_DRAFT_BASE_PROMPT:
+                            updated = existing_record.model_copy(update={"base_prompt": DEFAULT_BRO_BASE_PROMPT})
+                            conn.execute(
+                                """
+                                UPDATE personas
+                                SET base_prompt = ?, updated_at = ?
+                                WHERE user_id = ? AND persona_id = ?
+                                """,
+                                (updated.base_prompt, _timestamp(), user_id, updated.persona_id),
+                            )
+                            return updated.to_persona()
+                        return existing_record.to_persona()
                 conn.execute(
                     """
                     INSERT INTO personas
@@ -379,7 +405,7 @@ class PublicAuthStore:
             user_id=user_id,
             name="Newbro",
             avatar="bro",
-            base_prompt="Help turn voice instructions into clear executable drafts.",
+            base_prompt=DEFAULT_BRO_BASE_PROMPT,
         )
 
     async def claim_executor_node(self, *, user_id: str, node_id: str) -> None:

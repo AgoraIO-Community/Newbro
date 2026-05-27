@@ -22,6 +22,11 @@ def test_load_executor_node_config_reads_enabled_executors(tmp_path: Path):
                 "executors:",
                 "  codex:",
                 "    command: /opt/codex",
+                "audio:",
+                "  transcription:",
+                "    provider: local_whisper",
+                "    model: base",
+                "    language: auto",
             ]
         )
         + "\n",
@@ -32,6 +37,8 @@ def test_load_executor_node_config_reads_enabled_executors(tmp_path: Path):
 
     assert loaded.node_settings.enabled_executors == ["codex"]
     assert loaded.executors["codex"]["command"] == "/opt/codex"
+    assert loaded.audio["transcription"]["provider"] == "local_whisper"
+    assert loaded.audio["transcription"]["model"] == "base"
 
 
 def test_load_executor_node_config_rejects_invalid_enabled_executors(tmp_path: Path):

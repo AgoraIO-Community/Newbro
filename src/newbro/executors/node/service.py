@@ -19,14 +19,18 @@ from newbro.executors.core import ExecutorEvent, ExecutorEventType, ExecutorSess
 from newbro.protocol import (
     AckMessage,
     CancelRunCommand,
+    DispatchAudioInstructionCommand,
     DispatchRunCommand,
+    DispatchTextInstructionCommand,
     ExecutorNodeExecutor,
+    ExecutorTextInstruction,
     RegisterNodeMessage,
     ReleaseRunCommand,
     RunEventMessage,
     SupplyInteractionResponseCommand,
 )
 
+from .audio import AudioTranscriber, build_audio_transcriber
 from .config import ExecutorNodeSettings
 
 LOGGER = logging.getLogger(__name__)
@@ -85,10 +89,13 @@ class ExecutorNodeService:
         *,
         settings: ExecutorNodeSettings,
         executors_config: dict[str, Any],
+        audio_config: dict[str, Any] | None = None,
+        audio_transcriber: AudioTranscriber | None = None,
         reporter: ExecutorNodeLifecycleReporter | None = None,
     ) -> None:
         self._settings = settings
         self._executors = self._build_executors(executors_config)
+        self._audio_transcriber = audio_transcriber or build_audio_transcriber(audio_config)
         self._live_sessions: dict[str, ExecutorSession] = {}
         self._active_runs: dict[str, LocalRunContext] = {}
         self._send_lock = asyncio.Lock()
@@ -119,7 +126,10 @@ class ExecutorNodeService:
                         RegisterNodeMessage(
                             node_id=self._settings.node_id,
                             token=self._settings.token,
-                            executors=[self._descriptor(name, executor) for name, executor in self._executors.items()],
+                            executors=[
+                                await self._descriptor(name, executor)
+                                for name, executor in self._executors.items()
+                            ],
                         ).model_dump(mode="json"),
                     )
                     ack = AckMessage.model_validate(await self._recv_json(websocket))
@@ -155,6 +165,14 @@ class ExecutorNodeService:
         if message_type == "dispatch_run":
             command = DispatchRunCommand.model_validate(payload)
             await self._dispatch_run(websocket, command)
+            return
+        if message_type == "dispatch_audio_instruction":
+            command = DispatchAudioInstructionCommand.model_validate(payload)
+            await self._dispatch_audio_instruction(websocket, command)
+            return
+        if message_type == "dispatch_text_instruction":
+            command = DispatchTextInstructionCommand.model_validate(payload)
+            await self._dispatch_text_instruction(websocket, command)
             return
         if message_type == "cancel_run":
             command = CancelRunCommand.model_validate(payload)
@@ -249,6 +267,159 @@ class ExecutorNodeService:
             return
         await context.executor.cancel_run(command.run_id)
 
+    async def _dispatch_audio_instruction(
+        self,
+        websocket: Any,
+        command: DispatchAudioInstructionCommand,
+    ) -> None:
+        context = self._active_runs.get(command.run_id)
+        session = self._live_sessions.get(command.execution_session_id)
+        if context is None or session is None:
+            await self._send_audio_instruction_event(
+                websocket,
+                command,
+                event_type=ExecutorEventType.FAILED,
+                message="No active executor run is available for audio.",
+                metadata={"audio_instruction_id": command.audio.audio_instruction_id},
+            )
+            return
+        text_handler = getattr(context.executor, "handle_text_instruction", None)
+        native_audio_handler = getattr(context.executor, "handle_audio_instruction", None)
+        if text_handler is None and native_audio_handler is None:
+            await self._send_audio_instruction_event(
+                websocket,
+                command,
+                event_type=ExecutorEventType.FAILED,
+                message=f"Executor '{command.executor_type}' does not support audio instructions.",
+                metadata={"audio_instruction_id": command.audio.audio_instruction_id},
+            )
+            return
+        from newbro.protocol import ExecutionRun
+
+        run = ExecutionRun(
+            run_id=command.run_id,
+            task_id=command.task_id,
+            execution_session_id=command.execution_session_id,
+            executor_type=command.executor_type,
+        )
+        try:
+            if text_handler is not None and self._audio_transcriber.available:
+                transcription = await self._audio_transcriber.transcribe(command.audio)
+                transcript = transcription.text.strip()
+                if not transcript:
+                    await self._send_audio_instruction_event(
+                        websocket,
+                        command,
+                        event_type=ExecutorEventType.FAILED,
+                        message="Audio transcription produced no instruction text.",
+                        metadata={"audio_instruction_id": command.audio.audio_instruction_id},
+                    )
+                    return
+                instruction = ExecutorTextInstruction(
+                    instruction_id=f"txt-{command.audio.audio_instruction_id}",
+                    target_persona_id=command.audio.target_persona_id,
+                    text=transcript,
+                    source_audio_instruction_id=command.audio.audio_instruction_id,
+                    metadata={
+                        "source": "executor_node_whisper",
+                        "transcript_text": transcript,
+                        "transcription_language": transcription.language or "",
+                        "transcription_duration_seconds": transcription.duration_seconds or 0,
+                        **(transcription.metadata or {}),
+                    },
+                )
+                handler = text_handler
+                event_source = instruction
+            elif native_audio_handler is not None:
+                handler = native_audio_handler
+                event_source = command.audio
+            else:
+                await self._send_audio_instruction_event(
+                    websocket,
+                    command,
+                    event_type=ExecutorEventType.FAILED,
+                    message="Local Whisper transcription is not available on this executor node.",
+                    metadata={"audio_instruction_id": command.audio.audio_instruction_id},
+                )
+                return
+            async for event in handler(run, session, event_source):
+                await self._send_json(
+                    websocket,
+                    RunEventMessage(
+                        run_id=command.run_id,
+                        execution_session_id=command.execution_session_id,
+                        executor_type=command.executor_type,
+                        session_id=session.session_id,
+                        event_type=event.event_type.value,
+                        message=event.message,
+                        metadata=dict(event.metadata),
+                        latest_resume_handle=_build_resume_handle(context.executor, session),
+                    ).model_dump(mode="json"),
+                )
+        except Exception as exc:
+            await self._send_audio_instruction_event(
+                websocket,
+                command,
+                event_type=ExecutorEventType.FAILED,
+                message=str(exc),
+                metadata={"audio_instruction_id": command.audio.audio_instruction_id},
+            )
+
+    async def _dispatch_text_instruction(
+        self,
+        websocket: Any,
+        command: DispatchTextInstructionCommand,
+    ) -> None:
+        context = self._active_runs.get(command.run_id)
+        session = self._live_sessions.get(command.execution_session_id)
+        if context is None or session is None:
+            await self._send_text_instruction_event(
+                websocket,
+                command,
+                event_type=ExecutorEventType.FAILED,
+                message="No active executor run is available for text.",
+            )
+            return
+        text_handler = getattr(context.executor, "handle_text_instruction", None)
+        if text_handler is None:
+            await self._send_text_instruction_event(
+                websocket,
+                command,
+                event_type=ExecutorEventType.FAILED,
+                message=f"Executor '{command.executor_type}' does not support text follow-up instructions.",
+            )
+            return
+        from newbro.protocol import ExecutionRun
+
+        run = ExecutionRun(
+            run_id=command.run_id,
+            task_id=command.task_id,
+            execution_session_id=command.execution_session_id,
+            executor_type=command.executor_type,
+        )
+        try:
+            async for event in text_handler(run, session, command.instruction):
+                await self._send_json(
+                    websocket,
+                    RunEventMessage(
+                        run_id=command.run_id,
+                        execution_session_id=command.execution_session_id,
+                        executor_type=command.executor_type,
+                        session_id=session.session_id,
+                        event_type=event.event_type.value,
+                        message=event.message,
+                        metadata=dict(event.metadata),
+                        latest_resume_handle=_build_resume_handle(context.executor, session),
+                    ).model_dump(mode="json"),
+                )
+        except Exception as exc:
+            await self._send_text_instruction_event(
+                websocket,
+                command,
+                event_type=ExecutorEventType.FAILED,
+                message=str(exc),
+            )
+
     async def _supply_interaction_response(
         self,
         command: SupplyInteractionResponseCommand,
@@ -278,6 +449,53 @@ class ExecutorNodeService:
             )
             return
         session.mark_blocked_resolved()
+
+    async def _send_audio_instruction_event(
+        self,
+        websocket: Any,
+        command: DispatchAudioInstructionCommand,
+        *,
+        event_type: ExecutorEventType,
+        message: str,
+        metadata: dict[str, object],
+    ) -> None:
+        await self._send_json(
+            websocket,
+            RunEventMessage(
+                run_id=command.run_id,
+                execution_session_id=command.execution_session_id,
+                executor_type=command.executor_type,
+                session_id=command.execution_session_id,
+                event_type=event_type.value,
+                message=message,
+                metadata=metadata,
+            ).model_dump(mode="json"),
+        )
+
+    async def _send_text_instruction_event(
+        self,
+        websocket: Any,
+        command: DispatchTextInstructionCommand,
+        *,
+        event_type: ExecutorEventType,
+        message: str,
+    ) -> None:
+        await self._send_json(
+            websocket,
+            RunEventMessage(
+                run_id=command.run_id,
+                execution_session_id=command.execution_session_id,
+                executor_type=command.executor_type,
+                session_id=command.execution_session_id,
+                event_type=event_type.value,
+                message=message,
+                metadata={
+                    "instruction_id": command.instruction.instruction_id,
+                    "source": "executor_text_instruction",
+                },
+                latest_resume_handle=None,
+            ).model_dump(mode="json"),
+        )
 
     async def _ensure_session(self, executor: Any, command: DispatchRunCommand) -> ExecutorSession:
         existing = self._live_sessions.get(command.execution_session_id)
@@ -311,12 +529,21 @@ class ExecutorNodeService:
                 )
         return built
 
-    def _descriptor(self, executor_type: str, executor: Any) -> ExecutorNodeExecutor:
-        capabilities = executor.get_capabilities()
+    async def _descriptor(self, executor_type: str, executor: Any) -> ExecutorNodeExecutor:
+        refresh = getattr(executor, "refresh_capabilities", None)
+        if refresh is not None:
+            try:
+                capabilities = await refresh()
+            except Exception:
+                capabilities = executor.get_capabilities()
+        else:
+            capabilities = executor.get_capabilities()
         return ExecutorNodeExecutor(
             executor_type=executor_type,
             supports_resume=capabilities.supports_resume,
             supports_follow_up=capabilities.supports_follow_up,
+            supports_audio_instruction=capabilities.supports_audio_instruction
+            or (capabilities.supports_follow_up and self._audio_transcriber.available),
             supports_pause=capabilities.supports_pause,
             supports_cancel=capabilities.supports_cancel,
         )

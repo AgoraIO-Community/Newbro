@@ -23,6 +23,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--acpx-agent",
         help="Override the ACPX agent for this run, for example codex or openclaw.",
     )
+    parser.add_argument(
+        "--audio-language",
+        default=None,
+        help="Override local Whisper language for executor-node audio transcription, for example auto, en, or zh.",
+    )
+    parser.add_argument(
+        "--whisper-model",
+        default=None,
+        help="Override local Whisper model for executor-node audio transcription, for example base or small.",
+    )
     return parser
 
 
@@ -37,6 +47,15 @@ def main(argv: list[str] | None = None) -> int:
         acpx_config = dict(effective_executors.get("acpx") or {})
         acpx_config["agent"] = args.acpx_agent
         effective_executors["acpx"] = acpx_config
+    effective_audio = dict(loaded.audio)
+    if args.audio_language or args.whisper_model:
+        transcription = dict(effective_audio.get("transcription") or {})
+        transcription.setdefault("provider", "local_whisper")
+        if args.audio_language:
+            transcription["language"] = args.audio_language
+        if args.whisper_model:
+            transcription["model"] = args.whisper_model
+        effective_audio["transcription"] = transcription
     settings = replace(
         loaded.node_settings,
         synapse_base_url=args.base_url,
@@ -47,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     service = ExecutorNodeService(
         settings=settings,
         executors_config=effective_executors,
+        audio_config=effective_audio,
     )
     try:
         asyncio.run(service.run_forever())

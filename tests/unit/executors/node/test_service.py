@@ -12,7 +12,14 @@ from newbro.executors.node.config import ExecutorNodeSettings
 from newbro.executors.node.service import ExecutorNodeLifecycleReporter, ExecutorNodeService
 import newbro.executors.node.service as service_module
 from newbro.executors.adapters.codex.session import CodexExecutorSession
-from newbro.protocol import SupplyInteractionResponseCommand
+from newbro.executors.node.audio import AudioTranscriptionResult
+from newbro.protocol import (
+    DispatchAudioInstructionCommand,
+    DispatchTextInstructionCommand,
+    ExecutorAudioInstruction,
+    ExecutorTextInstruction,
+    SupplyInteractionResponseCommand,
+)
 
 
 class FakeExecutor:
@@ -21,8 +28,38 @@ class FakeExecutor:
             executor_type="codex",
             supports_resume=True,
             supports_follow_up=True,
+            supports_audio_instruction=False,
             supports_pause=True,
             supports_cancel=True,
+        )
+
+    async def handle_text_instruction(self, run, session, instruction):
+        from newbro.executors.core import ExecutorEvent, ExecutorEventType
+
+        yield ExecutorEvent(
+            run_id=run.run_id,
+            session_id=session.session_id,
+            event_type=ExecutorEventType.PROGRESS,
+            message="text sent",
+            metadata={
+                "instruction_id": instruction.instruction_id,
+                "source_audio_instruction_id": instruction.source_audio_instruction_id or "",
+                "text": instruction.text,
+            },
+        )
+
+
+class FakeAudioTranscriber:
+    @property
+    def available(self) -> bool:
+        return True
+
+    async def transcribe(self, audio):
+        return AudioTranscriptionResult(
+            text="Please continue from the audio.",
+            language="en",
+            duration_seconds=1.0,
+            metadata={"whisper_model": "fake"},
         )
 
 
@@ -68,6 +105,7 @@ def build_service(monkeypatch: pytest.MonkeyPatch, *, reporter: ExecutorNodeLife
             enabled_executors=["codex"],
         ),
         executors_config={},
+        audio_transcriber=FakeAudioTranscriber(),
         reporter=reporter,
     )
 
@@ -191,3 +229,86 @@ async def test_supply_interaction_response_logs_failures(monkeypatch: pytest.Mon
     assert "Failed to forward interaction response to executor node session" in caplog.text
     assert "exec-1" in caplog.text
     assert "ireq-1" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_dispatch_audio_instruction_forwards_to_active_executor(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    websocket = FakeWebSocket([])
+    session = CodexExecutorSession(session_id="codex-session-1", executor_type="codex")
+    background_task = asyncio.create_task(asyncio.sleep(60))
+    service._live_sessions["exec-1"] = session
+    service._active_runs["run-1"] = service_module.LocalRunContext(
+        executor=service._executors["codex"],
+        execution_session_id="exec-1",
+        background_task=background_task,
+    )
+    command = DispatchAudioInstructionCommand(
+        run_id="run-1",
+        execution_session_id="exec-1",
+        executor_type="codex",
+        task_id="task-1",
+        audio=ExecutorAudioInstruction(
+            audio_instruction_id="aud-1",
+            target_persona_id="forge",
+            artifact_path="/tmp/audio.pcm",
+            mime_type="audio/pcm",
+            duration_ms=1000,
+            sample_rate=24000,
+            num_channels=1,
+            samples_per_channel=24000,
+            size_bytes=48000,
+        ),
+    )
+    try:
+        await service._dispatch_audio_instruction(websocket, command)
+    finally:
+        background_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await background_task
+
+    assert websocket.sent[-1]["type"] == "run_event"
+    assert websocket.sent[-1]["event_type"] == "progress"
+    assert websocket.sent[-1]["metadata"]["source_audio_instruction_id"] == "aud-1"
+    assert websocket.sent[-1]["metadata"]["text"] == "Please continue from the audio."
+
+
+@pytest.mark.anyio
+async def test_dispatch_text_instruction_forwards_to_active_executor(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    websocket = FakeWebSocket([])
+    session = CodexExecutorSession(session_id="codex-session-1", executor_type="codex")
+    background_task = asyncio.create_task(asyncio.sleep(60))
+    service._live_sessions["exec-1"] = session
+    service._active_runs["run-1"] = service_module.LocalRunContext(
+        executor=service._executors["codex"],
+        execution_session_id="exec-1",
+        background_task=background_task,
+    )
+    command = DispatchTextInstructionCommand(
+        run_id="run-1",
+        execution_session_id="exec-1",
+        executor_type="codex",
+        task_id="task-1",
+        instruction=ExecutorTextInstruction(
+            instruction_id="txt-1",
+            target_persona_id="forge",
+            text="Continue directly.",
+            metadata={"source": "bro_detail_text"},
+        ),
+    )
+    try:
+        await service._dispatch_text_instruction(websocket, command)
+    finally:
+        background_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await background_task
+
+    assert websocket.sent[-1]["type"] == "run_event"
+    assert websocket.sent[-1]["event_type"] == "progress"
+    assert websocket.sent[-1]["metadata"]["instruction_id"] == "txt-1"
+    assert websocket.sent[-1]["metadata"]["text"] == "Continue directly."

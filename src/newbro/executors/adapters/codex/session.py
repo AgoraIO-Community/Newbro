@@ -21,6 +21,7 @@ class CodexExecutorSession(ExecutorSession):
     _stderr_lines: list[str] = PrivateAttr(default_factory=list)
     _stderr_task: asyncio.Task[None] | None = PrivateAttr(default=None)
     _thread_id: str | None = PrivateAttr(default=None)
+    _turn_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
     _blocked_resolution_event: asyncio.Event | None = PrivateAttr(default=None)
     _blocked_wait_result: Literal["resolved", "aborted"] | None = PrivateAttr(default=None)
 
@@ -60,6 +61,10 @@ class CodexExecutorSession(ExecutorSession):
 
     def is_alive(self) -> bool:
         return self._process is not None and self._process.returncode is None
+
+    @property
+    def turn_lock(self) -> asyncio.Lock:
+        return self._turn_lock
 
     async def close(self) -> None:
         self.abort_blocked_wait()

@@ -77,6 +77,17 @@ class RunManager:
             ):
                 run.latest_progress_message = event.message
                 should_append_detail = True
+            if event.metadata:
+                metadata = dict(event.metadata)
+                run.metadata["latest_progress_event"] = metadata
+                audio_id = metadata.get("source_audio_instruction_id")
+                transcript = metadata.get("transcript_text")
+                if isinstance(audio_id, str) and audio_id and isinstance(transcript, str) and transcript.strip():
+                    transcripts = run.metadata.get("audio_transcripts")
+                    if not isinstance(transcripts, dict):
+                        transcripts = {}
+                    transcripts[audio_id] = transcript.strip()
+                    run.metadata["audio_transcripts"] = transcripts
             if task.status != TaskStatus.RUNNING:
                 task.status = TaskStatus.RUNNING
         elif event.event_type == ExecutorEventType.WAITING_EXECUTOR:

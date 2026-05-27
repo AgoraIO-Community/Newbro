@@ -35,6 +35,7 @@ import type {
   DraftOutputFailedStreamEvent,
   DraftOutputStartedStreamEvent,
   DraftSession,
+  ExecutionSession,
   ExecutionRun,
   ExecutorNodeRecord,
   AgentEvent,
@@ -246,6 +247,7 @@ function useNewbroShellState() {
   const [runtimePersonas, setRuntimePersonas] = useState<Persona[]>([]);
   const [executorNodes, setExecutorNodes] = useState<ExecutorNodeRecord[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [executionSessions, setExecutionSessions] = useState<ExecutionSession[]>([]);
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
@@ -269,6 +271,7 @@ function useNewbroShellState() {
     setRuntimePersonas(snapshot.personas);
     setExecutorNodes(snapshot.executor_nodes ?? []);
     setTasks(snapshot.tasks ?? []);
+    setExecutionSessions(snapshot.execution_sessions ?? []);
     setExecutionRuns(snapshot.execution_runs ?? []);
     setTaskSummaries(snapshot.summaries ?? []);
     setAgentEvents(snapshot.agent_events ?? []);
@@ -281,6 +284,7 @@ function useNewbroShellState() {
     setRuntimePersonas([]);
     setExecutorNodes([]);
     setTasks([]);
+    setExecutionSessions([]);
     setExecutionRuns([]);
     setTaskSummaries([]);
     setAgentEvents([]);
@@ -639,6 +643,7 @@ function useNewbroShellState() {
     runtimePersonas,
     executorNodes,
     tasks,
+    executionSessions,
     executionRuns,
     taskSummaries,
     agentEvents,

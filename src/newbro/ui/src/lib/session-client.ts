@@ -46,6 +46,8 @@ export function buildExecutorRunCommand(
   options?: {
     enabledExecutors?: string[];
     acpxAgent?: string | null;
+    audioLanguage?: string | null;
+    whisperModel?: string | null;
   },
 ): string {
   const command = [
@@ -64,6 +66,12 @@ export function buildExecutorRunCommand(
   }
   if (options?.acpxAgent) {
     command.push("--acpx-agent", shellQuote(options.acpxAgent));
+  }
+  if (options?.audioLanguage) {
+    command.push("--audio-language", shellQuote(options.audioLanguage));
+  }
+  if (options?.whisperModel) {
+    command.push("--whisper-model", shellQuote(options.whisperModel));
   }
   return command.join(" ");
 }
@@ -198,6 +206,61 @@ export async function submitAgoraVoiceEvent(
     body: JSON.stringify(event),
   });
   await ensureOk(response);
+}
+
+export interface ExecutorAudioInstructionResponse {
+  audio_instruction_id: string;
+  target_persona_id: string;
+  status: string;
+  duration_ms: number;
+  size_bytes: number;
+}
+
+export async function submitExecutorAudioInstruction(
+  sessionId: string,
+  payload: {
+    targetPersonaId: string;
+    pcm16: Blob;
+    durationMs: number;
+    sampleRate: number;
+    numChannels: number;
+    samplesPerChannel: number;
+  },
+): Promise<ExecutorAudioInstructionResponse> {
+  const query = new URLSearchParams({
+    target_persona_id: payload.targetPersonaId,
+    duration_ms: String(payload.durationMs),
+    sample_rate: String(payload.sampleRate),
+    num_channels: String(payload.numChannels),
+    samples_per_channel: String(payload.samplesPerChannel),
+  });
+  const response = await fetch(
+    buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/executor-audio-instructions?${query.toString()}`),
+    {
+      method: "POST",
+      headers: { "Content-Type": "audio/pcm" },
+      body: payload.pcm16,
+    },
+  );
+  return (await ensureOk(response)).json();
+}
+
+export async function submitExecutorTextInstruction(
+  sessionId: string,
+  payload: {
+    targetPersonaId: string;
+    text: string;
+  },
+): Promise<{ instruction_id: string; target_persona_id: string; status: string }> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/executor-text-instructions`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      target_persona_id: payload.targetPersonaId,
+      text: payload.text,
+    }),
+  });
+  return (await ensureOk(response)).json();
 }
 
 export async function getConversationSnapshot(sessionId: string): Promise<ConversationSnapshot> {

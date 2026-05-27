@@ -174,6 +174,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--acpx-agent",
         help="Override the ACPX agent for this run, for example codex or openclaw.",
     )
+    executor_run_parser.add_argument(
+        "--audio-language",
+        help="Override local Whisper language for executor-node audio transcription, for example auto, en, or zh.",
+    )
+    executor_run_parser.add_argument(
+        "--whisper-model",
+        help="Override local Whisper model for executor-node audio transcription, for example base or small.",
+    )
 
     service_parser = subparsers.add_parser("service", help="Install and control the Ubuntu systemd service.")
     service_subparsers = service_parser.add_subparsers(dest="service_command", required=True)
@@ -459,6 +467,8 @@ def cmd_executor_run(args: argparse.Namespace) -> int:
             token=args.token,
             enabled_executors=args.enabled_executor or None,
             acpx_agent=args.acpx_agent,
+            audio_language=args.audio_language,
+            whisper_model=args.whisper_model,
         ),
         cwd=executor_run_cwd(),
     )
@@ -547,6 +557,8 @@ def executor_node_command(
     token: str,
     enabled_executors: list[str] | None = None,
     acpx_agent: str | None = None,
+    audio_language: str | None = None,
+    whisper_model: str | None = None,
 ) -> list[str]:
     command = [
         str(venv_python),
@@ -563,6 +575,10 @@ def executor_node_command(
         command.extend(["--enabled-executor", executor_type])
     if acpx_agent:
         command.extend(["--acpx-agent", acpx_agent])
+    if audio_language:
+        command.extend(["--audio-language", audio_language])
+    if whisper_model:
+        command.extend(["--whisper-model", whisper_model])
     return command
 
 

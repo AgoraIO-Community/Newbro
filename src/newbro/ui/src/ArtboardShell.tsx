@@ -8,14 +8,15 @@ import {
   createPersona,
   getSessionSnapshot,
   revealExecutorNodeConnectCommand,
-  sendDraft,
   setVoiceTarget,
+  submitExecutorAudioInstruction,
+  submitExecutorTextInstruction,
   updatePersona,
 } from "./lib/session-client";
 import { buildBroCardModels, buildBroTaskRecords } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { useNewbroShell } from "./NewbroShell";
-import type { ExecutorNodeRecord, Persona, Task } from "./types";
+import type { ExecutionRun, ExecutorNodeRecord, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord } from "./components/newbro/types";
 
 type RuntimePage = "home" | "detail";
@@ -28,12 +29,379 @@ type HomeRecentItem = {
   when: string;
 };
 
+type AudioTurnStatus = "recording" | "sending" | "sent" | "failed";
+type TextTurnStatus = "sending" | "sent" | "failed";
+
+type AudioTurn = {
+  id: string;
+  broId: string;
+  status: AudioTurnStatus;
+  durationMs: number;
+  error?: string;
+  transcript?: string;
+};
+
+type TextTurn = {
+  id: string;
+  broId: string;
+  text: string;
+  status: TextTurnStatus;
+  error?: string;
+};
+
+type ChatMessage = {
+  role: "user" | "assistant";
+  text: string;
+  id: string;
+};
+
+type ActiveCodexAudioState = {
+  enabled: boolean;
+  reason: string;
+};
+
 type BroNodeState =
   | { kind: "sample" | "no_bound_node" | "bound_node_missing"; node: null }
   | { kind: "never_connected" | "usable_disconnected" | "usable_connected"; node: ExecutorNodeRecord };
 
 function describeError(error: unknown, defaultMessage: string): string {
   return error instanceof Error && error.message.trim() ? error.message : defaultMessage;
+}
+
+function formatAudioDuration(durationMs: number): string {
+  if (!durationMs) return "0:00";
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function audioTurnMeta(turn: AudioTurn): string {
+  const duration = formatAudioDuration(turn.durationMs);
+  if (turn.status === "recording") return "Recording";
+  if (turn.status === "sending") return `Sending · ${duration}`;
+  if (turn.status === "failed") return `Failed · ${duration}`;
+  return `Sent · ${duration}`;
+}
+
+function AudioTurnBubble({ bro, turn, mobile = false }: { bro: BroCardModel; turn: AudioTurn; mobile?: boolean }) {
+  const prefix = mobile ? "thr" : "dt";
+  const metaClass = mobile ? "thr-meta" : "dt-bubble-meta";
+  return (
+    <div className={`${prefix}-turn ${prefix}-turn-you`}>
+      <div className={`${prefix}-bubble ${prefix}-bubble-you nb-audio-bubble nb-audio-bubble-${turn.status}`}>
+        <span className="nb-audio-wave" aria-hidden="true">{Array.from({ length: 9 }).map((_, index) => <i key={index} />)}</span>
+        <span className="nb-audio-label">Voice note</span>
+        <span className="nb-audio-duration">{formatAudioDuration(turn.durationMs)}</span>
+      </div>
+      <div className={metaClass}>
+        {audioTurnMeta(turn)}
+        {turn.status === "failed" && turn.error ? ` · ${turn.error}` : ""}
+      </div>
+      {turn.transcript ? <div className="nb-audio-transcript">{turn.transcript}</div> : null}
+      <span className="sr-only">
+        Audio message to {bro.name}{turn.transcript ? `; transcript: ${turn.transcript}` : ""}.
+      </span>
+    </div>
+  );
+}
+
+function TextTurnBubble({ turn, mobile = false }: { turn: TextTurn; mobile?: boolean }) {
+  const prefix = mobile ? "thr" : "dt";
+  const metaClass = mobile ? "thr-meta" : "dt-bubble-meta";
+  const meta = turn.status === "sending" ? "Sending" : turn.status === "failed" ? "Failed" : "Sent";
+  return (
+    <div className={`${prefix}-turn ${prefix}-turn-you`}>
+      <div className={`${prefix}-bubble ${prefix}-bubble-you${turn.status === "failed" ? " ob-bubble-failed" : ""}`}>{turn.text}</div>
+      <div className={metaClass}>
+        {meta}
+        {turn.status === "failed" && turn.error ? ` · ${turn.error}` : ""}
+      </div>
+    </div>
+  );
+}
+
+function ConversationMessageBubble({ bro, message, mobile = false }: { bro: BroCardModel; message: ChatMessage; mobile?: boolean }) {
+  const prefix = mobile ? "thr" : "dt";
+  const metaClass = mobile ? "thr-meta" : "dt-bubble-meta";
+  const isUser = message.role === "user";
+  return (
+    <div className={`${prefix}-turn ${isUser ? `${prefix}-turn-you` : `${prefix}-turn-bro`}`}>
+      <div className={`${prefix}-bubble ${isUser ? `${prefix}-bubble-you` : `${prefix}-bubble-bro`}`}>{message.text}</div>
+      <div className={metaClass}>{isUser ? "You" : bro.name}</div>
+    </div>
+  );
+}
+
+function applyAudioTranscripts(turns: AudioTurn[], runs: ExecutionRun[]): AudioTurn[] {
+  if (turns.length === 0) return turns;
+  const transcripts = new Map<string, string>();
+  for (const run of runs) {
+    const stickyTranscripts = run.metadata?.audio_transcripts;
+    if (stickyTranscripts && typeof stickyTranscripts === "object" && !Array.isArray(stickyTranscripts)) {
+      for (const [audioId, transcript] of Object.entries(stickyTranscripts as Record<string, unknown>)) {
+        if (typeof transcript === "string" && audioId && transcript.trim()) {
+          transcripts.set(audioId, transcript.trim());
+        }
+      }
+    }
+    const event = run.metadata?.latest_progress_event;
+    if (!event || typeof event !== "object" || Array.isArray(event)) continue;
+    const metadata = event as Record<string, unknown>;
+    const audioId = metadata.source_audio_instruction_id;
+    const transcript = metadata.transcript_text;
+    if (typeof audioId === "string" && audioId && typeof transcript === "string" && transcript.trim()) {
+      transcripts.set(audioId, transcript.trim());
+    }
+  }
+  if (transcripts.size === 0) return turns;
+  let changed = false;
+  const next = turns.map((turn) => {
+    const transcript = transcripts.get(turn.id);
+    if (!transcript || turn.transcript === transcript) return turn;
+    changed = true;
+    return { ...turn, transcript };
+  });
+  return changed ? next : turns;
+}
+
+function activeCodexAudioState(
+  shell: Pick<ReturnType<typeof useNewbroShell>, "runtimePersonas" | "executionSessions" | "executionRuns" | "executorNodes">,
+  bro: BroCardModel,
+): ActiveCodexAudioState {
+  const persona = shell.runtimePersonas.find((candidate) => candidate.persona_id === bro.id);
+  if (!persona?.executor_node_id) return { enabled: false, reason: "Bind and connect this Bro before recording." };
+  const node = shell.executorNodes.find((candidate) => candidate.node_id === persona.executor_node_id);
+  if (!node || node.connection_status !== "connected" || !node.connected_executors.includes("codex")) {
+    return { enabled: false, reason: "Connect the Codex executor before recording." };
+  }
+  const codexCapability = node.connected_executor_capabilities?.find(
+    (capability) => capability.executor_type === "codex",
+  );
+  if (codexCapability && !codexCapability.supports_audio_instruction) {
+    return { enabled: false, reason: "Enable local Whisper on the executor node before recording." };
+  }
+  if (!persona.current_task_id) return { enabled: false, reason: "Start a Codex task before recording." };
+  const activeRun = shell.executionRuns.find((run) => (
+    run.task_id === persona.current_task_id
+    && run.executor_type === "codex"
+    && ["assigned", "running", "blocked"].includes(run.status)
+  ));
+  if (!activeRun) return { enabled: false, reason: "No active Codex session for this Bro." };
+  const activeSession = shell.executionSessions.find((session) => (
+    session.base_executor_id === "codex"
+    && session.active_run_id === activeRun.run_id
+  ));
+  if (!activeSession) return { enabled: false, reason: "No active Codex session for this Bro." };
+  if (!activeRun || activeRun.executor_type !== "codex" || !["assigned", "running", "blocked"].includes(activeRun.status)) {
+    return { enabled: false, reason: "No active Codex session for this Bro." };
+  }
+  return { enabled: true, reason: "Hold to record audio" };
+}
+
+function activeCodexTextState(
+  shell: Pick<ReturnType<typeof useNewbroShell>, "runtimePersonas" | "tasks" | "executionSessions" | "executionRuns" | "executorNodes">,
+  bro: BroCardModel,
+): ActiveCodexAudioState {
+  const persona = shell.runtimePersonas.find((candidate) => candidate.persona_id === bro.id);
+  if (!persona?.executor_node_id) return { enabled: false, reason: "Bind and connect this Bro before sending." };
+  const node = shell.executorNodes.find((candidate) => candidate.node_id === persona.executor_node_id);
+  if (!node || node.connection_status !== "connected" || !node.connected_executors.includes("codex")) {
+    return { enabled: false, reason: "Connect the Codex executor before sending." };
+  }
+  const codexCapability = node.connected_executor_capabilities?.find(
+    (capability) => capability.executor_type === "codex",
+  );
+  if (codexCapability && !codexCapability.supports_follow_up) {
+    return { enabled: false, reason: "Selected Bro's executor node does not support text follow-up." };
+  }
+  if (!persona.current_task_id) return { enabled: true, reason: "Start a direct executor task" };
+  const currentTask = shell.tasks.find((task) => task.task_id === persona.current_task_id);
+  if (currentTask && ["created", "queued"].includes(currentTask.status)) {
+    return { enabled: true, reason: "Start queued executor task" };
+  }
+  const activeRun = shell.executionRuns.find((run) => (
+    run.task_id === persona.current_task_id
+    && run.executor_type === "codex"
+    && ["assigned", "running", "blocked"].includes(run.status)
+  ));
+  if (!activeRun) return { enabled: false, reason: "No active Codex session for this Bro." };
+  const activeSession = shell.executionSessions.find((session) => (
+    session.base_executor_id === "codex"
+    && session.active_run_id === activeRun.run_id
+  ));
+  if (!activeSession) return { enabled: false, reason: "No active Codex session for this Bro." };
+  return { enabled: true, reason: "Send directly to executor" };
+}
+
+function usePushToTalkAudio({
+  sessionId,
+  broId,
+  disabled,
+  onTurn,
+  onRemoveTurn,
+  onError,
+  onSent,
+}: {
+  sessionId: string | null;
+  broId: string;
+  disabled: boolean;
+  onTurn: (turn: AudioTurn) => void;
+  onRemoveTurn: (turnId: string) => void;
+  onError: (message: string) => void;
+  onSent: () => void;
+}) {
+  const [phase, setPhase] = useState<"idle" | "recording" | "sending">("idle");
+  const activeRef = useRef<{
+    recorder: MediaRecorder;
+    stream: MediaStream;
+    chunks: Blob[];
+    startedAt: number;
+    turnId: string;
+  } | null>(null);
+
+  async function start() {
+    if (disabled || !sessionId || activeRef.current) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      const turnId = `audio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const active = {
+        recorder,
+        stream,
+        chunks: [] as Blob[],
+        startedAt: Date.now(),
+        turnId,
+      };
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size > 0) active.chunks.push(event.data);
+      });
+      activeRef.current = active;
+      onTurn({ id: turnId, broId, status: "recording", durationMs: 0 });
+      setPhase("recording");
+      recorder.start();
+    } catch (error: unknown) {
+      onError(describeError(error, "Microphone could not be started."));
+    }
+  }
+
+  async function stopAndSend() {
+    const active = activeRef.current;
+    if (!active || !sessionId) return;
+    activeRef.current = null;
+    setPhase("sending");
+    const durationMs = Math.max(1, Date.now() - active.startedAt);
+    const blob = await stopRecorder(active);
+    try {
+      const pcm = await mediaBlobToPcm16(blob);
+      onTurn({ id: active.turnId, broId, status: "sending", durationMs: pcm.durationMs || durationMs });
+      const response = await submitExecutorAudioInstruction(sessionId, {
+        targetPersonaId: broId,
+        pcm16: pcm.blob,
+        durationMs: pcm.durationMs || durationMs,
+        sampleRate: pcm.sampleRate,
+        numChannels: pcm.numChannels,
+        samplesPerChannel: pcm.samplesPerChannel,
+      });
+      onRemoveTurn(active.turnId);
+      onTurn({ id: response.audio_instruction_id, broId, status: "sent", durationMs: pcm.durationMs || durationMs });
+      onSent();
+    } catch (error: unknown) {
+      const message = describeError(error, "Audio could not be sent.");
+      onTurn({ id: active.turnId, broId, status: "failed", durationMs, error: message });
+      onError(message);
+    } finally {
+      setPhase("idle");
+    }
+  }
+
+  function cancel() {
+    const active = activeRef.current;
+    if (!active) return;
+    activeRef.current = null;
+    void stopRecorder(active).catch(() => undefined);
+    onRemoveTurn(active.turnId);
+    setPhase("idle");
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") cancel();
+    }
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") cancel();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("blur", cancel);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("blur", cancel);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      cancel();
+    };
+  }, []);
+
+  return { phase, start, stopAndSend, cancel };
+}
+
+async function stopRecorder(active: {
+  recorder: MediaRecorder;
+  stream: MediaStream;
+  chunks: Blob[];
+}): Promise<Blob> {
+  if (active.recorder.state !== "inactive") {
+    const stopped = new Promise<void>((resolve) => {
+      active.recorder.addEventListener("stop", () => resolve(), { once: true });
+    });
+    active.recorder.stop();
+    await stopped;
+  }
+  active.stream.getTracks().forEach((track) => track.stop());
+  return new Blob(active.chunks, { type: active.recorder.mimeType });
+}
+
+async function mediaBlobToPcm16(blob: Blob): Promise<{
+  blob: Blob;
+  durationMs: number;
+  sampleRate: number;
+  numChannels: number;
+  samplesPerChannel: number;
+}> {
+  const audioContextConstructor = window.AudioContext
+    ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!audioContextConstructor) {
+    throw new Error("This browser cannot decode recorded audio.");
+  }
+  const audioContext = new audioContextConstructor();
+  try {
+    const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
+    const samplesPerChannel = decoded.length;
+    const mixed = new Float32Array(samplesPerChannel);
+    for (let channelIndex = 0; channelIndex < decoded.numberOfChannels; channelIndex += 1) {
+      const channel = decoded.getChannelData(channelIndex);
+      for (let sampleIndex = 0; sampleIndex < samplesPerChannel; sampleIndex += 1) {
+        mixed[sampleIndex] += channel[sampleIndex] / decoded.numberOfChannels;
+      }
+    }
+    const pcm16 = new Int16Array(samplesPerChannel);
+    for (let index = 0; index < samplesPerChannel; index += 1) {
+      const sample = Math.max(-1, Math.min(1, mixed[index]));
+      pcm16[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    }
+    return {
+      blob: new Blob([pcm16.buffer], { type: "audio/pcm" }),
+      durationMs: Math.round(decoded.duration * 1000),
+      sampleRate: decoded.sampleRate,
+      numChannels: 1,
+      samplesPerChannel,
+    };
+  } finally {
+    void audioContext.close();
+  }
 }
 
 function hasNodeEverConnected(node: ExecutorNodeRecord): boolean {
@@ -408,7 +776,7 @@ function CreateConnectSheet({
         await createPersona(sessionId, {
           name: broName,
           avatar: "bro",
-          base_prompt: "Help turn voice instructions into clear executable drafts.",
+          base_prompt: "Execute direct typed and push-to-talk instructions in the connected workspace.",
           executor_node_id: nodeId,
         });
       }
@@ -624,19 +992,23 @@ function OfflineBanner({ bro, node, sessionId }: { bro: BroCardModel; node: Exec
 function ThreadPanel({
   bro,
   records,
+  textTurns,
+  audioTurns,
+  conversationMessages,
   disabled,
   disabledReason,
 }: {
   bro: BroCardModel;
   records: BroTaskRecord[];
+  textTurns: TextTurn[];
+  audioTurns: AudioTurn[];
+  conversationMessages: ChatMessage[];
   disabled?: boolean;
   disabledReason?: string | null;
 }) {
   const shell = useNewbroShell();
   const draftText = shell.draftSession?.current_draft?.text ?? "";
   const activeRecord = records[0] ?? null;
-  const threadMessages = shell.chatMessages.slice(-8);
-  const hasThreadMessages = threadMessages.length > 0;
 
   return (
     <>
@@ -657,14 +1029,9 @@ function ThreadPanel({
           <div className="dt-bubble-meta">Draft · ready to send</div>
         </div>
       ) : null}
-      {threadMessages.map((message) => (
-        <div key={message.id} className={`dt-turn ${message.role === "user" ? "dt-turn-you" : "dt-turn-bro"}`}>
-          <div className={`dt-bubble ${message.role === "user" ? "dt-bubble-you" : "dt-bubble-bro"}`}>{message.text}</div>
-          <div className="dt-bubble-meta">
-            {message.role === "user" ? "You · sent" : `${bro.name} · reply`}
-          </div>
-        </div>
-      ))}
+      {textTurns.map((turn) => <TextTurnBubble key={turn.id} turn={turn} />)}
+      {audioTurns.map((turn) => <AudioTurnBubble key={turn.id} bro={bro} turn={turn} />)}
+      {conversationMessages.map((message) => <ConversationMessageBubble key={message.id} bro={bro} message={message} />)}
       {activeRecord ? (
         <div className="dt-turn dt-turn-bro">
           <div className="dt-status">
@@ -677,7 +1044,7 @@ function ThreadPanel({
             <div className="dt-status-foot">{activeRecord.description || activeRecord.summary || bro.progressLabel}</div>
           </div>
         </div>
-      ) : !hasThreadMessages ? (
+      ) : textTurns.length === 0 && audioTurns.length === 0 && conversationMessages.length === 0 ? (
         <div className="dt-turn dt-turn-bro">
           <div className="dt-bubble dt-bubble-bro">
             {disabled ? "I am paused until the node reconnects." : "No thread yet. Tell me what to build."}
@@ -698,44 +1065,70 @@ function ThreadPanel({
 function MobileThreadSurface({
   bro,
   records,
+  textTurns,
+  audioTurns,
+  conversationMessages,
+  onTextTurn,
+  onAudioTurn,
+  onRemoveAudioTurn,
   disabled,
   disabledReason,
 }: {
   bro: BroCardModel;
   records: BroTaskRecord[];
+  textTurns: TextTurn[];
+  audioTurns: AudioTurn[];
+  conversationMessages: ChatMessage[];
+  onTextTurn: (turn: TextTurn) => void;
+  onAudioTurn: (turn: AudioTurn) => void;
+  onRemoveAudioTurn: (turnId: string) => void;
   disabled?: boolean;
   disabledReason?: string | null;
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
-  const draftText = shell.draftSession?.current_draft?.text ?? draft;
+  const draftText = draft;
   const activeRecord = records[0] ?? null;
-  const threadMessages = shell.chatMessages.slice(-8);
-  const hasThreadMessages = threadMessages.length > 0;
   const connected = shell.voiceSession.phase === "connected";
   const loading = shell.voiceSession.phase === "loading";
   const [inputMode, setInputMode] = useState<"ptt" | "free">("ptt");
+  const audioState = activeCodexAudioState(shell, bro);
+  const textState = activeCodexTextState(shell, bro);
+  const textDisabled = Boolean(disabled) || !textState.enabled;
+  const micDisabled = Boolean(disabled) || !audioState.enabled;
+  const recorder = usePushToTalkAudio({
+    sessionId: shell.activeShellSessionId,
+    broId: bro.id,
+    disabled: micDisabled,
+    onTurn: onAudioTurn,
+    onRemoveTurn: onRemoveAudioTurn,
+    onError: shell.setShellError,
+    onSent: shell.refreshShellSession,
+  });
 
   function submitText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    submitDraftText();
+    void submitDraftText();
   }
 
-  async function sendCurrentDraft() {
-    if (!shell.activeShellSessionId || disabled) return;
-    await sendDraft(shell.activeShellSessionId, {
-      draft_session_id: shell.draftSession?.id,
-      draft_revision_id: shell.draftSession?.current_revision_id ?? undefined,
-    });
-    await shell.refreshShellSession();
-  }
-
-  function submitDraftText() {
+  async function submitDraftText() {
     const text = draft.trim();
-    if (!text || disabled) return;
-    const sent = shell.sendMessage(text, bro.id);
-    if (!sent) return;
+    if (!text || textDisabled || !shell.activeShellSessionId) return;
+    const turnId = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    onTextTurn({ id: turnId, broId: bro.id, text, status: "sending" });
     setDraft("");
+    try {
+      await submitExecutorTextInstruction(shell.activeShellSessionId, {
+        targetPersonaId: bro.id,
+        text,
+      });
+      onTextTurn({ id: turnId, broId: bro.id, text, status: "sent" });
+      await shell.refreshShellSession();
+    } catch (error: unknown) {
+      const message = describeError(error, "Text could not be sent.");
+      onTextTurn({ id: turnId, broId: bro.id, text, status: "failed", error: message });
+      shell.setShellError(message);
+    }
   }
 
   function toggleVoice() {
@@ -774,14 +1167,9 @@ function MobileThreadSurface({
             </div>
           </div>
         ) : null}
-        {threadMessages.map((message) => (
-          <div key={message.id} className={`thr-turn ${message.role === "user" ? "thr-turn-you" : "thr-turn-bro"}`}>
-            <div className={`thr-bubble ${message.role === "user" ? "thr-bubble-you" : "thr-bubble-bro"}`}>{message.text}</div>
-            <div className="thr-meta">
-              {message.role === "user" ? "You · sent" : `${bro.name} · reply`}
-            </div>
-          </div>
-        ))}
+        {textTurns.map((turn) => <TextTurnBubble key={turn.id} turn={turn} mobile />)}
+        {audioTurns.map((turn) => <AudioTurnBubble key={turn.id} bro={bro} turn={turn} mobile />)}
+        {conversationMessages.map((message) => <ConversationMessageBubble key={message.id} bro={bro} message={message} mobile />)}
         {activeRecord ? (
           <div className="thr-turn thr-turn-bro">
             <div className="thr-status">
@@ -794,7 +1182,7 @@ function MobileThreadSurface({
               <div className="thr-status-foot">{activeRecord.description || activeRecord.summary || bro.progressLabel}</div>
             </div>
           </div>
-        ) : !hasThreadMessages ? (
+        ) : textTurns.length === 0 && audioTurns.length === 0 && conversationMessages.length === 0 ? (
           <div className="thr-turn thr-turn-bro">
             <div className="thr-bubble thr-bubble-bro">
               {disabled ? "I am paused until the node reconnects." : "No thread yet. Tell me what to build."}
@@ -864,10 +1252,10 @@ function MobileThreadSurface({
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && draft.trim()) {
                       event.preventDefault();
-                      submitDraftText();
+                      void submitDraftText();
                     }
                   }}
-                  placeholder={disabled ? "Reconnect the node before sending" : `Message ${bro.name} - or hold the mic to talk`}
+                  placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? `Message ${bro.name} - or hold the mic to talk` : textState.reason}
                   disabled={disabled}
                 />
               </div>
@@ -875,24 +1263,42 @@ function MobileThreadSurface({
                 <button
                   type="submit"
                   className="thr-mic-btn thr-mic-btn-send"
-                  aria-label="Send message"
-                  onClick={(event) => {
-                    if (!draft.trim()) {
-                      event.preventDefault();
-                      void sendCurrentDraft();
-                    }
-                  }}
+                  aria-label={textDisabled ? textState.reason : "Send message"}
+                  disabled={textDisabled}
                 >
                   <ArrowUp size={22} strokeWidth={2.4} aria-hidden="true" />
                 </button>
               ) : (
                 <button
                   type="button"
-                  data-testid={connected ? "voice-session-stop" : "voice-session-start"}
-                  className={`thr-mic-btn thr-mic-btn-${disabled ? "idle ob-mic-disabled" : connected ? "listening" : "idle"}`}
-                  aria-label={disabled ? "Hold to talk · node offline" : connected ? "Stop voice session" : `Wake up ${bro.name}`}
-                  disabled={disabled || loading}
-                  onClick={toggleVoice}
+                  data-testid="voice-session-start"
+                  className={`thr-mic-btn thr-mic-btn-${micDisabled ? "idle ob-mic-disabled" : recorder.phase === "recording" ? "listening" : "idle"}`}
+                  aria-label={micDisabled ? audioState.reason : `Hold to record for ${bro.name}`}
+                  title={micDisabled ? audioState.reason : "Hold to record audio"}
+                  disabled={micDisabled || loading || recorder.phase === "sending"}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    void recorder.start();
+                  }}
+                  onPointerUp={(event) => {
+                    event.preventDefault();
+                    void recorder.stopAndSend();
+                  }}
+                  onPointerCancel={recorder.cancel}
+                  onBlur={recorder.cancel}
+                  onKeyDown={(event) => {
+                    if ((event.key === " " || event.key === "Enter") && recorder.phase === "idle") {
+                      event.preventDefault();
+                      void recorder.start();
+                    }
+                  }}
+                  onKeyUp={(event) => {
+                    if (event.key === " " || event.key === "Enter") {
+                      event.preventDefault();
+                      void recorder.stopAndSend();
+                    }
+                  }}
                 >
                   <span className="thr-mic-halo" aria-hidden="true" />
                   <span className="thr-mic-halo thr-mic-halo-2" aria-hidden="true" />
@@ -911,24 +1317,53 @@ function MobileThreadSurface({
 function DesktopComposerBar({
   bro,
   disabled,
-  onToggleVoice,
+  onTextTurn,
+  onAudioTurn,
+  onRemoveAudioTurn,
 }: {
   bro: BroCardModel;
   disabled: boolean;
-  onToggleVoice: () => void;
+  onTextTurn: (turn: TextTurn) => void;
+  onAudioTurn: (turn: AudioTurn) => void;
+  onRemoveAudioTurn: (turnId: string) => void;
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
   const connected = shell.voiceSession.phase === "connected";
   const loading = shell.voiceSession.phase === "loading";
+  const audioState = activeCodexAudioState(shell, bro);
+  const textState = activeCodexTextState(shell, bro);
+  const textDisabled = disabled || !textState.enabled;
+  const micDisabled = disabled || !audioState.enabled;
+  const recorder = usePushToTalkAudio({
+    sessionId: shell.activeShellSessionId,
+    broId: bro.id,
+    disabled: micDisabled,
+    onTurn: onAudioTurn,
+    onRemoveTurn: onRemoveAudioTurn,
+    onError: shell.setShellError,
+    onSent: shell.refreshShellSession,
+  });
 
-  function submitText(event: FormEvent<HTMLFormElement>) {
+  async function submitText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || disabled) return;
-    const sent = shell.sendMessage(text, bro.id);
-    if (!sent) return;
+    if (!text || textDisabled || !shell.activeShellSessionId) return;
+    const turnId = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    onTextTurn({ id: turnId, broId: bro.id, text, status: "sending" });
     setDraft("");
+    try {
+      await submitExecutorTextInstruction(shell.activeShellSessionId, {
+        targetPersonaId: bro.id,
+        text,
+      });
+      onTextTurn({ id: turnId, broId: bro.id, text, status: "sent" });
+      await shell.refreshShellSession();
+    } catch (error: unknown) {
+      const message = describeError(error, "Text could not be sent.");
+      onTextTurn({ id: turnId, broId: bro.id, text, status: "failed", error: message });
+      shell.setShellError(message);
+    }
   }
 
   return (
@@ -956,7 +1391,7 @@ function DesktopComposerBar({
           className="dt-cmp-input"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder={disabled ? "Reconnect the node before sending" : `Type to ${bro.name}...`}
+          placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? `Type to ${bro.name}...` : textState.reason}
           disabled={disabled}
         />
         <button type="button" className="dt-cmp-mode nb-detail-clear" onClick={() => setDraft("")} disabled={!draft}>
@@ -964,19 +1399,42 @@ function DesktopComposerBar({
         </button>
         <button
           type="button"
-          data-testid={connected ? "voice-session-stop" : "voice-session-start"}
-          className={`dt-cmp-mic dt-cmp-mic-${disabled ? "off" : connected ? "free" : "ptt"}`}
-          aria-label={connected ? "Stop voice session" : "Hold to Talk"}
-          disabled={disabled || loading}
-          onClick={onToggleVoice}
+          data-testid="voice-session-start"
+          className={`dt-cmp-mic dt-cmp-mic-${micDisabled ? "off" : recorder.phase === "recording" ? "free" : "ptt"}`}
+          aria-label={micDisabled ? audioState.reason : "Hold to record audio"}
+          title={micDisabled ? audioState.reason : "Hold to record audio"}
+          disabled={micDisabled || loading || recorder.phase === "sending"}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            void recorder.start();
+          }}
+          onPointerUp={(event) => {
+            event.preventDefault();
+            void recorder.stopAndSend();
+          }}
+          onPointerCancel={recorder.cancel}
+          onBlur={recorder.cancel}
+          onKeyDown={(event) => {
+            if ((event.key === " " || event.key === "Enter") && recorder.phase === "idle") {
+              event.preventDefault();
+              void recorder.start();
+            }
+          }}
+          onKeyUp={(event) => {
+            if (event.key === " " || event.key === "Enter") {
+              event.preventDefault();
+              void recorder.stopAndSend();
+            }
+          }}
         >
           <Mic size={18} aria-hidden="true" />
         </button>
         <button
           type="submit"
           className="dt-cmp-send"
-          aria-label="Send message"
-          disabled={disabled || !draft.trim()}
+          aria-label={textDisabled ? textState.reason : "Send message"}
+          disabled={textDisabled || !draft.trim()}
         >
           <SendHorizontal size={16} strokeWidth={2.2} />
         </button>
@@ -1071,6 +1529,8 @@ function DesktopVoiceDock({
 
 function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void }) {
   const shell = useNewbroShell();
+  const [textTurns, setTextTurns] = useState<TextTurn[]>([]);
+  const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const needsConnect = bro?.source === "runtime" && nodeStateNeedsConnect(nodeState);
@@ -1093,10 +1553,38 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     return () => { void clearVoiceTarget(sessionId).catch(() => undefined); };
   }, [shell.hasLoadedShellSnapshot, shell.activeShellSessionId, bro?.id, needsConnect]);
 
+  useEffect(() => {
+    setAudioTurns((current) => applyAudioTranscripts(current, shell.executionRuns));
+  }, [shell.executionRuns]);
+
   if (!shell.hasLoadedShellSnapshot) return null;
   if (!bro) return <DesktopHome onOpenBro={() => undefined} />;
 
   const disabledReason = offline ? `${offline.name} is not connected.` : null;
+  const visibleTextTurns = textTurns.filter((turn) => turn.broId === bro.id);
+  const visibleAudioTurns = audioTurns.filter((turn) => turn.broId === bro.id);
+  const visibleConversationMessages = shell.chatMessages.slice(-8);
+  const upsertTextTurn = (turn: TextTurn) => {
+    setTextTurns((current) => {
+      const existing = current.findIndex((candidate) => candidate.id === turn.id);
+      if (existing === -1) return [...current, turn];
+      const next = [...current];
+      next[existing] = turn;
+      return next;
+    });
+  };
+  const upsertAudioTurn = (turn: AudioTurn) => {
+    setAudioTurns((current) => {
+      const existing = current.findIndex((candidate) => candidate.id === turn.id);
+      if (existing === -1) return [...current, turn];
+      const next = [...current];
+      next[existing] = turn;
+      return next;
+    });
+  };
+  const removeAudioTurn = (turnId: string) => {
+    setAudioTurns((current) => current.filter((turn) => turn.id !== turnId));
+  };
 
   return (
     <DesktopFrame active="detail" bro={bro} onHome={onHome}>
@@ -1112,20 +1600,23 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
             <div className="dt-pane-scroll">
               <div className="dt-pane-content">
                 {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
-                <ThreadPanel bro={bro} records={records} disabled={Boolean(offline)} disabledReason={disabledReason} />
+                <ThreadPanel
+                  bro={bro}
+                  records={records}
+                  textTurns={visibleTextTurns}
+                  audioTurns={visibleAudioTurns}
+                  conversationMessages={visibleConversationMessages}
+                  disabled={Boolean(offline)}
+                  disabledReason={disabledReason}
+                />
               </div>
             </div>
             <DesktopComposerBar
               bro={bro}
               disabled={Boolean(offline)}
-              onToggleVoice={() => {
-                if (!shell.activeShellSessionId) return;
-                if (shell.voiceSession.phase === "connected") {
-                  void shell.stopVoiceSession();
-                } else {
-                  void shell.startVoiceSession(shell.activeShellSessionId);
-                }
-              }}
+              onTextTurn={upsertTextTurn}
+              onAudioTurn={upsertAudioTurn}
+              onRemoveAudioTurn={removeAudioTurn}
             />
           </section>
         </div>
@@ -1262,6 +1753,8 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
 function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }) {
   const shell = useNewbroShell();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [textTurns, setTextTurns] = useState<TextTurn[]>([]);
+  const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const offline = nodeState.kind === "usable_disconnected" ? nodeState.node : null;
   const needsConnect = bro.source === "runtime" && nodeStateNeedsConnect(nodeState) && nodeState.kind !== "no_bound_node";
@@ -1273,8 +1766,35 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
         tasks: shell.tasks,
         executionRuns: shell.executionRuns,
         summaries: shell.taskSummaries,
-      })
+    })
     : [];
+  const visibleTextTurns = textTurns.filter((turn) => turn.broId === bro.id);
+  const visibleAudioTurns = audioTurns.filter((turn) => turn.broId === bro.id);
+  const visibleConversationMessages = shell.chatMessages.slice(-8);
+  useEffect(() => {
+    setAudioTurns((current) => applyAudioTranscripts(current, shell.executionRuns));
+  }, [shell.executionRuns]);
+  const upsertAudioTurn = (turn: AudioTurn) => {
+    setAudioTurns((current) => {
+      const existing = current.findIndex((candidate) => candidate.id === turn.id);
+      if (existing === -1) return [...current, turn];
+      const next = [...current];
+      next[existing] = turn;
+      return next;
+    });
+  };
+  const upsertTextTurn = (turn: TextTurn) => {
+    setTextTurns((current) => {
+      const existing = current.findIndex((candidate) => candidate.id === turn.id);
+      if (existing === -1) return [...current, turn];
+      const next = [...current];
+      next[existing] = turn;
+      return next;
+    });
+  };
+  const removeAudioTurn = (turnId: string) => {
+    setAudioTurns((current) => current.filter((turn) => turn.id !== turnId));
+  };
   if (needsConnect && shell.activeShellSessionId) {
     return (
       <MobileStage>
@@ -1370,7 +1890,18 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
           </button>
         </aside>
         {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
-        <MobileThreadSurface bro={bro} records={records} disabled={Boolean(offline)} disabledReason={offline ? `${offline.name} is not connected.` : null} />
+        <MobileThreadSurface
+          bro={bro}
+          records={records}
+          textTurns={visibleTextTurns}
+          audioTurns={visibleAudioTurns}
+          conversationMessages={visibleConversationMessages}
+          onTextTurn={upsertTextTurn}
+          onAudioTurn={upsertAudioTurn}
+          onRemoveAudioTurn={removeAudioTurn}
+          disabled={Boolean(offline)}
+          disabledReason={offline ? `${offline.name} is not connected.` : null}
+        />
       </div>
     </MobileStage>
   );

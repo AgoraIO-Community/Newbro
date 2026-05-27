@@ -10,7 +10,11 @@ from newbro.executors.core import ExecutorEvent, ExecutorEventType
 from newbro.protocol import (
     AckMessage,
     CancelRunCommand,
+    DispatchAudioInstructionCommand,
     DispatchRunCommand,
+    DispatchTextInstructionCommand,
+    ExecutorAudioInstruction,
+    ExecutorTextInstruction,
     ExecutorNodeExecutor,
     ExecutorNodeRecord,
     InteractionRequest,
@@ -91,6 +95,20 @@ class ExecutorNodeManager:
             state = self._connections_by_node.get(node_id)
             return state is not None and executor_type in state.executors
         return any(executor_type in state.executors for state in self._connections_by_node.values())
+
+    def executor_supports_audio_instruction(self, executor_type: str, *, node_id: str) -> bool:
+        state = self._connections_by_node.get(node_id)
+        if state is None:
+            return False
+        executor = state.executors.get(executor_type)
+        return executor is not None and executor.supports_audio_instruction
+
+    def executor_supports_follow_up(self, executor_type: str, *, node_id: str) -> bool:
+        state = self._connections_by_node.get(node_id)
+        if state is None:
+            return False
+        executor = state.executors.get(executor_type)
+        return executor is not None and executor.supports_follow_up
 
     def executor_availability(self, executor_type: str, *, node_id: str | None = None) -> dict[str, object]:
         if not self.is_detached_executor(executor_type):
@@ -287,6 +305,66 @@ class ExecutorNodeManager:
         except Exception:
             await self.disconnect(websocket=connection.websocket, reason="cancel_failed")
 
+    async def dispatch_audio_instruction(
+        self,
+        *,
+        run_id: str,
+        execution_session_id: str,
+        executor_type: str,
+        task_id: str,
+        node_id: str,
+        audio: ExecutorAudioInstruction,
+    ) -> bool:
+        connection = await self._connection_for_node(node_id)
+        if connection is None:
+            return False
+        executor = connection.executors.get(executor_type)
+        if executor is None or not executor.supports_audio_instruction:
+            return False
+        command = DispatchAudioInstructionCommand(
+            run_id=run_id,
+            execution_session_id=execution_session_id,
+            executor_type=executor_type,
+            task_id=task_id,
+            audio=audio,
+        )
+        try:
+            await self._send_json(connection, command.model_dump(mode="json"))
+        except Exception:
+            await self.disconnect(websocket=connection.websocket, reason="audio_instruction_failed")
+            return False
+        return True
+
+    async def dispatch_text_instruction(
+        self,
+        *,
+        run_id: str,
+        execution_session_id: str,
+        executor_type: str,
+        task_id: str,
+        node_id: str,
+        instruction: ExecutorTextInstruction,
+    ) -> bool:
+        connection = await self._connection_for_node(node_id)
+        if connection is None:
+            return False
+        executor = connection.executors.get(executor_type)
+        if executor is None or not executor.supports_follow_up:
+            return False
+        command = DispatchTextInstructionCommand(
+            run_id=run_id,
+            execution_session_id=execution_session_id,
+            executor_type=executor_type,
+            task_id=task_id,
+            instruction=instruction,
+        )
+        try:
+            await self._send_json(connection, command.model_dump(mode="json"))
+        except Exception:
+            await self.disconnect(websocket=connection.websocket, reason="text_instruction_failed")
+            return False
+        return True
+
     async def supply_interaction_response(
         self,
         request: InteractionRequest,
@@ -433,6 +511,10 @@ class ExecutorNodeManager:
             node_id: ExecutorNodeConnectionView(
                 connected=True,
                 executors=sorted(state.executors),
+                executor_capabilities=[
+                    state.executors[executor_type].model_copy(deep=True)
+                    for executor_type in sorted(state.executors)
+                ],
             )
             for node_id, state in self._connections_by_node.items()
         }

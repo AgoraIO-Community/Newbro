@@ -23,9 +23,10 @@ def test_main_returns_130_on_keyboard_interrupt(monkeypatch, capsys):
     )
 
     class FakeService:
-        def __init__(self, *, settings, executors_config):
+        def __init__(self, *, settings, executors_config, audio_config=None):
             self.settings = settings
             self.executors_config = executors_config
+            self.audio_config = audio_config
 
         def run_forever(self):
             return object()
@@ -58,13 +59,15 @@ def test_main_applies_enabled_executor_and_acpx_agent_overrides(monkeypatch):
                 enabled_executors=["codex"],
             ),
             executors={"acpx": {"command": "acpx", "agent": "codex"}},
+            audio={"transcription": {"provider": "local_whisper", "model": "base"}},
         ),
     )
 
     class FakeService:
-        def __init__(self, *, settings, executors_config):
+        def __init__(self, *, settings, executors_config, audio_config=None):
             captured["settings"] = settings
             captured["executors_config"] = executors_config
+            captured["audio_config"] = audio_config
 
         async def run_forever(self):
             return None
@@ -84,9 +87,15 @@ def test_main_applies_enabled_executor_and_acpx_agent_overrides(monkeypatch):
                 "acpx",
                 "--acpx-agent",
                 "openclaw",
+                "--audio-language",
+                "zh",
+                "--whisper-model",
+                "small",
             ]
         )
         == 0
     )
     assert captured["settings"].enabled_executors == ["acpx"]
     assert captured["executors_config"]["acpx"]["agent"] == "openclaw"
+    assert captured["audio_config"]["transcription"]["language"] == "zh"
+    assert captured["audio_config"]["transcription"]["model"] == "small"

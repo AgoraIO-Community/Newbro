@@ -65,7 +65,13 @@ live voice path.
 
 ## Dispatch Safety
 
-- Never dispatch raw user speech directly to an executor.
+- Never dispatch draft/free-voice raw user speech directly to an executor.
+- Bro Detail push-to-talk typed text and locally recorded mic audio are the
+  explicit exception: typed text starts a direct executor task when the Bro is
+  idle or targets an already active executor session through typed executor-node
+  instruction protocols; mic audio targets an already active executor session
+  after executor-node transcription, without Communication Brain or Draft Brain
+  involvement.
 - Dispatch from a structured Draft through a Dispatch Plan and Dispatch Gate.
 - Send only the current draft revision; stale revision sends must fail before
   task creation.

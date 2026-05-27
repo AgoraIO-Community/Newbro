@@ -89,6 +89,20 @@ newbro executor run \
 
 Repeat `--enabled-executor` to enable multiple executor families for one run.
 
+Composer push-to-talk audio uses local Whisper inside the executor node. The
+`newbro-cli` package includes the required Whisper runtime dependencies. By
+default the node auto-detects language and uses the configured/default model;
+foreground runs can override both inline:
+
+```bash
+newbro executor run \
+  --base-url https://newbro.example.com \
+  --node-id node-1234 \
+  --token secret \
+  --audio-language zh \
+  --whisper-model small
+```
+
 ## Optional ACPX Executor
 
 If you want Newbro to delegate execution through `acpx` instead of the direct

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RouterProvider } from "@tanstack/react-router";
 import App from "../App";
 import { buildBroCardModels } from "../components/newbro";
@@ -81,6 +81,8 @@ const clientMock = vi.hoisted(() => ({
   }),
   sendSocketMessage: vi.fn(),
   sendSocketDraftAsrTurn: vi.fn(),
+  submitExecutorAudioInstruction: vi.fn(),
+  submitExecutorTextInstruction: vi.fn(),
   createPersona: vi.fn(),
   updatePersona: vi.fn(),
   createExecutorNode: vi.fn(),
@@ -171,6 +173,16 @@ function usableExecutorNode(overrides: Record<string, unknown> = {}) {
     name: "Workshop Mini",
     enabled_executors: ["codex"],
     connected_executors: ["codex"],
+    connected_executor_capabilities: [
+      {
+        executor_type: "codex",
+        supports_resume: true,
+        supports_follow_up: true,
+        supports_audio_instruction: true,
+        supports_pause: true,
+        supports_cancel: true,
+      },
+    ],
     connection_status: "connected",
     token_hint: "tok...0001",
     last_connected_at: "2026-05-23T20:00:00Z",
@@ -208,11 +220,78 @@ function forgeSnapshot(sessionId: string, node = usableExecutorNode()) {
         avatar: "bro",
         base_prompt: "",
         executor_node_id: node.node_id,
+        bro_detail_session_id: "detail-forge",
         status: "idle",
         current_task_id: null,
       },
     ],
     executor_nodes: [node],
+  };
+}
+
+function activeForgeSnapshot(sessionId: string, node = usableExecutorNode()) {
+  return {
+    ...forgeSnapshot(sessionId, node),
+    personas: [
+      {
+        persona_id: "forge",
+        name: "Forge",
+        avatar: "bro",
+        base_prompt: "",
+        executor_node_id: node.node_id,
+        bro_detail_session_id: "detail-forge",
+        status: "busy",
+        current_task_id: "task-1",
+      },
+    ],
+    tasks: [
+      {
+        task_id: "task-1",
+        root_task_id: "task-1",
+        parent_task_id: null,
+        title: "Active Codex task",
+        goal: "Keep working",
+        status: "running",
+        priority: 0,
+        interruptible: true,
+        requires_confirmation: false,
+        preferred_executor: "codex",
+        session_affinity: null,
+        task_revision: 1,
+        latest_instruction: null,
+        metadata: { persona_id: "forge" },
+      },
+    ],
+    execution_sessions: [
+      {
+        execution_session_id: "exec-1",
+        task_id: "task-1",
+        base_executor_id: "codex",
+        executor_node_id: node.node_id,
+        continuity_key: null,
+        run_ids: ["run-1"],
+        active_run_id: "run-1",
+        latest_run_id: "run-1",
+        latest_resume_handle: null,
+        queued_run_request: null,
+      },
+    ],
+    execution_runs: [
+      {
+        run_id: "run-1",
+        task_id: "task-1",
+        execution_session_id: "exec-1",
+        executor_type: "codex",
+        status: "running",
+        claimed_by: null,
+        run_revision: 1,
+        latest_progress_message: null,
+        output_summary: null,
+        block_reason: null,
+        failure_reason: null,
+        metadata: {},
+      },
+    ],
   };
 }
 
@@ -256,6 +335,11 @@ describe("Newbro artboard shell", () => {
     clientMock.revealExecutorNodeConnectCommand.mockResolvedValue({
       node: usableExecutorNode({ node_id: "node-1", name: "Local node" }),
       token: "token-1",
+    });
+    clientMock.submitExecutorTextInstruction.mockResolvedValue({
+      instruction_id: "txt-1",
+      target_persona_id: "forge",
+      status: "accepted",
     });
     clientMock.updatePersona.mockResolvedValue({});
   });
@@ -327,7 +411,7 @@ describe("Newbro artboard shell", () => {
     expect(clientMock.createPersona).toHaveBeenCalledWith("session-1", {
       name: "atlas",
       avatar: "bro",
-      base_prompt: "Help turn voice instructions into clear executable drafts.",
+      base_prompt: "Execute direct typed and push-to-talk instructions in the connected workspace.",
       executor_node_id: "node-1",
     });
     expect(screen.getByTestId("bro-setup-done")).toHaveTextContent("Done");
@@ -347,7 +431,8 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "forge"));
   });
 
-  it("sends desktop typed Bro detail input directly to the targeted Bro", async () => {
+  it("sends desktop typed Bro detail input directly to the executor node", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing"));
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
@@ -358,24 +443,79 @@ describe("Newbro artboard shell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    await waitFor(() => expect(clientMock.sendSocketMessage).toHaveBeenCalled());
-    expect(clientMock.sendSocketMessage.mock.calls.at(-1)?.[2]).toBe("Run the desktop direct send path");
-    expect(clientMock.sendSocketMessage.mock.calls.at(-1)?.[3]).toBe("forge");
-    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
-    expect(clientMock.sendDraft).not.toHaveBeenCalled();
-
-    act(() => {
-      socketHarness.handlers?.onMessage({
-        type: "user_message_appended",
-        sequence: 2,
-        message_id: "msg-desktop-direct",
-        role: "user",
+    await waitFor(() => {
+      expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
         text: "Run the desktop direct send path",
-        source: "user",
       });
     });
+    expect(clientMock.sendSocketMessage).not.toHaveBeenCalled();
+    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
+    expect(clientMock.sendDraft).not.toHaveBeenCalled();
+  });
 
-    expect(await screen.findByText("Run the desktop direct send path")).toBeInTheDocument();
+  it("enables desktop typed send for a connected idle Bro", async () => {
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const input = await screen.findByPlaceholderText("Type to Forge...");
+    fireEvent.change(input, { target: { value: "start from idle bro" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        text: "start from idle bro",
+      });
+    });
+    expect(clientMock.sendSocketMessage).not.toHaveBeenCalled();
+  });
+
+  it("renders conversation replies in the unified Bro detail thread", async () => {
+    clientMock.getConversationSnapshot.mockResolvedValueOnce({
+      session_id: "session-existing",
+      conversation_history: [
+        {
+          message_id: "msg-overall",
+          role: "assistant",
+          text: "Conversation reply from Communication Brain",
+          created_at: "2026-05-27T00:00:00Z",
+        },
+      ],
+    });
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
+    expect(await screen.findByText("Conversation reply from Communication Brain")).toBeInTheDocument();
+  });
+
+  it("keeps desktop typed send enabled for a queued direct Bro task", async () => {
+    const snapshot = activeForgeSnapshot("session-existing");
+    snapshot.execution_sessions = [];
+    snapshot.execution_runs = [];
+    snapshot.tasks[0] = {
+      ...snapshot.tasks[0],
+      status: "queued",
+    };
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const input = await screen.findByPlaceholderText("Type to Forge...");
+    fireEvent.change(input, { target: { value: "retry queued task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        text: "retry queued task",
+      });
+    });
+    expect(clientMock.sendSocketMessage).not.toHaveBeenCalled();
   });
 
   it("uses the artboarded offline detail state and blocks talk/send for disconnected usable nodes", async () => {
@@ -391,11 +531,94 @@ describe("Newbro artboard shell", () => {
 
     expect(await screen.findByTestId("bro-node-disconnected-warning")).toHaveTextContent("Workshop Mini is not connected");
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Hold to Talk" })).toBeDisabled();
     expect(screen.getByPlaceholderText("Reconnect the node before sending")).toBeDisabled();
   });
 
-  it("sends mobile thread text through the shell socket", async () => {
+  it("gates desktop PTT audio on an active Codex execution session", async () => {
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
+    expect(screen.getByTestId("voice-session-start")).toBeDisabled();
+    expect(screen.getByTestId("voice-session-start")).toHaveAccessibleName("Start a Codex task before recording.");
+    expect(connectorMock.prepareConnectorSession).not.toHaveBeenCalled();
+  });
+
+  it("enables desktop PTT audio when the Bro has an active Codex execution session", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing"));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
+    expect(screen.getByTestId("voice-session-start")).toBeEnabled();
+    expect(screen.getByTestId("voice-session-start")).toHaveAccessibleName("Hold to record audio");
+  });
+
+  it("enables desktop PTT audio for a continuation run on the Bro's current task", async () => {
+    const snapshot = activeForgeSnapshot("session-existing");
+    snapshot.execution_sessions[0] = {
+      ...snapshot.execution_sessions[0],
+      task_id: "task-previous",
+      run_ids: ["run-previous", "run-1"],
+    };
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
+    expect(screen.getByTestId("voice-session-start")).toBeEnabled();
+    expect(screen.getByTestId("voice-session-start")).toHaveAccessibleName("Hold to record audio");
+  });
+
+  it("sends desktop PTT text directly to the executor node", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing"));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const input = await screen.findByPlaceholderText("Type to Forge...");
+    fireEvent.change(input, { target: { value: "continue directly" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        text: "continue directly",
+      });
+    });
+    expect(clientMock.sendSocketMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps desktop PTT audio disabled when connected Codex does not advertise audio support", async () => {
+    const unsupportedNode = usableExecutorNode({
+      connected_executor_capabilities: [
+        {
+          executor_type: "codex",
+          supports_resume: true,
+          supports_follow_up: true,
+          supports_audio_instruction: false,
+          supports_pause: true,
+          supports_cancel: true,
+        },
+      ],
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing", unsupportedNode));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
+    expect(screen.getByTestId("voice-session-start")).toBeDisabled();
+    expect(screen.getByTestId("voice-session-start")).toHaveAccessibleName(
+      "Enable local Whisper on the executor node before recording.",
+    );
+  });
+
+  it("sends mobile thread text directly to the executor node", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing"));
     window.history.replaceState({}, "", "/mobile?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
@@ -406,23 +629,14 @@ describe("Newbro artboard shell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    await waitFor(() => expect(clientMock.sendSocketMessage).toHaveBeenCalled());
-    expect(clientMock.sendSocketMessage.mock.calls.at(-1)?.[2]).toBe("Please draft the launch note");
-    expect(clientMock.sendSocketMessage.mock.calls.at(-1)?.[3]).toBe("forge");
-    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
-
-    act(() => {
-      socketHarness.handlers?.onMessage({
-        type: "user_message_appended",
-        sequence: 2,
-        message_id: "msg-mobile-direct",
-        role: "user",
+    await waitFor(() => {
+      expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
         text: "Please draft the launch note",
-        source: "user",
       });
     });
-
-    expect(await screen.findByText("Please draft the launch note")).toBeInTheDocument();
+    expect(clientMock.sendSocketMessage).not.toHaveBeenCalled();
+    expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
   });
 
   it("starts free-route and selected mobile voice through the connector path", async () => {
@@ -441,6 +655,7 @@ describe("Newbro artboard shell", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Stop voice session" }));
     await waitFor(() => expect(clientMock.clearVoiceTarget).toHaveBeenCalledTimes(2));
     fireEvent.click(await screen.findByTestId("mobile-bro-row-forge"));
+    fireEvent.click(await screen.findByRole("tab", { name: /Always on/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Wake up Forge" }));
 
     await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "forge"));

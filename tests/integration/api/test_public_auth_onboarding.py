@@ -4,7 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from newbro.api.app import create_app
-from newbro.api.public_auth import SESSION_COOKIE_NAME
+from newbro.api.public_auth import DEFAULT_BRO_BASE_PROMPT, LEGACY_DRAFT_BASE_PROMPT, SESSION_COOKIE_NAME
 from newbro.api.public_auth import PublicAuthStore
 from newbro.connectors.voice.agora_convoai.module import AgoraConvoAIConnectorModule
 from newbro.connectors.voice.agora_convoai.settings import AgoraConvoAIConnectorSettings
@@ -129,6 +129,23 @@ async def test_invited_user_bootstraps_empty_session_without_default_bro(tmp_pat
         assert resumed.status_code == 200
         assert resumed.json()["session_id"] == body["session_id"]
         assert resumed.json()["default_persona_id"] is None
+
+
+@pytest.mark.anyio
+async def test_public_auth_store_migrates_legacy_draft_bro_prompt(tmp_path):
+    db_path = tmp_path / "public_auth.sqlite3"
+    store = PublicAuthStore(path=db_path)
+    await store.create_persona(
+        user_id="user-1",
+        name="Forge",
+        avatar="bro",
+        base_prompt=LEGACY_DRAFT_BASE_PROMPT,
+    )
+
+    migrated_store = PublicAuthStore(path=db_path)
+    personas = await migrated_store.list_personas(user_id="user-1")
+
+    assert personas[0].base_prompt == DEFAULT_BRO_BASE_PROMPT
 
 
 @pytest.mark.anyio

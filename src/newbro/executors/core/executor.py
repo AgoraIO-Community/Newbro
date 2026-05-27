@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Protocol
 
-from newbro.protocol import ExecutionRun, Task
+from newbro.protocol import ExecutionRun, ExecutorAudioInstruction, ExecutorTextInstruction, Task
 
 from .capabilities import ExecutorCapabilities
 from .events import ExecutorEvent
@@ -22,6 +22,22 @@ class Executor(Protocol):
         run: ExecutionRun,
         task: Task,
         session: ExecutorSession,
+    ) -> AsyncIterator[ExecutorEvent]:
+        ...
+
+    def handle_audio_instruction(
+        self,
+        run: ExecutionRun,
+        session: ExecutorSession,
+        audio: ExecutorAudioInstruction,
+    ) -> AsyncIterator[ExecutorEvent]:
+        ...
+
+    def handle_text_instruction(
+        self,
+        run: ExecutionRun,
+        session: ExecutorSession,
+        instruction: ExecutorTextInstruction,
     ) -> AsyncIterator[ExecutorEvent]:
         ...
 

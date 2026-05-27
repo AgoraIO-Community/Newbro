@@ -27,6 +27,7 @@ class ExecutorNodeSettings:
 class LoadedExecutorNodeConfig:
     node_settings: ExecutorNodeSettings
     executors: dict[str, Any] = field(default_factory=dict)
+    audio: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None
 
 
@@ -42,7 +43,7 @@ def load_executor_node_config(
     load_env_file(env_path, override=False)
     config_path = config_file or env_path.with_name(SYNAPSE_CONNECTOR_CONFIG_FILE.name)
     if not config_path.exists():
-        return LoadedExecutorNodeConfig(node_settings=ExecutorNodeSettings(), executors={}, source_path=None)
+        return LoadedExecutorNodeConfig(node_settings=ExecutorNodeSettings(), executors={}, audio={}, source_path=None)
     try:
         raw = load_yaml_file(config_path)
     except YAMLParseError as exc:
@@ -59,10 +60,15 @@ def load_executor_node_config(
         _resolve_env_placeholders(raw.get("executor_node") or {}, config_path),
         config_path,
     )
+    audio = _parse_audio_settings(
+        _resolve_env_placeholders(raw.get("audio") or {}, config_path),
+        config_path,
+    )
     if not node_settings.enabled_executors:
         return LoadedExecutorNodeConfig(
             node_settings=node_settings,
             executors={},
+            audio=audio,
             source_path=config_path,
         )
     raw_executors = raw.get("executors") or {}
@@ -76,6 +82,7 @@ def load_executor_node_config(
     return LoadedExecutorNodeConfig(
         node_settings=node_settings,
         executors=executors,
+        audio=audio,
         source_path=config_path,
     )
 
@@ -120,6 +127,14 @@ def _parse_node_settings(raw_host: Any, config_path: Path) -> ExecutorNodeSettin
         token=str(raw_host.get("token", "")),
         enabled_executors=enabled_executors,
     )
+
+
+def _parse_audio_settings(raw_audio: Any, config_path: Path) -> dict[str, Any]:
+    if raw_audio is None:
+        return {}
+    if not isinstance(raw_audio, dict):
+        raise ExecutorNodeConfigError(f"'audio' must be a mapping in {config_path}")
+    return dict(raw_audio)
 
 
 def _parse_string_list(value: Any, *, field_name: str, config_path: Path) -> list[str]:

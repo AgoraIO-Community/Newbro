@@ -10,6 +10,8 @@ from newbro.api.routes.auth import router as auth_router
 from newbro.api.routes.commands import router as commands_router
 from newbro.api.routes.drafts import router as drafts_router
 from newbro.api.routes.executor_nodes import router as executor_nodes_router
+from newbro.api.routes.executor_audio import router as executor_audio_router
+from newbro.api.routes.executor_text import router as executor_text_router
 from newbro.api.routes.health import router as health_router
 from newbro.api.routes.interaction_requests import router as interaction_requests_router
 from newbro.api.routes.messages import router as messages_router
@@ -49,6 +51,8 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(interaction_requests_router, prefix=API_PREFIX)
     app.include_router(personas_router, prefix=API_PREFIX)
     app.include_router(executor_nodes_router, prefix=API_PREFIX)
+    app.include_router(executor_audio_router, prefix=API_PREFIX)
+    app.include_router(executor_text_router, prefix=API_PREFIX)
     app.include_router(stream_router, prefix=API_PREFIX)
     app.include_router(executor_control_router, prefix=API_PREFIX)
 

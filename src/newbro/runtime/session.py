@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import tempfile
 import time
 from dataclasses import replace
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
@@ -52,6 +54,8 @@ from newbro.protocol import (
     ExecutionMode,
     ExecutionRun,
     ExecutionSession,
+    ExecutorAudioInstruction,
+    ExecutorTextInstruction,
     InteractionType,
     InteractionRequest,
     MutationType,
@@ -103,6 +107,8 @@ from .models import (
 FALLBACK_ASSISTANT_ERROR_MESSAGE = "Sorry, something went wrong while generating the reply."
 LOGGER = logging.getLogger(__name__)
 MAX_TASK_INSTRUCTION_CHARS = 4000
+AUDIO_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "newbro-audio-artifacts"
+AUDIO_ACTIVE_RUN_STATUSES = {RunStatus.ASSIGNED, RunStatus.RUNNING, RunStatus.BLOCKED}
 
 
 def _title_from_draft_text(text: str) -> str:
@@ -110,6 +116,23 @@ def _title_from_draft_text(text: str) -> str:
     if len(title) > 72:
         title = title[:69].rstrip() + "..."
     return title or "Draft task"
+
+
+def _mark_direct_executor_input(
+    metadata: dict[str, object],
+    source: str,
+) -> dict[str, object]:
+    next_metadata = dict(metadata)
+    sources = next_metadata.get("direct_executor_input_sources")
+    if isinstance(sources, list):
+        direct_sources = [item for item in sources if isinstance(item, str)]
+    else:
+        direct_sources = []
+    if source not in direct_sources:
+        direct_sources.append(source)
+    next_metadata["direct_executor_input_sources"] = direct_sources
+    next_metadata["suppress_communication_notifications"] = True
+    return next_metadata
 
 
 def _task_instruction_from_draft(draft) -> str:
@@ -286,6 +309,216 @@ class SessionRuntime:
 
     def set_voice_target(self, persona_id: str | None) -> None:
         self._voice_target_persona_id = persona_id
+
+    async def submit_executor_text_instruction(
+        self,
+        *,
+        target_persona_id: str,
+        text: str,
+    ) -> ExecutorTextInstruction:
+        persona = await self.blackboard.get_persona(target_persona_id)
+        if persona is None:
+            raise ValueError("Selected Bro is not available.")
+        if not persona.executor_node_id:
+            raise ValueError("Selected Bro is not bound to an executor node.")
+        if not self.executor_node_manager.is_executor_connected(
+            "codex",
+            node_id=persona.executor_node_id,
+        ):
+            raise ValueError("Selected Bro's Codex executor node is not connected.")
+        if not self.executor_node_manager.executor_supports_follow_up(
+            "codex",
+            node_id=persona.executor_node_id,
+        ):
+            raise ValueError("Selected Bro's executor node does not support text follow-up instructions.")
+
+        instruction = ExecutorTextInstruction(
+            instruction_id=f"txt-{uuid4().hex[:12]}",
+            target_persona_id=persona.persona_id,
+            text=text.strip(),
+            metadata={"source": "bro_detail_text"},
+        )
+
+        execution_session, run = await self._active_codex_execution_for_persona(persona.persona_id)
+        if execution_session is None or run is None:
+            if persona.current_task_id:
+                task = await self.blackboard.get_task(persona.current_task_id)
+                if task is not None and task.status in {TaskStatus.CREATED, TaskStatus.QUEUED}:
+                    task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_text")
+                    task.latest_instruction = self._merge_follow_up_instruction(task.latest_instruction, instruction.text)
+                    task.goal = task.goal or instruction.text
+                    await self.blackboard.put_task(task)
+                    self.schedule_execution()
+                    await self.publish_snapshot()
+                    return instruction
+                raise ValueError("Selected Bro has no active Codex execution session.")
+            await self._start_executor_text_task(persona=persona, instruction=instruction)
+            self.schedule_execution()
+            await self.publish_snapshot()
+            return instruction
+
+        task = await self.blackboard.get_task(run.task_id)
+        if task is not None:
+            task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_text")
+            await self.blackboard.put_task(task)
+
+        dispatched = await self.executor_node_manager.dispatch_text_instruction(
+            run_id=run.run_id,
+            execution_session_id=execution_session.execution_session_id,
+            executor_type="codex",
+            task_id=run.task_id,
+            node_id=persona.executor_node_id,
+            instruction=instruction,
+        )
+        if not dispatched:
+            raise ValueError("Selected Bro's Codex executor node is not ready for text.")
+        await self.publish_snapshot()
+        return instruction
+
+    async def _start_executor_text_task(
+        self,
+        *,
+        persona,
+        instruction: ExecutorTextInstruction,
+    ) -> Task:
+        task_id = f"task-{uuid4().hex[:8]}"
+        text = instruction.text.strip()
+        metadata = {
+            "immutable": True,
+            "source_kind": "bro_detail_text",
+            "assigned_bro_id": persona.persona_id,
+            "persona_id": persona.persona_id,
+            "persona_name": persona.name,
+            "persona_avatar": persona.avatar,
+            "bro_detail_session_id": persona.bro_detail_session_id,
+            "executor_node_id": persona.executor_node_id,
+            "instruction_id": instruction.instruction_id,
+            "mode": TaskMode.MODIFY_ALLOWED.value,
+            "suppress_communication_notifications": True,
+        }
+        task = Task(
+            task_id=task_id,
+            root_task_id=task_id,
+            title=_title_from_draft_text(text),
+            goal=text,
+            status=TaskStatus.QUEUED,
+            preferred_executor="codex",
+            session_affinity=f"ws-{persona.bro_detail_session_id}",
+            latest_instruction=text,
+            metadata=metadata,
+        )
+        await self.blackboard.put_persona(
+            persona.model_copy(update={"status": "busy", "current_task_id": task_id})
+        )
+        await self.blackboard.put_task(task)
+        await self.blackboard.put_execution_mode(
+            TaskExecutionMode(task_id=task_id, mode=ExecutionMode.UNDECIDED)
+        )
+        await self.blackboard.append_mutation(
+            TaskMutation(
+                mutation_id=f"mut-{uuid4().hex[:8]}",
+                task_id=task_id,
+                mutation_type=MutationType.CREATE,
+                patch={
+                    "title": task.title,
+                    "goal": task.goal,
+                    "preferred_executor": "codex",
+                    "persona_id": persona.persona_id,
+                    "persona_name": persona.name,
+                    "source_kind": "bro_detail_text",
+                    "instruction_id": instruction.instruction_id,
+                },
+                created_by="bro_detail_text",
+            )
+        )
+        saved = await self.blackboard.get_task(task_id)
+        return saved or task
+
+    async def submit_executor_audio_instruction(
+        self,
+        *,
+        target_persona_id: str,
+        pcm16: bytes,
+        mime_type: str,
+        duration_ms: int,
+        sample_rate: int,
+        num_channels: int,
+        samples_per_channel: int,
+    ) -> ExecutorAudioInstruction:
+        persona = await self.blackboard.get_persona(target_persona_id)
+        if persona is None:
+            raise ValueError("Selected Bro is not available.")
+        if not persona.executor_node_id:
+            raise ValueError("Selected Bro is not bound to an executor node.")
+        if not self.executor_node_manager.is_executor_connected(
+            "codex",
+            node_id=persona.executor_node_id,
+        ):
+            raise ValueError("Selected Bro's Codex executor node is not connected.")
+        if not self.executor_node_manager.executor_supports_audio_instruction(
+            "codex",
+            node_id=persona.executor_node_id,
+        ):
+            raise ValueError("Selected Bro's executor node does not support audio transcription instructions.")
+
+        execution_session, run = await self._active_codex_execution_for_persona(persona.persona_id)
+        if execution_session is None or run is None:
+            raise ValueError("Selected Bro has no active Codex execution session.")
+
+        task = await self.blackboard.get_task(run.task_id)
+        if task is not None:
+            task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_ptt")
+            await self.blackboard.put_task(task)
+
+        audio_instruction_id = f"aud-{uuid4().hex[:12]}"
+        artifact_dir = AUDIO_ARTIFACT_DIR / self.session_id
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = artifact_dir / f"{audio_instruction_id}.pcm"
+        artifact_path.write_bytes(pcm16)
+        audio = ExecutorAudioInstruction(
+            audio_instruction_id=audio_instruction_id,
+            target_persona_id=persona.persona_id,
+            artifact_path=str(artifact_path),
+            mime_type=mime_type,
+            duration_ms=duration_ms,
+            sample_rate=sample_rate,
+            num_channels=num_channels,
+            samples_per_channel=samples_per_channel,
+            size_bytes=len(pcm16),
+            metadata={"source": "bro_detail_ptt"},
+        )
+        dispatched = await self.executor_node_manager.dispatch_audio_instruction(
+            run_id=run.run_id,
+            execution_session_id=execution_session.execution_session_id,
+            executor_type="codex",
+            task_id=run.task_id,
+            node_id=persona.executor_node_id,
+            audio=audio,
+        )
+        if not dispatched:
+            raise ValueError("Selected Bro's Codex executor node is not ready for audio.")
+        await self.publish_snapshot()
+        return audio
+
+    async def _active_codex_execution_for_persona(
+        self,
+        persona_id: str,
+    ) -> tuple[ExecutionSession | None, ExecutionRun | None]:
+        persona = await self.blackboard.get_persona(persona_id)
+        if persona is None or not persona.current_task_id:
+            return None, None
+        for execution_session in await self.blackboard.list_sessions():
+            if execution_session.base_executor_id != "codex" or not execution_session.active_run_id:
+                continue
+            run = await self.blackboard.get_run(execution_session.active_run_id or "")
+            if run is None:
+                continue
+            if run.task_id != persona.current_task_id:
+                continue
+            if run.executor_type != "codex" or run.status not in AUDIO_ACTIVE_RUN_STATUSES:
+                continue
+            return execution_session, run
+        return None, None
 
 
 
@@ -1876,6 +2109,7 @@ class SessionRuntime:
                 "supports_cancel": capability.supports_cancel,
                 "supports_resume": capability.supports_resume,
                 "supports_follow_up": capability.supports_follow_up,
+                "supports_audio_instruction": capability.supports_audio_instruction,
                 **self.executor_node_manager.executor_availability(capability.executor_type),
             }
             for capability in self.registry.list_capabilities()

@@ -32,6 +32,8 @@ class NotificationCandidateBuilder:
         summary: TaskSummary | None,
         existing: list[NotificationCandidate],
     ) -> NotificationCandidate | None:
+        if _suppresses_communication_notifications(task):
+            return None
         if task.status == TaskStatus.CANCELLED:
             return None
 
@@ -90,6 +92,8 @@ class NotificationCandidateBuilder:
         summary: TaskSummary | None,
         existing: list[NotificationCandidate],
     ) -> NotificationCandidate | None:
+        if _suppresses_communication_notifications(task):
+            return None
         if summary is None or not summary.needs_user_input:
             return None
         if any(
@@ -134,3 +138,9 @@ def _already_exists(
     existing: list[NotificationCandidate],
 ) -> bool:
     return any(item.candidate_id == candidate.candidate_id for item in existing)
+
+
+def _suppresses_communication_notifications(task: Task) -> bool:
+    if task.metadata.get("suppress_communication_notifications") is True:
+        return True
+    return task.metadata.get("source_kind") in {"bro_detail_text", "bro_detail_ptt"}

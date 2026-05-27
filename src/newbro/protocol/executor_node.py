@@ -11,6 +11,7 @@ class ExecutorNodeExecutor(BaseModel):
     executor_type: str
     supports_resume: bool = False
     supports_follow_up: bool = False
+    supports_audio_instruction: bool = False
     supports_pause: bool = False
     supports_cancel: bool = True
 
@@ -25,6 +26,7 @@ class ExecutorNodeRecord(BaseModel):
     token_hint: str | None = None
     last_connected_at: str | None = None
     last_seen_at: str | None = None
+    connected_executor_capabilities: list[ExecutorNodeExecutor] = Field(default_factory=list)
 
 
 class ExecutorNodeCredentialIssue(BaseModel):
@@ -88,6 +90,45 @@ class DispatchRunCommand(BaseModel):
     workspace_id: str | None = None
     task_metadata: dict[str, object] = Field(default_factory=dict)
     latest_resume_handle: AgentResumeHandle | None = None
+
+
+class ExecutorAudioInstruction(BaseModel):
+    audio_instruction_id: str
+    target_persona_id: str
+    artifact_path: str
+    mime_type: str
+    duration_ms: int
+    sample_rate: int
+    num_channels: int
+    samples_per_channel: int
+    size_bytes: int
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class ExecutorTextInstruction(BaseModel):
+    instruction_id: str
+    target_persona_id: str
+    text: str
+    source_audio_instruction_id: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class DispatchAudioInstructionCommand(BaseModel):
+    type: Literal["dispatch_audio_instruction"] = "dispatch_audio_instruction"
+    run_id: str
+    execution_session_id: str
+    executor_type: str
+    task_id: str
+    audio: ExecutorAudioInstruction
+
+
+class DispatchTextInstructionCommand(BaseModel):
+    type: Literal["dispatch_text_instruction"] = "dispatch_text_instruction"
+    run_id: str
+    execution_session_id: str
+    executor_type: str
+    task_id: str
+    instruction: ExecutorTextInstruction
 
 
 class CancelRunCommand(BaseModel):

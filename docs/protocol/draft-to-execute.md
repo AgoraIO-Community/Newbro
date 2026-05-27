@@ -1,9 +1,14 @@
 # Draft-to-Execute Protocol
 
 `newbro v1` uses a quiet, voice/ASR-driven draft-to-execute workflow.
-Desktop Bro Detail typed input in push-to-talk mode is the exception: it sends a
-targeted Communication Brain message directly to the selected Bro instead of
-preparing a Draft that needs a separate Send confirmation.
+Bro Detail push-to-talk is the exception: typed input starts a direct Codex task
+when the selected Bro is idle, or sends a typed executor-node text instruction
+to the selected Bro's active executor session when Codex is already running. The
+composer mic sends raw audio to the selected Bro's executor node. The executor
+node transcribes the recording with local Whisper and forwards the transcript as
+a typed text follow-up to the active executor session.
+Neither path prepares a Draft, requires a separate Send confirmation, or creates
+Communication Brain notification candidates for executor output.
 
 The stable contract is:
 
@@ -29,6 +34,47 @@ Fields:
 - `confidence`
 - `started_at`
 - `ended_at`
+
+## Bro Detail Push-To-Talk Audio
+
+Bro Detail composer push-to-talk audio is not an ASR or draft path. The browser
+records only while the mic control is actively pressed, converts the local
+recording to mono PCM, and uploads one raw audio instruction to the active
+session. The browser and gateway clients do not run STT.
+
+The mic is enabled only when all of these facts are true:
+
+- the selected Bro is runtime-backed
+- the Bro is bound to a connected executor node
+- that node has a connected Codex executor
+- the connected node advertises audio-instruction support, normally meaning
+  local Whisper plus text follow-up is available
+- the Bro has a current task with an active Codex execution session and active
+  run
+
+If any condition is false, recording is blocked before microphone capture starts.
+
+The upload endpoint accepts raw PCM only and validates owner auth, target Bro,
+connected Codex node, active Codex run, MIME type, duration, sample rate/channel
+metadata, and size. The current limits are 60 seconds and 25 MB. Accepted audio
+is stored as an artifact and dispatched over the typed executor-node protocol as
+`dispatch_audio_instruction` with an `ExecutorAudioInstruction` payload.
+
+Executor nodes advertise `supports_audio_instruction` only when they can accept
+raw audio and produce a usable executor instruction. In the default path, the
+node transcribes the artifact with local Whisper, creates an
+`ExecutorTextInstruction`, and calls the adapter's text follow-up handler. The
+Codex adapter starts a normal text turn in the existing Codex thread. This path
+does not require Codex realtime audio or API-key realtime auth. Newbro does not
+call Agora prepare/activate, RTC, RTM, ConvoAI, Agora STT, Draft ASR, or Draft
+Send for this composer mic path.
+
+Clients render the voice-note bubble before transcription completes. When the
+executor node reports successful Whisper progress metadata, clients attach the
+transcript under that same audio bubble rather than creating a separate user
+chat turn. The executor node defaults to automatic language detection, and
+foreground executor runs may override Whisper language and model with inline
+arguments.
 
 ## Bro Detail ASR Lifecycle
 

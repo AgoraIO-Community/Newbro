@@ -10,7 +10,7 @@ from newbro.executors.core import (
     ExecutorEvent,
     ExecutorEventType,
 )
-from newbro.protocol import AgentResumeHandle, ExecutionRun, Task
+from newbro.protocol import AgentResumeHandle, ExecutionRun, ExecutorTextInstruction, Task
 
 from .client import CodexAppServerClient
 from .jsonrpc import JsonRpcPeer
@@ -30,6 +30,7 @@ class CodexExecutor:
             executor_type="codex",
             supports_resume=True,
             supports_follow_up=True,
+            supports_audio_instruction=False,
             supports_pause=True,
             supports_cancel=True,
             supports_setup=False,
@@ -37,6 +38,9 @@ class CodexExecutor:
         self._active_runs: dict[str, CodexExecutorSession] = {}
 
     def get_capabilities(self) -> ExecutorCapabilities:
+        return self._capabilities
+
+    async def refresh_capabilities(self) -> ExecutorCapabilities:
         return self._capabilities
 
     async def create_session(self, workspace_id: str | None = None) -> CodexExecutorSession:
@@ -85,158 +89,20 @@ class CodexExecutor:
     ):
         self._active_runs[run.run_id] = session
         try:
-            prompt = self._build_prompt(task)
-            thread_id = await self._ensure_thread(session)
-            turn = await session.client.turn_start(thread_id=thread_id, prompt=prompt)
-            turn_id = _get_nested(turn, "turn", "id")
-            if not isinstance(turn_id, str):
-                raise RuntimeError("Codex turn/start did not return a turn id.")
-
-            last_assistant_message: str | None = None
-            assistant_item_phases: dict[str, str | None] = {}
-            assistant_item_text: dict[str, str] = {}
-            assistant_item_emitted_text: dict[str, str] = {}
-            while True:
-                event = await session.client.next_event()
-                method = str(event.get("method", ""))
-                params = event.get("params")
-                if not isinstance(params, dict):
-                    continue
-
-                if method == "turn/completed":
-                    completed_turn = params.get("turn")
-                    if isinstance(completed_turn, dict) and completed_turn.get("id") != turn_id:
-                        continue
-                    status = _get_nested(params, "turn", "status")
-                    if status == "completed":
-                        if not last_assistant_message:
-                            last_assistant_message = await self._read_final_assistant_message(
-                                session,
-                                turn_id,
-                            )
-                        yield ExecutorEvent(
-                            run_id=run.run_id,
-                            session_id=session.session_id,
-                            event_type=ExecutorEventType.COMPLETED,
-                            message=last_assistant_message or f"Completed: {task.title}",
-                            metadata={"thread_id": session.thread_id or ""},
-                        )
-                        return
-                    error_message = _get_nested(params, "turn", "error", "message")
-                    yield ExecutorEvent(
-                        run_id=run.run_id,
-                        session_id=session.session_id,
-                        event_type=ExecutorEventType.FAILED,
-                        message=str(error_message or "Codex turn failed."),
-                        metadata={"thread_id": session.thread_id or ""},
-                    )
-                    return
-
-                if method == "error":
-                    continue
-
-                if method == "item/agentMessage/delta":
-                    item_id = params.get("itemId")
-                    delta = params.get("delta")
-                    if not isinstance(item_id, str) or not isinstance(delta, str) or not delta:
-                        continue
-                    if assistant_item_phases.get(item_id) != "commentary":
-                        continue
-                    accumulated = assistant_item_text.get(item_id, "") + delta
-                    assistant_item_text[item_id] = accumulated
-                    candidate = accumulated.strip()
-                    previous = assistant_item_emitted_text.get(item_id, "")
-                    if candidate and _should_emit_codex_delta_progress(candidate, previous):
-                        assistant_item_emitted_text[item_id] = candidate
-                        yield ExecutorEvent(
-                            run_id=run.run_id,
-                            session_id=session.session_id,
-                            event_type=ExecutorEventType.PROGRESS,
-                            message=candidate,
-                            metadata={
-                                "thread_id": session.thread_id or "",
-                                "source": "codex",
-                                "codex_item_id": item_id,
-                                "phase": "commentary",
-                            },
-                        )
-                    continue
-
-                if method in {"item/started", "item/completed"}:
-                    item = params.get("item")
-                    if isinstance(item, dict):
-                        item_type = item.get("type")
-                        if item_type in {"assistantMessage", "agentMessage"}:
-                            item_id = item.get("id")
-                            phase = item.get("phase")
-                            if isinstance(item_id, str):
-                                assistant_item_phases[item_id] = phase if isinstance(phase, str) else None
-                            extracted = _extract_item_text(item)
-                            if extracted:
-                                last_assistant_message = extracted
-                                if (
-                                    isinstance(item_id, str)
-                                    and assistant_item_emitted_text.get(item_id) == extracted
-                                ):
-                                    continue
-                                if phase == "final_answer":
-                                    continue
-                                if isinstance(item_id, str):
-                                    assistant_item_emitted_text[item_id] = extracted
-                                yield ExecutorEvent(
-                                    run_id=run.run_id,
-                                    session_id=session.session_id,
-                                    event_type=ExecutorEventType.PROGRESS,
-                                    message=extracted,
-                                    metadata={
-                                        "thread_id": session.thread_id or "",
-                                        "source": "codex",
-                                        "phase": phase if isinstance(phase, str) else "",
-                                    },
-                                )
-                                continue
-                    continue
-
-                blocked_request = _extract_blocked_request(
-                    request_id=event.get("id"),
-                    method=method,
-                    params=params,
-                )
-                if blocked_request is not None:
-                    session.begin_blocked_wait()
-                    yield ExecutorEvent(
-                        run_id=run.run_id,
-                        session_id=session.session_id,
-                        event_type=ExecutorEventType.BLOCKED,
-                        message=blocked_request["message"],
-                        metadata=blocked_request["metadata"],
-                    )
-                    resolution = await session.wait_for_blocked_resolution(
-                        timeout_seconds=self._blocked_wait_timeout_seconds,
-                    )
-                    if resolution == "resolved":
-                        continue
-                    if resolution == "timed_out":
-                        yield ExecutorEvent(
-                            run_id=run.run_id,
-                            session_id=session.session_id,
-                            event_type=ExecutorEventType.FAILED,
-                            message="Timed out waiting for user input.",
-                            metadata={"thread_id": session.thread_id or ""},
-                        )
-                    return
-
-                if method == "thread/status/changed":
-                    status_type = _get_nested(params, "status", "type")
-                    if status_type == "systemError":
-                        yield ExecutorEvent(
-                            run_id=run.run_id,
-                            session_id=session.session_id,
-                            event_type=ExecutorEventType.FAILED,
-                            message="Codex thread entered systemError state.",
-                            metadata={"thread_id": session.thread_id or ""},
-                        )
-                        return
+            async with session.turn_lock:
+                prompt = self._build_prompt(task)
+                thread_id = await self._ensure_thread(session)
+                turn = await session.client.turn_start(thread_id=thread_id, prompt=prompt)
+                turn_id = _get_nested(turn, "turn", "id")
+                if not isinstance(turn_id, str):
+                    raise RuntimeError("Codex turn/start did not return a turn id.")
+                async for event in self._stream_turn_events(
+                    run,
+                    session,
+                    turn_id,
+                    completed_message=f"Completed: {task.title}",
+                ):
+                    yield event
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -249,6 +115,216 @@ class CodexExecutor:
             )
         finally:
             self._active_runs.pop(run.run_id, None)
+
+    async def handle_text_instruction(
+        self,
+        run: ExecutionRun,
+        session: CodexExecutorSession,
+        instruction: ExecutorTextInstruction,
+    ):
+        active_session = self._active_runs.get(run.run_id)
+        if active_session is not session:
+            raise RuntimeError("Codex follow-up instructions require an active run session.")
+        if not session.thread_id:
+            raise RuntimeError("Codex thread is not ready for follow-up instructions.")
+        text = instruction.text.strip()
+        if not text:
+            raise RuntimeError("Follow-up instruction text is empty.")
+        async with session.turn_lock:
+            turn = await session.client.turn_start(
+                thread_id=session.thread_id,
+                prompt=(
+                    "Direct user follow-up instruction:\n"
+                    f"{text}\n\n"
+                    "Act on this instruction in the existing execution thread."
+                ),
+            )
+            turn_id = _get_nested(turn, "turn", "id")
+            if not isinstance(turn_id, str):
+                raise RuntimeError("Codex turn/start did not return a turn id.")
+            event_metadata = {
+                **dict(instruction.metadata),
+                "instruction_id": instruction.instruction_id,
+                "source_audio_instruction_id": instruction.source_audio_instruction_id or "",
+                "turn_id": turn_id,
+            }
+            yield ExecutorEvent(
+                run_id=run.run_id,
+                session_id=session.session_id,
+                event_type=ExecutorEventType.PROGRESS,
+                message="Direct instruction sent to Codex.",
+                metadata={
+                    **event_metadata,
+                    "thread_id": session.thread_id,
+                    "source": "codex",
+                },
+            )
+            async for event in self._stream_turn_events(
+                run,
+                session,
+                turn_id,
+                completed_message="Codex completed the direct instruction.",
+                extra_metadata=event_metadata,
+            ):
+                yield event
+
+    async def _stream_turn_events(
+        self,
+        run: ExecutionRun,
+        session: CodexExecutorSession,
+        turn_id: str,
+        *,
+        completed_message: str,
+        extra_metadata: dict[str, object] | None = None,
+    ):
+        extra = dict(extra_metadata or {})
+        last_assistant_message: str | None = None
+        assistant_item_phases: dict[str, str | None] = {}
+        assistant_item_text: dict[str, str] = {}
+        assistant_item_emitted_text: dict[str, str] = {}
+        while True:
+            event = await session.client.next_event()
+            method = str(event.get("method", ""))
+            params = event.get("params")
+            if not isinstance(params, dict):
+                continue
+
+            if method == "turn/completed":
+                completed_turn = params.get("turn")
+                if isinstance(completed_turn, dict) and completed_turn.get("id") != turn_id:
+                    continue
+                status = _get_nested(params, "turn", "status")
+                if status == "completed":
+                    if not last_assistant_message:
+                        last_assistant_message = await self._read_final_assistant_message(
+                            session,
+                            turn_id,
+                        )
+                    yield ExecutorEvent(
+                        run_id=run.run_id,
+                        session_id=session.session_id,
+                        event_type=ExecutorEventType.COMPLETED,
+                        message=last_assistant_message or completed_message,
+                        metadata={**extra, "thread_id": session.thread_id or ""},
+                    )
+                    return
+                error_message = _get_nested(params, "turn", "error", "message")
+                yield ExecutorEvent(
+                    run_id=run.run_id,
+                    session_id=session.session_id,
+                    event_type=ExecutorEventType.FAILED,
+                    message=str(error_message or "Codex turn failed."),
+                    metadata={**extra, "thread_id": session.thread_id or ""},
+                )
+                return
+
+            if method == "error":
+                continue
+
+            if method == "item/agentMessage/delta":
+                item_id = params.get("itemId")
+                delta = params.get("delta")
+                if not isinstance(item_id, str) or not isinstance(delta, str) or not delta:
+                    continue
+                if assistant_item_phases.get(item_id) != "commentary":
+                    continue
+                accumulated = assistant_item_text.get(item_id, "") + delta
+                assistant_item_text[item_id] = accumulated
+                candidate = accumulated.strip()
+                previous = assistant_item_emitted_text.get(item_id, "")
+                if candidate and _should_emit_codex_delta_progress(candidate, previous):
+                    assistant_item_emitted_text[item_id] = candidate
+                    yield ExecutorEvent(
+                        run_id=run.run_id,
+                        session_id=session.session_id,
+                        event_type=ExecutorEventType.PROGRESS,
+                        message=candidate,
+                        metadata={
+                            **extra,
+                            "thread_id": session.thread_id or "",
+                            "source": "codex",
+                            "codex_item_id": item_id,
+                            "phase": "commentary",
+                        },
+                    )
+                continue
+
+            if method in {"item/started", "item/completed"}:
+                item = params.get("item")
+                if isinstance(item, dict):
+                    item_type = item.get("type")
+                    if item_type in {"assistantMessage", "agentMessage"}:
+                        item_id = item.get("id")
+                        phase = item.get("phase")
+                        if isinstance(item_id, str):
+                            assistant_item_phases[item_id] = phase if isinstance(phase, str) else None
+                        extracted = _extract_item_text(item)
+                        if extracted:
+                            last_assistant_message = extracted
+                            if (
+                                isinstance(item_id, str)
+                                and assistant_item_emitted_text.get(item_id) == extracted
+                            ):
+                                continue
+                            if phase == "final_answer":
+                                continue
+                            if isinstance(item_id, str):
+                                assistant_item_emitted_text[item_id] = extracted
+                            yield ExecutorEvent(
+                                run_id=run.run_id,
+                                session_id=session.session_id,
+                                event_type=ExecutorEventType.PROGRESS,
+                                message=extracted,
+                                metadata={
+                                    **extra,
+                                    "thread_id": session.thread_id or "",
+                                    "source": "codex",
+                                    "phase": phase if isinstance(phase, str) else "",
+                                },
+                            )
+                            continue
+                continue
+
+            blocked_request = _extract_blocked_request(
+                request_id=event.get("id"),
+                method=method,
+                params=params,
+            )
+            if blocked_request is not None:
+                session.begin_blocked_wait()
+                yield ExecutorEvent(
+                    run_id=run.run_id,
+                    session_id=session.session_id,
+                    event_type=ExecutorEventType.BLOCKED,
+                    message=blocked_request["message"],
+                    metadata={**extra, **blocked_request["metadata"]},
+                )
+                resolution = await session.wait_for_blocked_resolution(
+                    timeout_seconds=self._blocked_wait_timeout_seconds,
+                )
+                if resolution == "resolved":
+                    continue
+                if resolution == "timed_out":
+                    yield ExecutorEvent(
+                        run_id=run.run_id,
+                        session_id=session.session_id,
+                        event_type=ExecutorEventType.FAILED,
+                        message="Timed out waiting for user input.",
+                        metadata={**extra, "thread_id": session.thread_id or ""},
+                    )
+                return
+
+            if method == "thread/status/changed":
+                status_type = _get_nested(params, "status", "type")
+                if status_type == "systemError":
+                    yield ExecutorEvent(
+                        run_id=run.run_id,
+                        session_id=session.session_id,
+                        event_type=ExecutorEventType.FAILED,
+                        message="Codex thread entered systemError state.",
+                        metadata={**extra, "thread_id": session.thread_id or ""},
+                    )
+                    return
 
     async def _ensure_thread(self, session: CodexExecutorSession) -> str:
         if session.thread_id:

@@ -7,10 +7,10 @@ import textwrap
 import pytest
 
 from newbro.executors.adapters.codex import CodexExecutor
-from newbro.protocol import ExecutionRun, Task
+from newbro.protocol import ExecutionRun, ExecutorTextInstruction, Task
 
 
-def _write_fake_codex(tmp_path, *, auth_ok: bool = True):
+def _write_fake_codex(tmp_path, *, auth_ok: bool = True, account_type: str = "apiKey"):
     script = tmp_path / "fake-codex"
     script.write_text(
         textwrap.dedent(
@@ -22,6 +22,7 @@ def _write_fake_codex(tmp_path, *, auth_ok: bool = True):
             thread_counter = 0
             turn_counter = 0
             auth_ok = {str(auth_ok)}
+            account_type = {account_type!r}
             turns_by_thread = {{}}
 
             def send(payload):
@@ -44,7 +45,7 @@ def _write_fake_codex(tmp_path, *, auth_ok: bool = True):
                         {{
                             "id": request_id,
                             "result": {{
-                                "account": {{"type": "apiKey"}} if auth_ok else None,
+                                "account": {{"type": account_type}} if auth_ok else None,
                                 "requiresOpenaiAuth": True,
                             }},
                         }}
@@ -207,6 +208,22 @@ def _write_fake_codex(tmp_path, *, auth_ok: bool = True):
                                 }},
                             }}
                         )
+                elif method == "thread/realtime/start":
+                    if params.get("outputModality") != "text" or params.get("threadId") is None:
+                        send({{"id": request_id, "error": {{"message": "bad realtime start"}}}})
+                    else:
+                        send({{"id": request_id, "result": {{}}}})
+                elif method == "thread/realtime/appendAudio":
+                    audio = params.get("audio", {{}})
+                    if not audio.get("data") or not audio.get("sampleRate") or not audio.get("numChannels"):
+                        send({{"id": request_id, "error": {{"message": "bad realtime audio"}}}})
+                    else:
+                        send({{"id": request_id, "result": {{}}}})
+                elif method == "thread/realtime/stop":
+                    if params.get("threadId") is None:
+                        send({{"id": request_id, "error": {{"message": "bad realtime stop"}}}})
+                    else:
+                        send({{"id": request_id, "result": {{}}}})
                 else:
                     send({{"id": request_id, "error": {{"message": f"unknown method: {{method}}"}}}})
             """
@@ -417,6 +434,48 @@ async def test_codex_executor_completes_task_with_fake_app_server(tmp_path):
     assert events[-1].event_type.value == "completed"
     assert events[-1].message == "Done from Codex."
     assert session.thread_id == "thread-1"
+    await session.close()
+
+
+@pytest.mark.anyio
+async def test_codex_executor_refresh_capabilities_leaves_audio_to_executor_node_transcription(tmp_path):
+    command = _write_fake_codex(tmp_path, account_type="apiKey")
+    executor = CodexExecutor(command=str(command))
+
+    capabilities = await executor.refresh_capabilities()
+
+    assert capabilities.supports_audio_instruction is False
+    assert capabilities.supports_follow_up is True
+
+
+@pytest.mark.anyio
+async def test_codex_executor_sends_transcribed_audio_instruction_as_text_follow_up(tmp_path):
+    command = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+    session = await executor.create_session(str(tmp_path))
+    session.thread_id = "thread-1"
+    run = ExecutionRun(
+        run_id="run-audio",
+        task_id="task-1",
+        execution_session_id="exec-1",
+        executor_type="codex",
+    )
+    executor._active_runs[run.run_id] = session
+
+    instruction = ExecutorTextInstruction(
+        instruction_id="txt-aud-1",
+        target_persona_id="forge",
+        text="Please use the latest screenshot.",
+        source_audio_instruction_id="aud-1",
+        metadata={"source": "executor_node_whisper", "transcription_language": "en"},
+    )
+    events = [event async for event in executor.handle_text_instruction(run, session, instruction)]
+
+    assert [event.event_type.value for event in events] == ["progress", "progress", "completed"]
+    assert events[0].message == "Direct instruction sent to Codex."
+    assert events[-1].message == "Done from Codex."
+    assert events[-1].metadata["source_audio_instruction_id"] == "aud-1"
+    assert events[-1].metadata["transcription_language"] == "en"
     await session.close()
 
 
