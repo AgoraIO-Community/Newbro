@@ -96,8 +96,9 @@ Bro detail continuity:
   compatible request shapes instead of projecting an empty thread list.
 - Opening a `BroThread` is an explicit hydration operation. Newbro resolves the
   public thread id to a Codex resume handle, asks the detached executor node to
-  load and subscribe to the native thread with Codex `thread/resume`, then reads
-  initial history through Codex `thread/read`. The executor node forwards
+  read initial history through non-subscribing Codex `thread/read`, then starts
+  the selected-thread live layer by loading/subscribing to the native thread
+  with Codex `thread/resume`. The executor node forwards
   selected-thread events back to Newbro, and Newbro refreshes the public
   `BroThread` projection from `thread/read` when relevant events arrive.
   Leaving or replacing the selected thread must call the node's selected-thread

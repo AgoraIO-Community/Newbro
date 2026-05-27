@@ -749,8 +749,8 @@ async def test_open_imported_codex_thread_reports_recoverable_read_timeout(
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Codex thread/read timed out."
-    assert len(subscription_calls) == 1
-    assert unsubscribe_calls == [(subscription_calls[0], "codex-timeout-history")]
+    assert subscription_calls == []
+    assert unsubscribe_calls == []
 
 
 @pytest.mark.anyio

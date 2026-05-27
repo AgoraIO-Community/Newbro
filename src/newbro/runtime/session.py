@@ -941,36 +941,46 @@ class SessionRuntime:
         if not node_id:
             raise ValueError("Selected Codex thread is not connected to an executor node.")
         imported_thread = self._imported_codex_threads.get(resolved_thread_id)
-        subscribed_selected_thread = await self._replace_selected_codex_thread_subscription(
+        current_subscription = self._selected_codex_thread_subscriptions.get(persona.persona_id)
+        if (
+            current_subscription is not None
+            and (
+                current_subscription.public_thread_id != resolved_thread_id
+                or current_subscription.codex_thread_id != resume_handle.session_handle
+                or current_subscription.node_id != node_id
+            )
+        ):
+            await self._stop_selected_codex_thread_subscription(persona_id=persona.persona_id)
+
+        thread = await self.executor_node_manager.request_codex_thread(
+            node_id=node_id,
+            thread_id=resume_handle.session_handle,
+        )
+        await self._hydrate_opened_codex_thread_history(
             persona=persona,
             public_thread_id=resolved_thread_id,
             thread_continuity_key=thread_continuity_key,
-            node_id=node_id,
             resume_handle=resume_handle,
+            selected_session=selected_session,
+            node_id=node_id,
+            thread=thread,
             fallback_timestamp=imported_thread.updated_at if imported_thread is not None else None,
         )
         try:
-            thread = await self.executor_node_manager.request_codex_thread(
-                node_id=node_id,
-                thread_id=resume_handle.session_handle,
-            )
-            await self._hydrate_opened_codex_thread_history(
+            await self._replace_selected_codex_thread_subscription(
                 persona=persona,
                 public_thread_id=resolved_thread_id,
                 thread_continuity_key=thread_continuity_key,
-                resume_handle=resume_handle,
-                selected_session=selected_session,
                 node_id=node_id,
-                thread=thread,
+                resume_handle=resume_handle,
                 fallback_timestamp=imported_thread.updated_at if imported_thread is not None else None,
             )
-        except Exception:
-            if subscribed_selected_thread:
-                await self._stop_selected_codex_thread_subscription(
-                    persona_id=persona.persona_id,
-                    public_thread_id=resolved_thread_id,
-                )
-            raise
+        except Exception as exc:
+            LOGGER.warning(
+                "Selected Codex thread subscription failed for %s after hydration: %s",
+                resume_handle.session_handle,
+                exc,
+            )
         return await self.publish_snapshot()
 
     async def close_bro_thread(
