@@ -5,8 +5,10 @@ Bro Detail push-to-talk is the exception: typed input starts a direct Codex task
 when the selected Bro is idle, or sends a typed executor-node text instruction
 to the selected Bro's active executor session when Codex is already running. The
 composer mic sends raw audio to the selected Bro's executor node. The executor
-node transcribes the recording with local Whisper and forwards the transcript as
-a typed text follow-up to the active executor session.
+node transcribes the recording with local Whisper. If the selected Bro is idle,
+Newbro creates the same kind of direct Codex task that typed PTT creates; if
+Codex is already running, Newbro queues the transcript as direct Codex work in
+the selected thread instead of routing through Communication Brain.
 Neither path prepares a Draft, requires a separate Send confirmation, or creates
 Communication Brain notification candidates for executor output.
 
@@ -40,7 +42,7 @@ Fields:
 Bro Detail composer push-to-talk audio is not an ASR or draft path. The browser
 records only while the mic control is actively pressed, converts the local
 recording to mono PCM, and uploads one raw audio instruction to the active
-session. The browser and gateway clients do not run STT.
+Bro thread. The browser and gateway clients do not run STT.
 
 The mic is enabled only when all of these facts are true:
 
@@ -49,25 +51,41 @@ The mic is enabled only when all of these facts are true:
 - that node has a connected Codex executor
 - the connected node advertises audio-instruction support, normally meaning
   local Whisper plus text follow-up is available
-- the Bro has a current task with an active Codex execution session and active
-  run
 
 If any condition is false, recording is blocked before microphone capture starts.
 
 The upload endpoint accepts raw PCM only and validates owner auth, target Bro,
-connected Codex node, active Codex run, MIME type, duration, sample rate/channel
-metadata, and size. The current limits are 60 seconds and 25 MB. Accepted audio
-is stored as an artifact and dispatched over the typed executor-node protocol as
-`dispatch_audio_instruction` with an `ExecutorAudioInstruction` payload.
+connected Codex node, MIME type, duration, sample rate/channel metadata, and
+size. The current limits are 60 seconds and 25 MB. Accepted audio is stored as
+an artifact. If a matching active Codex run exists, Newbro dispatches it over
+the typed executor-node protocol as `dispatch_audio_instruction` with an
+`ExecutorAudioInstruction` payload. If no active run exists, Newbro sends
+`transcribe_audio_instruction`, receives a Whisper transcript from the executor
+node, and creates a queued direct Codex task from that transcript.
 
 Executor nodes advertise `supports_audio_instruction` only when they can accept
 raw audio and produce a usable executor instruction. In the default path, the
-node transcribes the artifact with local Whisper, creates an
-`ExecutorTextInstruction`, and calls the adapter's text follow-up handler. The
-Codex adapter starts a normal text turn in the existing Codex thread. This path
-does not require Codex realtime audio or API-key realtime auth. Newbro does not
-call Agora prepare/activate, RTC, RTM, ConvoAI, Agora STT, Draft ASR, or Draft
-Send for this composer mic path.
+node transcribes the artifact with local Whisper. Active-run audio returns a
+Whisper progress event that Newbro converts into a queued direct Codex task for
+the selected thread; idle audio returns a direct transcription response and
+Newbro starts that queued task immediately. This path does not require Codex
+realtime audio or API-key realtime auth. Newbro does not call Agora
+prepare/activate, RTC, RTM, ConvoAI, Agora STT, Draft ASR, or Draft Send for
+this composer mic path.
+
+Executor-node Whisper transcription resamples browser PCM to Whisper's expected
+16 kHz input rate, uses VAD/no-speech filtering, and does not condition a new
+voice note on prior transcript text. If the recording is too short or Whisper
+reports no clear speech, Newbro fails the voice note instead of creating a
+direct Codex task from a likely hallucinated transcript.
+
+Direct typed/PTT task `goal` and `latest_instruction` store only user-authored
+input or executor-node transcripts. Persona/base-prompt text is executor
+guidance and must not be persisted into user-visible task instruction fields or
+rendered as a user message in Bro Detail.
+When Codex or ACPX executes a direct Bro Detail typed/PTT task, the executor
+turn input is the raw user text/transcript itself; Newbro must not wrap it in
+`Task:`, `Goal:`, persona guidance, or any other prompt prefix.
 
 Clients render the voice-note bubble before transcription completes. When the
 executor node reports successful Whisper progress metadata, clients attach the

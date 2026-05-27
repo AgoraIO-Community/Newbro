@@ -61,13 +61,19 @@ class ReconcileLoop:
         return completed_run_ids
 
     async def _execute_task(self, task: Task, claimed) -> str | None:
-        # Inject persona base_prompt into the task if assigned.
+        executor_task = task
         persona_id = task.metadata.get("persona_id")
         if isinstance(persona_id, str):
             persona = await self._store.get_persona(persona_id)
             if persona is not None and persona.base_prompt:
-                existing = task.latest_instruction or ""
-                task.latest_instruction = f"{persona.base_prompt}\n\n{existing}".strip()
+                executor_task = task.model_copy(
+                    update={
+                        "metadata": {
+                            **task.metadata,
+                            "executor_persona_prompt": persona.base_prompt,
+                        }
+                    }
+                )
 
         executor_type = task.preferred_executor or self._default_executor_type
         try:
@@ -90,7 +96,7 @@ class ReconcileLoop:
         )
         await self._modes.initialize_task_mode(self._store, task.task_id)
         started_at = time.monotonic()
-        async for event in executor.run_task(run, task, executor_session):
+        async for event in executor.run_task(run, executor_task, executor_session):
             await self._runs.apply_event(self._store, task, run, event)
             await self._modes.classify(
                 self._store,

@@ -1365,25 +1365,11 @@ class SessionRuntime:
         ):
             raise ValueError("Selected Bro's executor node does not support audio transcription instructions.")
 
-        thread_target_id, thread_continuity_key, _thread_session, _thread_resume_handle = await self._resolve_bro_thread_target(
+        thread_target_id, thread_continuity_key, thread_session, thread_resume_handle = await self._resolve_bro_thread_target(
             persona=persona,
             target_thread_id=target_thread_id,
             create_new_thread=False,
         )
-        execution_session, run = await self._active_codex_execution_for_persona(
-            persona.persona_id,
-            target_thread_id=thread_target_id,
-        )
-        if execution_session is None or run is None:
-            raise ValueError("Selected Bro has no active Codex execution session.")
-
-        task = await self.blackboard.get_task(run.task_id)
-        if task is not None:
-            task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_ptt")
-            task.metadata["bro_thread_id"] = thread_continuity_key
-            task.metadata["target_thread_id"] = thread_target_id
-            await self.blackboard.put_task(task)
-
         audio_instruction_id = f"aud-{uuid4().hex[:12]}"
         artifact_dir = AUDIO_ARTIFACT_DIR / self.session_id
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -1402,6 +1388,91 @@ class SessionRuntime:
             size_bytes=len(pcm16),
             metadata={"source": "bro_detail_ptt", "target_thread_id": thread_target_id},
         )
+        execution_session, run = await self._active_codex_execution_for_persona(
+            persona.persona_id,
+            target_thread_id=thread_target_id,
+        )
+        if execution_session is None or run is None:
+            try:
+                transcription = await self.executor_node_manager.transcribe_audio_instruction(
+                    executor_type="codex",
+                    node_id=persona.executor_node_id,
+                    audio=audio,
+                )
+            except RuntimeError as exc:
+                raise ValueError(str(exc)) from exc
+            transcript = (transcription.transcript_text or "").strip()
+            if not transcript:
+                raise ValueError("Audio transcription produced no instruction text.")
+            audio.metadata.update(
+                {
+                    "source": "executor_node_whisper",
+                    "source_audio_instruction_id": audio.audio_instruction_id,
+                    "transcript_text": transcript,
+                    "transcription_language": transcription.language or "",
+                    "transcription_duration_seconds": transcription.duration_seconds or 0,
+                    **transcription.metadata,
+                }
+            )
+            instruction = ExecutorTextInstruction(
+                instruction_id=f"txt-{audio.audio_instruction_id}",
+                target_persona_id=persona.persona_id,
+                target_thread_id=thread_target_id,
+                text=transcript,
+                source_audio_instruction_id=audio.audio_instruction_id,
+                metadata={
+                    "source": "executor_node_whisper",
+                    "target_thread_id": thread_target_id,
+                    "source_audio_instruction_id": audio.audio_instruction_id,
+                    "transcript_text": transcript,
+                },
+            )
+            if persona.current_task_id:
+                pending_task = await self.blackboard.get_task(persona.current_task_id)
+                pending_thread_id = pending_task.metadata.get("bro_thread_id") if pending_task is not None else None
+                if (
+                    pending_task is not None
+                    and pending_task.status in {TaskStatus.CREATED, TaskStatus.QUEUED}
+                    and (target_thread_id is None or pending_thread_id == thread_continuity_key)
+                ):
+                    pending_task.metadata = _mark_direct_executor_input(pending_task.metadata, "bro_detail_ptt")
+                    pending_task.metadata["bro_thread_id"] = thread_continuity_key
+                    pending_task.metadata["target_thread_id"] = thread_target_id
+                    pending_task.metadata["source_audio_instruction_id"] = audio.audio_instruction_id
+                    pending_task.latest_instruction = self._merge_follow_up_instruction(
+                        pending_task.latest_instruction,
+                        instruction.text,
+                    )
+                    pending_task.goal = pending_task.goal or instruction.text
+                    await self.blackboard.put_task(pending_task)
+                    self.schedule_execution()
+                    await self.publish_snapshot()
+                    return audio
+                raise ValueError("Selected Bro has no active Codex execution session.")
+            await self._start_executor_text_task(
+                persona=persona,
+                instruction=instruction,
+                thread_id=thread_target_id,
+                thread_continuity_key=thread_continuity_key,
+                selected_execution_session=thread_session,
+                selected_resume_handle=thread_resume_handle,
+                source_kind="bro_detail_ptt",
+                created_by="bro_detail_ptt",
+                extra_metadata={
+                    "source_audio_instruction_id": audio.audio_instruction_id,
+                    "direct_executor_input_sources": ["bro_detail_ptt"],
+                },
+            )
+            self.schedule_execution()
+            await self.publish_snapshot()
+            return audio
+
+        task = await self.blackboard.get_task(run.task_id)
+        if task is not None:
+            task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_ptt")
+            task.metadata["bro_thread_id"] = thread_continuity_key
+            task.metadata["target_thread_id"] = thread_target_id
+            await self.blackboard.put_task(task)
         dispatched = await self.executor_node_manager.dispatch_audio_instruction(
             run_id=run.run_id,
             execution_session_id=execution_session.execution_session_id,
@@ -1422,7 +1493,9 @@ class SessionRuntime:
         target_thread_id: str | None = None,
     ) -> tuple[ExecutionSession | None, ExecutionRun | None]:
         persona = await self.blackboard.get_persona(persona_id)
-        if persona is None or not persona.current_task_id:
+        if persona is None:
+            return None, None
+        if not persona.current_task_id and target_thread_id is None:
             return None, None
         for execution_session in await self.blackboard.list_sessions():
             if execution_session.base_executor_id != "codex" or not execution_session.active_run_id:
@@ -1432,7 +1505,7 @@ class SessionRuntime:
             run = await self.blackboard.get_run(execution_session.active_run_id or "")
             if run is None:
                 continue
-            if run.task_id != persona.current_task_id:
+            if target_thread_id is None and run.task_id != persona.current_task_id:
                 continue
             if run.executor_type != "codex" or run.status not in AUDIO_ACTIVE_RUN_STATUSES:
                 continue

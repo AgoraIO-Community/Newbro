@@ -230,6 +230,7 @@ export interface ExecutorAudioInstructionResponse {
   status: string;
   duration_ms: number;
   size_bytes: number;
+  transcript_text?: string | null;
 }
 
 export async function submitExecutorAudioInstruction(

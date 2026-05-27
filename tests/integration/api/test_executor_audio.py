@@ -8,6 +8,7 @@ from newbro.api.public_auth import PublicAuthStore
 from newbro.blackboard.store import BlackboardWriteEvent, BlackboardWriteKind
 from newbro.protocol import (
     AgentResumeHandle,
+    AudioInstructionTranscribedMessage,
     ExecutionRun,
     ExecutionSession,
     ExecutorNodeExecutor,
@@ -334,6 +335,106 @@ async def test_executor_audio_instruction_dispatches_to_executor_without_message
     assert websocket.sent[0]["type"] == "dispatch_audio_instruction"
     assert websocket.sent[0]["task_id"] == "task-current"
     assert websocket.sent[0]["audio"]["target_persona_id"] == "forge"
+
+
+@pytest.mark.anyio
+async def test_executor_audio_instruction_starts_direct_task_for_connected_idle_bro(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-audio-idle")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        manager = app.state.runtime_container.executor_node_manager
+        manager._connections_by_node["node-forge"] = NodeConnectionState(
+            websocket=websocket,
+            node_id="node-forge",
+            connected_at="2026-05-26T00:00:00+00:00",
+            executors={
+                "codex": ExecutorNodeExecutor(
+                    executor_type="codex",
+                    supports_resume=True,
+                    supports_follow_up=True,
+                    supports_audio_instruction=True,
+                )
+            },
+        )
+        await runtime_session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id="node-forge",
+                bro_detail_session_id="detail-forge",
+                status="idle",
+                current_task_id=None,
+            )
+        )
+        scheduled = False
+
+        def mark_scheduled(self) -> None:
+            nonlocal scheduled
+            scheduled = True
+
+        async def fake_transcribe_audio_instruction(**kwargs):
+            assert kwargs["executor_type"] == "codex"
+            assert kwargs["node_id"] == "node-forge"
+            assert kwargs["audio"].target_persona_id == "forge"
+            return AudioInstructionTranscribedMessage(
+                request_id="audio-transcribe-test",
+                node_id="node-forge",
+                executor_type="codex",
+                transcript_text="start from recorded audio",
+                language="en",
+                duration_seconds=0.1,
+                metadata={"whisper_model": "fake"},
+            )
+
+        monkeypatch.setattr(type(runtime_session), "schedule_execution", mark_scheduled)
+        monkeypatch.setattr(manager, "transcribe_audio_instruction", fake_transcribe_audio_instruction)
+
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-audio-instructions",
+            params={
+                "target_persona_id": "forge",
+                "duration_ms": 1,
+                "sample_rate": 24000,
+                "num_channels": 1,
+                "samples_per_channel": 24,
+            },
+            content=b"\x00\x00" * 24,
+            headers={"Content-Type": "audio/pcm"},
+        )
+        conversation = (await client.get(f"/api/sessions/{session_id}/conversation")).json()
+        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "accepted"
+    assert response.json()["transcript_text"] == "start from recorded audio"
+    assert conversation["conversation_history"] == []
+    assert scheduled
+    assert websocket.sent == []
+    tasks = await runtime_session.blackboard.list_tasks()
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.status == TaskStatus.QUEUED
+    assert task.preferred_executor == "codex"
+    assert task.latest_instruction == "start from recorded audio"
+    assert task.metadata["source_kind"] == "bro_detail_ptt"
+    assert task.metadata["source_audio_instruction_id"] == response.json()["audio_instruction_id"]
+    assert task.metadata["direct_executor_input_sources"] == ["bro_detail_ptt"]
+    assert task.metadata["suppress_communication_notifications"] is True
+    projected_thread = next(
+        thread for thread in snapshot["bro_threads"] if thread["thread_id"] == response.json()["target_thread_id"]
+    )
+    assert projected_thread["execution_session_id"] is None
+    assert projected_thread["status"] == "queued"
+    assert projected_thread["task_ids"] == [task.task_id]
 
 
 @pytest.mark.anyio

@@ -2889,8 +2889,13 @@
 }
 
 .dt-detail-v2.nb-detail-runtime {
-  height: calc(100dvh - 58px);
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
+}
+
+.dt-main:has(.nb-detail-runtime) {
+  overflow: hidden;
 }
 
 .nb-detail-connect-stage {
@@ -3462,7 +3467,8 @@
 
   .dt-detail-v2.nb-detail-runtime {
     display: block;
-    min-height: calc(100dvh - 74px);
+    height: 100%;
+    min-height: 0;
     width: 100%;
   }
 
@@ -3471,7 +3477,8 @@
   }
 
   .nb-detail-runtime .dt-pane {
-    min-height: calc(100dvh - 74px);
+    height: 100%;
+    min-height: 0;
     width: 100%;
   }
 

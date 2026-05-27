@@ -19,6 +19,7 @@ class ExecutorAudioInstructionResponse(BaseModel):
     status: str
     duration_ms: int
     size_bytes: int
+    transcript_text: str | None = None
 
 
 @router.post(
@@ -74,6 +75,9 @@ async def submit_executor_audio_instruction(
         status="accepted",
         duration_ms=audio.duration_ms,
         size_bytes=audio.size_bytes,
+        transcript_text=audio.metadata.get("transcript_text")
+        if isinstance(audio.metadata.get("transcript_text"), str)
+        else None,
     )
 
 

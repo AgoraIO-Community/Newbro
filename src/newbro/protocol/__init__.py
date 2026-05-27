@@ -44,6 +44,7 @@ from .enums import (
 )
 from .executor_node import (
     AckMessage,
+    AudioInstructionTranscribedMessage,
     CancelRunCommand,
     CodexThreadListItem,
     CodexThreadReadMessage,
@@ -64,6 +65,7 @@ from .executor_node import (
     ReleaseRunCommand,
     RunEventMessage,
     SupplyInteractionResponseCommand,
+    TranscribeAudioInstructionCommand,
 )
 from .execution_mode import TaskExecutionMode
 from .interaction import AttentionItem, InteractionRequest
@@ -90,6 +92,7 @@ __all__ = [
     "AttentionPriority",
     "AssignmentLease",
     "AsrTurn",
+    "AudioInstructionTranscribedMessage",
     "BindingStatus",
     "BroThread",
     "ConversationEffect",
@@ -151,6 +154,7 @@ __all__ = [
     "TaskStatus",
     "TaskSpec",
     "TaskSummary",
+    "TranscribeAudioInstructionCommand",
     "UiUpdate",
     "AckMessage",
 ]

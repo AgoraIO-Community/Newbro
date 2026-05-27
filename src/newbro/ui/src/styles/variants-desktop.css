@@ -3288,14 +3288,11 @@
 }
 .nb-audio-wave i {
   display: block;
-  width: 2px;
-  height: 8px;
+  width: 2.5px;
   border-radius: 999px;
   background: currentColor;
-  opacity: 0.78;
+  opacity: 0.75;
 }
-.nb-audio-wave i:nth-child(2n) { height: 14px; }
-.nb-audio-wave i:nth-child(3n) { height: 11px; }
 .nb-audio-label {
   font-size: 13px;
   font-weight: 650;
@@ -3305,19 +3302,40 @@
   margin-left: auto;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  opacity: 0.78;
+  opacity: 0.72;
 }
 .nb-audio-transcript {
   max-width: min(520px, 88%);
-  margin-top: 6px;
-  color: var(--nb-text);
+  margin-top: 10px;
+  color: var(--nb-ink-soft);
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
+  font-style: italic;
   white-space: pre-wrap;
 }
-.nb-audio-bubble-recording .nb-audio-wave i {
-  animation: nb-audio-wave 0.8s ease-in-out infinite;
+.nb-audio-transcript::before {
+  content: "Transcript";
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  font-style: normal;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--nb-ink-muted);
+  margin-bottom: 4px;
 }
+.nb-audio-bubble-recording .nb-audio-wave i {
+  animation: nb-audio-wave 0.9s ease-in-out infinite;
+}
+.nb-audio-bubble-recording .nb-audio-wave i:nth-child(1) { animation-delay:   0ms; }
+.nb-audio-bubble-recording .nb-audio-wave i:nth-child(2) { animation-delay:  90ms; }
+.nb-audio-bubble-recording .nb-audio-wave i:nth-child(3) { animation-delay: 180ms; }
+.nb-audio-bubble-recording .nb-audio-wave i:nth-child(4) { animation-delay: 270ms; }
+.nb-audio-bubble-recording .nb-audio-wave i:nth-child(5) { animation-delay: 360ms; }
+.nb-audio-bubble-recording .nb-audio-wave i:nth-child(6) { animation-delay: 270ms; }
+.nb-audio-bubble-recording .nb-audio-wave i:nth-child(7) { animation-delay: 180ms; }
+.nb-audio-bubble-recording .nb-audio-wave i:nth-child(8) { animation-delay:  90ms; }
+.nb-audio-bubble-recording .nb-audio-wave i:nth-child(9) { animation-delay:   0ms; }
 .nb-audio-bubble-sending { opacity: 0.78; }
 .nb-audio-bubble-failed {
   background: #fff1f2 !important;

@@ -255,3 +255,7 @@ Short log of important design decisions and changes for Newbro.
 - Added client-side paging to desktop and mobile Bro Detail thread pickers: 25 threads render initially, show-more expands by page, and URL-selected threads auto-expand into view.
 - Changed Bro Detail selected-thread timelines to render oldest-to-newest across synced task records, local text/audio turns, and conversation messages so the latest message appears last.
 - Changed Bro Detail task output cards to render the original markdown-like task/assistant summary structure instead of the flattened compact preview string.
+- Changed Bro Detail push-to-talk audio so connected idle Bros can transcribe raw audio through the executor node and start a direct Codex task from the transcript, matching typed PTT instead of requiring a pre-existing active Codex run.
+- Hardened executor-node Whisper transcription for Bro Detail PTT by resampling browser PCM to Whisper's 16 kHz input rate, using VAD/no-speech filtering, disabling prior-text conditioning, and rejecting short/no-clear-speech recordings.
+- Stopped persisting Bro persona/base-prompt guidance into direct typed/PTT task `latest_instruction`; executor guidance now travels as non-user metadata, and Bro Detail direct timelines suppress already-polluted prompt prefixes by rendering the clean task goal/title as the user turn.
+- Changed Codex and ACPX execution of Bro Detail direct typed/PTT tasks to send the raw user text or Whisper transcript as the executor turn input, without `Task:`/`Goal:` wrappers or persona guidance prefixes.

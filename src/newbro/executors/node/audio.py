@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Any, Protocol
 
 from newbro.protocol import ExecutorAudioInstruction
+
+WHISPER_SAMPLE_RATE = 16000
 
 
 @dataclass(slots=True)
@@ -82,7 +85,11 @@ class LocalWhisperTranscriber:
         if audio.num_channels > 1:
             usable = (pcm.size // audio.num_channels) * audio.num_channels
             pcm = pcm[:usable].reshape(-1, audio.num_channels).mean(axis=1).astype(np.int16)
+        signal_stats = _pcm_signal_stats(pcm, sample_rate=audio.sample_rate)
+        if signal_stats["duration_seconds"] < 0.25:
+            raise RuntimeError("Audio recording is too short to transcribe.")
         samples = pcm.astype(np.float32) / 32768.0
+        samples = _resample_audio(samples, source_sample_rate=audio.sample_rate, target_sample_rate=WHISPER_SAMPLE_RATE)
 
         def _run() -> AudioTranscriptionResult:
             model = self._ensure_model()
@@ -90,8 +97,28 @@ class LocalWhisperTranscriber:
                 samples,
                 language=self._language,
                 beam_size=5,
+                condition_on_previous_text=False,
+                hallucination_silence_threshold=1.0,
+                no_repeat_ngram_size=3,
+                vad_filter=True,
+                vad_parameters={
+                    "min_silence_duration_ms": 500,
+                    "speech_pad_ms": 200,
+                },
             )
-            text = " ".join(segment.text.strip() for segment in segments if segment.text.strip()).strip()
+            segment_list = list(segments)
+            accepted_segments = [
+                segment
+                for segment in segment_list
+                if segment.text.strip()
+                and not (
+                    getattr(segment, "no_speech_prob", 0.0) >= 0.8
+                    and getattr(segment, "avg_logprob", 0.0) < -0.5
+                )
+            ]
+            text = " ".join(segment.text.strip() for segment in accepted_segments).strip()
+            if not text:
+                raise RuntimeError("No clear speech was detected in the recording.")
             return AudioTranscriptionResult(
                 text=text,
                 language=getattr(info, "language", None),
@@ -99,6 +126,11 @@ class LocalWhisperTranscriber:
                 metadata={
                     "whisper_model": self._model_name,
                     "language_probability": getattr(info, "language_probability", None),
+                    "audio_peak": signal_stats["peak"],
+                    "audio_rms": signal_stats["rms"],
+                    "audio_rms_norm": signal_stats["rms_norm"],
+                    "whisper_segment_count": len(segment_list),
+                    "whisper_accepted_segment_count": len(accepted_segments),
                 },
             )
 
@@ -143,3 +175,31 @@ def _optional_string(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _pcm_signal_stats(pcm: Any, *, sample_rate: int) -> dict[str, float]:
+    sample_count = int(getattr(pcm, "size", 0) or 0)
+    if sample_count <= 0:
+        return {"duration_seconds": 0.0, "peak": 0.0, "rms": 0.0, "rms_norm": 0.0}
+    peak = float(max(abs(int(value)) for value in pcm))
+    rms = math.sqrt(sum(float(value) * float(value) for value in pcm) / sample_count)
+    return {
+        "duration_seconds": sample_count / max(sample_rate, 1),
+        "peak": peak,
+        "rms": rms,
+        "rms_norm": rms / 32768.0,
+    }
+
+
+def _resample_audio(samples: Any, *, source_sample_rate: int, target_sample_rate: int) -> Any:
+    if source_sample_rate == target_sample_rate:
+        return samples
+    import numpy as np
+
+    sample_count = int(getattr(samples, "size", 0) or 0)
+    if sample_count <= 1:
+        return samples
+    target_count = max(1, round(sample_count * target_sample_rate / max(source_sample_rate, 1)))
+    source_positions = np.linspace(0, sample_count - 1, num=sample_count, dtype=np.float64)
+    target_positions = np.linspace(0, sample_count - 1, num=target_count, dtype=np.float64)
+    return np.interp(target_positions, source_positions, samples).astype(np.float32)

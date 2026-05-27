@@ -313,10 +313,16 @@ class AcpxExecutor:
         return stdout
 
     def _build_prompt(self, task: Task) -> str:
+        direct_input = _direct_bro_detail_input(task)
+        if direct_input is not None:
+            return direct_input
         parts = [
             f"Task: {task.title}",
             f"Goal: {task.goal}",
         ]
+        persona_prompt = task.metadata.get("executor_persona_prompt")
+        if isinstance(persona_prompt, str) and persona_prompt.strip():
+            parts.append(f"Executor persona guidance: {persona_prompt.strip()}")
         if task.latest_instruction:
             parts.append(f"Latest instruction: {task.latest_instruction}")
         notes = [
@@ -340,6 +346,13 @@ class AcpxExecutor:
                 parts.append(f"- {prefix}{constraint['constraint'].strip()}")
         parts.append("Work inside the current repository and return a concise final result.")
         return "\n".join(parts)
+
+
+def _direct_bro_detail_input(task: Task) -> str | None:
+    if task.metadata.get("source_kind") not in {"bro_detail_text", "bro_detail_ptt"}:
+        return None
+    text = task.latest_instruction if isinstance(task.latest_instruction, str) else task.goal
+    return text.strip() if text.strip() else task.title.strip()
 
 
 async def _collect_stderr(

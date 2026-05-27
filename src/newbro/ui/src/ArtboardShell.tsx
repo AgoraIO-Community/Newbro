@@ -213,8 +213,8 @@ function AudioTurnBubble({ bro, turn, mobile = false }: { bro: BroCardModel; tur
   return (
     <div className={`${prefix}-turn ${prefix}-turn-you`}>
       <div className={`${prefix}-bubble ${prefix}-bubble-you nb-audio-bubble nb-audio-bubble-${turn.status}`}>
-        <span className="nb-audio-wave" aria-hidden="true">{Array.from({ length: 9 }).map((_, index) => <i key={index} />)}</span>
-        <span className="nb-audio-label">Voice note</span>
+        <span className="nb-audio-wave" aria-hidden="true">{[6, 13, 9, 16, 8, 15, 10, 14, 7].map((h, i) => <i key={i} style={{ height: `${h}px` }} />)}</span>
+        <span className="nb-audio-label">{turn.status === "recording" ? "Recording…" : "Voice note"}</span>
         <span className="nb-audio-duration">{formatAudioDuration(turn.durationMs)}</span>
       </div>
       <div className={metaClass}>
@@ -376,7 +376,7 @@ function applyAudioTranscripts(turns: AudioTurn[], runs: ExecutionRun[]): AudioT
 }
 
 function activeCodexAudioState(
-  shell: Pick<ReturnType<typeof useNewbroShell>, "runtimePersonas" | "executionSessions" | "executionRuns" | "executorNodes">,
+  shell: Pick<ReturnType<typeof useNewbroShell>, "runtimePersonas" | "tasks" | "executionSessions" | "executionRuns" | "executorNodes">,
   bro: BroCardModel,
 ): ActiveCodexAudioState {
   const persona = shell.runtimePersonas.find((candidate) => candidate.persona_id === bro.id);
@@ -391,7 +391,11 @@ function activeCodexAudioState(
   if (codexCapability && !codexCapability.supports_audio_instruction) {
     return { enabled: false, reason: "Enable local Whisper on the executor node before recording." };
   }
-  if (!persona.current_task_id) return { enabled: false, reason: "Start a Codex task before recording." };
+  if (!persona.current_task_id) return { enabled: true, reason: "Hold to record audio" };
+  const currentTask = shell.tasks.find((task) => task.task_id === persona.current_task_id);
+  if (currentTask && ["created", "queued"].includes(currentTask.status)) {
+    return { enabled: true, reason: "Hold to record audio" };
+  }
   const activeRun = shell.executionRuns.find((run) => (
     run.task_id === persona.current_task_id
     && run.executor_type === "codex"
@@ -403,9 +407,6 @@ function activeCodexAudioState(
     && session.active_run_id === activeRun.run_id
   ));
   if (!activeSession) return { enabled: false, reason: "No active Codex session for this Bro." };
-  if (!activeRun || activeRun.executor_type !== "codex" || !["assigned", "running", "blocked"].includes(activeRun.status)) {
-    return { enabled: false, reason: "No active Codex session for this Bro." };
-  }
   return { enabled: true, reason: "Hold to record audio" };
 }
 
@@ -522,7 +523,15 @@ function usePushToTalkAudio({
         samplesPerChannel: pcm.samplesPerChannel,
       });
       onRemoveTurn(active.turnId);
-      onTurn({ id: response.audio_instruction_id, broId, threadId: response.target_thread_id ?? targetThreadId, status: "sent", durationMs: pcm.durationMs || durationMs, createdAt: active.createdAt });
+      onTurn({
+        id: response.audio_instruction_id,
+        broId,
+        threadId: response.target_thread_id ?? targetThreadId,
+        status: "sent",
+        durationMs: pcm.durationMs || durationMs,
+        createdAt: active.createdAt,
+        transcript: response.transcript_text?.trim() || undefined,
+      });
       onSent();
     } catch (error: unknown) {
       const message = describeError(error, "Audio could not be sent.");
@@ -1692,9 +1701,6 @@ function DesktopComposerBar({
           placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? `Type to ${bro.name}...` : textState.reason}
           disabled={disabled}
         />
-        <button type="button" className="dt-cmp-mode nb-detail-clear" onClick={() => setDraft("")} disabled={!draft}>
-          Clear
-        </button>
         <button
           type="button"
           data-testid="voice-session-start"

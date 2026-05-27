@@ -18,6 +18,7 @@ from newbro.executors.adapters.codex import CodexExecutor, CodexExecutorSession
 from newbro.executors.core import ExecutorEvent, ExecutorEventType, ExecutorSession
 from newbro.protocol import (
     AckMessage,
+    AudioInstructionTranscribedMessage,
     CancelRunCommand,
     CodexThreadListItem,
     CodexThreadReadMessage,
@@ -33,6 +34,7 @@ from newbro.protocol import (
     ReleaseRunCommand,
     RunEventMessage,
     SupplyInteractionResponseCommand,
+    TranscribeAudioInstructionCommand,
 )
 
 from .audio import AudioTranscriber, build_audio_transcriber
@@ -174,6 +176,10 @@ class ExecutorNodeService:
         if message_type == "dispatch_audio_instruction":
             command = DispatchAudioInstructionCommand.model_validate(payload)
             await self._dispatch_audio_instruction(websocket, command)
+            return
+        if message_type == "transcribe_audio_instruction":
+            command = TranscribeAudioInstructionCommand.model_validate(payload)
+            await self._transcribe_audio_instruction(websocket, command)
             return
         if message_type == "dispatch_text_instruction":
             command = DispatchTextInstructionCommand.model_validate(payload)
@@ -337,6 +343,57 @@ class ExecutorNodeService:
                 CodexThreadReadMessage(
                     request_id=command.request_id,
                     node_id=self._settings.node_id,
+                    ok=False,
+                    error=str(exc),
+                ).model_dump(mode="json"),
+            )
+
+    async def _transcribe_audio_instruction(
+        self,
+        websocket: Any,
+        command: TranscribeAudioInstructionCommand,
+    ) -> None:
+        if not self._audio_transcriber.available:
+            await self._send_json(
+                websocket,
+                AudioInstructionTranscribedMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    executor_type=command.executor_type,
+                    ok=False,
+                    error="Local Whisper transcription is not available on this executor node.",
+                ).model_dump(mode="json"),
+            )
+            return
+        try:
+            transcription = await self._audio_transcriber.transcribe(command.audio)
+            transcript = transcription.text.strip()
+            if not transcript:
+                raise RuntimeError("Audio transcription produced no instruction text.")
+            await self._send_json(
+                websocket,
+                AudioInstructionTranscribedMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    executor_type=command.executor_type,
+                    transcript_text=transcript,
+                    language=transcription.language,
+                    duration_seconds=transcription.duration_seconds,
+                    metadata={
+                        "source": "executor_node_whisper",
+                        "source_audio_instruction_id": command.audio.audio_instruction_id,
+                        "target_thread_id": command.audio.target_thread_id or "",
+                        **(transcription.metadata or {}),
+                    },
+                ).model_dump(mode="json"),
+            )
+        except Exception as exc:
+            await self._send_json(
+                websocket,
+                AudioInstructionTranscribedMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    executor_type=command.executor_type,
                     ok=False,
                     error=str(exc),
                 ).model_dump(mode="json"),

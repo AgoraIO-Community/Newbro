@@ -19,6 +19,7 @@ from newbro.protocol import (
     ExecutorAudioInstruction,
     ExecutorTextInstruction,
     SupplyInteractionResponseCommand,
+    TranscribeAudioInstructionCommand,
 )
 
 
@@ -294,6 +295,52 @@ async def test_dispatch_audio_instruction_forwards_to_active_executor(monkeypatc
     assert websocket.sent[0]["metadata"]["target_thread_id"] == "bro-thread-1"
     assert websocket.sent[0]["metadata"]["transcript_text"] == "Please continue from the audio."
     assert len(websocket.sent) == 1
+
+
+@pytest.mark.anyio
+async def test_transcribe_audio_instruction_returns_transcript_without_active_run(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    websocket = FakeWebSocket([])
+    command = TranscribeAudioInstructionCommand(
+        request_id="audio-req-1",
+        executor_type="codex",
+        audio=ExecutorAudioInstruction(
+            audio_instruction_id="aud-1",
+            target_persona_id="forge",
+            target_thread_id="bro-thread-1",
+            artifact_path="/tmp/audio.pcm",
+            mime_type="audio/pcm",
+            duration_ms=1000,
+            sample_rate=24000,
+            num_channels=1,
+            samples_per_channel=24000,
+            size_bytes=48000,
+        ),
+    )
+
+    await service._transcribe_audio_instruction(websocket, command)
+
+    assert websocket.sent == [
+        {
+            "type": "audio_instruction_transcribed",
+            "request_id": "audio-req-1",
+            "node_id": "node-1",
+            "executor_type": "codex",
+            "ok": True,
+            "error": None,
+            "transcript_text": "Please continue from the audio.",
+            "language": "en",
+            "duration_seconds": 1.0,
+            "metadata": {
+                "source": "executor_node_whisper",
+                "source_audio_instruction_id": "aud-1",
+                "target_thread_id": "bro-thread-1",
+                "whisper_model": "fake",
+            },
+        }
+    ]
 
 
 @pytest.mark.anyio

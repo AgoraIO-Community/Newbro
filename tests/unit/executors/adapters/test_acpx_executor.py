@@ -143,6 +143,24 @@ async def test_acpx_executor_completes_task_with_fake_cli(tmp_path):
     assert session.agent_session_id == f"agent-session-{session.session_name}"
 
 
+def test_acpx_executor_uses_raw_direct_bro_detail_prompt(tmp_path):
+    command = _write_fake_acpx(tmp_path)
+    executor = AcpxExecutor(command=str(command))
+    task = Task(
+        task_id="task-direct",
+        root_task_id="task-direct",
+        title="Hello hello",
+        goal="Hello hello",
+        latest_instruction="Hello hello",
+        metadata={
+            "source_kind": "bro_detail_text",
+            "executor_persona_prompt": "Execute direct typed and push-to-talk instructions.",
+        },
+    )
+
+    assert executor._build_prompt(task) == "Hello hello"
+
+
 @pytest.mark.anyio
 async def test_acpx_executor_blocks_when_user_input_is_requested(tmp_path):
     command = _write_fake_acpx(tmp_path)

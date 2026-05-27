@@ -10,6 +10,7 @@ from uuid import uuid4
 from newbro.executors.core import ExecutorEvent, ExecutorEventType
 from newbro.protocol import (
     AckMessage,
+    AudioInstructionTranscribedMessage,
     CancelRunCommand,
     CodexThreadListItem,
     CodexThreadReadMessage,
@@ -27,6 +28,7 @@ from newbro.protocol import (
     RegisterNodeMessage,
     RunEventMessage,
     SupplyInteractionResponseCommand,
+    TranscribeAudioInstructionCommand,
 )
 from newbro.executors.node.registry import (
     ExecutorNodeConnectionView,
@@ -75,6 +77,7 @@ class ExecutorNodeManager:
         self._connections_lock = asyncio.Lock()
         self._run_queues: dict[str, asyncio.Queue[NodeRunEnvelope]] = {}
         self._run_states: dict[str, RunDispatchState] = {}
+        self._audio_transcription_requests: dict[str, asyncio.Future[AudioInstructionTranscribedMessage]] = {}
         self._codex_thread_list_requests: dict[str, asyncio.Future[CodexThreadsListedMessage]] = {}
         self._codex_thread_read_requests: dict[str, asyncio.Future[CodexThreadReadMessage]] = {}
 
@@ -349,6 +352,47 @@ class ExecutorNodeManager:
             await self.disconnect(websocket=connection.websocket, reason="audio_instruction_failed")
             return False
         return True
+
+    async def transcribe_audio_instruction(
+        self,
+        *,
+        executor_type: str,
+        node_id: str,
+        audio: ExecutorAudioInstruction,
+        timeout_seconds: float = 30.0,
+    ) -> AudioInstructionTranscribedMessage:
+        connection = await self._connection_for_node(node_id)
+        if connection is None:
+            raise RuntimeError("Codex executor node is not connected.")
+        executor = connection.executors.get(executor_type)
+        if executor is None or not executor.supports_audio_instruction:
+            raise RuntimeError("Selected Bro's executor node does not support audio transcription instructions.")
+        request_id = f"audio-transcribe-{uuid4().hex[:12]}"
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[AudioInstructionTranscribedMessage] = loop.create_future()
+        self._audio_transcription_requests[request_id] = future
+        command = TranscribeAudioInstructionCommand(
+            request_id=request_id,
+            executor_type=executor_type,
+            audio=audio,
+        )
+        try:
+            await self._send_json(connection, command.model_dump(mode="json"))
+            response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except Exception:
+            self._audio_transcription_requests.pop(request_id, None)
+            raise
+        if not response.ok:
+            raise RuntimeError(response.error or "Audio transcription failed.")
+        return response
+
+    def publish_audio_instruction_transcribed(self, message: AudioInstructionTranscribedMessage) -> AckMessage:
+        future = self._audio_transcription_requests.pop(message.request_id, None)
+        if future is None:
+            return AckMessage(message_type=message.type, ok=False, detail="unknown_request")
+        if not future.done():
+            future.set_result(message)
+        return AckMessage(message_type=message.type, detail="queued")
 
     async def dispatch_text_instruction(
         self,

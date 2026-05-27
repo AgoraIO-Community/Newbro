@@ -174,6 +174,26 @@ class DispatchAudioInstructionCommand(BaseModel):
     audio: ExecutorAudioInstruction
 
 
+class TranscribeAudioInstructionCommand(BaseModel):
+    type: Literal["transcribe_audio_instruction"] = "transcribe_audio_instruction"
+    request_id: str
+    executor_type: str
+    audio: ExecutorAudioInstruction
+
+
+class AudioInstructionTranscribedMessage(BaseModel):
+    type: Literal["audio_instruction_transcribed"] = "audio_instruction_transcribed"
+    request_id: str
+    node_id: str
+    executor_type: str
+    ok: bool = True
+    error: str | None = None
+    transcript_text: str | None = None
+    language: str | None = None
+    duration_seconds: float | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
 class DispatchTextInstructionCommand(BaseModel):
     type: Literal["dispatch_text_instruction"] = "dispatch_text_instruction"
     run_id: str

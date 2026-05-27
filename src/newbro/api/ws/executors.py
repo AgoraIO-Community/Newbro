@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from newbro.protocol import (
     AckMessage,
+    AudioInstructionTranscribedMessage,
     CodexThreadReadMessage,
     CodexThreadsListedMessage,
     NodeStatusMessage,
@@ -85,4 +86,10 @@ async def _handle_control_message(container, websocket: WebSocket, payload: obje
         except ValidationError:
             return AckMessage(message_type="codex_thread_read", ok=False, detail="invalid_payload")
         return container.executor_node_manager.publish_codex_thread_read(message)
+    if message_type == "audio_instruction_transcribed":
+        try:
+            message = AudioInstructionTranscribedMessage.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="audio_instruction_transcribed", ok=False, detail="invalid_payload")
+        return container.executor_node_manager.publish_audio_instruction_transcribed(message)
     return AckMessage(message_type=str(message_type or "unknown"), ok=False, detail="unknown_message_type")

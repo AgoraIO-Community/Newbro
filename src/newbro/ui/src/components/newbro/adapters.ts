@@ -229,7 +229,7 @@ function buildTaskRecord(
   const userText = sourceKind === "codex_thread_history"
     ? task.latest_instruction?.trim() ?? ""
     : sourceKind === "bro_detail_text" || sourceKind === "bro_detail_ptt"
-      ? (task.latest_instruction?.trim() || task.goal.trim() || task.title.trim())
+      ? directUserText(task)
       : "";
   const timestamp = taskRecordTimestamp(task);
   return {
@@ -245,6 +245,16 @@ function buildTaskRecord(
     timeLabel: taskRecordTimeLabel(task),
     timestampLabel: timestamp ? formatTimestampLabel(timestamp) : undefined,
   };
+}
+
+function directUserText(task: Task): string {
+  const goal = task.goal.trim();
+  const title = task.title.trim();
+  const instruction = task.latest_instruction?.trim() ?? "";
+  if (!instruction) return goal || title;
+  if (goal && instruction.includes(goal)) return goal;
+  if (title && instruction.includes(title)) return title;
+  return instruction;
 }
 
 function normalizeProgressCandidate(value: string | null | undefined): string | null {

@@ -786,14 +786,14 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByPlaceholderText("Reconnect the node before sending")).toBeDisabled();
   });
 
-  it("gates desktop PTT audio on an active Codex execution session", async () => {
+  it("enables desktop PTT audio for a connected idle Codex Bro", async () => {
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
 
     expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
-    expect(screen.getByTestId("voice-session-start")).toBeDisabled();
-    expect(screen.getByTestId("voice-session-start")).toHaveAccessibleName("Start a Codex task before recording.");
+    expect(screen.getByTestId("voice-session-start")).toBeEnabled();
+    expect(screen.getByTestId("voice-session-start")).toHaveAccessibleName("Hold to record audio");
     expect(connectorMock.prepareConnectorSession).not.toHaveBeenCalled();
   });
 
@@ -1149,6 +1149,38 @@ describe("buildBroTaskRecords", () => {
     });
 
     expect(records[0].userText).toBe("Direct user request");
+  });
+
+  it("does not show executor persona guidance as direct Bro detail user text", () => {
+    const records = buildBroTaskRecords("forge", {
+      broDetailSessionId: "detail-forge",
+      tasks: [
+        {
+          task_id: "task-direct-text",
+          root_task_id: "task-direct-text",
+          parent_task_id: null,
+          title: "Hello, hello",
+          goal: "Hello, hello",
+          status: "completed",
+          priority: 0,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 1,
+          latest_instruction: "Execute direct typed and push-to-talk instructions in the connected workspace.\n\nHello, hello",
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            source_kind: "bro_detail_ptt",
+          },
+        },
+      ],
+      executionRuns: [],
+      summaries: [],
+    });
+
+    expect(records[0].userText).toBe("Hello, hello");
   });
 
   it("filters selected thread tasks before applying the timeline limit", () => {

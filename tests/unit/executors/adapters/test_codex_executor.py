@@ -546,6 +546,24 @@ async def test_codex_executor_sends_transcribed_audio_instruction_as_text_follow
     await session.close()
 
 
+def test_codex_executor_uses_raw_direct_bro_detail_prompt(tmp_path):
+    command = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+    task = Task(
+        task_id="task-direct",
+        root_task_id="task-direct",
+        title="Hello hello",
+        goal="Hello hello",
+        latest_instruction="Hello hello",
+        metadata={
+            "source_kind": "bro_detail_ptt",
+            "executor_persona_prompt": "Execute direct typed and push-to-talk instructions.",
+        },
+    )
+
+    assert executor._build_prompt(task) == "Hello hello"
+
+
 @pytest.mark.anyio
 async def test_codex_executor_forks_existing_thread_on_follow_up(tmp_path):
     command = _write_fake_codex(tmp_path)

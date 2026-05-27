@@ -466,10 +466,16 @@ class CodexExecutor:
         return _extract_assistant_text_from_thread(response, turn_id)
 
     def _build_prompt(self, task: Task) -> str:
+        direct_input = _direct_bro_detail_input(task)
+        if direct_input is not None:
+            return direct_input
         parts = [
             f"Task: {task.title}",
             f"Goal: {task.goal}",
         ]
+        persona_prompt = task.metadata.get("executor_persona_prompt")
+        if isinstance(persona_prompt, str) and persona_prompt.strip():
+            parts.append(f"Executor persona guidance: {persona_prompt.strip()}")
         if task.latest_instruction:
             parts.append(f"Latest instruction: {task.latest_instruction}")
         notes = [
@@ -504,6 +510,13 @@ def _get_nested(value: object, *keys: str) -> object:
             return None
         current = current.get(key)
     return current
+
+
+def _direct_bro_detail_input(task: Task) -> str | None:
+    if task.metadata.get("source_kind") not in {"bro_detail_text", "bro_detail_ptt"}:
+        return None
+    text = task.latest_instruction if isinstance(task.latest_instruction, str) else task.goal
+    return text.strip() if text.strip() else task.title.strip()
 
 
 def _sort_codex_threads(threads: list[dict[str, object]]) -> list[dict[str, object]]:

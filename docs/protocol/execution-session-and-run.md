@@ -107,9 +107,12 @@ Bro detail continuity:
   after the thread is opened. Opening an imported thread for read-only hydration
   must also preserve the Codex `thread/list` updated time as the list sort key;
   only a real follow-up/direct send should make the thread look newly active.
-- push-to-talk audio transcription is emitted by the executor node as a run
-  progress event; Newbro turns the transcript into a queued direct Codex task in
-  the selected `BroThread` rather than attaching it to the already-running turn
+- push-to-talk audio is transcribed by the executor node. When a matching active
+  Codex run exists, the transcript is emitted as a run progress event and Newbro
+  turns it into a queued direct Codex task in the selected `BroThread`; when the
+  Bro is idle, Newbro requests executor-node transcription directly and creates
+  the queued direct Codex task from that transcript without requiring an active
+  run first
 - `BroThread.thread_id` is Newbro-owned UI/API identity; raw executor-native
   thread ids stay diagnostic data, not primary UI labels
 - rebinding a Bro to a different executor node rotates the Bro detail generation,
