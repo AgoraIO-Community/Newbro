@@ -107,8 +107,10 @@ Current behavior:
   for that native thread yet; opening one reuses the cached imported-thread
   projection instead of refreshing the global list, fetches selected history with
   Codex `thread/read` metadata plus a bounded `thread/turns/list` page before
-  rendering the selected timeline, and later selected-thread events refresh the
-  same snapshot stream. The selected timeline is filtered by the
+  rendering the selected timeline. Later direct text/PTT activity is rendered
+  from Newbro task/run events, and snapshot publishes use cached imported-thread
+  state instead of refreshing Codex history on the send path. The selected
+  timeline is filtered by the
   selected thread's `task_ids` before timeline limits are applied. It renders
   both sides of fetched/direct turns: each synced user instruction appears as a
   user bubble, followed by the executor task/progress/assistant output. User

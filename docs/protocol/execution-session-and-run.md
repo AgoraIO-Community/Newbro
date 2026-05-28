@@ -106,8 +106,10 @@ Bro detail continuity:
   shared Codex app-server process for these operations; selected-thread
   subscription records local event interest and must not spawn a separate
   app-server process. The executor node forwards selected-thread events back to
-  Newbro, and Newbro refreshes the public `BroThread` projection from
-  `thread/read` when relevant events arrive.
+  Newbro, but ordinary text/PTT sends and session snapshot publishes must not
+  block on Codex `thread/list` or `thread/read`. Newbro updates direct
+  text/PTT timelines from its typed task/run events; Codex history refresh is an
+  explicit open/hydration operation rather than a hot-path snapshot dependency.
   Leaving or replacing the selected thread must call the node's selected-thread
   close path, which in turn calls Codex `thread/unsubscribe`; stale events from
   older subscription ids are ignored. Hydration projects each returned turn into

@@ -19,7 +19,7 @@ import { buildBroCardModels, buildBroTaskRecords, buildBroThreadRecords } from "
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
-import type { ExecutionRun, ExecutorNodeRecord, Persona, Task } from "./types";
+import type { BroThread, ExecutionRun, ExecutorNodeRecord, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
 type RuntimePage = "home" | "detail";
@@ -27,6 +27,8 @@ type HomeBroState = "working" | "idle" | "offline";
 
 type HomeRecentItem = {
   id: string;
+  broId: string;
+  threadId: string;
   title: string;
   bro: string;
   when: string;
@@ -690,14 +692,22 @@ function compareHomeBros(a: BroCardModel, b: BroCardModel): number {
   return a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.id.localeCompare(b.id);
 }
 
-function broDetailHref(broId: string): string {
+function broDetailHref(broId: string, threadId?: string | null): string {
   if (typeof window === "undefined") return `/bros/${encodeURIComponent(broId)}`;
   const sid = new URLSearchParams(window.location.search).get("sid");
-  const query = sid ? `?sid=${encodeURIComponent(sid)}` : "";
+  const params = new URLSearchParams();
+  if (sid) params.set("sid", sid);
+  if (threadId) params.set("thread", threadId);
+  const query = params.toString() ? `?${params.toString()}` : "";
   return `/bros/${encodeURIComponent(broId)}${query}`;
 }
 
-function openBroFromHome(event: MouseEvent<HTMLAnchorElement>, broId: string, onOpen: (id: string) => void): void {
+function openBroFromHome(
+  event: MouseEvent<HTMLAnchorElement>,
+  broId: string,
+  onOpen: (id: string, threadId?: string) => void,
+  threadId?: string,
+): void {
   if (
     event.defaultPrevented
     || event.button !== 0
@@ -709,31 +719,39 @@ function openBroFromHome(event: MouseEvent<HTMLAnchorElement>, broId: string, on
     return;
   }
   event.preventDefault();
-  onOpen(broId);
+  onOpen(broId, threadId);
 }
 
-function taskTimeLabel(task: Task): string {
-  const value = ["updated_at", "completed_at", "created_at"]
-    .map((key) => task.metadata[key])
-    .find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0);
-  if (!value) return task.status.replace(/_/g, " ");
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) return task.status.replace(/_/g, " ");
-  const minutes = Math.floor(Math.max(0, Date.now() - timestamp) / 60_000);
+function homeThreadSortTime(thread: BroThread): number {
+  const parsed = thread.updated_at ? Date.parse(thread.updated_at) : Number.NaN;
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function homeThreadTimeLabel(thread: BroThread): string {
+  const parsed = thread.updated_at ? Date.parse(thread.updated_at) : Number.NaN;
+  if (Number.isNaN(parsed)) return thread.status.replace(/_/g, " ");
+  const minutes = Math.floor(Math.max(0, Date.now() - parsed) / 60_000);
   if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h`;
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(timestamp));
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(parsed));
 }
 
-function buildHomeRecents(tasks: Task[], personas: Persona[]): HomeRecentItem[] {
+function buildHomeRecents(threads: BroThread[], personas: Persona[]): HomeRecentItem[] {
   const personaNameById = new Map(personas.map((persona) => [persona.persona_id, persona.name]));
-  return [...tasks].reverse().slice(0, 5).map((task) => {
-    const personaId = task.metadata.persona_id ?? task.metadata.assigned_bro_id;
-    const bro = typeof personaId === "string" ? (personaNameById.get(personaId) ?? "NewBro") : "NewBro";
-    return { id: task.task_id, title: task.title, bro, when: taskTimeLabel(task) };
-  });
+  return [...threads]
+    .filter((thread) => personaNameById.has(thread.persona_id))
+    .sort((a, b) => homeThreadSortTime(b) - homeThreadSortTime(a))
+    .slice(0, 5)
+    .map((thread) => ({
+      id: thread.thread_id,
+      broId: thread.persona_id,
+      threadId: thread.thread_id,
+      title: thread.title || "Current session",
+      bro: personaNameById.get(thread.persona_id) ?? thread.persona_name ?? "NewBro",
+      when: homeThreadTimeLabel(thread),
+    }));
 }
 
 function Header({
@@ -910,13 +928,13 @@ function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
   );
 }
 
-function DesktopHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
+function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) => void }) {
   const shell = useNewbroShell();
   const [sheetOpen, setSheetOpen] = useState(false);
   const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
   const workingBros = homeBros.filter((bro) => homeBroState(bro) === "working");
   const standingByBros = homeBros.filter((bro) => homeBroState(bro) !== "working");
-  const recents = buildHomeRecents(shell.tasks, shell.runtimePersonas);
+  const recents = buildHomeRecents(shell.broThreads, shell.runtimePersonas);
   const hasBros = shell.runtimePersonas.length > 0;
 
   if (!shell.hasLoadedShellSnapshot) return null;
@@ -974,13 +992,17 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
                   <ul className="dt-recent-list">
                     {recents.map((recent) => (
                       <li key={recent.id}>
-                        <div className="dt-recent">
+                        <a
+                          className="dt-recent"
+                          href={broDetailHref(recent.broId, recent.threadId)}
+                          onClick={(event) => openBroFromHome(event, recent.broId, onOpenBro, recent.threadId)}
+                        >
                           <span className="dt-recent-icon"><FileText size={14} strokeWidth={1.9} /></span>
                           <span className="dt-recent-body">
                             <span className="dt-recent-title">{recent.title}</span>
                             <span className="dt-recent-meta"><span>{recent.bro}</span><span className="dt-bro-meta-sep">·</span><span>{recent.when}</span></span>
                           </span>
-                        </div>
+                        </a>
                       </li>
                     ))}
                   </ul>
@@ -2380,7 +2402,7 @@ function MobileStage({ children }: { children: React.ReactNode }) {
   );
 }
 
-function MobileHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
+function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) => void }) {
   const shell = useNewbroShell();
   const [accountOpen, setAccountOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -2391,7 +2413,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
   const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
   const working = homeBros.filter((bro) => homeBroState(bro) === "working");
   const standing = homeBros.filter((bro) => homeBroState(bro) !== "working");
-  const recents = buildHomeRecents(shell.tasks, shell.runtimePersonas);
+  const recents = buildHomeRecents(shell.broThreads, shell.runtimePersonas);
   const anyOverlay = accountOpen || addOpen || !!confirmId;
   const confirmBro = confirmId ? shell.bros.find((b) => b.id === confirmId) ?? null : null;
   const account = shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in";
@@ -2511,13 +2533,13 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
               <ul className="home-recents">
                 {recents.map((recent) => (
                   <li key={recent.id}>
-                    <div className="home-recent">
+                    <button type="button" className="home-recent" onClick={() => onOpenBro(recent.broId, recent.threadId)}>
                       <span className="home-recent-icon"><FileText size={13} /></span>
                       <span className="home-recent-body">
                         <span className="home-recent-title">{recent.title}</span>
                         <span className="home-recent-meta">{recent.bro} · {recent.when}</span>
                       </span>
-                    </div>
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -2814,7 +2836,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   );
 }
 
-export function ArtboardHomePage({ onOpenBro }: { onOpenBro: (broId: string) => void }) {
+export function ArtboardHomePage({ onOpenBro }: { onOpenBro: (broId: string, threadId?: string) => void }) {
   return <DesktopHome onOpenBro={onOpenBro} />;
 }
 
@@ -2828,7 +2850,7 @@ export function ArtboardMobilePage({
   onBack,
 }: {
   broId?: string | null;
-  onOpenBro?: (id: string) => void;
+  onOpenBro?: (id: string, threadId?: string) => void;
   onBack?: () => void;
 } = {}) {
   const shell = useNewbroShell();

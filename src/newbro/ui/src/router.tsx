@@ -18,11 +18,14 @@ function useIsMobile(): boolean {
 function useBroNavigate() {
   const navigate = useNavigate();
   const currentSearch = useSearch({ strict: false });
-  return (broId: string) => {
+  return (broId: string, threadId?: string) => {
+    const nextSearch = threadId
+      ? { ...currentSearch, thread: threadId }
+      : currentSearch;
     void navigate({
       to: "/bros/$broId",
       params: { broId },
-      search: currentSearch,
+      search: nextSearch,
     });
   };
 }
@@ -69,7 +72,7 @@ function MobileRouteComponent() {
   return (
     <ArtboardMobilePage
       broId={broId}
-      onOpenBro={setBroId}
+      onOpenBro={(id) => setBroId(id)}
       onBack={() => setBroId(null)}
     />
   );

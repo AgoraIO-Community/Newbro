@@ -11,6 +11,7 @@ from newbro.protocol import (
     AttentionItemStatus,
     AttentionPriority,
     BindingStatus,
+    CodexThreadEventMessage,
     ExecutionMode,
     ExecutionRun,
     ExecutionSession as RuntimeExecutionSession,
@@ -30,7 +31,7 @@ from newbro.protocol import (
 from newbro.executors.core import ExecutorCapabilities, ExecutorEvent, ExecutorEventType, ExecutorSession
 from newbro.protocol import Task, TaskStatus
 from newbro.runtime import Settings
-from newbro.runtime.session import create_session_runtime
+from newbro.runtime.session import SelectedCodexThreadSubscription, create_session_runtime
 
 
 @pytest.mark.anyio
@@ -52,6 +53,85 @@ async def test_session_runtime_publish_snapshot_notifies_subscribers():
     assert published.snapshot.session_id == "session-1"
 
     session.unsubscribe(queue)
+
+
+@pytest.mark.anyio
+async def test_session_runtime_publish_snapshot_uses_cached_codex_threads_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    calls = 0
+
+    async def fail_if_synced(self, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("publish_snapshot must not refresh Codex threads")
+
+    monkeypatch.setattr(type(session), "_sync_imported_codex_threads", fail_if_synced)
+    queue = session.subscribe()
+
+    snapshot = await session.publish_snapshot()
+    published = await queue.get()
+    initial = await session.initial_snapshot_event()
+
+    assert calls == 0
+    assert snapshot.session_id == "session-1"
+    assert published.type == "snapshot"
+    assert initial.type == "snapshot"
+
+    session.unsubscribe(queue)
+
+
+@pytest.mark.anyio
+async def test_selected_codex_thread_events_do_not_read_history_on_control_path(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+    calls = 0
+
+    async def fail_if_read(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("selected-thread events must not block on Codex thread/read")
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fail_if_read)
+
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={"item": {"type": "assistantMessage"}},
+        )
+    )
+
+    assert calls == 0
+    assert "forge" in session._selected_codex_thread_subscriptions
 
 
 @pytest.mark.anyio

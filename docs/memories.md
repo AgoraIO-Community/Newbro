@@ -267,3 +267,4 @@ Short log of important design decisions and changes for Newbro.
 ## 2026-05-28
 
 - Changed Bro Detail push-to-talk audio transport so Newbro sends browser-uploaded PCM content inside executor-node commands for local Whisper transcription, without requiring detached executor nodes to read backend-local audio artifact paths.
+- Changed Bro Detail text/PTT hot paths so session snapshot publishes and selected-thread subscription events do not refresh Codex `thread/list` or `thread/read`; direct timelines update from Newbro task/run events, while Codex history refresh stays explicit to thread list/open hydration.

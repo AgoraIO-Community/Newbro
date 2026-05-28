@@ -1246,42 +1246,12 @@ class SessionRuntime:
             "thread/closed",
         }:
             return
-        persona = await self.blackboard.get_persona(current.persona_id)
-        if persona is None:
-            return
         if message.method == "thread/closed":
             await self._stop_selected_codex_thread_subscription(
                 persona_id=current.persona_id,
                 public_thread_id=current.public_thread_id,
             )
-            return
-        try:
-            thread = await self.executor_node_manager.request_codex_thread(
-                node_id=current.node_id,
-                thread_id=current.codex_thread_id,
-            )
-        except Exception as exc:
-            LOGGER.warning(
-                "Failed to refresh selected Codex thread %s after %s: %s",
-                current.codex_thread_id,
-                message.method,
-                exc,
-            )
-            return
-        await self._hydrate_opened_codex_thread_history(
-            persona=persona,
-            public_thread_id=current.public_thread_id,
-            thread_continuity_key=current.thread_continuity_key,
-            resume_handle=current.resume_handle,
-            selected_session=await self._find_codex_thread_session_for_persona(
-                persona.persona_id,
-                current.public_thread_id,
-            ),
-            node_id=current.node_id,
-            thread=thread,
-            fallback_timestamp=current.fallback_timestamp,
-        )
-        await self.publish_snapshot()
+        return
 
     async def _hydrate_opened_codex_thread_history(
         self,
@@ -2119,13 +2089,13 @@ class SessionRuntime:
         if not self.subscribers and self._snapshot_task is not None:
             self._snapshot_task.cancel()
 
-    async def publish_snapshot(self, *, sync_imported_codex_threads: bool = True) -> SessionSnapshot:
+    async def publish_snapshot(self, *, sync_imported_codex_threads: bool = False) -> SessionSnapshot:
         snapshot = await self.snapshot(sync_imported_codex_threads=sync_imported_codex_threads)
         await self._broadcast_event(self._snapshot_event(snapshot))
         return snapshot
 
     async def initial_snapshot_event(self) -> SnapshotStreamEvent:
-        return self._snapshot_event(await self.snapshot())
+        return self._snapshot_event(await self.snapshot(sync_imported_codex_threads=False))
 
     async def publish_private_event(
         self,

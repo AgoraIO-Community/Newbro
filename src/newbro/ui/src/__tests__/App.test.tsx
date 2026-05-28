@@ -472,6 +472,46 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByRole("heading", { name: "Forge" })).toBeInTheDocument();
   });
 
+  it("opens a recent Home thread through the Bro detail route", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = [
+      {
+        thread_id: "recent-thread-1",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "completed",
+        title: "Recent home thread",
+        preview: "Open from home",
+        progress: 100,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-27T22:00:00+00:00",
+        diagnostics: { codex_thread_id: "codex-recent-1" },
+      },
+    ] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValueOnce(snapshot);
+    window.history.replaceState({}, "", "/?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByText("Recent home thread"));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/bros/forge");
+      expect(new URLSearchParams(window.location.search).get("thread")).toBe("recent-thread-1");
+      expect(clientMock.openBroThread).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        threadId: "recent-thread-1",
+      });
+    });
+  });
+
   it("sends desktop typed Bro detail input directly to the executor node", async () => {
     clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing"));
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");

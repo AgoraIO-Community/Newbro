@@ -83,7 +83,10 @@ Adapter direction:
   subscription is a node-local interest in events from the shared app-server,
   not a separate app-server process. The node calls `thread/resume`, forwards
   relevant thread events to Newbro, and calls `thread/unsubscribe` when the
-  selected thread is replaced or closed.
+  selected thread is replaced or closed. Newbro must not refresh Codex
+  `thread/list` or `thread/read` as part of ordinary text/PTT sends or session
+  snapshot broadcasts; those refreshes are explicit list/open/hydration
+  operations.
   `thread/resume` is required before `turn/start` when an imported or
   persisted native thread id is not yet loaded. `thread/start` remains the fresh
   direct-run creation path, while `thread/fork` remains the follow-up fork path.

@@ -354,8 +354,12 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
             )
         )
 
+        list_calls = 0
+
         async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+            nonlocal list_calls
             assert node_id == "node-forge"
+            list_calls += 1
             return [
                 CodexThreadListItem(
                     thread_id="codex-imported-native-1",
@@ -401,6 +405,7 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
     assert imported_thread["title"] == "Imported outside Newbro"
     assert imported_thread["has_resume_handle"] is True
     assert imported_thread["diagnostics"]["codex_thread_id"] == "codex-imported-native-1"
+    assert list_calls == 1
     assert response.status_code == 200
     assert response.json()["target_thread_id"] == imported_thread["thread_id"]
     assert conversation["conversation_history"] == []
