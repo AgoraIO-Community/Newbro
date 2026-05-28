@@ -151,9 +151,7 @@ const CHARS = {
   newbro: CNewBro,
 } satisfies Record<CharacterKind, (props: { asleep?: boolean; working?: boolean }) => ReactElement>;
 
-export function avatarTypeToCharacter(avatar: AvatarType): CharacterKind {
-  if (avatar === "bunny") return "rabbit";
-  if (avatar === "bro") return "person";
+export function avatarTypeToCharacter(avatar: AvatarType): AvatarType | CharacterKind {
   return avatar;
 }
 
@@ -163,14 +161,26 @@ export function BroAvatar({
   size = 48,
   tone = "ink",
 }: {
-  character?: CharacterKind;
+  character?: CharacterKind | AvatarType;
   state?: AvatarState;
   size?: number;
   tone?: "ink" | "soft" | "coral" | "warn" | "invert" | string;
 }) {
-  const Char = CHARS[character] ?? CHARS.person;
   const asleep = state === "idle" || state === "offline";
   const working = state === "working";
+
+  if (!(character in CHARS)) {
+    return (
+      <span
+        className={`bro-av bro-av-photo${working ? " bro-av-working" : ""}${state === "offline" ? " bro-av-offline" : ""}`}
+        aria-hidden="true"
+      >
+        <img src={`/avatars/${character}.webp`} alt="" />
+      </span>
+    );
+  }
+
+  const Char = CHARS[character as CharacterKind] ?? CHARS.person;
   const isRouter = character === "newbro";
   const colorMap = {
     ink: "var(--nb-ink)",
@@ -196,7 +206,6 @@ export function BroAvatar({
           <i style={{ fontSize: Math.max(10, size * 0.23) }}>z</i>
         </span>
       ) : null}
-      {working && !isRouter ? <span className="bro-av-halo" /> : null}
     </span>
   );
 }

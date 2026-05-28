@@ -1,7 +1,17 @@
 import type { BroThread, ExecutionRun, Task, TaskStatus, TaskSummary } from "../../types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord, RuntimeExecutorNodeInput, RuntimePersonaInput } from "./types";
 
-const avatarCycle = ["fox", "cat", "bunny", "bro"] as const;
+const avatarCycle = ["avatar_1", "avatar_2", "avatar_3", "avatar_4"] as const;
+
+const EXECUTOR_LABELS: Record<string, string> = {
+  acpx: "ACPX",
+  codex: "Codex",
+};
+
+function labelExecutorType(enabledExecutors: string[]): string | null {
+  if (enabledExecutors.length === 0) return null;
+  return enabledExecutors.map((e) => EXECUTOR_LABELS[e] ?? e).join(" · ");
+}
 
 function hashValue(value: string) {
   let hash = 0;
@@ -226,8 +236,9 @@ function buildTaskRecord(
   const recordSummary = taskRecordSummary(task, run, summary);
   const status = run?.status === "completed" ? "completed" : task.status;
   const sourceKind = metadataString(task.metadata, "source_kind");
+  const hasInstruction = Boolean(task.latest_instruction?.trim());
   const userText = sourceKind === "codex_thread_history"
-    ? task.latest_instruction?.trim() ?? ""
+    ? (hasInstruction ? directUserText(task) : "")
     : sourceKind === "bro_detail_text" || sourceKind === "bro_detail_ptt"
       ? directUserText(task)
       : "";
@@ -368,7 +379,9 @@ export function buildBroCardModels(
 
   return personas.map((persona) => {
     const busy = persona.status === "busy" || persona.current_task_id !== null;
-    const nodeName = persona.executor_node_id ? (nodesById.get(persona.executor_node_id)?.name ?? null) : null;
+    const node = persona.executor_node_id ? nodesById.get(persona.executor_node_id) : undefined;
+    const nodeName = node?.name ?? null;
+    const executorType = node ? labelExecutorType(node.enabled_executors) : null;
     const liveState = buildLiveState(persona, nodesById);
 
     // Pull real execution data when available
@@ -416,6 +429,7 @@ export function buildBroCardModels(
       liveState,
       executorNodeId: persona.executor_node_id,
       nodeName,
+      executorType,
       avatarType: selectAvatarType(persona),
       taskTitle,
       progress,

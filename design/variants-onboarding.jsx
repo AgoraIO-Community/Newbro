@@ -317,6 +317,7 @@ function FirstRunHomeVariant() {
   );
 }
 window.FirstRunHomeVariant = FirstRunHomeVariant;
+window.CreateBroSheet = CreateBroSheet;
 
 // ─────────────────────────────────────────────────────────────
 // 3. CREATE + CONNECT BRO — standalone artboard view

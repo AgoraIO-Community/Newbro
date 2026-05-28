@@ -1014,7 +1014,6 @@
 .nb-mobile-runtime-thread .thr-bar-avatar {
   display: grid;
   place-items: center;
-  overflow: visible;
   background: var(--nb-paper-sub);
 }
 

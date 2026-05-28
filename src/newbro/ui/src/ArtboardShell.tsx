@@ -6,6 +6,7 @@ import {
   clearVoiceTarget,
   createExecutorNode,
   createPersona,
+  deletePersona,
   getSessionSnapshot,
   revealExecutorNodeConnectCommand,
   setVoiceTarget,
@@ -108,18 +109,6 @@ function formatAudioDuration(durationMs: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
-}
-
-function formatMessageTimestamp(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) return undefined;
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
 }
 
 function timelineTimestamp(value: string | undefined): number {
@@ -233,7 +222,6 @@ function AudioTurnBubble({ bro, turn, mobile = false }: { bro: BroCardModel; tur
       <div className={metaClass}>
         <MessageMeta
           label={audioTurnMeta(turn)}
-          timestamp={turn.timestampLabel ?? formatMessageTimestamp(turn.createdAt)}
           error={turn.status === "failed" ? turn.error : undefined}
         />
       </div>
@@ -255,7 +243,6 @@ function TextTurnBubble({ turn, mobile = false }: { turn: TextTurn; mobile?: boo
       <div className={metaClass}>
         <MessageMeta
           label={meta}
-          timestamp={turn.timestampLabel ?? formatMessageTimestamp(turn.createdAt)}
           error={turn.status === "failed" ? turn.error : undefined}
         />
       </div>
@@ -319,9 +306,9 @@ function TaskRecordCard({ bro, record, mobile = false }: { bro: BroCardModel; re
   const spinClass = mobile ? "thr-status-spin" : "dt-status-spin";
   const doneDotClass = mobile ? "thr-status-done-dot" : "dt-status-done-dot";
   const titleClass = mobile ? "thr-status-title" : "dt-status-title";
-  const pctClass = mobile ? "thr-status-pct" : "dt-status-pct";
   const barClass = mobile ? "thr-status-bar" : "dt-status-bar";
   const footClass = mobile ? "thr-status-foot" : "dt-status-foot";
+  const metaClass = mobile ? "thr-meta" : "dt-bubble-meta";
   const bodyText = record.summary || record.description || bro.progressLabel;
   return (
     <div className={`${prefix}-turn ${prefix}-turn-bro`}>
@@ -329,14 +316,14 @@ function TaskRecordCard({ bro, record, mobile = false }: { bro: BroCardModel; re
         <div className={`${statusClass}-head`}>
           {active ? <span className={spinClass} /> : <span className={doneDotClass} />}
           <span className={titleClass}>{record.title}</span>
-          <span className={pctClass}>
-            <MessageMeta label={record.statusLabel} timestamp={record.timestampLabel} />
-          </span>
         </div>
         <div className={barClass}><i style={{ width: `${Math.max(8, Math.min(100, Math.round(record.progress)))}%` }} /></div>
         <div className={`${footClass} ${prefix}-task-body`}>
           <MarkdownText>{bodyText}</MarkdownText>
         </div>
+      </div>
+      <div className={metaClass}>
+        <MessageMeta label={record.statusLabel} />
       </div>
     </div>
   );
@@ -350,7 +337,7 @@ function ConversationMessageBubble({ bro, message, mobile = false }: { bro: BroC
     <div className={`${prefix}-turn ${isUser ? `${prefix}-turn-you` : `${prefix}-turn-bro`}`}>
       <div className={`${prefix}-bubble ${isUser ? `${prefix}-bubble-you` : `${prefix}-bubble-bro`}`}>{message.text}</div>
       <div className={metaClass}>
-        <MessageMeta label={isUser ? "You" : bro.name} timestamp={formatMessageTimestamp(message.createdAt)} />
+        <MessageMeta label={isUser ? "You" : bro.name} />
       </div>
     </div>
   );
@@ -685,7 +672,7 @@ function homeBroNode(bro: BroCardModel): string {
 
 function homeBroLast(bro: BroCardModel, state: HomeBroState): string {
   if (state === "working") return bro.progressLabel || `${Math.round(bro.progress)}%`;
-  if (state === "offline") return bro.nodeName ? `${bro.nodeName} offline` : "needs node";
+  if (state === "offline") return bro.nodeName ? "node offline" : "needs node";
   return bro.liveState === "live" ? "ready now" : "standing by";
 }
 
@@ -781,7 +768,6 @@ function Header({
             <button type="button" className={`dt-header-broswitch dt-header-broswitch-${tone}`} onClick={onHome}>
               <span className="dt-header-broswitch-avatar">
                 <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={homeBroState(bro)} size={22} />
-                <span className="dt-header-broswitch-pip" />
               </span>
               <span>{bro.name}</span>
             </button>
@@ -1232,7 +1218,17 @@ function CreateConnectSheet({
   );
 }
 
-function OfflineBanner({ bro, node, sessionId }: { bro: BroCardModel; node: ExecutorNodeRecord; sessionId: string | null }) {
+function OfflineBanner({
+  bro,
+  node,
+  sessionId,
+  mobile,
+}: {
+  bro: BroCardModel;
+  node: ExecutorNodeRecord;
+  sessionId: string | null;
+  mobile?: boolean;
+}) {
   const [command, setCommand] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   async function reveal() {
@@ -1253,12 +1249,15 @@ function OfflineBanner({ bro, node, sessionId }: { bro: BroCardModel; node: Exec
       <div className="ob-offline-banner-body">
         <strong>{node.name} is not connected.</strong>
         <span>{bro.name} can't take new messages until the node reconnects. The current draft stays saved.</span>
-        {command ? <pre className="nb-artboard-command">{command}</pre> : null}
+        {!mobile && command ? <pre className="nb-artboard-command">{command}</pre> : null}
+        {mobile && <span className="nb-artboard-offline-hint">Open Newbro on desktop to reconnect the node.</span>}
       </div>
-      <button type="button" data-testid="bro-node-copy-command" className="ob-offline-banner-action" onClick={() => { void reveal(); }}>
-        <span>{copied ? "Copied" : "Copy command"}</span>
-        <SendHorizontal size={11} strokeWidth={2.2} />
-      </button>
+      {!mobile && (
+        <button type="button" data-testid="bro-node-copy-command" className="ob-offline-banner-action" onClick={() => { void reveal(); }}>
+          <span>{copied ? "Copied" : "Copy command"}</span>
+          <SendHorizontal size={11} strokeWidth={2.2} />
+        </button>
+      )}
     </section>
   );
 }
@@ -1335,14 +1334,6 @@ function ThreadPanel({
           />
         );
       })}
-      {records.length === 0 && textTurns.length === 0 && audioTurns.length === 0 && conversationMessages.length === 0 ? (
-        <div className="dt-turn dt-turn-bro">
-          <div className="dt-bubble dt-bubble-bro">
-            {disabled ? "I am paused until the node reconnects." : "No thread yet. Tell me what to build."}
-          </div>
-          <div className="dt-bubble-meta">{bro.name} · standby</div>
-        </div>
-      ) : null}
     </>
   );
 }
@@ -1542,14 +1533,6 @@ function MobileThreadSurface({
             />
           );
         })}
-        {records.length === 0 && textTurns.length === 0 && audioTurns.length === 0 && conversationMessages.length === 0 ? (
-          <div className="thr-turn thr-turn-bro">
-            <div className="thr-bubble thr-bubble-bro">
-              {disabled ? "I am paused until the node reconnects." : "No thread yet. Tell me what to build."}
-            </div>
-            <div className="thr-meta">{bro.name} · standby</div>
-          </div>
-        ) : null}
       </main>
       <form className={`thr-composer nb-mobile-thread-composer${disabled ? " ob-composer-disabled" : ""}`} onSubmit={submitText}>
         {!disabled ? (
@@ -2066,9 +2049,9 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   }, [shell.executionRuns]);
 
   if (!shell.hasLoadedShellSnapshot) return null;
-  if (!bro) return <DesktopHome onOpenBro={() => undefined} />;
+  if (!bro) return null;
 
-  const disabledReason = offline ? `${offline.name} is not connected.` : null;
+  const disabledReason = offline ? `${bro.executorType ?? offline.name} is not connected.` : null;
   const visibleTextTurns = textTurns.filter((turn) => turn.broId === bro.id && turnMatchesThread(turn, activeThreadId));
   const visibleAudioTurns = audioTurns.filter((turn) => turn.broId === bro.id && turnMatchesThread(turn, activeThreadId));
   const visibleConversationMessages = shell.chatMessages.slice(-8);
@@ -2149,19 +2132,243 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
 function MobileBroCard({ bro, onOpen }: { bro: BroCardModel; onOpen: (id: string) => void }) {
   const state = homeBroState(bro);
   const tone = homeBroTone(state);
+  const chipLabel = homeBroChipLabel(state);
+  if (state === "working") {
+    return (
+      <button type="button" data-testid={`mobile-bro-row-${bro.id}`} className={`home-card home-card-${tone}`} onClick={() => onOpen(bro.id)}>
+        <div className="home-card-head">
+          <div className={`home-card-avatar home-card-avatar-${tone}`}>
+            <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={state} size={48} />
+          </div>
+          <div className="home-card-headtext">
+            <div className="home-card-name">
+              {bro.name}
+              {bro.executorType && <span className="home-card-role">· on {bro.executorType}</span>}
+            </div>
+            <div className="home-card-meta">
+              <span className={`home-chip home-chip-${tone}`}><span className="home-chip-dot" />{chipLabel}</span>
+            </div>
+          </div>
+          <span className="home-card-arrow">›</span>
+        </div>
+        <div className="home-card-task home-card-task-running">
+          <span className="home-card-spin" aria-hidden="true" />
+          <span className="home-card-task-text">{bro.taskTitle}</span>
+        </div>
+      </button>
+    );
+  }
   return (
-    <button type="button" data-testid={`mobile-bro-row-${bro.id}`} className={state === "working" ? "home-card" : "home-row"} onClick={() => onOpen(bro.id)}>
-      <div className={state === "working" ? `home-card-avatar home-card-avatar-${tone}` : `home-row-avatar home-row-avatar-${state}`}>
-        <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={state} size={state === "working" ? 36 : 25} />
+    <button type="button" data-testid={`mobile-bro-row-${bro.id}`} className="home-row" onClick={() => onOpen(bro.id)}>
+      <div className={`home-row-avatar home-row-avatar-${tone}`}>
+        <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={state} size={42} />
       </div>
-      <div className={state === "working" ? "home-card-headtext" : "home-row-body"}>
-        <div className={state === "working" ? "home-card-name" : "home-row-name"}>{bro.name}</div>
-        <div className={state === "working" ? "home-card-role" : "home-row-task"}>{state === "working" ? bro.taskTitle : homeBroLast(bro, state)}</div>
+      <div className="home-row-body">
+        <div className="home-row-top">
+          <span className="home-row-name">{bro.name}</span>
+          {bro.executorType && <span className="home-row-role">· on {bro.executorType}</span>}
+        </div>
+        <div className="home-row-task">{homeBroLast(bro, state)}</div>
       </div>
-      <span className={`home-chip home-chip-${tone}`}><span className="home-chip-dot" />{homeBroChipLabel(state)}</span>
+      <div className="home-row-right">
+        <span className={`home-chip home-chip-${tone}`}><span className="home-chip-dot" />{chipLabel}</span>
+      </div>
     </button>
   );
 }
+
+function HomeBroEditable({
+  bro,
+  featured,
+  editing,
+  onRemove,
+  onOpen,
+}: {
+  bro: BroCardModel;
+  featured: boolean;
+  editing: boolean;
+  onRemove: (id: string) => void;
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <div className={`home-edit-wrap${editing ? " home-edit-wrap-on" : ""}${featured ? " home-edit-wrap-card" : " home-edit-wrap-row"}`}>
+      <MobileBroCard bro={bro} onOpen={editing ? () => {} : onOpen} />
+      {editing && (
+        <button
+          type="button"
+          className="home-edit-remove"
+          aria-label={`Remove ${bro.name}`}
+          onClick={(e) => { e.stopPropagation(); onRemove(bro.id); }}
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+            <path d="M6 12h12" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function AddBroTile({ editing, onClick }: { editing: boolean; onClick: () => void }) {
+  return (
+    <button type="button" className={`home-add-row${editing ? " home-add-row-on" : ""}`} onClick={onClick}>
+      <span className="home-add-icon">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </span>
+      <span className="home-add-body">
+        <span className="home-add-title">Add a bro</span>
+        <span className="home-add-sub">Name them, then connect a node</span>
+      </span>
+      <span className="home-add-arrow">›</span>
+    </button>
+  );
+}
+
+function HomeAccountSheet({
+  account,
+  onClose,
+  onEnterEdit,
+  onAddBro,
+  onSignOut,
+  signOutPending,
+}: {
+  account: string;
+  onClose: () => void;
+  onEnterEdit: () => void;
+  onAddBro: () => void;
+  onSignOut: () => void;
+  signOutPending: boolean;
+}) {
+  const initial = account.trim().charAt(0).toUpperCase() || "N";
+  return (
+    <section className="acct-sheet" role="dialog" aria-label="Account">
+      <div className="acct-sheet-handle" aria-hidden="true" />
+      <header className="acct-identity">
+        <div className="acct-identity-avatar"><span>{initial}</span></div>
+        <div className="acct-identity-body">
+          <div className="acct-identity-name">{account}</div>
+          <div className="acct-identity-mail">{account}</div>
+        </div>
+        <button type="button" className="acct-identity-edit" aria-label="Close" onClick={onClose}>
+          <X size={15} strokeWidth={2} />
+        </button>
+      </header>
+
+      <div className="acct-section">
+        <div className="acct-section-eyebrow">BROS</div>
+        <button type="button" className="acct-row" onClick={onAddBro}>
+          <span className="acct-row-glyph acct-row-glyph-coral">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </span>
+          <span className="acct-row-body">
+            <span className="acct-row-title">Add a bro</span>
+            <span className="acct-row-meta">Name them, connect a node</span>
+          </span>
+          <span className="acct-row-chev">›</span>
+        </button>
+        <button type="button" className="acct-row" onClick={onEnterEdit}>
+          <span className="acct-row-glyph">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h13M3 12h10M3 18h7" /><path d="M19 14l3 3-3 3M22 17h-5" />
+            </svg>
+          </span>
+          <span className="acct-row-body">
+            <span className="acct-row-title">Manage bros</span>
+            <span className="acct-row-meta">Rename, remove, reorder</span>
+          </span>
+          <span className="acct-row-chev">›</span>
+        </button>
+      </div>
+
+      <div className="acct-section">
+        <div className="acct-section-eyebrow">APP</div>
+        <button type="button" className="acct-row acct-row-compact">
+          <span className="acct-row-title">Notifications</span>
+          <span className="acct-row-chev">›</span>
+        </button>
+        <button type="button" className="acct-row acct-row-compact">
+          <span className="acct-row-title">Help &amp; feedback</span>
+          <span className="acct-row-chev">›</span>
+        </button>
+      </div>
+
+      <div className="acct-foot">
+        <button
+          type="button"
+          className={`acct-signout${signOutPending ? " acct-signout-pending" : ""}`}
+          onClick={onSignOut}
+          disabled={signOutPending}
+        >
+          {signOutPending ? (
+            <>
+              <span className="acct-signout-spin" aria-hidden="true" />
+              <span>Signing out…</span>
+            </>
+          ) : (
+            <>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <path d="M16 17l5-5-5-5" /><path d="M21 12H9" />
+              </svg>
+              <span>Sign out</span>
+            </>
+          )}
+        </button>
+        <div className="acct-version">Newbro · workspace</div>
+      </div>
+    </section>
+  );
+}
+
+function HomeConfirmRemove({
+  bro,
+  sessionId,
+  onCancel,
+  onConfirmed,
+}: {
+  bro: BroCardModel;
+  sessionId: string;
+  onCancel: () => void;
+  onConfirmed: () => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const confirm = async () => {
+    setPending(true);
+    try {
+      await deletePersona(sessionId, bro.id);
+      onConfirmed();
+    } finally {
+      setPending(false);
+    }
+  };
+  const sessionWarning = homeBroState(bro) === "working";
+  return (
+    <section className="acct-confirm" role="alertdialog" aria-label={`Remove ${bro.name}`}>
+      <div className="acct-confirm-card">
+        <div className="acct-confirm-head">
+          <div className="acct-confirm-title">Remove {bro.name}?</div>
+          <div className="acct-confirm-sub">
+            {sessionWarning
+              ? `${bro.name} is mid-task. The session ends, the draft is kept, and the executor disconnects.`
+              : `${bro.name} disconnects from their node and stops appearing in your workspace. Their threads stay.`}
+          </div>
+        </div>
+        <div className="acct-confirm-actions">
+          <button type="button" className="acct-confirm-danger" onClick={confirm} disabled={pending}>
+            {pending ? "Removing…" : sessionWarning ? "Stop & remove" : "Remove from workspace"}
+          </button>
+        </div>
+      </div>
+      <button type="button" className="acct-confirm-cancel" onClick={onCancel}>Cancel</button>
+    </section>
+  );
+}
+
+
 
 function MobileStage({ children }: { children: React.ReactNode }) {
   return (
@@ -2175,80 +2382,175 @@ function MobileStage({ children }: { children: React.ReactNode }) {
 
 function MobileHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
   const shell = useNewbroShell();
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [signOutPending, setSignOutPending] = useState(false);
+
   const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
   const working = homeBros.filter((bro) => homeBroState(bro) === "working");
   const standing = homeBros.filter((bro) => homeBroState(bro) !== "working");
   const recents = buildHomeRecents(shell.tasks, shell.runtimePersonas);
+  const anyOverlay = accountOpen || addOpen || !!confirmId;
+  const confirmBro = confirmId ? shell.bros.find((b) => b.id === confirmId) ?? null : null;
+  const account = shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in";
+
+  const closeAll = () => { setAccountOpen(false); setAddOpen(false); setConfirmId(null); };
+  const enterEdit = () => { setAccountOpen(false); setEditMode(true); };
+
+  const handleSignOut = () => {
+    setSignOutPending(true);
+    void shell.logout().finally(() => setSignOutPending(false));
+  };
+
   if (!shell.hasLoadedShellSnapshot) return null;
   return (
     <MobileStage>
-      <div className={`home nb-mobile-home${shell.runtimePersonas.length === 0 ? " ob-firsthome" : ""}`} data-testid="mobile-home">
+      <div
+        className={`home nb-mobile-home${shell.runtimePersonas.length === 0 ? " ob-firsthome" : ""}${editMode ? " home-editing" : ""}${anyOverlay ? " home-dimmed" : ""}`}
+        data-testid="mobile-home"
+      >
         <header className="home-bar">
-          <div className="home-bar-l">
-            <div className="home-bar-logo"><img src="/newbro.webp" alt="" draggable={false} /></div>
-            <div className="home-bar-titles">
-              <div className="home-bar-greet">Hi · workspace</div>
-              <div className="home-bar-meta">{shell.runtimePersonas.length === 0 ? "workspace is empty · let's fix that" : `${working.length} of ${shell.bros.length} bros working · ${recents.length} sessions`}</div>
-            </div>
-          </div>
-          <button type="button" className="home-bar-btn" aria-label="Settings">
-            <Settings size={19} strokeWidth={1.9} />
-          </button>
+          {editMode ? (
+            <>
+              <div className="home-bar-l home-bar-l-edit">
+                <div className="home-bar-titles">
+                  <div className="home-bar-greet">Edit bros</div>
+                  <div className="home-bar-meta">Tap − to remove</div>
+                </div>
+              </div>
+              <button type="button" className="home-bar-done" onClick={() => setEditMode(false)}>Done</button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="home-bar-l home-bar-l-tap"
+                aria-label="Open account"
+                onClick={() => setAccountOpen(true)}
+              >
+                <div className="home-bar-logo"><img src="/newbro.webp" alt="" draggable={false} /></div>
+                <div className="home-bar-titles">
+                  <div className="home-bar-greet">Hi · workspace</div>
+                  <div className="home-bar-meta">
+                    {shell.runtimePersonas.length === 0
+                      ? "workspace is empty · let's fix that"
+                      : `${working.length} of ${shell.bros.length} bros working · ${recents.length} sessions`}
+                  </div>
+                </div>
+              </button>
+              <button type="button" className="home-bar-btn" aria-label="Account" onClick={() => setAccountOpen(true)}>
+                <Settings size={19} strokeWidth={1.9} />
+              </button>
+            </>
+          )}
         </header>
         <main className={shell.runtimePersonas.length === 0 ? "ob-firsthome-body" : "home-body"}>
           {shell.runtimePersonas.length === 0 ? (
             <>
-            <section className="ob-hero-card" data-testid="mobile-empty-workspace">
-              <div className="ob-hero-art">
-                <div className="ob-hero-art-bg" aria-hidden="true">{Array.from({ length: 28 }).map((_, index) => <i key={index} style={{ animationDelay: `${(index % 7) * 0.15}s` }} />)}</div>
-                <div className="ob-hero-mascot"><img src="/newbro.webp" alt="" draggable={false} /></div>
-                <span className="ob-hero-zzz" aria-hidden="true"><i>z</i><i>z</i><i>z</i></span>
-              </div>
-              <div className="ob-hero-body">
-                <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
-                <h2 className="ob-hero-h">You don't have a bro yet.</h2>
-                <p className="ob-hero-sub">Create a worker persona, bind it to a user-owned executor node, and it will appear here after Newbro can use it.</p>
-                <div className="ob-hero-actions">
-                  <button type="button" className="ob-cta ob-cta-block" onClick={() => setSheetOpen(true)}>
-                    <Plus size={15} strokeWidth={2.4} />
-                    <span>Create your first bro</span>
-                  </button>
+              <section className="ob-hero-card" data-testid="mobile-empty-workspace">
+                <div className="ob-hero-art">
+                  <div className="ob-hero-art-bg" aria-hidden="true">{Array.from({ length: 28 }).map((_, index) => <i key={index} style={{ animationDelay: `${(index % 7) * 0.15}s` }} />)}</div>
+                  <div className="ob-hero-mascot"><img src="/newbro.webp" alt="" draggable={false} /></div>
+                  <span className="ob-hero-zzz" aria-hidden="true"><i>z</i><i>z</i><i>z</i></span>
                 </div>
-              </div>
-            </section>
-            <section className="ob-ghost-section">
-              <div className="ob-explain-head"><span className="ob-eyebrow">STANDING BY · 0</span></div>
-              <div className="ob-ghost-list">
-                <div className="ob-ghost-row"><span className="ob-ghost-avatar" /><span className="ob-ghost-lines"><span className="ob-ghost-line ob-ghost-line-lg" /><span className="ob-ghost-line ob-ghost-line-sm" /></span><span className="ob-ghost-chip" /></div>
-                <div className="ob-ghost-row"><span className="ob-ghost-avatar" /><span className="ob-ghost-lines"><span className="ob-ghost-line ob-ghost-line-md" /><span className="ob-ghost-line ob-ghost-line-sm" /></span><span className="ob-ghost-chip" /></div>
-              </div>
-              <div className="ob-ghost-foot">These seats fill up after you connect a bro.</div>
-            </section>
+                <div className="ob-hero-body">
+                  <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
+                  <h2 className="ob-hero-h">You don't have a bro yet.</h2>
+                  <p className="ob-hero-sub">Create a worker persona, bind it to a user-owned executor node, and it will appear here after Newbro can use it.</p>
+                  <div className="ob-hero-actions">
+                    <button type="button" className="ob-cta ob-cta-block" onClick={() => setAddOpen(true)}>
+                      <Plus size={15} strokeWidth={2.4} />
+                      <span>Create your first bro</span>
+                    </button>
+                  </div>
+                </div>
+              </section>
+              <section className="ob-ghost-section">
+                <div className="ob-explain-head"><span className="ob-eyebrow">STANDING BY · 0</span></div>
+                <div className="ob-ghost-list">
+                  <div className="ob-ghost-row"><span className="ob-ghost-avatar" /><span className="ob-ghost-lines"><span className="ob-ghost-line ob-ghost-line-lg" /><span className="ob-ghost-line ob-ghost-line-sm" /></span><span className="ob-ghost-chip" /></div>
+                  <div className="ob-ghost-row"><span className="ob-ghost-avatar" /><span className="ob-ghost-lines"><span className="ob-ghost-line ob-ghost-line-md" /><span className="ob-ghost-line ob-ghost-line-sm" /></span><span className="ob-ghost-chip" /></div>
+                </div>
+                <div className="ob-ghost-foot">These seats fill up after you connect a bro.</div>
+              </section>
             </>
           ) : (
             <>
-              {working.length > 0 ? (
+              {working.length > 0 && (
                 <section className="home-section">
-                  <div className="home-section-head"><span className="home-section-eyebrow">In flight · {working.length}</span><span className="home-section-sub">Sessions currently dispatched</span></div>
-                  <div className="home-flight">{working.map((bro) => <MobileBroCard key={bro.id} bro={bro} onOpen={onOpenBro} />)}</div>
+                  <div className="home-section-head">
+                    <span className="home-section-eyebrow">In flight · {working.length}</span>
+                    <span className="home-section-sub">{editMode ? "Removing stops the task" : "Sessions currently dispatched"}</span>
+                  </div>
+                  <div className="home-flight">
+                    {working.map((bro) => (
+                      <HomeBroEditable key={bro.id} bro={bro} featured editing={editMode} onRemove={setConfirmId} onOpen={onOpenBro} />
+                    ))}
+                  </div>
                 </section>
-              ) : null}
+              )}
               <section className="home-section">
-                <div className="home-section-head"><span className="home-section-eyebrow">Standing by · {standing.length}</span></div>
-                <div className="home-list">{standing.map((bro) => <MobileBroCard key={bro.id} bro={bro} onOpen={onOpenBro} />)}</div>
+                <div className="home-section-head">
+                  <span className="home-section-eyebrow">Standing by · {standing.length}</span>
+                  {!editMode && <span className="home-section-sub">Idle, paused, or offline</span>}
+                </div>
+                <div className="home-list">
+                  {standing.map((bro) => (
+                    <HomeBroEditable key={bro.id} bro={bro} featured={false} editing={editMode} onRemove={setConfirmId} onOpen={onOpenBro} />
+                  ))}
+                  <AddBroTile editing={editMode} onClick={() => setAddOpen(true)} />
+                </div>
               </section>
             </>
           )}
-          {recents.length > 0 ? (
+          {!editMode && recents.length > 0 && (
             <section className="home-section">
               <div className="home-section-head"><span className="home-section-eyebrow">Recent · {recents.length}</span></div>
-              <ul className="home-recents">{recents.map((recent) => <li key={recent.id}><div className="home-recent"><span className="home-recent-icon"><FileText size={13} /></span><span className="home-recent-body"><span className="home-recent-title">{recent.title}</span><span className="home-recent-meta">{recent.bro} · {recent.when}</span></span></div></li>)}</ul>
+              <ul className="home-recents">
+                {recents.map((recent) => (
+                  <li key={recent.id}>
+                    <div className="home-recent">
+                      <span className="home-recent-icon"><FileText size={13} /></span>
+                      <span className="home-recent-body">
+                        <span className="home-recent-title">{recent.title}</span>
+                        <span className="home-recent-meta">{recent.bro} · {recent.when}</span>
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             </section>
-          ) : null}
+          )}
         </main>
+        {anyOverlay && <div className="home-scrim" onClick={closeAll} aria-hidden="true" />}
+        {accountOpen && (
+          <HomeAccountSheet
+            account={account}
+            onClose={() => setAccountOpen(false)}
+            onEnterEdit={enterEdit}
+            onAddBro={() => { setAccountOpen(false); setAddOpen(true); }}
+            onSignOut={handleSignOut}
+            signOutPending={signOutPending}
+          />
+        )}
+        {confirmBro && shell.activeShellSessionId && (
+          <HomeConfirmRemove
+            bro={confirmBro}
+            sessionId={shell.activeShellSessionId}
+            onCancel={() => setConfirmId(null)}
+            onConfirmed={() => { setConfirmId(null); void shell.refreshShellSession(); }}
+          />
+        )}
       </div>
-      {sheetOpen && shell.activeShellSessionId ? <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setSheetOpen(false)} onCreated={shell.refreshShellSession} /> : null}
+      {addOpen && shell.activeShellSessionId ? (
+        <CreateConnectSheet
+          sessionId={shell.activeShellSessionId}
+          onClose={() => setAddOpen(false)}
+          onCreated={shell.refreshShellSession}
+        />
+      ) : null}
     </MobileStage>
   );
 }
@@ -2398,24 +2700,25 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
           <div className="thr-bar-bro">
             <div className={`thr-bar-avatar${offline ? " ob-avatar-offline" : ""}`}>
               <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={offline ? "offline" : "working"} size={30} />
-              {offline ? <span className="ob-avatar-offline-pip" aria-hidden="true" /> : null}
             </div>
             <div className="thr-bar-meta">
               <div className="thr-bar-title-row">
                 <span className="thr-bar-name">{bro.name}</span>
                 <span className="thr-bar-sep">·</span>
-                <span className="thr-bar-thread-title">{bro.taskTitle || "Current draft"}</span>
+                <span className="thr-bar-thread-title">{bro.status === "busy" ? bro.taskTitle : (selectedThread?.title ?? "New thread")}</span>
               </div>
               <div className={`thr-bar-state thr-bar-state-${offline ? "warn" : "live"}`}>
                 <span className="thr-bar-dot" />
-                {offline ? `Offline · ${offline.name}` : "Live · ready"}
+                {offline ? `Offline · ${bro.executorType ?? offline.name}` : "Live · ready"}
               </div>
             </div>
           </div>
-          <button type="button" className="thr-more" aria-label="Switch thread" onClick={() => setPickerOpen(true)}>
+
+          <button type="button" className="thr-more" aria-label="Switch thread" disabled={Boolean(offline)} onClick={() => setPickerOpen(true)}>
             <Layers size={20} strokeWidth={1.9} />
           </button>
         </header>
+
         {pickerOpen ? <div className="thr-drawer-backdrop" onClick={() => setPickerOpen(false)} /> : null}
         <aside className={`thr-drawer${pickerOpen ? " thr-drawer-open" : ""}`} aria-hidden={!pickerOpen}>
           <header className="thr-drawer-head">
@@ -2490,7 +2793,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
             <span>New thread with {bro.name}</span>
           </button>
         </aside>
-        {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
+        {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} mobile /> : null}
         <MobileThreadSurface
           bro={bro}
           records={records}
@@ -2504,7 +2807,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
           onRemoveAudioTurn={removeAudioTurn}
           onThreadResolved={resolveThread}
           disabled={Boolean(offline)}
-          disabledReason={offline ? `${offline.name} is not connected.` : null}
+          disabledReason={offline ? `${bro.executorType ?? offline.name} is not connected.` : null}
         />
       </div>
     </MobileStage>
@@ -2519,12 +2822,21 @@ export function ArtboardBroDetailPage({ broId, onHome }: { broId: string; onHome
   return <DesktopDetail broId={broId} onHome={onHome} />;
 }
 
-export function ArtboardMobilePage() {
+export function ArtboardMobilePage({
+  broId,
+  onOpenBro,
+  onBack,
+}: {
+  broId?: string | null;
+  onOpenBro?: (id: string) => void;
+  onBack?: () => void;
+} = {}) {
   const shell = useNewbroShell();
-  const [detailId, setDetailId] = useState<string | null>(null);
-  const detailBro = detailId ? shell.bros.find((bro) => bro.id === detailId) ?? null : null;
-  if (detailBro) return <MobileDetail bro={detailBro} onBack={() => setDetailId(null)} />;
-  return <MobileHome onOpenBro={setDetailId} />;
+  const detailBro = broId ? shell.bros.find((bro) => bro.id === broId) ?? null : null;
+  if (broId && !shell.hasLoadedShellSnapshot) return null;
+  if (detailBro) return <MobileDetail bro={detailBro} onBack={onBack ?? (() => undefined)} />;
+  if (broId) return null;
+  return <MobileHome onOpenBro={onOpenBro ?? (() => undefined)} />;
 }
 
 export function buildRuntimeBroCards(

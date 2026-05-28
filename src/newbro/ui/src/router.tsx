@@ -1,6 +1,19 @@
+import { useEffect, useState } from "react";
 import { createRoute, createRouter, useNavigate, useSearch } from "@tanstack/react-router";
 import { ArtboardBroDetailPage, ArtboardHomePage, ArtboardMobilePage } from "./ArtboardShell";
 import { Route as rootRoute } from "./routes/__root";
+
+function useIsMobile(): boolean {
+  const query = "(max-width: 767px)";
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+  return isMobile;
+}
 
 function useBroNavigate() {
   const navigate = useNavigate();
@@ -15,26 +28,51 @@ function useBroNavigate() {
 }
 
 function HomeRouteComponent() {
+  const isMobile = useIsMobile();
+  const navigate = useNavigate();
+  const currentSearch = useSearch({ strict: false });
+  const openBro = useBroNavigate();
   if (window.location.pathname !== "/") return null;
-  return <ArtboardHomePage onOpenBro={useBroNavigate()} />;
+  if (isMobile) {
+    return (
+      <ArtboardMobilePage
+        onOpenBro={openBro}
+        onBack={() => { void navigate({ to: "/", search: currentSearch }); }}
+      />
+    );
+  }
+  return <ArtboardHomePage onOpenBro={openBro} />;
 }
 
 function BroDetailRouteComponent() {
   const params = broDetailRoute.useParams();
   const navigate = useNavigate();
   const currentSearch = useSearch({ strict: false });
-  return (
-    <ArtboardBroDetailPage
-      broId={params.broId}
-      onHome={() => {
-        void navigate({ to: "/", search: currentSearch });
-      }}
-    />
-  );
+  const isMobile = useIsMobile();
+  const openBro = useBroNavigate();
+  const goHome = () => { void navigate({ to: "/", search: currentSearch }); };
+  if (isMobile) {
+    return (
+      <ArtboardMobilePage
+        key={params.broId}
+        broId={params.broId}
+        onOpenBro={openBro}
+        onBack={goHome}
+      />
+    );
+  }
+  return <ArtboardBroDetailPage broId={params.broId} onHome={goHome} />;
 }
 
 function MobileRouteComponent() {
-  return <ArtboardMobilePage />;
+  const [broId, setBroId] = useState<string | null>(null);
+  return (
+    <ArtboardMobilePage
+      broId={broId}
+      onOpenBro={setBroId}
+      onBack={() => setBroId(null)}
+    />
+  );
 }
 
 function RemovedRouteComponent() {

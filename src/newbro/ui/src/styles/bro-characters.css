@@ -39,20 +39,24 @@
   100% { transform: translateY(-9px) translateX(2px); opacity: 0; }
 }
 
-/* working halo — breathing coral dot */
-.bro-av-halo {
-  position: absolute;
-  top: -2px; right: -2px;
-  width: 11px; height: 11px;
-  border-radius: 50%;
-  background: var(--nb-coral);
-  box-shadow: 0 0 0 3px rgba(255,106,61,0.18);
-  animation: bro-av-halo-breathe 1.8s ease-in-out infinite;
-  pointer-events: none;
-}
+/* working halo — breathing keyframes kept for live/running indicators outside the avatar */
 @keyframes bro-av-halo-breathe {
   0%, 100% { transform: scale(1); box-shadow: 0 0 0 3px rgba(255,106,61,0.18); }
   50%      { transform: scale(1.12); box-shadow: 0 0 0 5px rgba(255,106,61,0.28); }
+}
+
+/* photo avatar — fills parent container, clips to its border-radius */
+.bro-av-photo {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+}
+.bro-av-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* offline — fade + grayscale */
@@ -60,4 +64,3 @@
   filter: grayscale(0.55);
   opacity: 0.78;
 }
-.bro-av-offline .bro-av-halo { display: none; }

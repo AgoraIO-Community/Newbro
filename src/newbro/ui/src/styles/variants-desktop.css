@@ -139,16 +139,7 @@
   flex-shrink: 0;
   color: var(--nb-ink);
 }
-.dt-header-broswitch-pip {
-  position: absolute;
-  right: -1px; bottom: -1px;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  border: 2px solid var(--nb-paper);
-}
 .dt-header-broswitch-warn .dt-header-broswitch-avatar { filter: grayscale(0.4); opacity: 0.88; }
-.dt-header-broswitch-warn .dt-header-broswitch-pip { background: var(--nb-warn); }
-.dt-header-broswitch-info .dt-header-broswitch-pip { background: var(--nb-info); animation: dt-pulse 1.6s ease-in-out infinite; }
 
 .dt-header-r {
   display: flex; align-items: center;

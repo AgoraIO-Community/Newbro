@@ -175,6 +175,21 @@ function App() {
               <HomeVariant />
             </div>
           </DCArtboard>
+          <DCArtboard id="home-account" label="Home — account sheet (sign out)" width={440} height={920}>
+            <div style={{ position: "relative", width: "100%", height: "100%", display: "grid", placeItems: "center", background: "transparent" }}>
+              <HomeVariant initialAccountOpen />
+            </div>
+          </DCArtboard>
+          <DCArtboard id="home-edit" label="Home — manage bros (add / remove)" width={440} height={920}>
+            <div style={{ position: "relative", width: "100%", height: "100%", display: "grid", placeItems: "center", background: "transparent" }}>
+              <HomeVariant initialEditMode />
+            </div>
+          </DCArtboard>
+          <DCArtboard id="home-confirm-remove" label="Home — confirm remove a bro" width={440} height={920}>
+            <div style={{ position: "relative", width: "100%", height: "100%", display: "grid", placeItems: "center", background: "transparent" }}>
+              <HomeVariant initialEditMode initialConfirmRemoveId="forge" />
+            </div>
+          </DCArtboard>
           <DCArtboard id="threads" label="Threads — chat thread" width={440} height={920}>
             <div style={{ position: "relative", width: "100%", height: "100%", display: "grid", placeItems: "center", background: "transparent" }}>
               <ThreadsVariant />

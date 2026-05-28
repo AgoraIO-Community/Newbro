@@ -5,7 +5,7 @@ export type NavItem = {
   active: boolean;
 };
 
-export type AvatarType = "fox" | "cat" | "bunny" | "bro";
+export type AvatarType = "avatar_1" | "avatar_2" | "avatar_3" | "avatar_4";
 
 export type BroStatus = "busy" | "idle";
 export type BroLiveState = "live" | "offline" | "unbound";
@@ -18,6 +18,7 @@ export type BroCardModel = {
   liveState: BroLiveState;
   executorNodeId: string | null;
   nodeName: string | null;
+  executorType: string | null;
   avatarType: AvatarType;
   taskTitle: string;
   progress: number;
@@ -62,5 +63,5 @@ export type RuntimePersonaInput = Pick<
 
 export type RuntimeExecutorNodeInput = Pick<
   ExecutorNodeRecord,
-  "node_id" | "name" | "connection_status"
+  "node_id" | "name" | "connection_status" | "enabled_executors"
 >;

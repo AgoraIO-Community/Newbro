@@ -504,85 +504,431 @@ function HomeBroCard({ bro, onOpen, featured }) {
   );
 }
 
-function HomeVariant() {
-  const working = HOME_BROS.filter((b) => b.state === "working");
-  const others  = HOME_BROS.filter((b) => b.state !== "working");
+// ─────────────────────────────────────────────────────────────
+// Bro card variants for EDIT mode — wraps the existing card/row
+// with an iOS-style remove badge in the top-left corner. We keep
+// the cards otherwise pristine so swapping in/out of edit mode is
+// just a class change.
+// ─────────────────────────────────────────────────────────────
+function HomeBroEditable({ bro, featured, editing, onRemove, onOpen }) {
+  return (
+    <div className={`home-edit-wrap${editing ? " home-edit-wrap-on" : ""}${featured ? " home-edit-wrap-card" : " home-edit-wrap-row"}`}>
+      <HomeBroCard bro={bro} featured={featured} onOpen={editing ? () => {} : onOpen} />
+      {editing && (
+        <button
+          type="button"
+          className="home-edit-remove"
+          aria-label={`Remove ${bro.name}`}
+          onClick={(e) => { e.stopPropagation(); onRemove(bro.id); }}
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+            <path d="M6 12h12"/>
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// "+ Add a bro" tile — appears at the end of Standing-by. Visible
+// always; styled as a dashed ghost row in normal mode and a coral
+// CTA in edit mode where adding is the explicit purpose.
+function AddBroTile({ editing, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`home-add-row${editing ? " home-add-row-on" : ""}`}
+      onClick={onClick}
+    >
+      <span className="home-add-icon">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+      </span>
+      <span className="home-add-body">
+        <span className="home-add-title">Add a bro</span>
+        <span className="home-add-sub">Name them, then connect a node</span>
+      </span>
+      <span className="home-add-arrow">›</span>
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Account sheet — bottom sheet that appears when the user taps the
+// gear (or their avatar). Holds workspace identity, the "Manage
+// bros" toggle, and a destructive Sign-out at the bottom.
+// ─────────────────────────────────────────────────────────────
+function HomeAccountSheet({ onClose, onEnterEdit, onAddBro, onSignOut, signOutPending }) {
+  return (
+    <section className="acct-sheet" role="dialog" aria-label="Account">
+      <div className="acct-sheet-handle" aria-hidden="true" />
+
+      {/* identity card */}
+      <header className="acct-identity">
+        <div className="acct-identity-avatar">
+          <span>L</span>
+        </div>
+        <div className="acct-identity-body">
+          <div className="acct-identity-name">Luna Park</div>
+          <div className="acct-identity-mail">luna@parklane.studio</div>
+        </div>
+        <button type="button" className="acct-identity-edit" aria-label="Edit profile">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>
+          </svg>
+        </button>
+      </header>
+
+      {/* workspace section */}
+      <div className="acct-section">
+        <div className="acct-section-eyebrow">WORKSPACE</div>
+        <button type="button" className="acct-row">
+          <span className="acct-row-glyph acct-row-glyph-coral">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 9l9-6 9 6v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            </svg>
+          </span>
+          <span className="acct-row-body">
+            <span className="acct-row-title">Parklane Studio</span>
+            <span className="acct-row-meta">4 bros · 2 connectors · admin</span>
+          </span>
+          <span className="acct-row-chev">›</span>
+        </button>
+        <button type="button" className="acct-row">
+          <span className="acct-row-glyph">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1A4 4 0 0 1 16 11"/>
+            </svg>
+          </span>
+          <span className="acct-row-body">
+            <span className="acct-row-title">Switch workspace</span>
+            <span className="acct-row-meta">2 others available</span>
+          </span>
+          <span className="acct-row-chev">›</span>
+        </button>
+      </div>
+
+      {/* bros section */}
+      <div className="acct-section">
+        <div className="acct-section-eyebrow">BROS</div>
+        <button type="button" className="acct-row" onClick={onAddBro}>
+          <span className="acct-row-glyph acct-row-glyph-coral">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+          </span>
+          <span className="acct-row-body">
+            <span className="acct-row-title">Add a bro</span>
+            <span className="acct-row-meta">Name them, connect a node</span>
+          </span>
+          <span className="acct-row-chev">›</span>
+        </button>
+        <button type="button" className="acct-row" onClick={onEnterEdit}>
+          <span className="acct-row-glyph">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h13M3 12h10M3 18h7"/>
+              <path d="M19 14l3 3-3 3M22 17h-5"/>
+            </svg>
+          </span>
+          <span className="acct-row-body">
+            <span className="acct-row-title">Manage bros</span>
+            <span className="acct-row-meta">Rename, remove, reorder</span>
+          </span>
+          <span className="acct-row-chev">›</span>
+        </button>
+        <button type="button" className="acct-row">
+          <span className="acct-row-glyph">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2"/>
+              <path d="M3 10h18M8 4v6"/>
+            </svg>
+          </span>
+          <span className="acct-row-body">
+            <span className="acct-row-title">Connected nodes</span>
+            <span className="acct-row-meta">2 online · 1 paused</span>
+          </span>
+          <span className="acct-row-chev">›</span>
+        </button>
+      </div>
+
+      {/* app section */}
+      <div className="acct-section">
+        <div className="acct-section-eyebrow">APP</div>
+        <button type="button" className="acct-row acct-row-compact">
+          <span className="acct-row-title">Notifications</span>
+          <span className="acct-row-trail">All</span>
+          <span className="acct-row-chev">›</span>
+        </button>
+        <button type="button" className="acct-row acct-row-compact">
+          <span className="acct-row-title">Voice & dictation</span>
+          <span className="acct-row-trail">English (US)</span>
+          <span className="acct-row-chev">›</span>
+        </button>
+        <button type="button" className="acct-row acct-row-compact">
+          <span className="acct-row-title">Help & feedback</span>
+          <span className="acct-row-chev">›</span>
+        </button>
+      </div>
+
+      {/* sign out */}
+      <div className="acct-foot">
+        <button
+          type="button"
+          className={`acct-signout${signOutPending ? " acct-signout-pending" : ""}`}
+          onClick={onSignOut}
+        >
+          {signOutPending ? (
+            <React.Fragment>
+              <span className="acct-signout-spin" aria-hidden="true" />
+              <span>Signing out…</span>
+            </React.Fragment>
+          ) : (
+            <React.Fragment>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <path d="M16 17l5-5-5-5"/>
+                <path d="M21 12H9"/>
+              </svg>
+              <span>Sign out of Newbro</span>
+            </React.Fragment>
+          )}
+        </button>
+        <div className="acct-version">Newbro v0.9.2 · build 27a4</div>
+      </div>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Confirm-remove action sheet — iOS pattern with a danger primary
+// and a cancel below in a separate card.
+// ─────────────────────────────────────────────────────────────
+function HomeConfirmRemove({ bro, onCancel, onConfirm }) {
+  if (!bro) return null;
+  const sessionWarning = bro.state === "working";
+  return (
+    <section className="acct-confirm" role="alertdialog" aria-label={`Remove ${bro.name}`}>
+      <div className="acct-confirm-card">
+        <div className="acct-confirm-head">
+          <div className="acct-confirm-title">Remove {bro.name}?</div>
+          <div className="acct-confirm-sub">
+            {sessionWarning
+              ? `${bro.name} is mid-task on ${bro.node}. The session ends, the draft is kept, and the executor disconnects.`
+              : `${bro.name} disconnects from ${bro.node || "their node"} and stops appearing in your workspace. Their threads stay.`}
+          </div>
+        </div>
+        <div className="acct-confirm-actions">
+          <button type="button" className="acct-confirm-danger" onClick={() => onConfirm(bro.id)}>
+            {sessionWarning ? "Stop & remove" : "Remove from workspace"}
+          </button>
+        </div>
+      </div>
+      <button type="button" className="acct-confirm-cancel" onClick={onCancel}>Cancel</button>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// HomeVariant — interactive home with account sheet, edit mode,
+// and add/remove flows. Accepts initial-state props so the design
+// canvas can showcase each state in its own artboard.
+// ─────────────────────────────────────────────────────────────
+function HomeVariant({ initialAccountOpen = false, initialEditMode = false, initialAddOpen = false, initialConfirmRemoveId = null } = {}) {
+  const [bros, setBros]                   = React.useState(HOME_BROS);
+  const [accountOpen, setAccountOpen]     = React.useState(initialAccountOpen);
+  const [editMode, setEditMode]           = React.useState(initialEditMode);
+  const [addOpen, setAddOpen]             = React.useState(initialAddOpen);
+  const [confirmId, setConfirmId]         = React.useState(initialConfirmRemoveId);
+  const [signOutPending, setSignOutPending] = React.useState(false);
+
+  const working = bros.filter((b) => b.state === "working");
+  const others  = bros.filter((b) => b.state !== "working");
+  const confirmBro = bros.find((b) => b.id === confirmId);
+
+  const closeAll = () => {
+    setAccountOpen(false);
+    setAddOpen(false);
+    setConfirmId(null);
+  };
+
+  const enterEdit = () => {
+    setAccountOpen(false);
+    setEditMode(true);
+  };
+  const exitEdit = () => setEditMode(false);
+
+  const requestRemove = (id) => setConfirmId(id);
+  const confirmRemove = (id) => {
+    setBros((b) => b.filter((x) => x.id !== id));
+    setConfirmId(null);
+  };
+
+  const openAdd = () => {
+    setAccountOpen(false);
+    setAddOpen(true);
+  };
+  const closeAdd = () => setAddOpen(false);
+
+  const signOut = () => {
+    setSignOutPending(true);
+    // visual stub — no real navigation in the prototype
+    setTimeout(() => setSignOutPending(false), 1600);
+  };
+
+  const totalCount = bros.length;
+  const anyOverlay = accountOpen || addOpen || confirmBro;
+
   return (
     <IOSDevice width={402} height={874}>
-      <div className="home">
-        {/* top bar */}
+      <div className={`home${editMode ? " home-editing" : ""}${anyOverlay ? " home-dimmed" : ""}`}>
+        {/* top bar — title flips when editing */}
         <header className="home-bar">
-          <div className="home-bar-l">
-            <div className="home-bar-logo">
-              <img src="assets/newbro-logo.webp" alt="" draggable={false} />
-            </div>
-            <div className="home-bar-titles">
-              <div className="home-bar-greet">Hi · workspace</div>
-              <div className="home-bar-meta">
-                {working.length} of {HOME_BROS.length} bros working · 2 sessions
+          {editMode ? (
+            <React.Fragment>
+              <div className="home-bar-l home-bar-l-edit">
+                <div className="home-bar-titles">
+                  <div className="home-bar-greet">Edit bros</div>
+                  <div className="home-bar-meta">
+                    Tap − to remove · drag to reorder
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-          <button type="button" className="home-bar-btn" aria-label="Settings">
-            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.2.6.7 1 1.5 1H21a2 2 0 1 1 0 4h-.1c-.7 0-1.3.4-1.5 1z"/>
-            </svg>
-          </button>
+              <button type="button" className="home-bar-done" onClick={exitEdit}>Done</button>
+            </React.Fragment>
+          ) : (
+            <React.Fragment>
+              <button
+                type="button"
+                className="home-bar-l home-bar-l-tap"
+                onClick={() => setAccountOpen(true)}
+                aria-label="Open account"
+              >
+                <div className="home-bar-logo">
+                  <img src="assets/newbro-logo.webp" alt="" draggable={false} />
+                </div>
+                <div className="home-bar-titles">
+                  <div className="home-bar-greet">Hi, Luna</div>
+                  <div className="home-bar-meta">
+                    {working.length} of {totalCount} bros working · 2 sessions
+                  </div>
+                </div>
+              </button>
+              <button
+                type="button"
+                className="home-bar-btn"
+                aria-label="Account"
+                onClick={() => setAccountOpen(true)}
+              >
+                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.2.6.7 1 1.5 1H21a2 2 0 1 1 0 4h-.1c-.7 0-1.3.4-1.5 1z"/>
+                </svg>
+              </button>
+            </React.Fragment>
+          )}
         </header>
 
         <main className="home-body">
           {/* In-flight (featured cards) */}
-          <section className="home-section">
-            <div className="home-section-head">
-              <span className="home-section-eyebrow">In flight · {working.length}</span>
-              <span className="home-section-sub">Sessions currently dispatched</span>
-            </div>
-            <div className="home-flight">
-              {working.map((b) => (
-                <HomeBroCard key={b.id} bro={b} featured onOpen={() => {}} />
-              ))}
-            </div>
-          </section>
+          {working.length > 0 && (
+            <section className="home-section">
+              <div className="home-section-head">
+                <span className="home-section-eyebrow">In flight · {working.length}</span>
+                <span className="home-section-sub">{editMode ? "Removing stops the task" : "Sessions currently dispatched"}</span>
+              </div>
+              <div className="home-flight">
+                {working.map((b) => (
+                  <HomeBroEditable
+                    key={b.id}
+                    bro={b}
+                    featured
+                    editing={editMode}
+                    onRemove={requestRemove}
+                    onOpen={() => {}}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
 
           {/* Standing by */}
           <section className="home-section">
             <div className="home-section-head">
               <span className="home-section-eyebrow">Standing by · {others.length}</span>
+              {!editMode && <span className="home-section-sub">Idle, paused, or offline</span>}
             </div>
             <div className="home-list">
               {others.map((b) => (
-                <HomeBroCard key={b.id} bro={b} onOpen={() => {}} />
+                <HomeBroEditable
+                  key={b.id}
+                  bro={b}
+                  editing={editMode}
+                  onRemove={requestRemove}
+                  onOpen={() => {}}
+                />
               ))}
+              {/* + Add a bro tile — always available */}
+              <AddBroTile editing={editMode} onClick={() => setAddOpen(true)} />
             </div>
           </section>
 
-          {/* Recent */}
-          <section className="home-section">
-            <div className="home-section-head">
-              <span className="home-section-eyebrow">Recent · {HOME_RECENTS.length}</span>
-              <button type="button" className="home-section-link">See all</button>
-            </div>
-            <ul className="home-recents">
-              {HOME_RECENTS.map((r) => (
-                <li key={r.id}>
-                  <button type="button" className="home-recent">
-                    <span className="home-recent-icon">
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>
-                      </svg>
-                    </span>
-                    <span className="home-recent-body">
-                      <span className="home-recent-title">{r.title}</span>
-                      <span className="home-recent-meta">{r.bro} · {r.when}</span>
-                    </span>
-                    <span className="home-recent-arrow">›</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+          {/* Recent — hidden in edit mode so it doesn't look removable */}
+          {!editMode && (
+            <section className="home-section">
+              <div className="home-section-head">
+                <span className="home-section-eyebrow">Recent · {HOME_RECENTS.length}</span>
+                <button type="button" className="home-section-link">See all</button>
+              </div>
+              <ul className="home-recents">
+                {HOME_RECENTS.map((r) => (
+                  <li key={r.id}>
+                    <button type="button" className="home-recent">
+                      <span className="home-recent-icon">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>
+                        </svg>
+                      </span>
+                      <span className="home-recent-body">
+                        <span className="home-recent-title">{r.title}</span>
+                        <span className="home-recent-meta">{r.bro} · {r.when}</span>
+                      </span>
+                      <span className="home-recent-arrow">›</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </main>
+
+        {/* overlays */}
+        {(accountOpen || addOpen || confirmBro) && (
+          <div className="home-scrim" onClick={closeAll} aria-hidden="true" />
+        )}
+        {accountOpen && (
+          <HomeAccountSheet
+            onClose={() => setAccountOpen(false)}
+            onEnterEdit={enterEdit}
+            onAddBro={openAdd}
+            onSignOut={signOut}
+            signOutPending={signOutPending}
+          />
+        )}
+        {addOpen && (
+          <div className="home-add-sheet-wrap">
+            {window.CreateBroSheet ? <window.CreateBroSheet onClose={closeAdd} /> : null}
+          </div>
+        )}
+        {confirmBro && (
+          <HomeConfirmRemove
+            bro={confirmBro}
+            onCancel={() => setConfirmId(null)}
+            onConfirm={confirmRemove}
+          />
+        )}
       </div>
     </IOSDevice>
   );

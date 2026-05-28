@@ -801,14 +801,6 @@
   filter: grayscale(0.4);
   opacity: 0.85;
 }
-.ob-avatar-offline-pip {
-  position: absolute;
-  right: -2px; bottom: -2px;
-  width: 12px; height: 12px;
-  border-radius: 50%;
-  background: var(--nb-warn);
-  border: 2px solid var(--nb-paper);
-}
 
 .ob-offline-banner {
   display: flex; align-items: flex-start; gap: 10px;
