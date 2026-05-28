@@ -1367,7 +1367,24 @@
   border-radius: 50%;
   background: var(--nb-warn);
 }
+.dt-sys-event-spin {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  animation: ob-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
 .dt-sys-event strong { font-weight: 600; }
+
+.dt-thread-empty {
+  display: flex; flex-direction: column;
+  align-items: flex-start; gap: 6px;
+  padding: 32px 4px;
+  color: var(--nb-ink-muted);
+}
+.dt-thread-empty-eyebrow { font-size: 13px; font-weight: 600; color: var(--nb-ink); }
+.dt-thread-empty-hint { font-size: 12px; }
 
 .dt-artifact {
   margin-top: 4px;
@@ -2665,17 +2682,25 @@
   display: grid; place-items: center;
   flex-shrink: 0;
 }
-.dt-recent-body { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dt-recent-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
 .dt-recent-title {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0;
   color: var(--nb-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .dt-recent-meta {
   display: flex; align-items: center; gap: 6px;
   font-size: 11px;
   color: var(--nb-ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .dt-recent-mono {
   font-family: var(--nb-font-mono);
@@ -2925,7 +2950,7 @@
 .dt-detail-v2 {
   flex: 1; min-height: 0;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: clamp(260px, 22vw, 340px) minmax(0, 1fr);
   background: var(--nb-wash);
 }
 
@@ -2966,12 +2991,17 @@
 }
 .dt-pane-content {
   width: 100%;
-  max-width: 760px;
   padding: 28px 24px 24px;
   display: flex; flex-direction: column;
   gap: 14px;
 }
 
+.dt-pane-banner {
+  flex-shrink: 0;
+  display: flex; justify-content: center;
+  padding: 16px 24px 0;
+}
+.dt-pane-banner > .dt-offline-banner { width: 100%; }
 .dt-detail-v2 .dt-offline-banner { margin: 0 0 8px; }
 
 /* ═══════════════════════════════════════════════
@@ -2985,8 +3015,7 @@
 .dt-cmp-head {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px;
-  max-width: 820px;
-  margin: 0 auto 8px;
+  margin: 0 0 8px;
   padding: 0 4px;
 }
 .dt-cmp-modes {
@@ -3102,8 +3131,6 @@
 .dt-cmp-bar {
   display: flex; align-items: center;
   gap: 8px;
-  max-width: 820px;
-  margin: 0 auto;
   padding: 8px;
   background: var(--nb-paper);
   border: 1px solid var(--nb-line);
@@ -3336,4 +3363,38 @@
 @keyframes nb-audio-wave {
   0%, 100% { transform: scaleY(0.55); }
   50% { transform: scaleY(1.15); }
+}
+
+/* ═══════════════════════════════════════════════
+   Focus rings — keyboard navigation
+   ═══════════════════════════════════════════════ */
+.dt-threadlist-row:focus-visible,
+.dt-thread-new:focus-visible,
+.dt-thread-more:focus-visible,
+.dt-header-broswitch:focus-visible,
+.dt-header-brand:focus-visible,
+.dt-header-icon-btn:focus-visible,
+.dt-cmp-mode:focus-visible,
+.dt-cmp-send:focus-visible,
+.dt-cmp-mic:focus-visible,
+.dt-recent:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--nb-coral-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dt-header-pill-ready .dt-header-pill-dot,
+  .dt-header-pill-live .dt-header-pill-dot,
+  .dt-sidebar-bro-row-pip-info,
+  .dt-activity-state-live .dt-activity-state-dot,
+  .dt-home-chip-info .dt-home-chip-dot,
+  .dt-bro-state-info .dt-bro-state-dot,
+  .dt-bro-avatar-pip-info,
+  .dt-threadlist-pip,
+  .dt-free-led-active,
+  .dt-sys-event-spin,
+  .dt-status-spin,
+  .dt-bro-card-spin {
+    animation: none;
+  }
 }

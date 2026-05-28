@@ -986,7 +986,6 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
               <section className="dt-rail-block">
                 <div className="dt-rail-block-head">
                   <span className="ob-eyebrow">RECENT</span>
-                  <button type="button" className="ob-link ob-link-sm">See all</button>
                 </div>
                 {recents.length > 0 ? (
                   <ul className="dt-recent-list">
@@ -1304,6 +1303,11 @@ function ThreadPanel({
   const shell = useNewbroShell();
   const draftText = shell.draftSession?.current_draft?.text ?? "";
   const timelineEntries = buildTimelineEntries({ records, textTurns, audioTurns, conversationMessages });
+  const hasContent = Boolean(draftText) || timelineEntries.length > 0;
+  const showEmptyState = !hasContent
+    && !shell.openingThreadId
+    && !shell.threadOpenError
+    && !(disabled && disabledReason);
 
   return (
     <>
@@ -1318,10 +1322,10 @@ function ThreadPanel({
         </div>
       ) : null}
       {shell.openingThreadId ? (
-        <div className="dt-turn dt-turn-sys">
+        <div className="dt-turn dt-turn-sys" aria-busy="true">
           <div className="dt-sys-event">
-            <span className="dt-sys-event-dot" />
-            <span>Fetching thread history...</span>
+            <span className="dt-sys-event-spin" aria-hidden="true" />
+            <span>Fetching thread history…</span>
           </div>
         </div>
       ) : null}
@@ -1333,7 +1337,13 @@ function ThreadPanel({
           </div>
         </div>
       ) : null}
-      <div className="dt-thread-day"><span>Current session</span></div>
+      {showEmptyState ? (
+        <div className="dt-thread-empty" role="status">
+          <span className="dt-thread-empty-eyebrow">No messages with {bro.name} yet</span>
+          <span className="dt-thread-empty-hint">Type below or hold space to talk.</span>
+        </div>
+      ) : null}
+      {hasContent ? <div className="dt-thread-day"><span>Current session</span></div> : null}
       {draftText ? (
         <div className="dt-turn dt-turn-you">
           <div className="dt-bubble dt-bubble-you">{draftText}</div>
@@ -1958,8 +1968,12 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
-  const needsConnect = bro?.source === "runtime" && nodeStateNeedsConnect(nodeState);
-  const offline = nodeState.kind === "usable_disconnected" ? nodeState.node : null;
+  const needsConnect = bro?.source === "runtime"
+    && nodeStateNeedsConnect(nodeState)
+    && nodeState.kind !== "never_connected";
+  const offline = nodeState.kind === "usable_disconnected" || nodeState.kind === "never_connected"
+    ? nodeState.node
+    : null;
   const persona = bro?.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
   const threads = bro?.source === "runtime" ? buildBroThreadRecords(bro.id, shell.broThreads) : [];
   const selectedThread = !pendingNewThread
@@ -2120,9 +2134,18 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
             offline={offline}
           />
           <section className="dt-pane">
+            {offline ? (
+              <div className="dt-pane-banner">
+                <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} />
+              </div>
+            ) : null}
             <div className="dt-pane-scroll" ref={threadScrollRef}>
-              <div className="dt-pane-content">
-                {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} /> : null}
+              <div
+                className="dt-pane-content"
+                aria-live="polite"
+                aria-relevant="additions"
+                aria-busy={shell.openingThreadId ? true : undefined}
+              >
                 <ThreadPanel
                   bro={bro}
                   records={records}
