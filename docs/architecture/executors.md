@@ -55,11 +55,14 @@ Executor-node note:
   disconnect, and retry state explicit, and should only report ready after the
   control-channel registration handshake succeeds
 - Bro Detail audio instructions are node-local audio work: clients upload raw
-  audio, Newbro asks the detached node to transcribe with local Whisper, and
-  the transcript becomes direct executor work. With an active run this uses the
-  run-event path; from idle it uses a direct transcription request before
-  queuing a Codex task. `supports_audio_instruction` means the connected node
-  can accept raw audio and produce a usable executor instruction. Whisper
+  audio, Newbro sends the PCM content to the detached node over the
+  executor-node command channel, the node transcribes with local Whisper, and
+  the transcript becomes direct executor work. The command payload carries
+  typed audio metadata plus JSON-safe audio content and does not require the
+  detached node to read a backend-local filesystem path. With an active run this
+  uses the run-event path; from idle it uses a direct transcription request
+  before queuing a Codex task. `supports_audio_instruction` means the connected
+  node can accept raw audio and produce a usable executor instruction. Whisper
   language defaults to automatic detection; foreground executor runs can
   override language and model with inline CLI arguments.
 - Codex executor nodes also advertise `supports_thread_list` when they can call

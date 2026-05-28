@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import json
 import logging
@@ -75,6 +76,8 @@ class FakeAudioTranscriber:
         return True
 
     async def transcribe(self, audio):
+        assert base64.b64decode(audio.pcm16_b64, validate=True)
+        assert not hasattr(audio, "artifact_path")
         return AudioTranscriptionResult(
             text="Please continue from the audio.",
             language="en",
@@ -128,6 +131,22 @@ class FakeWebSocket:
         if isinstance(next_item, BaseException):
             raise next_item
         return json.dumps(next_item)
+
+
+def _audio_instruction() -> ExecutorAudioInstruction:
+    pcm16 = b"\x01\x00" * 24_000
+    return ExecutorAudioInstruction(
+        audio_instruction_id="aud-1",
+        target_persona_id="forge",
+        target_thread_id="bro-thread-1",
+        pcm16_b64=base64.b64encode(pcm16).decode("ascii"),
+        mime_type="audio/pcm",
+        duration_ms=1000,
+        sample_rate=24000,
+        num_channels=1,
+        samples_per_channel=24000,
+        size_bytes=len(pcm16),
+    )
 
 
 class FakeConnection:
@@ -300,18 +319,7 @@ async def test_dispatch_audio_instruction_forwards_to_active_executor(monkeypatc
         execution_session_id="exec-1",
         executor_type="codex",
         task_id="task-1",
-        audio=ExecutorAudioInstruction(
-            audio_instruction_id="aud-1",
-            target_persona_id="forge",
-            target_thread_id="bro-thread-1",
-            artifact_path="/tmp/audio.pcm",
-            mime_type="audio/pcm",
-            duration_ms=1000,
-            sample_rate=24000,
-            num_channels=1,
-            samples_per_channel=24000,
-            size_bytes=48000,
-        ),
+        audio=_audio_instruction(),
     )
     try:
         await service._dispatch_audio_instruction(websocket, command)
@@ -338,18 +346,7 @@ async def test_transcribe_audio_instruction_returns_transcript_without_active_ru
     command = TranscribeAudioInstructionCommand(
         request_id="audio-req-1",
         executor_type="codex",
-        audio=ExecutorAudioInstruction(
-            audio_instruction_id="aud-1",
-            target_persona_id="forge",
-            target_thread_id="bro-thread-1",
-            artifact_path="/tmp/audio.pcm",
-            mime_type="audio/pcm",
-            duration_ms=1000,
-            sample_rate=24000,
-            num_channels=1,
-            samples_per_channel=24000,
-            size_bytes=48000,
-        ),
+        audio=_audio_instruction(),
     )
 
     await service._transcribe_audio_instruction(websocket, command)

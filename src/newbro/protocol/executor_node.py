@@ -209,7 +209,7 @@ class ExecutorAudioInstruction(BaseModel):
     audio_instruction_id: str
     target_persona_id: str
     target_thread_id: str | None = None
-    artifact_path: str
+    pcm16_b64: str
     mime_type: str
     duration_ms: int
     sample_rate: int

@@ -125,10 +125,12 @@ Current behavior:
   first direct send.
 - Bro Detail push-to-talk mic input records local browser audio only while
   pressed, converts it to raw PCM, and uploads it to Newbro for dispatch to the
-  selected Bro's executor node; the node transcribes with local Whisper and
-  Newbro creates a queued direct Codex task from that transcript in the selected
-  Bro thread. Idle Bros start that direct task after transcription; active Bros
-  queue the transcript behind the current turn.
+  selected Bro's executor node. Newbro carries the PCM content in the
+  executor-node command payload instead of sending a backend-local file path;
+  the node transcribes with local Whisper and Newbro creates a queued direct
+  Codex task from that transcript in the selected Bro thread. Idle Bros start
+  that direct task after transcription; active Bros queue the transcript behind
+  the current turn.
 - The composer shows the audio bubble immediately, then displays the Whisper
   transcript under that same bubble after executor-node transcription succeeds
 - the mic is disabled until the selected Bro has a connected bound Codex node

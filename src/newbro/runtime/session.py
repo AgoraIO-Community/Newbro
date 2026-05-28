@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import logging
-import tempfile
 import time
 from dataclasses import replace
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
@@ -111,7 +110,6 @@ from .models import (
 FALLBACK_ASSISTANT_ERROR_MESSAGE = "Sorry, something went wrong while generating the reply."
 LOGGER = logging.getLogger(__name__)
 MAX_TASK_INSTRUCTION_CHARS = 4000
-AUDIO_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "newbro-audio-artifacts"
 AUDIO_ACTIVE_RUN_STATUSES = {RunStatus.ASSIGNED, RunStatus.RUNNING, RunStatus.BLOCKED}
 SELECTED_THREAD_HISTORY_READ_TIMEOUT_SECONDS = 4.0
 SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS = 2.0
@@ -1651,15 +1649,11 @@ class SessionRuntime:
             create_new_thread=False,
         )
         audio_instruction_id = f"aud-{uuid4().hex[:12]}"
-        artifact_dir = AUDIO_ARTIFACT_DIR / self.session_id
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        artifact_path = artifact_dir / f"{audio_instruction_id}.pcm"
-        artifact_path.write_bytes(pcm16)
         audio = ExecutorAudioInstruction(
             audio_instruction_id=audio_instruction_id,
             target_persona_id=persona.persona_id,
             target_thread_id=thread_target_id,
-            artifact_path=str(artifact_path),
+            pcm16_b64=base64.b64encode(pcm16).decode("ascii"),
             mime_type=mime_type,
             duration_ms=duration_ms,
             sample_rate=sample_rate,

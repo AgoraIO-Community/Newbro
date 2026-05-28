@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -335,6 +338,8 @@ async def test_executor_audio_instruction_dispatches_to_executor_without_message
     assert websocket.sent[0]["type"] == "dispatch_audio_instruction"
     assert websocket.sent[0]["task_id"] == "task-current"
     assert websocket.sent[0]["audio"]["target_persona_id"] == "forge"
+    assert "artifact_path" not in websocket.sent[0]["audio"]
+    assert base64.b64decode(websocket.sent[0]["audio"]["pcm16_b64"], validate=True) == b"\x00\x00" * 24
 
 
 @pytest.mark.anyio
@@ -381,12 +386,33 @@ async def test_executor_audio_instruction_starts_direct_task_for_connected_idle_
             nonlocal scheduled
             scheduled = True
 
-        async def fake_transcribe_audio_instruction(**kwargs):
-            assert kwargs["executor_type"] == "codex"
-            assert kwargs["node_id"] == "node-forge"
-            assert kwargs["audio"].target_persona_id == "forge"
-            return AudioInstructionTranscribedMessage(
-                request_id="audio-transcribe-test",
+        monkeypatch.setattr(type(runtime_session), "schedule_execution", mark_scheduled)
+
+        post_task = asyncio.create_task(
+            client.post(
+                f"/api/sessions/{session_id}/executor-audio-instructions",
+                params={
+                    "target_persona_id": "forge",
+                    "duration_ms": 1,
+                    "sample_rate": 24000,
+                    "num_channels": 1,
+                    "samples_per_channel": 24,
+                },
+                content=b"\x00\x00" * 24,
+                headers={"Content-Type": "audio/pcm"},
+            )
+        )
+        for _ in range(100):
+            if websocket.sent:
+                break
+            await asyncio.sleep(0.01)
+        assert len(websocket.sent) == 1
+        assert websocket.sent[0]["type"] == "transcribe_audio_instruction"
+        assert "artifact_path" not in websocket.sent[0]["audio"]
+        assert base64.b64decode(websocket.sent[0]["audio"]["pcm16_b64"], validate=True) == b"\x00\x00" * 24
+        manager.publish_audio_instruction_transcribed(
+            AudioInstructionTranscribedMessage(
+                request_id=websocket.sent[0]["request_id"],
                 node_id="node-forge",
                 executor_type="codex",
                 transcript_text="start from recorded audio",
@@ -394,22 +420,8 @@ async def test_executor_audio_instruction_starts_direct_task_for_connected_idle_
                 duration_seconds=0.1,
                 metadata={"whisper_model": "fake"},
             )
-
-        monkeypatch.setattr(type(runtime_session), "schedule_execution", mark_scheduled)
-        monkeypatch.setattr(manager, "transcribe_audio_instruction", fake_transcribe_audio_instruction)
-
-        response = await client.post(
-            f"/api/sessions/{session_id}/executor-audio-instructions",
-            params={
-                "target_persona_id": "forge",
-                "duration_ms": 1,
-                "sample_rate": 24000,
-                "num_channels": 1,
-                "samples_per_channel": 24,
-            },
-            content=b"\x00\x00" * 24,
-            headers={"Content-Type": "audio/pcm"},
         )
+        response = await post_task
         conversation = (await client.get(f"/api/sessions/{session_id}/conversation")).json()
         snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
 
@@ -418,7 +430,6 @@ async def test_executor_audio_instruction_starts_direct_task_for_connected_idle_
     assert response.json()["transcript_text"] == "start from recorded audio"
     assert conversation["conversation_history"] == []
     assert scheduled
-    assert websocket.sent == []
     tasks = await runtime_session.blackboard.list_tasks()
     assert len(tasks) == 1
     task = tasks[0]
@@ -545,3 +556,5 @@ async def test_executor_audio_instruction_targets_selected_codex_thread_without_
     assert websocket.sent[0]["type"] == "dispatch_audio_instruction"
     assert websocket.sent[0]["execution_session_id"] == "exec-selected"
     assert websocket.sent[0]["audio"]["target_thread_id"] == "bro-thread-selected"
+    assert "artifact_path" not in websocket.sent[0]["audio"]
+    assert base64.b64decode(websocket.sent[0]["audio"]["pcm16_b64"], validate=True) == b"\x00\x00" * 24

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
 import math
-from pathlib import Path
 from typing import Any, Protocol
 
 from newbro.protocol import ExecutorAudioInstruction
@@ -73,12 +74,9 @@ class LocalWhisperTranscriber:
         import anyio
         import numpy as np
 
-        artifact = Path(audio.artifact_path)
-        if not artifact.is_file():
-            raise RuntimeError("Audio artifact is not available for transcription.")
-        raw = artifact.read_bytes()
+        raw = _decode_pcm16_content(audio)
         if not raw:
-            raise RuntimeError("Audio artifact is empty.")
+            raise RuntimeError("Audio content is empty.")
         if len(raw) % 2 != 0:
             raw = raw[:-1]
         pcm = np.frombuffer(raw, dtype=np.int16)
@@ -175,6 +173,13 @@ def _optional_string(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _decode_pcm16_content(audio: ExecutorAudioInstruction) -> bytes:
+    try:
+        return base64.b64decode(audio.pcm16_b64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise RuntimeError("Audio content payload is invalid.") from exc
 
 
 def _pcm_signal_stats(pcm: Any, *, sample_rate: int) -> dict[str, float]:

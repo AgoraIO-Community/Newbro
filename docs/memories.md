@@ -263,3 +263,7 @@ Short log of important design decisions and changes for Newbro.
 - Changed Bro Detail imported-thread opening to skip global Codex thread-list refreshes for cached imported threads and start selected-thread subscription outside the HTTP open response path.
 - Changed Bro Detail selected Codex thread history reads to use `thread/read` metadata plus bounded `thread/turns/list` pages instead of full `thread/read includeTurns` payloads.
 - Changed the detached Codex executor node to reuse one long-lived Codex app-server process for thread list/read/start/resume and selected-thread event routing; subscriptions are local event interests instead of separate app-server processes.
+
+## 2026-05-28
+
+- Changed Bro Detail push-to-talk audio transport so Newbro sends browser-uploaded PCM content inside executor-node commands for local Whisper transcription, without requiring detached executor nodes to read backend-local audio artifact paths.

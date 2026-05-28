@@ -56,20 +56,23 @@ If any condition is false, recording is blocked before microphone capture starts
 
 The upload endpoint accepts raw PCM only and validates owner auth, target Bro,
 connected Codex node, MIME type, duration, sample rate/channel metadata, and
-size. The current limits are 60 seconds and 25 MB. Accepted audio is stored as
-an artifact. If a matching active Codex run exists, Newbro dispatches it over
-the typed executor-node protocol as `dispatch_audio_instruction` with an
-`ExecutorAudioInstruction` payload. If no active run exists, Newbro sends
-`transcribe_audio_instruction`, receives a Whisper transcript from the executor
-node, and creates a queued direct Codex task from that transcript.
+size. The current limits are 60 seconds and 25 MB. Accepted audio is encoded as
+JSON-safe PCM content inside the typed executor-node command; the detached node
+does not read a backend-local audio path. If a matching active Codex run exists,
+Newbro dispatches it over the typed executor-node protocol as
+`dispatch_audio_instruction` with an `ExecutorAudioInstruction` payload. If no
+active run exists, Newbro sends `transcribe_audio_instruction`, receives a
+Whisper transcript from the executor node, and creates a queued direct Codex
+task from that transcript.
 
 Executor nodes advertise `supports_audio_instruction` only when they can accept
 raw audio and produce a usable executor instruction. In the default path, the
-node transcribes the artifact with local Whisper. Active-run audio returns a
-Whisper progress event that Newbro converts into a queued direct Codex task for
-the selected thread; idle audio returns a direct transcription response and
-Newbro starts that queued task immediately. This path does not require Codex
-realtime audio or API-key realtime auth. Newbro does not call Agora
+node decodes the command's audio content and transcribes it with local Whisper.
+Active-run audio returns a Whisper progress event that Newbro converts into a
+queued direct Codex task for the selected thread; idle audio returns a direct
+transcription response and Newbro starts that queued task immediately. This path
+does not require Codex realtime audio or API-key realtime auth. Newbro does not
+call Agora
 prepare/activate, RTC, RTM, ConvoAI, Agora STT, Draft ASR, or Draft Send for
 this composer mic path.
 
