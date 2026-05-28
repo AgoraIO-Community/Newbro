@@ -287,18 +287,23 @@ export async function submitExecutorTextInstruction(
     targetPersonaId: string;
     targetThreadId?: string | null;
     createNewThread?: boolean;
+    clientRequestId?: string | null;
     text: string;
   },
 ): Promise<{ instruction_id: string; target_persona_id: string; target_thread_id: string | null; status: string }> {
+  const body: Record<string, unknown> = {
+    target_persona_id: payload.targetPersonaId,
+    target_thread_id: payload.targetThreadId ?? null,
+    create_new_thread: payload.createNewThread ?? false,
+    text: payload.text,
+  };
+  if (payload.clientRequestId) {
+    body.client_request_id = payload.clientRequestId;
+  }
   const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/executor-text-instructions`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      target_persona_id: payload.targetPersonaId,
-      target_thread_id: payload.targetThreadId ?? null,
-      create_new_thread: payload.createNewThread ?? false,
-      text: payload.text,
-    }),
+    body: JSON.stringify(body),
   });
   return (await ensureOk(response)).json();
 }

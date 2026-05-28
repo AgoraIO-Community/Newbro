@@ -316,32 +316,6 @@
   box-shadow: 0 30px 70px -22px rgba(16, 17, 20, 0.22), 0 6px 14px -6px rgba(16, 17, 20, 0.06);
 }
 
-.nb-mobile-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 28px 4px;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.nb-mobile-battery {
-  position: relative;
-  display: inline-flex;
-  width: 16px;
-  height: 10px;
-  border: 1px solid var(--nb-mobile-ink);
-  border-radius: 2px;
-}
-
-.nb-mobile-battery span {
-  position: absolute;
-  inset: 1px auto 1px 1px;
-  width: 70%;
-  border-radius: 1px;
-  background: var(--nb-mobile-ink);
-}
-
 .nb-mobile-content {
   display: flex;
   min-height: 0;

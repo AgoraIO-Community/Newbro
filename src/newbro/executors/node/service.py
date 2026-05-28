@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, field
 import logging
 import sys
+import time
 from typing import Any, TextIO
 from urllib.parse import urlparse, urlunparse
 
@@ -46,6 +47,11 @@ from .audio import AudioTranscriber, build_audio_transcriber
 from .config import ExecutorNodeSettings
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _emit_executor_text_metric(message: str, *args: object) -> None:
+    LOGGER.info(message, *args)
+    print(message % args, file=sys.stderr, flush=True)
 
 
 @dataclass(slots=True)
@@ -698,9 +704,29 @@ class ExecutorNodeService:
         websocket: Any,
         command: DispatchTextInstructionCommand,
     ) -> None:
+        started_at = time.perf_counter()
+        client_request_id = command.instruction.metadata.get("client_request_id")
+        _emit_executor_text_metric(
+            "executor_text_metric step=node.dispatch.received node_id=%s client_request_id=%s instruction_id=%s task_id=%s run_id=%s execution_session_id=%s",
+            self._settings.node_id,
+            client_request_id,
+            command.instruction.instruction_id,
+            command.task_id,
+            command.run_id,
+            command.execution_session_id,
+        )
         context = self._active_runs.get(command.run_id)
         session = self._live_sessions.get(command.execution_session_id)
         if context is None or session is None:
+            _emit_executor_text_metric(
+                "executor_text_metric step=node.dispatch.rejected node_id=%s client_request_id=%s instruction_id=%s task_id=%s run_id=%s elapsed_ms=%s reason=no_active_run",
+                self._settings.node_id,
+                client_request_id,
+                command.instruction.instruction_id,
+                command.task_id,
+                command.run_id,
+                int((time.perf_counter() - started_at) * 1000),
+            )
             await self._send_text_instruction_event(
                 websocket,
                 command,
@@ -710,6 +736,15 @@ class ExecutorNodeService:
             return
         text_handler = getattr(context.executor, "handle_text_instruction", None)
         if text_handler is None:
+            _emit_executor_text_metric(
+                "executor_text_metric step=node.dispatch.rejected node_id=%s client_request_id=%s instruction_id=%s task_id=%s run_id=%s elapsed_ms=%s reason=unsupported",
+                self._settings.node_id,
+                client_request_id,
+                command.instruction.instruction_id,
+                command.task_id,
+                command.run_id,
+                int((time.perf_counter() - started_at) * 1000),
+            )
             await self._send_text_instruction_event(
                 websocket,
                 command,
@@ -727,6 +762,19 @@ class ExecutorNodeService:
         )
         try:
             async for event in text_handler(run, session, command.instruction):
+                event_metadata = dict(event.metadata)
+                event_metadata.setdefault("client_request_id", client_request_id)
+                event_metadata.setdefault("instruction_id", command.instruction.instruction_id)
+                _emit_executor_text_metric(
+                    "executor_text_metric step=node.event.%s node_id=%s client_request_id=%s instruction_id=%s task_id=%s run_id=%s elapsed_ms=%s",
+                    event.event_type.value,
+                    self._settings.node_id,
+                    client_request_id,
+                    command.instruction.instruction_id,
+                    command.task_id,
+                    command.run_id,
+                    int((time.perf_counter() - started_at) * 1000),
+                )
                 await self._send_json(
                     websocket,
                     RunEventMessage(
@@ -736,11 +784,20 @@ class ExecutorNodeService:
                         session_id=session.session_id,
                         event_type=event.event_type.value,
                         message=event.message,
-                        metadata=dict(event.metadata),
+                        metadata=event_metadata,
                         latest_resume_handle=_build_resume_handle(context.executor, session),
                     ).model_dump(mode="json"),
                 )
         except Exception as exc:
+            _emit_executor_text_metric(
+                "executor_text_metric step=node.dispatch.failed node_id=%s client_request_id=%s instruction_id=%s task_id=%s run_id=%s elapsed_ms=%s",
+                self._settings.node_id,
+                client_request_id,
+                command.instruction.instruction_id,
+                command.task_id,
+                command.run_id,
+                int((time.perf_counter() - started_at) * 1000),
+            )
             await self._send_text_instruction_event(
                 websocket,
                 command,
@@ -819,6 +876,7 @@ class ExecutorNodeService:
                 message=message,
                 metadata={
                     "instruction_id": command.instruction.instruction_id,
+                    "client_request_id": command.instruction.metadata.get("client_request_id"),
                     "source": "executor_text_instruction",
                 },
                 latest_resume_handle=None,

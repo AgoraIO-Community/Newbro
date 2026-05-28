@@ -72,6 +72,19 @@ type TimelineEntry =
 
 const THREAD_LIST_PAGE_SIZE = 25;
 
+function directExecutorMetric(stage: string, details: Record<string, unknown>): void {
+  const payload = {
+    stage,
+    at: new Date().toISOString(),
+    ...details,
+  };
+  window.dispatchEvent(new CustomEvent("newbro:direct-executor-metric", { detail: payload }));
+  if (import.meta.env.MODE !== "test") {
+    // eslint-disable-next-line no-console
+    console.info("[newbro:direct-executor]", payload);
+  }
+}
+
 function turnMatchesThread<T extends { threadId?: string | null }>(turn: T, threadId: string | null): boolean {
   return !threadId || !turn.threadId || turn.threadId === threadId;
 }
@@ -1395,20 +1408,50 @@ function MobileThreadSurface({
     if (!text || textDisabled || !shell.activeShellSessionId) return;
     const turnId = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const createdAt = new Date().toISOString();
+    const startedAt = performance.now();
+    directExecutorMetric("ui.text.submit.started", {
+      client_request_id: turnId,
+      session_id: shell.activeShellSessionId,
+      bro_id: bro.id,
+      target_thread_id: selectedThreadId,
+      create_new_thread: createNewThread,
+      text_length: text.length,
+    });
     onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending", createdAt });
+    directExecutorMetric("ui.text.local_turn_rendered", {
+      client_request_id: turnId,
+      elapsed_ms: Math.round(performance.now() - startedAt),
+    });
     setDraft("");
     try {
       const response = await submitExecutorTextInstruction(shell.activeShellSessionId, {
         targetPersonaId: bro.id,
         targetThreadId: selectedThreadId,
         createNewThread,
+        clientRequestId: turnId,
         text,
+      });
+      directExecutorMetric("ui.text.http.accepted", {
+        client_request_id: turnId,
+        instruction_id: response.instruction_id,
+        target_thread_id: response.target_thread_id,
+        elapsed_ms: Math.round(performance.now() - startedAt),
       });
       onThreadResolved(response.target_thread_id);
       onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent", createdAt });
       await shell.refreshShellSession();
+      directExecutorMetric("ui.text.refresh.completed", {
+        client_request_id: turnId,
+        instruction_id: response.instruction_id,
+        elapsed_ms: Math.round(performance.now() - startedAt),
+      });
     } catch (error: unknown) {
       const message = describeError(error, "Text could not be sent.");
+      directExecutorMetric("ui.text.submit.failed", {
+        client_request_id: turnId,
+        elapsed_ms: Math.round(performance.now() - startedAt),
+        error: message,
+      });
       onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", createdAt, error: message });
       shell.setShellError(message);
     }
@@ -1669,20 +1712,50 @@ function DesktopComposerBar({
     if (!text || textDisabled || !shell.activeShellSessionId) return;
     const turnId = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const createdAt = new Date().toISOString();
+    const startedAt = performance.now();
+    directExecutorMetric("ui.text.submit.started", {
+      client_request_id: turnId,
+      session_id: shell.activeShellSessionId,
+      bro_id: bro.id,
+      target_thread_id: selectedThreadId,
+      create_new_thread: createNewThread,
+      text_length: text.length,
+    });
     onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending", createdAt });
+    directExecutorMetric("ui.text.local_turn_rendered", {
+      client_request_id: turnId,
+      elapsed_ms: Math.round(performance.now() - startedAt),
+    });
     setDraft("");
     try {
       const response = await submitExecutorTextInstruction(shell.activeShellSessionId, {
         targetPersonaId: bro.id,
         targetThreadId: selectedThreadId,
         createNewThread,
+        clientRequestId: turnId,
         text,
+      });
+      directExecutorMetric("ui.text.http.accepted", {
+        client_request_id: turnId,
+        instruction_id: response.instruction_id,
+        target_thread_id: response.target_thread_id,
+        elapsed_ms: Math.round(performance.now() - startedAt),
       });
       onThreadResolved(response.target_thread_id);
       onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent", createdAt });
       await shell.refreshShellSession();
+      directExecutorMetric("ui.text.refresh.completed", {
+        client_request_id: turnId,
+        instruction_id: response.instruction_id,
+        elapsed_ms: Math.round(performance.now() - startedAt),
+      });
     } catch (error: unknown) {
       const message = describeError(error, "Text could not be sent.");
+      directExecutorMetric("ui.text.submit.failed", {
+        client_request_id: turnId,
+        elapsed_ms: Math.round(performance.now() - startedAt),
+        error: message,
+      });
       onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", createdAt, error: message });
       shell.setShellError(message);
     }
@@ -2094,7 +2167,6 @@ function MobileStage({ children }: { children: React.ReactNode }) {
   return (
     <div className="nb-mobile-stage" data-testid="mobile-walkie">
       <div className="nb-mobile-phone">
-        <div className="nb-mobile-status"><span>9:41</span><span className="nb-mobile-battery" aria-hidden="true"><span /></span></div>
         {children}
       </div>
     </div>
@@ -2175,24 +2247,6 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string) => void }) {
             </section>
           ) : null}
         </main>
-        {shell.runtimePersonas.length > 0 ? (
-          <div className="mobile-action-dock">
-            <button
-              type="button"
-              className="home-fab"
-              aria-label={shell.voiceSession.phase === "connected" ? "Stop voice session" : "Call NewBro"}
-              onClick={() => {
-                if (shell.voiceSession.phase === "connected") {
-                  void shell.stopMobileVoiceSession();
-                } else {
-                  void shell.startMobileVoiceSession(null);
-                }
-              }}
-            >
-              {shell.voiceSession.phase === "connected" ? "Stop voice session" : "Call NewBro"}
-            </button>
-          </div>
-        ) : null}
       </div>
       {sheetOpen && shell.activeShellSessionId ? <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setSheetOpen(false)} onCreated={shell.refreshShellSession} /> : null}
     </MobileStage>

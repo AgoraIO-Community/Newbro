@@ -57,6 +57,39 @@ type DraftOutputEvent =
 const AUTH_REQUIRED_STATUS = "Request failed with status 401";
 const AUTH_REQUIRED_MESSAGE = "Authentication required";
 
+function logDirectExecutorSnapshotMetric(sessionId: string, snapshot: SessionSnapshot): void {
+  const directTasks = snapshot.tasks
+    .filter((task) => task.metadata.source_kind === "bro_detail_text" || typeof task.metadata.client_request_id === "string")
+    .sort((left, right) => {
+      const leftTime = Date.parse(String(left.metadata.updated_at ?? left.metadata.created_at ?? ""));
+      const rightTime = Date.parse(String(right.metadata.updated_at ?? right.metadata.created_at ?? ""));
+      if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime)) return rightTime - leftTime;
+      return 0;
+    });
+  const task = directTasks[0];
+  if (!task) return;
+  const run = snapshot.execution_runs.find((candidate) => candidate.task_id === task.task_id) ?? null;
+  const payload = {
+    stage: "ui.stream.snapshot.received",
+    at: new Date().toISOString(),
+    session_id: sessionId,
+    client_request_id: task.metadata.client_request_id ?? null,
+    instruction_id: task.metadata.instruction_id ?? null,
+    task_id: task.task_id,
+    task_status: task.status,
+    run_id: run?.run_id ?? null,
+    run_status: run?.status ?? null,
+    target_thread_id: task.metadata.target_thread_id ?? null,
+    created_at: task.metadata.created_at ?? null,
+    updated_at: task.metadata.updated_at ?? null,
+  };
+  window.dispatchEvent(new CustomEvent("newbro:direct-executor-metric", { detail: payload }));
+  if (import.meta.env.MODE !== "test") {
+    // eslint-disable-next-line no-console
+    console.info("[newbro:direct-executor]", payload);
+  }
+}
+
 function isAuthRequiredError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -487,6 +520,7 @@ function useNewbroShellState() {
       onMessage: (event) => {
         if (!mountedRef.current) return;
         if (event.type === "snapshot") {
+          logDirectExecutorSnapshotMetric(activeShellSessionId, event.snapshot);
           startTransition(() => applySnapshot(event.snapshot));
           return;
         }

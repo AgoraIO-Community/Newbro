@@ -489,6 +489,7 @@ describe("Newbro artboard shell", () => {
         targetPersonaId: "forge",
         targetThreadId: "exec-1",
         createNewThread: false,
+        clientRequestId: expect.stringMatching(/^text-/),
         text: "Run the desktop direct send path",
       });
     });
@@ -549,6 +550,7 @@ describe("Newbro artboard shell", () => {
         targetPersonaId: "forge",
         targetThreadId: "exec-old",
         createNewThread: false,
+        clientRequestId: expect.stringMatching(/^text-/),
         text: "continue the older thread",
       });
     });
@@ -851,6 +853,7 @@ describe("Newbro artboard shell", () => {
         targetPersonaId: "forge",
         targetThreadId: null,
         createNewThread: true,
+        clientRequestId: expect.stringMatching(/^text-/),
         text: "start a separate thread",
       });
     });
@@ -870,6 +873,7 @@ describe("Newbro artboard shell", () => {
         targetPersonaId: "forge",
         targetThreadId: null,
         createNewThread: false,
+        clientRequestId: expect.stringMatching(/^text-/),
         text: "start from idle bro",
       });
     });
@@ -918,6 +922,7 @@ describe("Newbro artboard shell", () => {
         targetPersonaId: "forge",
         targetThreadId: "exec-1",
         createNewThread: false,
+        clientRequestId: expect.stringMatching(/^text-/),
         text: "retry queued task",
       });
     });
@@ -994,6 +999,7 @@ describe("Newbro artboard shell", () => {
         targetPersonaId: "forge",
         targetThreadId: "exec-1",
         createNewThread: false,
+        clientRequestId: expect.stringMatching(/^text-/),
         text: "continue directly",
       });
     });
@@ -1042,6 +1048,7 @@ describe("Newbro artboard shell", () => {
         targetPersonaId: "forge",
         targetThreadId: "exec-1",
         createNewThread: false,
+        clientRequestId: expect.stringMatching(/^text-/),
         text: "Please draft the launch note",
       });
     });
@@ -1049,21 +1056,12 @@ describe("Newbro artboard shell", () => {
     expect(clientMock.sendSocketDraftAsrTurn).not.toHaveBeenCalled();
   });
 
-  it("starts free-route and selected mobile voice through the connector path", async () => {
+  it("starts selected mobile voice through the connector path", async () => {
     window.history.replaceState({}, "", "/mobile?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Call NewBro" }));
-    await waitFor(() => expect(clientMock.clearVoiceTarget).toHaveBeenCalledWith("session-existing"));
-    await waitFor(() => expect(connectorMock.prepareConnectorSession).toHaveBeenCalledWith({
-      synapse_session_id: "session-existing",
-    }));
-    await waitFor(() => expect(connectorMock.activateConnectorSession).toHaveBeenCalled());
-
-    connectorMock.prepareConnectorSession.mockClear();
-    fireEvent.click(await screen.findByRole("button", { name: "Stop voice session" }));
-    await waitFor(() => expect(clientMock.clearVoiceTarget).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: "Call NewBro" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByTestId("mobile-bro-row-forge"));
     fireEvent.click(await screen.findByRole("tab", { name: /Always on/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Wake up Forge" }));

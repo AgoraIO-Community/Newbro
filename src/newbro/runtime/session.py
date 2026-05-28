@@ -141,6 +141,10 @@ def _mark_direct_executor_input(
     return next_metadata
 
 
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.perf_counter() - started_at) * 1000)
+
+
 def _new_bro_thread_id() -> str:
     return f"{BRO_THREAD_PREFIX}{uuid4().hex[:12]}"
 
@@ -749,6 +753,58 @@ class SessionRuntime:
     _selected_codex_thread_subscriptions: dict[str, SelectedCodexThreadSubscription] = field(default_factory=dict, init=False, repr=False)
     _selected_codex_thread_subscription_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False, repr=False)
     _open_bro_thread_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
+
+    def _record_direct_executor_text_metric(
+        self,
+        *,
+        step: str,
+        client_request_id: str | None,
+        instruction_id: str | None = None,
+        target_persona_id: str | None = None,
+        target_thread_id: str | None = None,
+        task_id: str | None = None,
+        run_id: str | None = None,
+        execution_session_id: str | None = None,
+        elapsed_ms: int | None = None,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        metric_details: dict[str, object] = {
+            "step": step,
+            "client_request_id": client_request_id,
+            "instruction_id": instruction_id,
+            "target_persona_id": target_persona_id,
+            "target_thread_id": target_thread_id,
+        }
+        if elapsed_ms is not None:
+            metric_details["elapsed_ms"] = elapsed_ms
+        if details:
+            metric_details.update(details)
+        self.observability.logger.emit_event(
+            level="INFO",
+            event_name=f"executor_text.{step}",
+            component="runtime.direct_executor",
+            summary="Executor text instruction timing",
+            conversation_id=self.session_id,
+            request_id=client_request_id,
+            task_id=task_id,
+            run_id=run_id,
+            execution_session_id=execution_session_id,
+            executor_type="codex",
+            details=metric_details,
+        )
+        LOGGER.info(
+            "executor_text_metric step=%s session_id=%s client_request_id=%s instruction_id=%s target_persona_id=%s target_thread_id=%s task_id=%s run_id=%s execution_session_id=%s elapsed_ms=%s",
+            step,
+            self.session_id,
+            client_request_id,
+            instruction_id,
+            target_persona_id,
+            target_thread_id,
+            task_id,
+            run_id,
+            execution_session_id,
+            elapsed_ms,
+        )
 
     async def snapshot(self, *, sync_imported_codex_threads: bool = True) -> SessionSnapshot:
         tasks = await self.blackboard.list_tasks()
@@ -1367,7 +1423,19 @@ class SessionRuntime:
         text: str,
         target_thread_id: str | None = None,
         create_new_thread: bool = False,
+        client_request_id: str | None = None,
     ) -> ExecutorTextInstruction:
+        started_at = time.perf_counter()
+        self._record_direct_executor_text_metric(
+            step="runtime.received",
+            client_request_id=client_request_id,
+            target_persona_id=target_persona_id,
+            target_thread_id=target_thread_id,
+            details={
+                "create_new_thread": create_new_thread,
+                "text_length": len(text.strip()),
+            },
+        )
         persona = await self.blackboard.get_persona(target_persona_id)
         if persona is None:
             raise ValueError("Selected Bro is not available.")
@@ -1383,23 +1451,61 @@ class SessionRuntime:
                 node_id=persona.executor_node_id,
         ):
             raise ValueError("Selected Bro's executor node does not support text follow-up instructions.")
+        self._record_direct_executor_text_metric(
+            step="runtime.executor_ready",
+            client_request_id=client_request_id,
+            target_persona_id=persona.persona_id,
+            target_thread_id=target_thread_id,
+            elapsed_ms=_elapsed_ms(started_at),
+            details={"executor_node_id": persona.executor_node_id},
+        )
 
+        resolve_started_at = time.perf_counter()
         thread_target_id, thread_continuity_key, thread_session, thread_resume_handle = await self._resolve_bro_thread_target(
             persona=persona,
             target_thread_id=target_thread_id,
             create_new_thread=create_new_thread,
+        )
+        self._record_direct_executor_text_metric(
+            step="runtime.thread_resolved",
+            client_request_id=client_request_id,
+            target_persona_id=persona.persona_id,
+            target_thread_id=thread_target_id,
+            elapsed_ms=_elapsed_ms(resolve_started_at),
+            details={
+                "total_elapsed_ms": _elapsed_ms(started_at),
+                "thread_continuity_key": thread_continuity_key,
+                "resume_mode": thread_session is not None or thread_resume_handle is not None,
+            },
         )
         instruction = ExecutorTextInstruction(
             instruction_id=f"txt-{uuid4().hex[:12]}",
             target_persona_id=persona.persona_id,
             target_thread_id=thread_target_id,
             text=text.strip(),
-            metadata={"source": "bro_detail_text", "target_thread_id": thread_target_id},
+            metadata={
+                "source": "bro_detail_text",
+                "target_thread_id": thread_target_id,
+                "client_request_id": client_request_id,
+            },
         )
 
+        lookup_started_at = time.perf_counter()
         execution_session, run = await self._active_codex_execution_for_persona(
             persona.persona_id,
             target_thread_id=thread_target_id,
+        )
+        self._record_direct_executor_text_metric(
+            step="runtime.active_execution_checked",
+            client_request_id=client_request_id,
+            instruction_id=instruction.instruction_id,
+            target_persona_id=persona.persona_id,
+            target_thread_id=thread_target_id,
+            task_id=run.task_id if run is not None else None,
+            run_id=run.run_id if run is not None else None,
+            execution_session_id=execution_session.execution_session_id if execution_session is not None else None,
+            elapsed_ms=_elapsed_ms(lookup_started_at),
+            details={"total_elapsed_ms": _elapsed_ms(started_at)},
         )
         if execution_session is None or run is None:
             if persona.current_task_id:
@@ -1413,30 +1519,89 @@ class SessionRuntime:
                     task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_text")
                     task.metadata["bro_thread_id"] = thread_continuity_key
                     task.metadata["target_thread_id"] = thread_target_id
+                    task.metadata["client_request_id"] = client_request_id
                     task.latest_instruction = self._merge_follow_up_instruction(task.latest_instruction, instruction.text)
                     task.goal = task.goal or instruction.text
                     await self.blackboard.put_task(task)
+                    schedule_started_at = time.perf_counter()
                     self.schedule_execution()
+                    self._record_direct_executor_text_metric(
+                        step="runtime.queued_task_updated",
+                        client_request_id=client_request_id,
+                        instruction_id=instruction.instruction_id,
+                        target_persona_id=persona.persona_id,
+                        target_thread_id=thread_target_id,
+                        task_id=task.task_id,
+                        elapsed_ms=_elapsed_ms(schedule_started_at),
+                        details={"total_elapsed_ms": _elapsed_ms(started_at)},
+                    )
+                    publish_started_at = time.perf_counter()
                     await self.publish_snapshot()
+                    self._record_direct_executor_text_metric(
+                        step="runtime.snapshot_published",
+                        client_request_id=client_request_id,
+                        instruction_id=instruction.instruction_id,
+                        target_persona_id=persona.persona_id,
+                        target_thread_id=thread_target_id,
+                        task_id=task.task_id,
+                        elapsed_ms=_elapsed_ms(publish_started_at),
+                        details={"total_elapsed_ms": _elapsed_ms(started_at)},
+                    )
                     return instruction
                 raise ValueError("Selected Bro has no active Codex execution session.")
-            await self._start_executor_text_task(
+            create_started_at = time.perf_counter()
+            task = await self._start_executor_text_task(
                 persona=persona,
                 instruction=instruction,
                 thread_id=thread_target_id,
                 thread_continuity_key=thread_continuity_key,
                 selected_execution_session=thread_session,
                 selected_resume_handle=thread_resume_handle,
+                extra_metadata={"client_request_id": client_request_id},
             )
+            self._record_direct_executor_text_metric(
+                step="runtime.task_created",
+                client_request_id=client_request_id,
+                instruction_id=instruction.instruction_id,
+                target_persona_id=persona.persona_id,
+                target_thread_id=thread_target_id,
+                task_id=task.task_id if task is not None else None,
+                elapsed_ms=_elapsed_ms(create_started_at),
+                details={"total_elapsed_ms": _elapsed_ms(started_at)},
+            )
+            schedule_started_at = time.perf_counter()
             self.schedule_execution()
+            self._record_direct_executor_text_metric(
+                step="runtime.execution_scheduled",
+                client_request_id=client_request_id,
+                instruction_id=instruction.instruction_id,
+                target_persona_id=persona.persona_id,
+                target_thread_id=thread_target_id,
+                task_id=task.task_id if task is not None else None,
+                elapsed_ms=_elapsed_ms(schedule_started_at),
+                details={"total_elapsed_ms": _elapsed_ms(started_at)},
+            )
+            publish_started_at = time.perf_counter()
             await self.publish_snapshot()
+            self._record_direct_executor_text_metric(
+                step="runtime.snapshot_published",
+                client_request_id=client_request_id,
+                instruction_id=instruction.instruction_id,
+                target_persona_id=persona.persona_id,
+                target_thread_id=thread_target_id,
+                task_id=task.task_id if task is not None else None,
+                elapsed_ms=_elapsed_ms(publish_started_at),
+                details={"total_elapsed_ms": _elapsed_ms(started_at)},
+            )
             return instruction
 
         task = await self.blackboard.get_task(run.task_id)
         if task is not None:
             task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_text")
+            task.metadata["client_request_id"] = client_request_id
             await self.blackboard.put_task(task)
 
+        dispatch_started_at = time.perf_counter()
         dispatched = await self.executor_node_manager.dispatch_text_instruction(
             run_id=run.run_id,
             execution_session_id=execution_session.execution_session_id,
@@ -1445,9 +1610,37 @@ class SessionRuntime:
             node_id=persona.executor_node_id,
             instruction=instruction,
         )
+        self._record_direct_executor_text_metric(
+            step="runtime.dispatch_completed",
+            client_request_id=client_request_id,
+            instruction_id=instruction.instruction_id,
+            target_persona_id=persona.persona_id,
+            target_thread_id=thread_target_id,
+            task_id=run.task_id,
+            run_id=run.run_id,
+            execution_session_id=execution_session.execution_session_id,
+            elapsed_ms=_elapsed_ms(dispatch_started_at),
+            details={
+                "total_elapsed_ms": _elapsed_ms(started_at),
+                "dispatched": dispatched,
+            },
+        )
         if not dispatched:
             raise ValueError("Selected Bro's Codex executor node is not ready for text.")
+        publish_started_at = time.perf_counter()
         await self.publish_snapshot()
+        self._record_direct_executor_text_metric(
+            step="runtime.snapshot_published",
+            client_request_id=client_request_id,
+            instruction_id=instruction.instruction_id,
+            target_persona_id=persona.persona_id,
+            target_thread_id=thread_target_id,
+            task_id=run.task_id,
+            run_id=run.run_id,
+            execution_session_id=execution_session.execution_session_id,
+            elapsed_ms=_elapsed_ms(publish_started_at),
+            details={"total_elapsed_ms": _elapsed_ms(started_at)},
+        )
         return instruction
 
     async def _start_executor_text_task(
