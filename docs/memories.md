@@ -283,3 +283,4 @@ Short log of important design decisions and changes for Newbro.
 - Changed ConvoAI connector activation cleanup so cleanup failures are logged while preserving the primary activation error.
 - Split Newbro CLI startup ownership into focused parser, command, config, process, check, status, path, and systemd modules, and added read-only `newbro status` while keeping `newbro dev` backend/frontend-only and leaving executor nodes explicit.
 - Added first-class Codex goal/plan projection: Codex goals come from `thread/goal/get` and goal events, Codex plans come from documented plan events/items, plan state is stored separately from progress, and reasoning items stay hidden from Bro Detail timeline cards.
+- Changed the VPS Docker deployment workflow to prune stopped containers and unused images before pulling/updating Compose, then prune unused images again after start so replaced app images do not accumulate; volumes are not pruned.

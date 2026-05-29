@@ -196,7 +196,17 @@ jobs:
             caddy_config:
           EOF
           printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
-          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && docker compose pull && docker compose up -d && docker compose ps"
+          ssh -i ~/.ssh/newbro_deploy -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "
+            set -euxo pipefail
+            cd '$DEPLOY_PATH'
+            docker container prune -f
+            docker image prune -a -f
+            docker compose pull
+            docker compose up -d
+            docker image prune -a -f
+            docker compose ps
+            docker system df
+          "
 
       - name: Verify public health
         run: |

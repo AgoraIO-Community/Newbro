@@ -123,8 +123,10 @@ GitHub Actions
   -> push image to GHCR
   -> SSH to VPS
   -> write docker-compose.yml
+  -> prune stopped containers and unused images
   -> docker compose pull
   -> docker compose up -d
+  -> prune unused images left by the replaced deployment
   -> verify https://newbro.example.com/api/health
 ```
 
@@ -186,7 +188,12 @@ cd /opt/newbro
 docker compose ps
 docker compose logs --tail=200 newbro
 docker compose logs --tail=200 caddy
+docker system df
 ```
+
+The workflow intentionally prunes stopped containers and unused images, but not
+volumes. Persistent runtime state stays mounted from `/root/.newbro`, and Caddy
+state remains in named Compose volumes.
 
 ## Non-Default Paths
 
