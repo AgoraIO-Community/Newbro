@@ -37,6 +37,12 @@ Run the connector host only:
 ./newbro connector run
 ```
 
+Inspect connector readiness without starting services:
+
+```bash
+./newbro status
+```
+
 `./newbro dev` and `./newbro start` do not auto-start the standalone connector
 host anymore. Use `./newbro connector run` only when you want a separate connector
 process.

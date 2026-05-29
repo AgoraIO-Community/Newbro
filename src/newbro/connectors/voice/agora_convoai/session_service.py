@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -24,6 +25,8 @@ from .service import (
     PreparedConvoAISession,
 )
 from .settings import AgoraConvoAIConnectorSettings
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -169,7 +172,9 @@ class AgoraConnectorSessionService:
                 try:
                     await self._convoai_service.stop_session(activated.runtime_session_id)
                 except Exception:
-                    pass
+                    LOGGER.exception(
+                        "Failed to clean up activated ConvoAI session after connector binding failure."
+                    )
             await self._binding_registry.unregister(reserved.binding_id)
             raise
         except ConvoAIRuntimeError:
@@ -186,7 +191,9 @@ class AgoraConnectorSessionService:
             try:
                 await self._convoai_service.stop_session(activated.runtime_session_id)
             except Exception:
-                pass
+                LOGGER.exception(
+                    "Failed to clean up activated ConvoAI session after connector binding mismatch."
+                )
             await self._binding_registry.unregister(binding.binding_id)
             raise RuntimeError("Connector binding did not finalize correctly.")
 

@@ -7,6 +7,7 @@ from uuid import uuid4
 from newbro.communication.history import ConversationEntry
 from newbro.blackboard import BlackboardStore
 from newbro.observability.emitters.communication import CommunicationDiagnosticEmitter
+from newbro.observability.reason_codes import COMMUNICATION_MODEL_FAILURE
 from newbro.protocol import MutationType, NotificationCandidate, Task, TaskMutation, TaskStatus
 from newbro.executors.core import ExecutorCapabilities
 
@@ -226,7 +227,15 @@ class CommunicationBrain:
                 on_trace=on_trace or self._trace_callback,
                 on_tool_call=on_tool_call,
             )
-        except Exception:
+        except Exception as exc:
+            if self._observability is not None:
+                self._observability.reply_failed(
+                    conversation_id=conversation_id,
+                    request_id=None,
+                    reason_code=COMMUNICATION_MODEL_FAILURE,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
             if len(candidates) == 1:
                 reply_text = candidates[0].summary_short
             else:

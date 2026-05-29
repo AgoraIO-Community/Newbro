@@ -783,6 +783,55 @@ def test_doctor_points_to_install_and_setup(monkeypatch, tmp_path: Path, capsys)
     assert "[missing] env file: run ./newbro setup" in output
 
 
+def test_status_reports_readiness_without_starting_services(monkeypatch, tmp_path: Path, capsys):
+    env_local = tmp_path / ".newbro" / ".env"
+    env_local.parent.mkdir(parents=True, exist_ok=True)
+    env_local.write_text("OPENAI_API_KEY=test-key\n", encoding="utf-8")
+    (tmp_path / ".newbro" / "config.yaml").write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "connector_host:",
+                "  enabled: false",
+                "  enabled_connectors: []",
+                "connectors: {}",
+                "executor_node:",
+                "  enabled_executors:",
+                "    - codex",
+                "executors:",
+                "  codex:",
+                "    command: codex",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True, exist_ok=True)
+    venv_python.write_text("", encoding="utf-8")
+
+    configure_repo_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_main, "report_command", lambda name, required=True: print(f"[ok] command: {name}") or True)
+    monkeypatch.setattr(cli_main, "report_port", lambda port: print(f"[ok] port {port} is free") or True)
+    monkeypatch.setattr(
+        cli_main,
+        "report_reachability",
+        lambda label, url: print(f"[ok] {label}: {url}") or True,
+    )
+
+    assert cli_main.main(["status"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Newbro status" in output
+    assert "[ok] env: OPENAI_API_KEY" in output
+    assert "[ok] config:" in output
+    assert "[ok] connector: disabled" in output
+    assert "[ok] backend health: http://127.0.0.1:8000/api/health" in output
+    assert "[ok] frontend: http://127.0.0.1:5173/" in output
+    assert "[ok] executor node config: enabled executors codex" in output
+    assert "executor run --base-url ... --node-id ... --token ..." in output
+
+
 def test_report_port_tolerates_permission_error(monkeypatch, capsys):
     class DeniedSocket:
         def bind(self, _address):

@@ -273,3 +273,8 @@ Short log of important design decisions and changes for Newbro.
 - Changed native Codex response-turn display so each executor turn keeps one latest assistant/agent message; later messages or deltas for the same executor turn replace that assistant side in place.
 - Changed direct text/PTT and selected-thread native event reconciliation to merge by explicit `client_request_id` and generic executor identity instead of thread-level suppression or text/timestamp matching.
 - Removed implicit direct-send thread fallback; Bro Detail now uses explicit selected/new-thread targeting for direct text and push-to-talk audio.
+- Changed Execution Brain reconcile failures so unexpected executor exceptions and invalid resume handles become explicit failed task/run state instead of being silently discarded.
+- Changed notification rendering fallback so model-rendering failures emit `comm.reply.failed` diagnostics before candidate summary text is used.
+- Changed connector notification watcher and TTS delivery failures to log exceptions instead of being swallowed silently.
+- Changed ConvoAI connector activation cleanup so cleanup failures are logged while preserving the primary activation error.
+- Split Newbro CLI startup ownership into focused parser, command, config, process, check, status, path, and systemd modules, and added read-only `newbro status` while keeping `newbro dev` backend/frontend-only and leaving executor nodes explicit.

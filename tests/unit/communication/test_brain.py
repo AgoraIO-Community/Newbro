@@ -7,10 +7,15 @@ from newbro.communication.tools import build_default_tool_registry
 from newbro.communication.models import ScriptedCommunicationModel
 from newbro.communication.models.scripted import ScriptedPlan
 from newbro.communication.history import InMemoryConversationHistory
+from newbro.observability.emitters.communication import CommunicationDiagnosticEmitter
+from newbro.observability.logger import DiagnosticLogger
+from newbro.observability.store import InMemoryDiagnosticStore
 from newbro.protocol import (
     InteractionRequest,
     InteractionRequestKind,
     InteractionRequestStatus,
+    NotificationCandidate,
+    NotificationCandidateType,
     Task,
     TaskStatus,
     TaskCommandType,
@@ -72,6 +77,40 @@ async def test_communication_brain_replays_local_history_across_turns():
 class FailingModel:
     async def respond(self, **kwargs):
         raise AssertionError("Model should not be called for this local intent.")
+
+
+class FailingNotificationModel:
+    async def respond(self, **kwargs):
+        return CommunicationModelResult(reply_text="unused", conversational_act="model_reply")
+
+    async def render_notification(self, **kwargs):
+        raise RuntimeError("notification model unavailable")
+
+
+@pytest.mark.anyio
+async def test_notification_summary_fallback_emits_diagnostic_failure():
+    store = InMemoryBlackboard()
+    diagnostic_store = InMemoryDiagnosticStore()
+    observability = CommunicationDiagnosticEmitter(DiagnosticLogger(store=diagnostic_store))
+    brain = CommunicationBrain(store, FailingNotificationModel(), observability=observability)
+    candidate = NotificationCandidate(
+        candidate_id="candidate-1",
+        task_id="task-1",
+        candidate_type=NotificationCandidateType.COMPLETED,
+        priority="p2",
+        summary_short="Task completed.",
+        created_at="2026-05-29T00:00:00+00:00",
+        merge_key="task-1:completed",
+    )
+
+    result = await brain.emit_notification("conv-1", candidates=[candidate])
+
+    assert result.reply_text == "Task completed."
+    events = list(diagnostic_store.all())
+    failed = next(item for item in events if item.event_name == "comm.reply.failed")
+    assert failed.reason_code == "communication_model_failure"
+    assert failed.details["error_type"] == "RuntimeError"
+    assert failed.details["error_message"] == "notification model unavailable"
 
 
 def _build_brain_with_runtime_like_control(

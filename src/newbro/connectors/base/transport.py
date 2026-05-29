@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -12,6 +13,8 @@ import websockets
 
 from newbro.api.paths import API_PREFIX
 from newbro.protocol import AgoraVoiceEvent, RuntimeDecision
+
+LOGGER = logging.getLogger(__name__)
 
 
 class NewbroConnectorError(RuntimeError):
@@ -210,6 +213,10 @@ class HttpNewbroConnectorTransport:
         except asyncio.CancelledError:
             raise
         except Exception:
+            LOGGER.exception(
+                "Newbro notification websocket watcher failed for session %s.",
+                session_id,
+            )
             return
 
     async def close(self) -> None:

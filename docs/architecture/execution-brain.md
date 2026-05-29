@@ -59,6 +59,15 @@ Execution-side interruption rule:
 
 - explicit cancel/pause commands should update task, run, session, and binding projections promptly, even if the executor reports a late stale terminal event afterward
 
+Execution failure visibility rule:
+
+- unexpected executor or reconcile exceptions must become explicit failed
+  task/run state with execution-detail metadata; the reconcile loop must not
+  discard exceptions as if no work happened
+- executor-provided resume handles are part of the executor/session contract; if
+  a real executor returns an invalid resume handle, the run should fail visibly
+  instead of silently dropping continuity state
+
 Detached-host availability rule:
 
 - if a real executor node is unavailable, the task should move into

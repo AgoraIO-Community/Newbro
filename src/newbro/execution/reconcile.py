@@ -3,10 +3,21 @@ from __future__ import annotations
 import asyncio
 import time
 
+from pydantic import ValidationError
+
 from newbro.blackboard import BlackboardQueryService, BlackboardStore
-from newbro.executors.core import ExecutorRegistry, UnknownExecutorError
+from newbro.executors.core import ExecutorEvent, ExecutorEventType, ExecutorRegistry, UnknownExecutorError
 from newbro.observability.emitters.execution import ExecutionDiagnosticEmitter
-from newbro.protocol import AgentResumeHandle, BindingStatus, RunStatus, Task, TaskStatus, TaskSummary
+from newbro.protocol import (
+    AgentResumeHandle,
+    BindingStatus,
+    ExecutionRun,
+    ExecutionSession,
+    RunStatus,
+    Task,
+    TaskStatus,
+    TaskSummary,
+)
 
 from .assignment import AssignmentManager
 from .mode_manager import ExecutionModeManager
@@ -53,7 +64,7 @@ class ReconcileLoop:
             coroutines.append(self._execute_task(task, claimed))
         if not coroutines:
             return []
-        results = await asyncio.gather(*coroutines, return_exceptions=True)
+        results = await asyncio.gather(*coroutines)
         completed_run_ids: list[str] = []
         for result in results:
             if isinstance(result, str):
@@ -81,31 +92,47 @@ class ReconcileLoop:
         except UnknownExecutorError:
             await self._fail_unknown_executor(task, claimed, executor_type)
             return None
-        session, claimed, executor_session = await self._sessions.ensure_session(
-            self._store,
-            executor,
-            task,
-            claimed,
-        )
-        run = await self._runs.create_run(
-            self._store,
-            task,
-            session,
-            claimed_by=claimed.claimed_by,
-            executor_type=executor_type,
-        )
-        await self._modes.initialize_task_mode(self._store, task.task_id)
-        started_at = time.monotonic()
-        async for event in executor.run_task(run, executor_task, executor_session):
-            await self._runs.apply_event(self._store, task, run, event)
-            await self._modes.classify(
+
+        session: ExecutionSession | None = None
+        run: ExecutionRun | None = None
+        try:
+            session, claimed, executor_session = await self._sessions.ensure_session(
                 self._store,
-                task_id=task.task_id,
-                run_id=run.run_id,
-                run_status=run.status,
-                elapsed_seconds=max(0.0, time.monotonic() - started_at),
+                executor,
+                task,
+                claimed,
             )
-        await self._sync_executor_session(executor, session, executor_session)
+            run = await self._runs.create_run(
+                self._store,
+                task,
+                session,
+                claimed_by=claimed.claimed_by,
+                executor_type=executor_type,
+            )
+            await self._modes.initialize_task_mode(self._store, task.task_id)
+            started_at = time.monotonic()
+            async for event in executor.run_task(run, executor_task, executor_session):
+                await self._runs.apply_event(self._store, task, run, event)
+                await self._modes.classify(
+                    self._store,
+                    task_id=task.task_id,
+                    run_id=run.run_id,
+                    run_status=run.status,
+                    elapsed_seconds=max(0.0, time.monotonic() - started_at),
+                )
+            await self._sync_executor_session(executor, session, executor_session)
+        except Exception as exc:
+            await self._fail_execution_exception(
+                task,
+                claimed,
+                executor_type=executor_type,
+                exc=exc,
+                run=run,
+                session=session,
+            )
+            return None
+        assert run is not None
+        assert session is not None
         summary = self._summaries.build_summary(task, run)
         await self._store.put_summary(summary)
         if run.status == RunStatus.WAITING_EXECUTOR:
@@ -137,9 +164,60 @@ class ReconcileLoop:
         if isinstance(serialized_resume_handle, dict):
             try:
                 session.latest_resume_handle = AgentResumeHandle.model_validate(serialized_resume_handle)
-            except Exception:
-                session.latest_resume_handle = None
+            except ValidationError as exc:
+                raise RuntimeError("Executor returned an invalid resume handle.") from exc
             await self._store.put_session(session)
+
+    async def _fail_execution_exception(
+        self,
+        task: Task,
+        claimed_binding,
+        *,
+        executor_type: str,
+        exc: Exception,
+        run: ExecutionRun | None,
+        session: ExecutionSession | None,
+    ) -> None:
+        message = str(exc).strip() or f"{type(exc).__name__} during execution."
+        if run is not None:
+            await self._runs.apply_event(
+                self._store,
+                task,
+                run,
+                ExecutorEvent(
+                    run_id=run.run_id,
+                    session_id=session.execution_session_id if session is not None else run.execution_session_id,
+                    event_type=ExecutorEventType.FAILED,
+                    message=message,
+                    metadata={
+                        "reason_code": "execution_exception",
+                        "error_type": type(exc).__name__,
+                    },
+                ),
+            )
+            await self._store.put_summary(self._summaries.build_summary(task, run))
+        else:
+            task.status = TaskStatus.FAILED
+            await self._store.put_task(task)
+            await self._store.put_summary(
+                TaskSummary(
+                    task_id=task.task_id,
+                    operational_summary=message,
+                    conversational_summary=f"I couldn't start this task because execution failed: {message}",
+                    latest_user_visible_status="failed",
+                    needs_user_input=False,
+                )
+            )
+        await self._store.put_binding(
+            claimed_binding.model_copy(
+                update={
+                    "claimed_by": None,
+                    "claim_expires_at": None,
+                    "binding_status": BindingStatus.RELEASED,
+                }
+            )
+        )
+        await self._release_persona(task)
 
     async def _fail_unknown_executor(
         self,
@@ -172,6 +250,7 @@ class ReconcileLoop:
                 }
             )
         )
+
     async def _release_persona(self, task: Task) -> None:
         persona_id = task.metadata.get("persona_id")
         if not isinstance(persona_id, str):

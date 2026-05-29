@@ -6,6 +6,7 @@ Preferred local bootstrap and run flow:
 ./install.sh
 ./newbro setup
 ./newbro doctor
+./newbro status
 ./newbro dev
 ```
 
@@ -16,6 +17,11 @@ dependencies. It also creates starter `~/.newbro/.env` plus
 `~/.newbro/config.yaml` files when they do not already exist. `./newbro
 setup` owns interactive runtime configuration for `~/.newbro/.env` plus the
 shared `~/.newbro/config.yaml`.
+
+`./newbro doctor` is the prerequisite/config gate for local development.
+`./newbro status` is read-only and broader: it reports dependency, config,
+port, local endpoint reachability, frontend build, connector, and executor-node
+readiness without starting services.
 
 By default, diagnostics timeline polling requests from the frontend inspector are
 filtered out of `uvicorn.access` output so local access logs are less noisy. Set
@@ -69,6 +75,9 @@ terminal:
 
 `./newbro dev` and `./newbro start` do not auto-start the executor node.
 Run `./newbro executor run` explicitly when you want local real execution.
+There is intentionally no `./newbro dev --with-executor-node`; executor-node
+credentials are issued by Newbro and should stay explicit in the copied
+`executor run` command.
 
 Backend-only and frontend-only commands:
 
@@ -90,6 +99,10 @@ and `/api/connectors` to the local main service while you iterate on the UI.
 `./newbro connector run` remains available when you want to run the standalone
 headless connector host by itself for separate deployment or direct connector
 testing.
+
+Foreground local runs stop with Ctrl+C. Newbro does not provide a generic
+`./newbro stop` command because local dev runs do not own a PID/state file; use
+the `service` commands for systemd-managed deployments.
 
 Separate frontend production deployments are documented in
 [`./vercel-ui-deployment.md`](./vercel-ui-deployment.md). Local

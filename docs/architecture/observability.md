@@ -57,6 +57,9 @@ Communication LLM note:
   normal message turns so the effective Communication Brain system prompt can be
   audited without enabling full verbose LLM logging
 - full built `messages` payloads still require `SYNAPSE_LOG_LLM_DETAILS=true`
+- notification rendering may fall back to candidate summary text so important
+  task updates are still visible, but model-rendering failures must emit
+  `comm.reply.failed` before the fallback is used
 
 Execution logging note:
 
@@ -66,6 +69,16 @@ Execution logging note:
 - repetitive progress-time `bb.run.updated` and `bb.task.updated` refreshes may
   still exist as debug diagnostics, but normal `INFO` output should stay focused
   on semantic progress, blocking, and terminal changes
+- unexpected execution exceptions should be represented as failed run/task state
+  and execution-detail metadata instead of disappearing in the reconcile loop
+
+Connector logging note:
+
+- connector notification watcher and TTS delivery failures should be logged
+  rather than swallowed silently; a single failed notification delivery may keep
+  the watcher alive only when the failure is observable
+- connector activation cleanup failures should be logged while preserving the
+  primary activation/finalization error
 
 ## Canonical Event Shape
 

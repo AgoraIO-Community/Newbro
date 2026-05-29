@@ -15,6 +15,7 @@ For a fresh clone:
 ./install.sh
 ./newbro setup
 ./newbro doctor
+./newbro status
 ./newbro dev
 ```
 
@@ -26,6 +27,14 @@ do not already exist.
 `./newbro setup` fills in `~/.newbro/.env` plus the shared
 `~/.newbro/config.yaml` runtime config. By default it prompts for required
 runtime values such as `OPENAI_API_KEY`.
+
+`./newbro doctor` is the prerequisite/config gate. It returns non-zero when the
+local checkout is not ready to run.
+
+`./newbro status` is a read-only operational view. It reports local dependency
+readiness, config file presence/validity, important ports, local endpoint
+reachability, frontend build availability, connector readiness, and
+executor-node setup guidance without starting services.
 
 For automation:
 
@@ -147,6 +156,7 @@ come from the node record unless overridden with `--enabled-executor`.
 ./newbro setup
 ./newbro connector setup
 ./newbro doctor
+./newbro status
 ./newbro dev
 ./newbro backend
 ./newbro frontend
@@ -175,6 +185,23 @@ To run only the headless connector host:
 ```bash
 ./newbro connector run
 ```
+
+Foreground local commands stop with Ctrl+C. There is no general `newbro stop`
+command for dev runs; systemd deployments use `newbro service stop`.
+
+## CLI Ownership
+
+The repo-root `./newbro` launcher and installed `newbro` console script both
+enter `src/newbro/cli/main.py`. That file is the compatibility router for
+existing command names; parser construction, command argv builders, process
+supervision, shared checks, status/doctor command logic, path helpers, and
+systemd unit rendering live in focused modules under `src/newbro/cli/`.
+
+Startup and inspection code should fail visibly on missing dependencies, invalid
+config, busy ports, missing frontend builds, and connector or executor-node
+misconfiguration. Do not add implicit fallback startup paths unless they are
+intentional product behavior, documented here, observable in CLI output, and
+covered by tests.
 
 ## Test And Build
 

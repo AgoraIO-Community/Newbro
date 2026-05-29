@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from uuid import uuid4
 
 from newbro.protocol import AgoraVoiceEvent, RuntimeDecision
 
 from .transport import NewbroConnectorTransport
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -144,6 +147,15 @@ class ConnectorBindingRegistry:
                 try:
                     await self._speaker.speak(binding.runtime_session_id, text)
                 except Exception:
+                    LOGGER.exception(
+                        "Connector notification speech delivery failed for binding %s.",
+                        binding_id,
+                    )
                     continue
         except asyncio.CancelledError:
             raise
+        except Exception:
+            LOGGER.exception(
+                "Connector notification watcher failed for Newbro session %s.",
+                synapse_session_id,
+            )

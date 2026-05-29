@@ -30,6 +30,7 @@ Use this path when you want to run Newbro locally from a fresh repo checkout.
 ./install.sh
 ./newbro setup
 ./newbro doctor
+./newbro status
 ./newbro dev
 ```
 
@@ -45,6 +46,9 @@ What each command does:
   creates starter config files under `~/.newbro/`.
 - `./newbro setup` asks for required runtime values such as `OPENAI_API_KEY`.
 - `./newbro doctor` checks local prerequisites.
+- `./newbro status` prints a read-only operational view of config,
+  dependencies, ports, local endpoint reachability, connector readiness, and
+  executor-node readiness.
 - `./newbro dev` starts the backend on `8000` and the frontend on `5173`.
 
 For public hosted deployment, use the Docker-based GitHub Actions path:
