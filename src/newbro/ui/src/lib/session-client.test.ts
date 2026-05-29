@@ -214,6 +214,7 @@ describe("session-client transport base URL handling", () => {
       sampleRate: 16000,
       numChannels: 1,
       samplesPerChannel: 16,
+      clientRequestId: "audio-client-1",
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -221,13 +222,47 @@ describe("session-client transport base URL handling", () => {
     expect(call).toBeDefined();
     const [url, init] = call as unknown as [string, RequestInit];
     expect(url).toBe(
-      "/api/sessions/session-1/executor-audio-instructions?target_persona_id=forge&duration_ms=1&sample_rate=16000&num_channels=1&samples_per_channel=16&target_thread_id=bro-thread-1",
+      "/api/sessions/session-1/executor-audio-instructions?target_persona_id=forge&duration_ms=1&sample_rate=16000&num_channels=1&samples_per_channel=16&target_thread_id=bro-thread-1&client_request_id=audio-client-1",
     );
     expect(init).toEqual({
       method: "POST",
       headers: { "Content-Type": "audio/pcm" },
       body: audio,
     });
+  });
+
+  it("submits executor audio instructions with new-thread intent", async () => {
+    const audio = new Blob([new Uint8Array([0, 0, 1, 0])], { type: "audio/pcm" });
+    const fetchMock = vi.fn(async () =>
+      okJsonResponse({
+        audio_instruction_id: "aud-1",
+        target_persona_id: "forge",
+        target_thread_id: "bro-thread-new",
+        status: "accepted",
+        duration_ms: 1,
+        size_bytes: 4,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./session-client");
+    await client.submitExecutorAudioInstruction("session-1", {
+      targetPersonaId: "forge",
+      targetThreadId: null,
+      createNewThread: true,
+      pcm16: audio,
+      durationMs: 1,
+      sampleRate: 16000,
+      numChannels: 1,
+      samplesPerChannel: 16,
+      clientRequestId: "audio-client-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(
+      "/api/sessions/session-1/executor-audio-instructions?target_persona_id=forge&duration_ms=1&sample_rate=16000&num_channels=1&samples_per_channel=16&create_new_thread=true&client_request_id=audio-client-1",
+    );
   });
 
   it("opens a bro thread through the hydration endpoint", async () => {

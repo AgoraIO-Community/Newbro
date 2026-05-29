@@ -224,6 +224,8 @@ export function buildBroThreadRecords(
       activeTaskId: thread.active_task_id,
       latestTaskId: thread.latest_task_id,
       hasResumeHandle: thread.has_resume_handle,
+      timelineStatus: thread.timeline_status ?? "not_loaded",
+      timelineError: thread.timeline_error ?? null,
       timeLabel: threadTimeLabel(thread),
     }));
 }

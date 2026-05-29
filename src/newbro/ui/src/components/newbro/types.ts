@@ -53,6 +53,8 @@ export type BroThreadRecord = {
   activeTaskId: string | null;
   latestTaskId: string | null;
   hasResumeHandle: boolean;
+  timelineStatus: BroThread["timeline_status"];
+  timelineError: string | null;
   timeLabel?: string;
 };
 

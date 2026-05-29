@@ -1539,7 +1539,7 @@
   display: flex; flex-direction: column; gap: 8px;
   width: 100%;
 }
-.thr-status-head { display: flex; align-items: center; gap: 8px; }
+.thr-status-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .thr-status-spin {
   width: 14px; height: 14px;
   border-radius: 50%;
@@ -1554,7 +1554,7 @@
   box-shadow: inset 0 0 0 4px var(--nb-info-soft);
   flex: 0 0 auto;
 }
-.thr-status-title { font-size: 13px; font-weight: 600; color: var(--nb-info-ink); flex: 1; }
+.thr-status-title { font-size: 13px; font-weight: 600; color: var(--nb-info-ink); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .thr-status-pct { font-family: var(--nb-font-mono); font-size: 11.5px; color: var(--nb-info-ink); }
 .thr-status-bar { height: 4px; border-radius: 2px; background: rgba(59,130,246,0.18); overflow: hidden; }
 .thr-status-bar i { display: block; height: 100%; background: var(--nb-info); transition: width 0.45s ease-out; }

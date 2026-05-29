@@ -57,14 +57,17 @@ Executor-node note:
 - Bro Detail audio instructions are node-local audio work: clients upload raw
   audio, Newbro sends the PCM content to the detached node over the
   executor-node command channel, the node transcribes with local Whisper, and
-  the transcript becomes direct executor work. The command payload carries
-  typed audio metadata plus JSON-safe audio content and does not require the
-  detached node to read a backend-local filesystem path. With an active run this
-  uses the run-event path; from idle it uses a direct transcription request
-  before queuing a Codex task. `supports_audio_instruction` means the connected
-  node can accept raw audio and produce a usable executor instruction. Whisper
-  language defaults to automatic detection; foreground executor runs can
-  override language and model with inline CLI arguments.
+  the transcript becomes direct executor work. Direct audio must carry explicit
+  thread intent, either `target_thread_id` or `create_new_thread=true`; Newbro
+  does not fall back to an active or latest thread when that intent is missing.
+  The command payload carries typed audio metadata plus JSON-safe audio content
+  and does not require the detached node to read a backend-local filesystem
+  path. With an active run on the resolved thread this uses the run-event path;
+  otherwise it uses a direct transcription request before queuing a Codex task.
+  `supports_audio_instruction` means the connected node can accept raw audio and
+  produce a usable executor instruction. Whisper language defaults to automatic
+  detection; foreground executor runs can override language and model with
+  inline CLI arguments.
 - Codex executor nodes also advertise `supports_thread_list` when they can call
   Codex app-server `thread/list`. Newbro uses that node-local capability to
   import real global Codex threads into Bro Detail without exposing raw
@@ -86,7 +89,11 @@ Adapter direction:
   selected thread is replaced or closed. Newbro must not refresh Codex
   `thread/list` or `thread/read` as part of ordinary text/PTT sends or session
   snapshot broadcasts; those refreshes are explicit list/open/hydration
-  operations.
+  operations. Imported history and live selected-thread events are normalized
+  into generic `BroTimelineTurn` identity fields (`executor_id`,
+  `executor_thread_id`, `executor_turn_id`) before the UI sees them, so Bro
+  Detail reconciliation is not Codex-specific and does not rely on suppressing
+  an entire thread or comparing message text/timestamps.
   `thread/resume` is required before `turn/start` when an imported or
   persisted native thread id is not yet loaded. `thread/start` remains the fresh
   direct-run creation path, while `thread/fork` remains the follow-up fork path.

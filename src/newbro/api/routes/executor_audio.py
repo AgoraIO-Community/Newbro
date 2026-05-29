@@ -31,6 +31,8 @@ async def submit_executor_audio_instruction(
     request: Request,
     target_persona_id: str = Query(min_length=1),
     target_thread_id: str | None = Query(default=None, min_length=1),
+    create_new_thread: bool = Query(default=False),
+    client_request_id: str | None = Query(default=None, min_length=1),
     duration_ms: int = Query(gt=0, le=MAX_AUDIO_DURATION_MS),
     sample_rate: int = Query(ge=8000, le=96000),
     num_channels: int = Query(ge=1, le=2),
@@ -59,6 +61,8 @@ async def submit_executor_audio_instruction(
         audio = await session.submit_executor_audio_instruction(
             target_persona_id=target_persona_id,
             target_thread_id=target_thread_id,
+            create_new_thread=create_new_thread,
+            client_request_id=client_request_id,
             pcm16=body,
             mime_type=mime_type,
             duration_ms=duration_ms,

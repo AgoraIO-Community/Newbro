@@ -258,6 +258,8 @@ export async function submitExecutorAudioInstruction(
     sampleRate: number;
     numChannels: number;
     samplesPerChannel: number;
+    createNewThread?: boolean;
+    clientRequestId?: string | null;
   },
 ): Promise<ExecutorAudioInstructionResponse> {
   const query = new URLSearchParams({
@@ -269,6 +271,12 @@ export async function submitExecutorAudioInstruction(
   });
   if (payload.targetThreadId) {
     query.set("target_thread_id", payload.targetThreadId);
+  }
+  if (payload.createNewThread) {
+    query.set("create_new_thread", "true");
+  }
+  if (payload.clientRequestId) {
+    query.set("client_request_id", payload.clientRequestId);
   }
   const response = await fetch(
     buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/executor-audio-instructions?${query.toString()}`),

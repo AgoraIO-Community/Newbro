@@ -26,6 +26,77 @@ async def _redeem(client: AsyncClient, app, code: str = "invite-text") -> None:
     assert response.status_code == 200
 
 
+async def _put_connected_forge(runtime_session, manager, websocket: FakeWebSocket | None = None) -> None:
+    manager._connections_by_node["node-forge"] = NodeConnectionState(
+        websocket=websocket or FakeWebSocket(),
+        node_id="node-forge",
+        connected_at="2026-05-26T00:00:00+00:00",
+        executors={
+            "codex": ExecutorNodeExecutor(
+                executor_type="codex",
+                supports_resume=True,
+                supports_follow_up=True,
+                supports_audio_instruction=True,
+            )
+        },
+    )
+    await runtime_session.blackboard.put_persona(
+        Persona(
+            persona_id="forge",
+            name="Forge",
+            avatar="bro",
+            base_prompt="",
+            executor_node_id="node-forge",
+            bro_detail_session_id="detail-forge",
+            status="idle",
+            current_task_id=None,
+        )
+    )
+
+
+@pytest.mark.anyio
+async def test_executor_text_instruction_requires_explicit_thread_intent(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-text-explicit")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        await _put_connected_forge(runtime_session, app.state.runtime_container.executor_node_manager)
+
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-text-instructions",
+            json={"target_persona_id": "forge", "text": "ambiguous send"},
+        )
+
+    assert response.status_code == 409
+    assert "requires explicit thread intent" in response.text
+
+
+@pytest.mark.anyio
+async def test_executor_text_instruction_rejects_thread_target_contradiction(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-text-contradiction")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        await _put_connected_forge(runtime_session, app.state.runtime_container.executor_node_manager)
+
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-text-instructions",
+            json={
+                "target_persona_id": "forge",
+                "target_thread_id": "thread-existing",
+                "create_new_thread": True,
+                "text": "contradictory send",
+            },
+        )
+
+    assert response.status_code == 409
+    assert "cannot target an existing thread and create a new thread" in response.text
+
+
 @pytest.mark.anyio
 async def test_executor_text_instruction_dispatches_to_active_executor_without_message_route(tmp_path):
     app = create_app()
@@ -95,7 +166,7 @@ async def test_executor_text_instruction_dispatches_to_active_executor_without_m
 
         response = await client.post(
             f"/api/sessions/{session_id}/executor-text-instructions",
-            json={"target_persona_id": "forge", "text": "continue directly"},
+            json={"target_persona_id": "forge", "target_thread_id": "exec-1", "text": "continue directly"},
         )
         run = await runtime_session.blackboard.get_run("run-current")
         assert run is not None
@@ -169,7 +240,7 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
 
         response = await client.post(
             f"/api/sessions/{session_id}/executor-text-instructions",
-            json={"target_persona_id": "forge", "text": "start directly"},
+            json={"target_persona_id": "forge", "text": "start directly", "create_new_thread": True},
         )
         conversation = (await client.get(f"/api/sessions/{session_id}/conversation")).json()
         snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
@@ -201,6 +272,107 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
     assert persona is not None
     assert persona.current_task_id == task.task_id
     assert persona.status == "busy"
+
+
+@pytest.mark.anyio
+async def test_open_new_direct_thread_does_not_duplicate_sent_text_as_history(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-new-thread-open")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        manager = app.state.runtime_container.executor_node_manager
+        manager._connections_by_node["node-forge"] = NodeConnectionState(
+            websocket=websocket,
+            node_id="node-forge",
+            connected_at="2026-05-26T00:00:00+00:00",
+            executors={
+                "codex": ExecutorNodeExecutor(
+                    executor_type="codex",
+                    supports_resume=True,
+                    supports_follow_up=True,
+                    supports_audio_instruction=True,
+                )
+            },
+        )
+        await runtime_session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id="node-forge",
+                bro_detail_session_id="detail-forge",
+                status="idle",
+                current_task_id=None,
+            )
+        )
+
+        def mark_scheduled(self) -> None:
+            return None
+
+        async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
+            raise AssertionError("opening a direct thread must not read Codex history")
+
+        async def fake_subscribe_codex_thread(**kwargs):
+            return None
+
+        monkeypatch.setattr(type(runtime_session), "schedule_execution", mark_scheduled)
+        monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+        monkeypatch.setattr(manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
+
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-text-instructions",
+            json={"target_persona_id": "forge", "text": "start directly", "create_new_thread": True},
+        )
+        assert response.status_code == 200
+        target_thread_id = response.json()["target_thread_id"]
+        tasks = await runtime_session.blackboard.list_tasks()
+        assert len(tasks) == 1
+        direct_task = tasks[0]
+        resume_handle = AgentResumeHandle(
+            executor_id="codex",
+            session_handle="codex-thread-new",
+            opaque={"cwd": "/tmp/work", "title": "start directly"},
+        )
+        await runtime_session.blackboard.put_session(
+            ExecutionSession(
+                execution_session_id="exec-new",
+                task_id=direct_task.task_id,
+                base_executor_id="codex",
+                executor_node_id="node-forge",
+                continuity_key=target_thread_id,
+                run_ids=["run-new"],
+                latest_run_id="run-new",
+                latest_resume_handle=resume_handle,
+            )
+        )
+        await runtime_session.blackboard.put_run(
+            ExecutionRun(
+                run_id="run-new",
+                task_id=direct_task.task_id,
+                execution_session_id="exec-new",
+                executor_type="codex",
+                status=RunStatus.COMPLETED,
+                output_summary="Started.",
+            )
+        )
+
+        opened = await client.post(
+            f"/api/sessions/{session_id}/bro-threads/{target_thread_id}/open",
+            json={"target_persona_id": "forge"},
+        )
+
+    assert opened.status_code == 200
+    tasks = await runtime_session.blackboard.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].task_id == direct_task.task_id
+    assert not any(task.metadata.get("source_kind") == "codex_thread_history" for task in tasks)
 
 
 @pytest.mark.anyio
@@ -423,7 +595,10 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
 
 
 @pytest.mark.anyio
-async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch: pytest.MonkeyPatch):
+async def test_open_imported_codex_thread_loads_native_messages_without_task_hydration(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
     app = create_app()
     app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
     websocket = FakeWebSocket()
@@ -492,83 +667,31 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
                 )
             ]
 
+        read_calls: list[tuple[str, str]] = []
+
         async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
-            assert node_id == "node-forge"
-            assert thread_id == "codex-imported-native-history"
+            read_calls.append((node_id, thread_id))
             return {
                 "id": thread_id,
                 "turns": [
                     {
-                        "id": "turn-history-1",
+                        "id": "turn-user",
+                        "createdAt": 1779850110,
                         "items": [
                             {
                                 "type": "event_msg",
-                                "payload": {
-                                    "type": "user_message",
-                                    "message": "summarize the imported repo",
-                                },
-                            },
-                            {
-                                "type": "response_item",
-                                "payload": {
-                                    "type": "message",
-                                    "role": "assistant",
-                                    "content": [
-                                        {
-                                            "type": "output_text",
-                                            "text": "Imported history response from Codex.",
-                                        }
-                                    ],
-                                },
+                                "id": "user-1",
+                                "payload": {"type": "user_message", "message": "Open the imported context."},
                             }
                         ],
-                        "status": "completed",
                     },
                     {
-                        "id": "turn-history-2",
+                        "id": "turn-assistant",
+                        "createdAt": 1779850120,
                         "items": [
-                            {
-                                "type": "response_item",
-                                "payload": {
-                                    "type": "message",
-                                    "role": "assistant",
-                                    "content": [
-                                        {
-                                            "type": "output_text",
-                                            "text": "Assistant-only imported status.",
-                                        }
-                                    ],
-                                },
-                            }
+                            {"type": "agentMessage", "id": "assistant-commentary", "text": "Checking imported context."},
+                            {"type": "agentMessage", "id": "assistant-1", "text": "Imported context is ready."}
                         ],
-                        "status": "completed",
-                    },
-                    {
-                        "id": "turn-history-3",
-                        "createdAt": "2026-05-28T12:00:00+00:00",
-                        "items": [
-                            {
-                                "type": "event_msg",
-                                "payload": {
-                                    "type": "user_message",
-                                    "message": "then inspect the mobile layout",
-                                },
-                            },
-                            {
-                                "type": "response_item",
-                                "payload": {
-                                    "type": "message",
-                                    "role": "assistant",
-                                    "content": [
-                                        {
-                                            "type": "output_text",
-                                            "text": "Second imported response from Codex.",
-                                        }
-                                    ],
-                                },
-                            },
-                        ],
-                        "status": "completed",
                     },
                 ],
             }
@@ -643,40 +766,31 @@ async def test_open_imported_codex_thread_hydrates_history(tmp_path, monkeypatch
     assert response.status_code == 200
     assert close_response.status_code == 200
     assert list_calls == 1
+    assert read_calls == [("node-forge", "codex-imported-native-history")]
     assert len(subscription_calls) == 1
     assert unsubscribe_calls == [(subscription_calls[0][0], "codex-imported-native-history")]
     opened = response.json()
     assert [thread["thread_id"] for thread in opened["bro_threads"]] == original_thread_ids
-    hydrated_thread = next(thread for thread in opened["bro_threads"] if thread["thread_id"] == imported_thread["thread_id"])
-    assert hydrated_thread["thread_id"] == imported_thread["thread_id"]
-    assert hydrated_thread["title"] == imported_thread["title"]
-    assert hydrated_thread["task_ids"]
-    assert hydrated_thread["diagnostics"]["history_hydrated"] is True
-    assert hydrated_thread["diagnostics"]["codex_cwd"] == "/tmp/elsewhere"
-    task_id = hydrated_thread["task_ids"][0]
-    task = next(task for task in opened["tasks"] if task["task_id"] == task_id)
-    assert task["title"] == "summarize the imported repo"
-    assert task["latest_instruction"] == "summarize the imported repo"
-    assert task["metadata"]["source_kind"] == "codex_thread_history"
-    assert task["metadata"]["target_thread_id"] == imported_thread["thread_id"]
-    assert task["metadata"]["codex_import_thread_id"] == "codex-imported-native-history"
-    assert task["metadata"]["created_at"] == imported_thread["updated_at"]
-    assert task["metadata"]["updated_at"] == imported_thread["updated_at"]
-    assistant_only = next(
-        task for task in opened["tasks"] if task["metadata"].get("codex_history_turn_id") == "turn-history-2"
-    )
-    assert assistant_only["latest_instruction"] is None
-    second_user = next(
-        task for task in opened["tasks"] if task["metadata"].get("codex_history_turn_id") == "turn-history-3"
-    )
-    assert second_user["latest_instruction"] == "then inspect the mobile layout"
-    assert second_user["metadata"]["bro_thread_id"] == imported_thread["thread_id"]
-    summary = next(summary for summary in opened["summaries"] if summary["task_id"] == task_id)
-    assert summary["conversational_summary"] == "Imported history response from Codex."
+    opened_thread = next(thread for thread in opened["bro_threads"] if thread["thread_id"] == imported_thread["thread_id"])
+    assert opened_thread["thread_id"] == imported_thread["thread_id"]
+    assert opened_thread["title"] == imported_thread["title"]
+    assert opened_thread["task_ids"] == []
+    assert opened_thread["timeline_status"] == "loaded"
+    assert opened_thread["timeline_error"] is None
+    assert "history_hydrated" not in opened_thread["diagnostics"]
+    assert opened_thread["diagnostics"]["codex_cwd"] == "/tmp/elsewhere"
+    assert [
+        (turn["user"]["text"] if turn["user"] else None, turn["assistant"]["text"] if turn["assistant"] else None, turn["thread_id"])
+        for turn in opened["bro_timeline_turns"]
+        if turn["thread_id"] == imported_thread["thread_id"]
+    ] == [
+        ("Open the imported context.", "Imported context is ready.", imported_thread["thread_id"]),
+    ]
+    assert not any(task["metadata"].get("source_kind") == "codex_thread_history" for task in opened["tasks"])
 
 
 @pytest.mark.anyio
-async def test_open_imported_codex_thread_reports_recoverable_read_timeout(
+async def test_open_imported_codex_thread_history_timeout_marks_messages_failed(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -732,10 +846,11 @@ async def test_open_imported_codex_thread_reports_recoverable_read_timeout(
             ]
 
         async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
-            raise TimeoutError()
+            raise TimeoutError("Timed out reading Codex thread history.")
 
         subscription_calls: list[str] = []
         unsubscribe_calls: list[tuple[str, str]] = []
+        subscription_started = asyncio.Event()
 
         async def fake_subscribe_codex_thread(
             *,
@@ -749,6 +864,7 @@ async def test_open_imported_codex_thread_reports_recoverable_read_timeout(
             timeout_seconds: float = 8.0,
         ):
             subscription_calls.append(subscription_id)
+            subscription_started.set()
 
         async def fake_unsubscribe_codex_thread(
             *,
@@ -770,11 +886,17 @@ async def test_open_imported_codex_thread_reports_recoverable_read_timeout(
             f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
             json={"target_persona_id": "forge"},
         )
+        await asyncio.wait_for(subscription_started.wait(), timeout=1.0)
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Timed out reading Codex thread history."
-    assert subscription_calls == []
+    assert response.status_code == 200
+    assert subscription_calls
     assert unsubscribe_calls == []
+    opened = response.json()
+    opened_thread = opened["bro_threads"][0]
+    assert opened_thread["timeline_status"] == "failed"
+    assert opened_thread["timeline_error"] == "Timed out reading Codex thread history."
+    assert opened["bro_timeline_turns"] == []
+    assert not any(task["metadata"].get("source_kind") == "codex_thread_history" for task in opened["tasks"])
 
 
 @pytest.mark.anyio
@@ -827,6 +949,8 @@ async def test_executor_text_instruction_recovers_queued_direct_task_without_act
                     "source_kind": "bro_detail_text",
                     "persona_id": "forge",
                     "executor_node_id": "node-forge",
+                    "bro_thread_id": "thread-stuck",
+                    "target_thread_id": "thread-stuck",
                 },
                 latest_instruction="first text",
             )
@@ -841,7 +965,7 @@ async def test_executor_text_instruction_recovers_queued_direct_task_without_act
 
         response = await client.post(
             f"/api/sessions/{session_id}/executor-text-instructions",
-            json={"target_persona_id": "forge", "text": "retry text"},
+            json={"target_persona_id": "forge", "target_thread_id": "thread-stuck", "text": "retry text"},
         )
 
     assert response.status_code == 200

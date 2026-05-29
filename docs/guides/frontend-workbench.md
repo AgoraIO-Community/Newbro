@@ -91,31 +91,37 @@ Current behavior:
   Draft card: submitting the composer starts a direct Codex task when the Bro is
   idle, or sends a typed executor-node text instruction to the selected Bro's
   active executor session when Codex is already running, instead of calling
-  session messages, draft ASR, or draft Send endpoints
+  session messages, draft ASR, or draft Send endpoints. The composer must send
+  explicit thread intent for both text and PTT audio: selected threads use
+  `targetThreadId`, and an empty/pending new thread uses `createNewThread=true`
 - Bro Detail desktop left rail and mobile drawer render real Codex-backed
   `bro_threads` from the runtime snapshot, not task records. Selecting a thread
-  calls the open-thread hydration endpoint, writes `thread` into the URL, and
-  direct text/PTT sends include that target so completed selected Codex threads
-  resume through their stored execution-session resume handle. The frontend does
-  not call Codex app-server subscription APIs directly: Newbro's open-thread
-  endpoint fetches selected-thread history and then asks the bound executor node
-  to load/subscribe to the native Codex thread in the background, and the
-  close-thread endpoint releases that subscription when Bro Detail leaves the
-  thread, starts a new pending thread, or unmounts. The
+  calls the open-thread endpoint, writes `thread` into the URL, and direct
+  text/PTT sends include that target so completed selected Codex threads resume
+  through their stored execution-session resume handle. The frontend does not
+  call Codex app-server subscription APIs directly: Newbro's open-thread
+  endpoint asks the bound executor node to subscribe to selected-thread events in
+  the background, and the close-thread endpoint releases that subscription when
+  Bro Detail leaves the thread, starts a new pending thread, or unmounts. The
   snapshot can include Codex threads imported through the connected executor
   node's `thread/list` capability even when Newbro has not created task history
   for that native thread yet; opening one reuses the cached imported-thread
-  projection instead of refreshing the global list, fetches selected history with
-  Codex `thread/read` metadata plus a bounded `thread/turns/list` page before
-  rendering the selected timeline. Later direct text/PTT activity is rendered
-  from Newbro task/run events, and snapshot publishes use cached imported-thread
-  state instead of refreshing Codex history on the send path. The selected
-  timeline is filtered by the
-  selected thread's `task_ids` before timeline limits are applied. It renders
-  both sides of fetched/direct turns: each synced user instruction appears as a
-  user bubble, followed by the executor task/progress/assistant output. User
-  bubbles, assistant/conversation bubbles, audio turns, and task output cards
-  display timestamps from the originating turn or message. The selected thread
+  projection instead of refreshing the global list, then loads native Codex
+  history into canonical `bro_timeline_turns` for display without creating
+  Newbro `Task`, `ExecutionRun`, or `TaskSummary` records. Bro Detail renders
+  the selected thread from `SessionSnapshot.bro_timeline_turns` only, plus
+  local optimistic text/audio placeholders that already use the same turn shape
+  and are replaced by canonical backend turns via `client_request_id`. It no
+  longer timestamp-merges local text turns, local audio turns, task records,
+  conversation messages, and native executor messages. Both sides of
+  direct/native turns render from the same object: each user instruction
+  appears as the existing user bubble, and assistant/native/task output appears
+  in the existing task output card. Native Codex response turns expose only the
+  latest assistant/agent message for that executor turn; while a turn is
+  running, newer assistant/agent messages replace the previous one in place.
+  Audio transcripts render inside the audio user message instead of as a second
+  text bubble. User bubbles, audio turns, and task output cards display
+  timestamps from the originating timeline turn or message. The selected thread
   timeline is rendered oldest-to-newest and desktop/mobile panes scroll to the
   bottom when opening a thread or receiving new selected-thread content. Task
   output cards render the original markdown-like assistant/task summary

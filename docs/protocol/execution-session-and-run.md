@@ -5,6 +5,9 @@ Key objects:
 - `ExecutorConfig`
 - `AgentResumeHandle`
 - `BroThread`
+- `BroTimelineTurn`
+- `BroTimelineMessage`
+- `BroTimelineTask`
 - `QueuedRunRequest`
 - `ExecutionSession`
 - `ExecutionRun`
@@ -21,6 +24,20 @@ Responsibilities:
 - `BroThread`
   - user-facing Bro Detail dialog projection backed by Newbro execution session
     state and, for Codex, a stored `AgentResumeHandle`
+- `BroTimelineTurn`
+  - canonical Bro Detail timeline read model in `SessionSnapshot`. One turn
+    represents one logical user/executor exchange and carries generic
+    multi-executor identity: public `thread_id`, `executor_id`, optional
+    `client_request_id`, optional `executor_thread_id`, and optional
+    `executor_turn_id`.
+- `BroTimelineMessage`
+  - user or assistant side of a canonical timeline turn. Audio transcript,
+    duration, and audio id belong to the audio user message instead of creating
+    a second text user message.
+- `BroTimelineTask`
+  - task/run state attached to a Newbro-owned timeline turn. Native executor
+    history does not create this object unless Newbro actually created the
+    task/run.
 - `QueuedRunRequest`
   - one queued follow-up request for an active lineage
 - `ExecutionSession`
@@ -74,9 +91,11 @@ Bro detail continuity:
 
 - draft-created tasks assigned to the same Bro detail generation reuse the same
   executor session when executor family and `executor_node_id` also match
-- direct Bro Detail text and push-to-talk inputs can target a selected
-  `BroThread`; follow-up tasks created for that selection reuse the thread's
-  execution-session continuity and Codex resume handle
+- direct Bro Detail text and push-to-talk inputs must provide explicit thread
+  intent: either a selected `target_thread_id` or `create_new_thread=true`, but
+  never both. The backend does not infer active/latest thread ownership for
+  direct sends. Follow-up tasks created for a selected `BroThread` reuse the
+  thread's execution-session continuity and Codex resume handle
 - New direct Bro Detail inputs create a `BroThread` projection as soon as the
   queued task is durable, even before the scheduler creates the backing
   `ExecutionSession`, so the current thread is visible immediately after send
@@ -94,36 +113,47 @@ Bro detail continuity:
   not hidden behind the first default page. If a newer request shape is not
   accepted by the installed Codex app-server, Newbro retries with older
   compatible request shapes instead of projecting an empty thread list.
-- Opening a `BroThread` is an explicit hydration operation. Newbro resolves the
-  public thread id to a Codex resume handle. For a known imported Codex thread,
-  opening uses the cached `thread/list` projection and resume handle instead of
-  refreshing the global Codex thread list on the open request path. Newbro asks
-  the detached executor node to read initial history through non-subscribing
-  Codex `thread/read` for thread metadata plus a bounded `thread/turns/list`
-  page with full turn items, then returns the hydrated snapshot and starts the
-  selected-thread live layer in the background by loading/subscribing to the
-  native thread with Codex `thread/resume`. The detached executor node keeps one
-  shared Codex app-server process for these operations; selected-thread
-  subscription records local event interest and must not spawn a separate
-  app-server process. The executor node forwards selected-thread events back to
-  Newbro, but ordinary text/PTT sends and session snapshot publishes must not
-  block on Codex `thread/list` or `thread/read`. Newbro updates direct
-  text/PTT timelines from its typed task/run events; Codex history refresh is an
-  explicit open/hydration operation rather than a hot-path snapshot dependency.
+- Opening a `BroThread` resolves the public thread id to a Codex resume handle,
+  starts selected-thread event interest, and, for imported native Codex threads,
+  loads native thread history into executor-owned `BroTimelineTurn` records for
+  display in Bro Detail. For a known imported Codex thread, opening uses the
+  cached `thread/list` projection and resume handle instead of refreshing the
+  global Codex thread list on the open request path. Newbro must not project
+  native Codex history into Newbro `Task`, `ExecutionRun`, or `TaskSummary`
+  records just because a thread was selected. The detached executor node keeps
+  one shared Codex app-server process for list/start/resume/history read and
+  selected-thread event routing; selected-thread subscription records local
+  event interest and must not spawn a separate app-server process. The executor
+  node forwards selected-thread events back to Newbro. Ordinary text/PTT sends
+  and session snapshot publishes must not block on Codex `thread/list`,
+  `thread/read`, or `thread/turns/list`; imported-thread open may read history,
+  but history-read failures are represented as per-thread `timeline_status =
+  failed` and `timeline_error`, not as open-request conflicts. `SessionSnapshot`
+  exposes `bro_timeline_turns` as the Bro Detail rendering contract.
+  Newbro-owned turns are projected from typed `Task`, `ExecutionRun`, and
+  `TaskSummary` state; executor-owned turns are projected from imported native
+  history and selected-thread live events. The projection is a read model, not a
+  durable store competing with either source. Reconciliation uses, in order,
+  canonical `turn_id`, `client_request_id`, and
+  `executor_id + executor_thread_id + executor_turn_id`; it does not use
+  thread-level suppression or text/timestamp similarity. Native Codex history
+  pairs a user-only turn with the next assistant-only turn when Codex represents
+  one logical exchange as separate native records. For each native response
+  turn, Newbro exposes only the latest assistant/agent message; later
+  assistant/agent items or deltas for that same executor turn replace the
+  displayed assistant side instead of adding another timeline entry.
   Leaving or replacing the selected thread must call the node's selected-thread
   close path, which in turn calls Codex `thread/unsubscribe`; stale events from
-  older subscription ids are ignored. Hydration projects each returned turn into
-  typed task, summary, and run history for the selected thread. For each
-  hydrated turn, the task `goal` / `latest_instruction` carries that turn's
-  synced user-side text when Codex reported one, while summaries and runs carry
-  executor output. Clients must filter by the selected thread's `task_ids`
-  before applying timeline limits; they must not infer the selected timeline
-  from task cards that happened to be loaded earlier. Imported Codex thread
-  titles are stable thread-list display labels and must not be replaced by
-  hydrated task titles after the thread is opened. Opening an imported thread
-  for read-only hydration must also preserve the Codex `thread/list` updated
-  time as the list sort key; only a real follow-up/direct send should make the
-  thread look newly active.
+  older subscription ids are ignored. Clients must render Bro Detail from the
+  selected thread's canonical `bro_timeline_turns`, plus only timeline-shaped
+  optimistic placeholders that are replaced by canonical turns through
+  `client_request_id`; they must not infer the selected timeline by merging
+  task cards, local text/audio echoes, conversation messages, and native
+  messages by timestamp. Imported
+  Codex thread titles are stable thread-list display labels. Opening an
+  imported thread without sending a follow-up must also preserve the Codex
+  `thread/list` updated time as the list sort key; only a real follow-up/direct
+  send should make the thread look newly active.
 - push-to-talk audio is transcribed by the executor node. Newbro carries the
   browser-uploaded PCM content and typed metadata in the executor-node command
   payload, so transcription does not depend on a shared filesystem path between

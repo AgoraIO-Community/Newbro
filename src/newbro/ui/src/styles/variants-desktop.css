@@ -155,14 +155,6 @@
   text-transform: uppercase;
 }
 .dt-header-pill-dot { width: 6px; height: 6px; border-radius: 50%; }
-.dt-header-pill-ready,
-.dt-header-pill-empty {
-  border: 1px solid var(--nb-line);
-  background: var(--nb-paper-sub);
-  color: var(--nb-ink-soft);
-}
-.dt-header-pill-ready .dt-header-pill-dot { background: var(--nb-live); animation: dt-pulse 1.6s ease-in-out infinite; }
-.dt-header-pill-empty .dt-header-pill-dot { background: var(--nb-ink-muted); }
 .dt-header-pill-live {
   border: 1px solid var(--nb-coral-border);
   background: var(--nb-coral-soft);
@@ -1769,7 +1761,7 @@
 }
 .dt-roster-row {
   display: grid;
-  grid-template-columns: 32px 1fr auto;
+  grid-template-columns: 32px 1fr auto auto;
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
@@ -1823,6 +1815,43 @@
   white-space: nowrap;
 }
 .dt-roster-row-offline .dt-roster-last { color: var(--nb-warn-ink); }
+
+.dt-bro-card-copy {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 4px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--nb-warn-edge);
+  background: var(--nb-warn-soft);
+  color: var(--nb-warn-ink);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.dt-bro-card-copy:hover { background: var(--nb-warn); color: white; border-color: var(--nb-warn); }
+.dt-bro-card-copy:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--nb-warn-edge); }
+
+.dt-roster-copy {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--nb-warn-edge);
+  background: var(--nb-warn-soft);
+  color: var(--nb-warn-ink);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.dt-roster-copy:hover { background: var(--nb-warn); color: white; border-color: var(--nb-warn); }
+.dt-roster-copy:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--nb-warn-edge); }
 
 /* ─────────────────────────────────────────────
    AGENT ACTIVITY RAIL (BroDetail pages)
@@ -2735,6 +2764,7 @@
 }
 .dt-status-head {
   display: flex; align-items: center; gap: 10px;
+  min-width: 0;
 }
 .dt-status-spin {
   width: 14px; height: 14px;
@@ -2751,10 +2781,14 @@
 }
 .dt-status-title {
   flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--nb-info-ink);
   letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .dt-status-pct {
   font-family: var(--nb-font-mono);
@@ -3383,7 +3417,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dt-header-pill-ready .dt-header-pill-dot,
   .dt-header-pill-live .dt-header-pill-dot,
   .dt-sidebar-bro-row-pip-info,
   .dt-activity-state-live .dt-activity-state-dot,

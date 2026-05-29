@@ -145,7 +145,56 @@ export interface BroThread {
   latest_task_id: string | null;
   has_resume_handle: boolean;
   updated_at: string | null;
+  timeline_status: "not_loaded" | "loading" | "loaded" | "failed";
+  timeline_error: string | null;
   diagnostics: Record<string, unknown>;
+}
+
+export interface BroTimelineMessage {
+  message_id: string;
+  role: "user" | "assistant";
+  kind: "text" | "audio";
+  text: string | null;
+  transcript: string | null;
+  audio_id: string | null;
+  duration_ms: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+  status: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface BroTimelineTask {
+  task_id: string;
+  run_id: string | null;
+  title: string;
+  status: string;
+  status_label: string;
+  progress: number;
+  description: string | null;
+  summary: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface BroTimelineTurn {
+  turn_id: string;
+  thread_id: string;
+  persona_id: string;
+  executor_id: string;
+  owner: "newbro" | "executor";
+  client_request_id: string | null;
+  executor_thread_id: string | null;
+  executor_turn_id: string | null;
+  input_modality: "text" | "audio" | "unknown";
+  user: BroTimelineMessage | null;
+  assistant: BroTimelineMessage | null;
+  task: BroTimelineTask | null;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  created_at: string | null;
+  updated_at: string | null;
+  metadata: Record<string, unknown>;
 }
 
 export interface ExecutionRun {
@@ -351,6 +400,7 @@ export interface SessionSnapshot {
   summaries: TaskSummary[];
   notification_candidates: NotificationCandidate[];
   bro_threads: BroThread[];
+  bro_timeline_turns: BroTimelineTurn[];
   personas: Persona[];
   interaction_requests: InteractionRequest[];
   attention_items: AttentionItem[];

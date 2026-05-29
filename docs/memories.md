@@ -267,4 +267,9 @@ Short log of important design decisions and changes for Newbro.
 ## 2026-05-28
 
 - Changed Bro Detail push-to-talk audio transport so Newbro sends browser-uploaded PCM content inside executor-node commands for local Whisper transcription, without requiring detached executor nodes to read backend-local audio artifact paths.
-- Changed Bro Detail text/PTT hot paths so session snapshot publishes and selected-thread subscription events do not refresh Codex `thread/list` or `thread/read`; direct timelines update from Newbro task/run events, while Codex history refresh stays explicit to thread list/open hydration.
+- Changed Bro Detail text/PTT hot paths so session snapshot publishes and selected-thread subscription events do not refresh Codex `thread/list` or `thread/read`; direct timelines update from Newbro task/run events.
+- Removed Bro Detail selected-thread task hydration: opening a Codex-backed thread no longer projects native Codex turns into Newbro tasks.
+- Changed Bro Detail to render from canonical backend-owned `BroTimelineTurn` snapshot records; imported/native Codex history remains separate from Newbro tasks/runs/summaries, and history read failures set per-thread timeline load state instead of failing open.
+- Changed native Codex response-turn display so each executor turn keeps one latest assistant/agent message; later messages or deltas for the same executor turn replace that assistant side in place.
+- Changed direct text/PTT and selected-thread native event reconciliation to merge by explicit `client_request_id` and generic executor identity instead of thread-level suppression or text/timestamp matching.
+- Removed implicit direct-send thread fallback; Bro Detail now uses explicit selected/new-thread targeting for direct text and push-to-talk audio.

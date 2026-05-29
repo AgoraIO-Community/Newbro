@@ -79,7 +79,16 @@ from .mutation import TaskMutation
 from .notification import NotificationCandidate
 from .persona import Persona
 from .run import ExecutionRun
-from .session import AgentResumeHandle, BroThread, ExecutionSession, QueuedRunRequest, SessionBinding
+from .session import (
+    AgentResumeHandle,
+    BroThread,
+    BroTimelineMessage,
+    BroTimelineTask,
+    BroTimelineTurn,
+    ExecutionSession,
+    QueuedRunRequest,
+    SessionBinding,
+)
 from .summary import TaskSummary
 from .task import Task
 from .task_execution_detail import TaskExecutionDetailEntry
@@ -100,6 +109,9 @@ __all__ = [
     "AudioInstructionTranscribedMessage",
     "BindingStatus",
     "BroThread",
+    "BroTimelineMessage",
+    "BroTimelineTask",
+    "BroTimelineTurn",
     "ConversationEffect",
     "CancelRunCommand",
     "CodexThreadListItem",

@@ -50,6 +50,9 @@ from newbro.protocol import (
     AgentResumeHandle,
     AttentionItemKind,
     BroThread,
+    BroTimelineMessage,
+    BroTimelineTask,
+    BroTimelineTurn,
     CodexThreadEventMessage,
     CodexThreadListItem,
     DispatchGateOutcome,
@@ -111,9 +114,9 @@ FALLBACK_ASSISTANT_ERROR_MESSAGE = "Sorry, something went wrong while generating
 LOGGER = logging.getLogger(__name__)
 MAX_TASK_INSTRUCTION_CHARS = 4000
 AUDIO_ACTIVE_RUN_STATUSES = {RunStatus.ASSIGNED, RunStatus.RUNNING, RunStatus.BLOCKED}
-SELECTED_THREAD_HISTORY_READ_TIMEOUT_SECONDS = 4.0
 SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS = 2.0
 BRO_THREAD_PREFIX = "bro-thread-"
+IMPORTED_CODEX_THREAD_PREFIX = "codex-import-"
 
 
 def _title_from_draft_text(text: str) -> str:
@@ -151,13 +154,13 @@ def _new_bro_thread_id() -> str:
 
 def _imported_bro_thread_id(persona_id: str, codex_thread_id: str) -> str:
     digest = hashlib.sha256(f"{persona_id}:{codex_thread_id}".encode("utf-8")).hexdigest()
-    return f"codex-import-{digest[:16]}"
+    return f"{IMPORTED_CODEX_THREAD_PREFIX}{digest[:16]}"
 
 
 def _public_thread_id(session: ExecutionSession) -> str:
     if isinstance(session.continuity_key, str) and session.continuity_key.startswith(BRO_THREAD_PREFIX):
         return session.continuity_key
-    if isinstance(session.continuity_key, str) and session.continuity_key.startswith("codex-import-"):
+    if isinstance(session.continuity_key, str) and session.continuity_key.startswith(IMPORTED_CODEX_THREAD_PREFIX):
         return session.continuity_key
     return session.execution_session_id
 
@@ -265,119 +268,270 @@ def _title_from_codex_thread(item: CodexThreadListItem) -> str:
     return "Imported Codex thread"
 
 
-def _history_identity(prefix: str, *parts: object) -> str:
-    digest = hashlib.sha256(":".join(str(part) for part in parts).encode("utf-8")).hexdigest()
-    return f"{prefix}-{digest[:12]}"
-
-
-def _codex_thread_turns(thread: dict[str, object]) -> list[dict[str, object]]:
-    turns = thread.get("turns")
-    if isinstance(turns, list):
-        return [turn for turn in turns if isinstance(turn, dict)]
-    return []
-
-
-def _codex_turn_id(turn: dict[str, object], index: int) -> str:
-    value = turn.get("id") or turn.get("turnId")
-    return value if isinstance(value, str) and value else f"turn-{index}"
-
-
-def _codex_turn_timestamp(turn: dict[str, object]) -> str | None:
-    for key in ("updatedAt", "createdAt", "timestamp"):
+def _thread_timestamp_from_turn(turn: dict[str, object]) -> str | None:
+    for key in ("createdAt", "created_at", "timestamp", "updatedAt", "updated_at"):
         value = turn.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
         if isinstance(value, int | float):
             return _iso_from_epoch_seconds(value)
-        if isinstance(value, str) and value.strip():
-            candidate = value.strip()
-            if candidate.isdigit():
-                return _iso_from_epoch_seconds(int(candidate))
-            try:
-                return datetime.fromisoformat(candidate.replace("Z", "+00:00")).isoformat()
-            except ValueError:
-                continue
     return None
 
 
-def _text_from_codex_value(value: object) -> str:
-    parts: list[str] = []
-
-    def visit(candidate: object) -> None:
-        if isinstance(candidate, str):
-            if candidate.strip():
-                parts.append(candidate.strip())
-            return
-        if isinstance(candidate, list):
-            for item in candidate:
-                visit(item)
-            return
-        if not isinstance(candidate, dict):
-            return
-        text = candidate.get("text")
-        if isinstance(text, str) and text.strip():
-            parts.append(text.strip())
-        for key in ("input", "content", "items", "message", "messages", "payload"):
-            nested = candidate.get(key)
-            if nested is not None:
-                visit(nested)
-
-    visit(value)
-    return "\n".join(parts).strip()
+def _codex_thread_event_timestamp(params: dict[str, object]) -> str:
+    timestamp = _thread_timestamp_from_turn(params)
+    item = params.get("item")
+    if timestamp is None and isinstance(item, dict):
+        timestamp = _thread_timestamp_from_turn(item)
+    return timestamp or datetime.now(tz=UTC).isoformat()
 
 
-def _codex_role_tokens(item: dict[str, object]) -> set[str]:
-    tokens: set[str] = set()
-
-    def add(value: object) -> None:
-        if isinstance(value, str) and value.strip():
-            normalized = value.strip().lower().replace("-", "_")
-            tokens.add(normalized)
-            tokens.add(normalized.replace("_", ""))
-
-    add(item.get("role"))
-    add(item.get("type"))
+def _extract_codex_item_text(item: dict[str, object]) -> str | None:
+    direct_text = item.get("text")
+    if isinstance(direct_text, str) and direct_text.strip():
+        return direct_text.strip()
+    content = item.get("content")
+    if isinstance(content, list):
+        parts: list[str] = []
+        for entry in content:
+            if isinstance(entry, dict):
+                text = entry.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif isinstance(entry, str):
+                parts.append(entry)
+        text = "".join(parts).strip()
+        if text:
+            return text
     payload = item.get("payload")
     if isinstance(payload, dict):
-        add(payload.get("role"))
-        add(payload.get("type"))
-    return tokens
+        for key in ("message", "text", "content"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    for key in ("message", "input"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
-def _codex_item_is_user(item: dict[str, object]) -> bool:
-    return bool(
-        _codex_role_tokens(item)
-        & {"user", "human", "user_message", "usermessage", "user_input", "userinput"}
-    )
+def _codex_item_role(item: dict[str, object]) -> Literal["user", "assistant"] | None:
+    item_type = item.get("type")
+    if item_type in {"assistantMessage", "agentMessage"}:
+        return "assistant"
+    if item_type in {"userMessage", "user_message"}:
+        return "user"
+    payload = item.get("payload")
+    if isinstance(payload, dict) and payload.get("type") == "user_message":
+        return "user"
+    role = item.get("role")
+    if role in {"user", "assistant"}:
+        return role  # type: ignore[return-value]
+    return None
 
 
-def _codex_item_is_assistant(item: dict[str, object]) -> bool:
-    return bool(
-        _codex_role_tokens(item)
-        & {"assistant", "assistant_message", "assistantmessage", "agent_message", "agentmessage"}
-    )
+def _timeline_status(task: Task | None, run: ExecutionRun | None, fallback: str = "pending") -> str:
+    status = _thread_status(task, run)
+    if status == "blocked":
+        return "running"
+    if status == "queued":
+        return "pending"
+    if status in {"pending", "running", "completed", "failed", "cancelled"}:
+        return status
+    return fallback
 
 
-def _codex_turn_user_text(turn: dict[str, object]) -> str | None:
-    text = _text_from_codex_value(turn.get("input"))
-    if text:
-        return text
-    user_items: list[object] = []
-    for item in turn.get("items", []) if isinstance(turn.get("items"), list) else []:
-        if isinstance(item, dict) and _codex_item_is_user(item):
-            user_items.append(item)
-    text = _text_from_codex_value(user_items)
-    return text or None
+def _task_status_label(status: str) -> str:
+    return status.replace("_", " ")
 
 
-def _codex_turn_assistant_text(turn: dict[str, object]) -> str | None:
-    assistant_items: list[object] = []
-    for item in turn.get("items", []) if isinstance(turn.get("items"), list) else []:
-        if isinstance(item, dict) and _codex_item_is_assistant(item):
-            assistant_items.append(item)
-    text = _text_from_codex_value(assistant_items)
-    if text:
-        return text
-    text = _text_from_codex_value(turn.get("output"))
-    return text or None
+def _timeline_task_progress(status: str) -> int:
+    if status == "completed":
+        return 100
+    if status == "running":
+        return 60
+    if status == "failed":
+        return 30
+    if status == "cancelled":
+        return 30
+    return 15
+
+
+def _event_metadata_string(run: ExecutionRun | None, key: str) -> str | None:
+    if run is None:
+        return None
+    for event_key in ("latest_terminal_event", "latest_progress_event", "blocked_event"):
+        event = run.metadata.get(event_key)
+        if isinstance(event, dict):
+            value = event.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return None
+
+
+def _task_input_modality(task: Task) -> Literal["text", "audio", "unknown"]:
+    source_kind = task.metadata.get("source_kind")
+    if source_kind == "bro_detail_ptt":
+        return "audio"
+    if source_kind == "bro_detail_text":
+        return "text"
+    if task.metadata.get("source_audio_instruction_id"):
+        return "audio"
+    return "text" if task.latest_instruction or task.goal else "unknown"
+
+
+def _direct_user_text(task: Task) -> str:
+    goal = task.goal.strip()
+    title = task.title.strip()
+    instruction = (task.latest_instruction or "").strip()
+    if not instruction:
+        return goal or title
+    if goal and goal in instruction:
+        return goal
+    if title and title in instruction:
+        return title
+    return instruction
+
+
+def _timeline_turns_from_codex_thread(
+    *,
+    thread: dict[str, object],
+    public_thread_id: str,
+    executor_thread_id: str,
+    persona_id: str,
+    executor_id: str = "codex",
+) -> list[BroTimelineTurn]:
+    turns = thread.get("turns")
+    if not isinstance(turns, list):
+        return []
+    timeline_turns: list[BroTimelineTurn] = []
+    pending_user_message: BroTimelineMessage | None = None
+    pending_user_turn_id: str | None = None
+    pending_user_timestamp: str | None = None
+
+    def append_user_only_turn() -> None:
+        nonlocal pending_user_message, pending_user_turn_id, pending_user_timestamp
+        if pending_user_message is None or pending_user_turn_id is None:
+            return
+        timeline_turns.append(
+            BroTimelineTurn(
+                turn_id=f"{public_thread_id}:{executor_id}:{pending_user_turn_id}",
+                thread_id=public_thread_id,
+                persona_id=persona_id,
+                executor_id=executor_id,
+                owner="executor",
+                executor_thread_id=executor_thread_id,
+                executor_turn_id=pending_user_turn_id,
+                input_modality="text",
+                user=pending_user_message,
+                status="completed",
+                created_at=pending_user_timestamp,
+                updated_at=pending_user_timestamp,
+                metadata={
+                    "source": "native_history",
+                    "executor_thread_id": executor_thread_id,
+                    "executor_turn_id": pending_user_turn_id,
+                    "assistant_title": pending_user_message.text,
+                },
+            )
+        )
+        pending_user_message = None
+        pending_user_turn_id = None
+        pending_user_timestamp = None
+
+    for turn_index, turn in enumerate(turns):
+        if not isinstance(turn, dict):
+            continue
+        turn_id = turn.get("id")
+        turn_id_text = str(turn_id) if isinstance(turn_id, str) and turn_id else f"turn-{turn_index}"
+        timestamp = _thread_timestamp_from_turn(turn)
+        items = turn.get("items")
+        if not isinstance(items, list):
+            continue
+        latest_user_message: BroTimelineMessage | None = None
+        latest_assistant_message: BroTimelineMessage | None = None
+        for item_index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            role = _codex_item_role(item)
+            if role is None:
+                continue
+            text = _extract_codex_item_text(item)
+            if not text:
+                continue
+            item_id = item.get("id")
+            item_id_text = str(item_id) if isinstance(item_id, str) and item_id else f"item-{item_index}"
+            status = item.get("status")
+            message = BroTimelineMessage(
+                message_id=f"{public_thread_id}:{turn_id_text}:{role}",
+                role=role,
+                kind="text",
+                text=text,
+                created_at=timestamp,
+                status=status if isinstance(status, str) and status else "completed",
+                metadata={
+                    "executor_turn_id": turn_id_text,
+                    "codex_item_id": item_id_text,
+                    "codex_item_type": item.get("type") if isinstance(item.get("type"), str) else None,
+                },
+            )
+            if role == "assistant":
+                latest_assistant_message = message
+            else:
+                latest_user_message = message
+        if latest_user_message is None and latest_assistant_message is None:
+            continue
+        status_text = str(turn.get("status") or "").lower()
+        turn_status: Literal["pending", "running", "completed", "failed", "cancelled"] = "completed"
+        if status_text in {"running", "inprogress", "in_progress"}:
+            turn_status = "running"
+        elif status_text == "failed":
+            turn_status = "failed"
+        elif status_text in {"cancelled", "canceled"}:
+            turn_status = "cancelled"
+        if latest_assistant_message is None and latest_user_message is not None:
+            append_user_only_turn()
+            pending_user_message = latest_user_message
+            pending_user_turn_id = turn_id_text
+            pending_user_timestamp = timestamp
+            continue
+        paired_user_message = latest_user_message
+        original_user_turn_id: str | None = None
+        if latest_assistant_message is not None and paired_user_message is None and pending_user_message is not None:
+            paired_user_message = pending_user_message
+            original_user_turn_id = pending_user_turn_id
+            pending_user_message = None
+            pending_user_turn_id = None
+            pending_user_timestamp = None
+        elif latest_assistant_message is not None:
+            append_user_only_turn()
+        timeline_turns.append(
+            BroTimelineTurn(
+                turn_id=f"{public_thread_id}:{executor_id}:{turn_id_text}",
+                thread_id=public_thread_id,
+                persona_id=persona_id,
+                executor_id=executor_id,
+                owner="executor",
+                executor_thread_id=executor_thread_id,
+                executor_turn_id=turn_id_text,
+                input_modality="text" if paired_user_message is not None else "unknown",
+                user=paired_user_message,
+                assistant=latest_assistant_message,
+                status=turn_status,
+                created_at=paired_user_message.created_at if paired_user_message is not None else timestamp,
+                updated_at=timestamp,
+                metadata={
+                    "source": "native_history",
+                    "executor_thread_id": executor_thread_id,
+                    "executor_turn_id": turn_id_text,
+                    "assistant_title": paired_user_message.text if paired_user_message is not None else None,
+                    "original_user_executor_turn_id": original_user_turn_id,
+                },
+            )
+        )
+    append_user_only_turn()
+    return timeline_turns
 
 
 def _build_bro_thread_projection(
@@ -608,6 +762,276 @@ def _build_bro_thread_projection(
     )
 
 
+def _summary_text_for_timeline(
+    *,
+    task: Task,
+    run: ExecutionRun | None,
+    summary: TaskSummary | None,
+) -> str:
+    if summary is not None:
+        if summary.conversational_summary:
+            return summary.conversational_summary
+        if summary.operational_summary:
+            return summary.operational_summary
+    if run is not None:
+        if run.output_summary:
+            return run.output_summary
+        if run.failure_reason:
+            return run.failure_reason
+        if run.block_reason:
+            return run.block_reason
+        if run.latest_progress_message:
+            return run.latest_progress_message
+    return task.goal or task.title
+
+
+def _run_metadata_dict(run: ExecutionRun | None, key: str) -> dict[str, object]:
+    if run is None:
+        return {}
+    value = run.metadata.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _audio_transcript_for_task(task: Task, run: ExecutionRun | None) -> str | None:
+    audio_id = task.metadata.get("source_audio_instruction_id")
+    if not isinstance(audio_id, str) or not audio_id:
+        return None
+    transcripts = _run_metadata_dict(run, "audio_transcripts")
+    transcript = transcripts.get(audio_id)
+    if isinstance(transcript, str) and transcript.strip():
+        return transcript.strip()
+    instruction = (task.latest_instruction or "").strip()
+    return instruction or None
+
+
+def _build_newbro_timeline_turns(
+    *,
+    tasks: list[Task],
+    sessions: list[ExecutionSession],
+    runs: list[ExecutionRun],
+    summaries: list[TaskSummary],
+) -> list[BroTimelineTurn]:
+    runs_by_task: dict[str, list[ExecutionRun]] = {}
+    for run in runs:
+        runs_by_task.setdefault(run.task_id, []).append(run)
+    session_by_id = {session.execution_session_id: session for session in sessions}
+    summary_by_task_id = {summary.task_id: summary for summary in summaries}
+    turns: list[BroTimelineTurn] = []
+    for task in tasks:
+        public_thread_id = _task_thread_public_id(task)
+        if public_thread_id is None:
+            continue
+        persona_id = _task_metadata_string(task, "persona_id") or _task_metadata_string(task, "assigned_bro_id")
+        if persona_id is None:
+            continue
+        task_runs = runs_by_task.get(task.task_id, [])
+        run = task_runs[-1] if task_runs else None
+        execution_session = session_by_id.get(run.execution_session_id) if run is not None else None
+        status = _timeline_status(task, run)
+        created_at = _task_metadata_string(task, "created_at")
+        updated_at = _task_updated_at(task) or created_at
+        client_request_id = _task_metadata_string(task, "client_request_id")
+        executor_id = task.preferred_executor or (run.executor_type if run is not None else "codex")
+        executor_thread_id = (
+            _event_metadata_string(run, "executor_thread_id")
+            or _event_metadata_string(run, "thread_id")
+            or _task_metadata_string(task, "codex_import_thread_id")
+        )
+        if executor_thread_id is None and execution_session is not None and execution_session.latest_resume_handle:
+            handle = execution_session.latest_resume_handle
+            if isinstance(handle.session_handle, str) and handle.session_handle:
+                executor_thread_id = handle.session_handle
+        executor_turn_id = (
+            _event_metadata_string(run, "executor_turn_id")
+            or _event_metadata_string(run, "turn_id")
+        )
+        input_modality = _task_input_modality(task)
+        user_text = _direct_user_text(task)
+        audio_id = _task_metadata_string(task, "source_audio_instruction_id")
+        if input_modality == "audio":
+            user_message = BroTimelineMessage(
+                message_id=f"{task.task_id}:user",
+                role="user",
+                kind="audio",
+                text=None,
+                transcript=_audio_transcript_for_task(task, run) or user_text or None,
+                audio_id=audio_id,
+                status="sent" if status != "failed" else "failed",
+                created_at=created_at,
+                updated_at=updated_at,
+                metadata={"source_kind": task.metadata.get("source_kind")},
+            )
+        else:
+            user_message = BroTimelineMessage(
+                message_id=f"{task.task_id}:user",
+                role="user",
+                kind="text",
+                text=user_text or None,
+                status="sent" if status != "failed" else "failed",
+                created_at=created_at,
+                updated_at=updated_at,
+                metadata={"source_kind": task.metadata.get("source_kind")},
+            )
+        summary_text = _summary_text_for_timeline(task=task, run=run, summary=summary_by_task_id.get(task.task_id))
+        assistant_text = None
+        if run is not None:
+            assistant_text = run.output_summary or run.failure_reason or run.block_reason or run.latest_progress_message
+        assistant = (
+            BroTimelineMessage(
+                message_id=f"{task.task_id}:assistant",
+                role="assistant",
+                kind="text",
+                text=assistant_text,
+                status=status,
+                created_at=updated_at,
+                updated_at=updated_at,
+                metadata={"source": "newbro_task"},
+            )
+            if assistant_text
+            else None
+        )
+        task_status = run.status.value if run is not None else task.status.value
+        turns.append(
+            BroTimelineTurn(
+                turn_id=(
+                    f"{public_thread_id}:newbro:{client_request_id}"
+                    if client_request_id
+                    else f"{public_thread_id}:newbro:{task.task_id}"
+                ),
+                thread_id=public_thread_id,
+                persona_id=persona_id,
+                executor_id=executor_id,
+                owner="newbro",
+                client_request_id=client_request_id,
+                executor_thread_id=executor_thread_id,
+                executor_turn_id=executor_turn_id,
+                input_modality=input_modality,
+                user=user_message,
+                assistant=assistant,
+                task=BroTimelineTask(
+                    task_id=task.task_id,
+                    run_id=run.run_id if run is not None else None,
+                    title=task.title,
+                    status=task_status,
+                    status_label=_task_status_label(task_status),
+                    progress=_timeline_task_progress(status),
+                    description=summary_text,
+                    summary=summary_text,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                    metadata={
+                        "source_kind": task.metadata.get("source_kind"),
+                        "target_thread_id": public_thread_id,
+                    },
+                ),
+                status=status,  # type: ignore[arg-type]
+                created_at=created_at,
+                updated_at=updated_at,
+                metadata={
+                    "source": "newbro_task",
+                    "task_id": task.task_id,
+                    **({"run_id": run.run_id} if run is not None else {}),
+                },
+            )
+        )
+    return turns
+
+
+def _timeline_identity(turn: BroTimelineTurn) -> tuple[str, str, str] | None:
+    if not turn.executor_thread_id or not turn.executor_turn_id:
+        return None
+    return (turn.executor_id, turn.executor_thread_id, turn.executor_turn_id)
+
+
+def _merge_timeline_turn(existing: BroTimelineTurn, incoming: BroTimelineTurn) -> BroTimelineTurn:
+    user = existing.user or incoming.user
+    assistant = incoming.assistant or existing.assistant
+    task = existing.task or incoming.task
+    status = existing.status
+    if existing.status in {"pending", "running"} and incoming.status in {"completed", "failed", "cancelled", "running"}:
+        status = incoming.status
+    return existing.model_copy(
+        update={
+            "user": user,
+            "assistant": assistant,
+            "task": task,
+            "status": status,
+            "client_request_id": existing.client_request_id or incoming.client_request_id,
+            "executor_thread_id": existing.executor_thread_id or incoming.executor_thread_id,
+            "executor_turn_id": existing.executor_turn_id or incoming.executor_turn_id,
+            "input_modality": existing.input_modality if existing.input_modality != "unknown" else incoming.input_modality,
+            "updated_at": incoming.updated_at or existing.updated_at,
+            "metadata": {**incoming.metadata, **existing.metadata},
+        }
+    )
+
+
+def _sort_timeline_turns(turns: list[BroTimelineTurn]) -> list[BroTimelineTurn]:
+    def key(turn: BroTimelineTurn) -> tuple[float, str]:
+        timestamp = turn.created_at or turn.updated_at or ""
+        parsed = DateParseCache.parse(timestamp)
+        return (parsed, turn.turn_id)
+
+    return sorted(turns, key=key)
+
+
+class DateParseCache:
+    _cache: dict[str, float] = {}
+
+    @classmethod
+    def parse(cls, value: str) -> float:
+        if not value:
+            return float("-inf")
+        cached = cls._cache.get(value)
+        if cached is not None:
+            return cached
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            parsed = float("-inf")
+        cls._cache[value] = parsed
+        return parsed
+
+
+def _build_bro_timeline_projection(
+    *,
+    tasks: list[Task],
+    sessions: list[ExecutionSession],
+    runs: list[ExecutionRun],
+    summaries: list[TaskSummary],
+    executor_turns: list[BroTimelineTurn],
+) -> list[BroTimelineTurn]:
+    merged: dict[str, BroTimelineTurn] = {}
+    by_executor_identity: dict[tuple[str, str, str], str] = {}
+    by_client_request_id: dict[str, str] = {}
+    for turn in _build_newbro_timeline_turns(tasks=tasks, sessions=sessions, runs=runs, summaries=summaries):
+        merged[turn.turn_id] = turn
+        if turn.client_request_id:
+            by_client_request_id[turn.client_request_id] = turn.turn_id
+        identity = _timeline_identity(turn)
+        if identity is not None:
+            by_executor_identity[identity] = turn.turn_id
+    for turn in executor_turns:
+        existing_id = by_client_request_id.get(turn.client_request_id) if turn.client_request_id else None
+        if existing_id is not None and existing_id in merged:
+            merged[existing_id] = _merge_timeline_turn(merged[existing_id], turn)
+            identity = _timeline_identity(merged[existing_id])
+            if identity is not None:
+                by_executor_identity[identity] = existing_id
+            continue
+        identity = _timeline_identity(turn)
+        existing_id = by_executor_identity.get(identity) if identity is not None else None
+        if existing_id is not None and existing_id in merged:
+            merged[existing_id] = _merge_timeline_turn(merged[existing_id], turn)
+            continue
+        merged[turn.turn_id] = turn
+        if turn.client_request_id:
+            by_client_request_id[turn.client_request_id] = turn.turn_id
+        if identity is not None:
+            by_executor_identity[identity] = turn.turn_id
+    return _sort_timeline_turns(list(merged.values()))
+
+
 def _task_instruction_from_draft(draft) -> str:
     task_spec = getattr(draft, "task_spec", None)
     if task_spec is None:
@@ -753,6 +1177,10 @@ class SessionRuntime:
     _selected_codex_thread_subscriptions: dict[str, SelectedCodexThreadSubscription] = field(default_factory=dict, init=False, repr=False)
     _selected_codex_thread_subscription_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False, repr=False)
     _open_bro_thread_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
+    _bro_thread_executor_turns: dict[str, list[BroTimelineTurn]] = field(default_factory=dict, init=False, repr=False)
+    _bro_thread_timeline_status: dict[str, Literal["not_loaded", "loading", "loaded", "failed"]] = field(default_factory=dict, init=False, repr=False)
+    _bro_thread_timeline_errors: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _bro_thread_live_message_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
 
     def _record_direct_executor_text_metric(
         self,
@@ -838,6 +1266,16 @@ class SessionRuntime:
             if sync_imported_codex_threads
             else list(self._imported_codex_threads.values())
         )
+        bro_threads = self._with_bro_thread_timeline_state(
+            _build_bro_thread_projection(
+                tasks=tasks,
+                sessions=sessions,
+                runs=runs,
+                summaries=summaries,
+                personas=personas,
+                imported_threads=imported_threads,
+            )
+        )
         return SessionSnapshot(
             session_id=self.session_id,
             voice_target_persona_id=self._voice_target_persona_id,
@@ -848,13 +1286,13 @@ class SessionRuntime:
             bindings=bindings,
             summaries=summaries,
             notification_candidates=notification_candidates,
-            bro_threads=_build_bro_thread_projection(
+            bro_threads=bro_threads,
+            bro_timeline_turns=_build_bro_timeline_projection(
                 tasks=tasks,
                 sessions=sessions,
                 runs=runs,
                 summaries=summaries,
-                personas=personas,
-                imported_threads=imported_threads,
+                executor_turns=self._bro_thread_executor_turn_snapshot(),
             ),
             personas=personas,
             interaction_requests=sanitized_interaction_requests,
@@ -864,6 +1302,23 @@ class SessionRuntime:
             executor_nodes=await self.executor_node_manager.list_nodes(),
             draft_session=self.draft_manager.active_session,
         )
+
+    def _with_bro_thread_timeline_state(self, threads: list[BroThread]) -> list[BroThread]:
+        return [
+            thread.model_copy(
+                update={
+                    "timeline_status": self._bro_thread_timeline_status.get(thread.thread_id, "not_loaded"),
+                    "timeline_error": self._bro_thread_timeline_errors.get(thread.thread_id),
+                }
+            )
+            for thread in threads
+        ]
+
+    def _bro_thread_executor_turn_snapshot(self) -> list[BroTimelineTurn]:
+        turns: list[BroTimelineTurn] = []
+        for thread_turns in self._bro_thread_executor_turns.values():
+            turns.extend(thread_turns)
+        return turns
 
     async def _sync_imported_codex_threads(
         self,
@@ -1012,7 +1467,6 @@ class SessionRuntime:
                 persona=persona,
                 resolved_thread_id=resolved_thread_id,
                 thread_continuity_key=thread_continuity_key,
-                selected_session=selected_session,
                 resume_handle=resume_handle,
                 node_id=node_id,
             )
@@ -1023,12 +1477,15 @@ class SessionRuntime:
         persona,
         resolved_thread_id: str,
         thread_continuity_key: str,
-        selected_session,
         resume_handle,
         node_id: str,
     ) -> "SessionSnapshot":
         imported_thread = self._imported_codex_threads.get(resolved_thread_id)
         current_subscription = self._selected_codex_thread_subscriptions.get(persona.persona_id)
+        should_load_timeline = self._should_load_bro_thread_timeline(
+            public_thread_id=resolved_thread_id,
+            resume_handle=resume_handle,
+        )
         if current_subscription is not None:
             same = (
                 current_subscription.public_thread_id == resolved_thread_id
@@ -1036,24 +1493,16 @@ class SessionRuntime:
                 and current_subscription.node_id == node_id
             )
             if same:
+                if should_load_timeline:
+                    await self._load_bro_thread_timeline(
+                        persona=persona,
+                        public_thread_id=resolved_thread_id,
+                        node_id=node_id,
+                        resume_handle=resume_handle,
+                    )
                 return await self.publish_snapshot(sync_imported_codex_threads=False)
             await self._stop_selected_codex_thread_subscription(persona_id=persona.persona_id, wait=False)
 
-        thread = await self.executor_node_manager.request_codex_thread(
-            node_id=node_id,
-            thread_id=resume_handle.session_handle,
-            timeout_seconds=SELECTED_THREAD_HISTORY_READ_TIMEOUT_SECONDS,
-        )
-        await self._hydrate_opened_codex_thread_history(
-            persona=persona,
-            public_thread_id=resolved_thread_id,
-            thread_continuity_key=thread_continuity_key,
-            resume_handle=resume_handle,
-            selected_session=selected_session,
-            node_id=node_id,
-            thread=thread,
-            fallback_timestamp=imported_thread.updated_at if imported_thread is not None else None,
-        )
         self._schedule_selected_codex_thread_subscription(
             persona=persona,
             public_thread_id=resolved_thread_id,
@@ -1062,7 +1511,74 @@ class SessionRuntime:
             resume_handle=resume_handle,
             fallback_timestamp=imported_thread.updated_at if imported_thread is not None else None,
         )
+        if should_load_timeline:
+            await self._load_bro_thread_timeline(
+                persona=persona,
+                public_thread_id=resolved_thread_id,
+                node_id=node_id,
+                resume_handle=resume_handle,
+            )
         return await self.publish_snapshot(sync_imported_codex_threads=False)
+
+    def _should_load_bro_thread_timeline(
+        self,
+        *,
+        public_thread_id: str,
+        resume_handle: AgentResumeHandle,
+    ) -> bool:
+        if not public_thread_id.startswith(IMPORTED_CODEX_THREAD_PREFIX):
+            return False
+        if public_thread_id in self._bro_thread_executor_turns:
+            return False
+        if self._bro_thread_timeline_status.get(public_thread_id) == "loaded":
+            return False
+        return (
+            resume_handle.executor_id == "codex"
+            and isinstance(resume_handle.session_handle, str)
+            and bool(resume_handle.session_handle)
+        )
+
+    async def _load_bro_thread_timeline(
+        self,
+        *,
+        persona,
+        public_thread_id: str,
+        node_id: str,
+        resume_handle: AgentResumeHandle,
+    ) -> None:
+        native_thread_id = resume_handle.session_handle
+        if not isinstance(native_thread_id, str) or not native_thread_id:
+            return
+        self._bro_thread_timeline_status[public_thread_id] = "loading"
+        self._bro_thread_timeline_errors.pop(public_thread_id, None)
+        await self.publish_snapshot(sync_imported_codex_threads=False)
+        try:
+            thread = await self.executor_node_manager.request_codex_thread(
+                node_id=node_id,
+                thread_id=native_thread_id,
+            )
+        except Exception as exc:
+            message = str(exc).strip() or "Codex thread history could not be loaded."
+            self._bro_thread_executor_turns.pop(public_thread_id, None)
+            self._bro_thread_timeline_status[public_thread_id] = "failed"
+            self._bro_thread_timeline_errors[public_thread_id] = message
+            LOGGER.warning(
+                "Failed to load Codex thread history for %s/%s: %s",
+                public_thread_id,
+                native_thread_id,
+                message,
+            )
+            return
+        for turn in _timeline_turns_from_codex_thread(
+            thread=thread,
+            public_thread_id=public_thread_id,
+            executor_thread_id=native_thread_id,
+            persona_id=persona.persona_id,
+            executor_id="codex",
+        ):
+            self._upsert_bro_thread_executor_turn(turn)
+        self._bro_thread_timeline_status[public_thread_id] = "loaded"
+        self._bro_thread_timeline_errors.pop(public_thread_id, None)
 
     async def _codex_thread_open_needs_import_sync(self, *, persona, target_thread_id: str) -> bool:
         if await self._find_codex_thread_session_for_persona(persona.persona_id, target_thread_id) is not None:
@@ -1170,7 +1686,7 @@ class SessionRuntime:
                 raise
             except Exception as exc:
                 LOGGER.warning(
-                    "Selected Codex thread subscription failed for %s after hydration: %s",
+                    "Selected Codex thread subscription failed for %s after open: %s",
                     resume_handle.session_handle,
                     exc,
                 )
@@ -1241,11 +1757,15 @@ class SessionRuntime:
             return
         if message.method not in {
             "turn/completed",
+            "item/agentMessage/delta",
             "item/completed",
             "thread/status/changed",
             "thread/closed",
         }:
             return
+        if message.method in {"item/agentMessage/delta", "item/completed"}:
+            if await self._apply_codex_thread_timeline_event(message, current):
+                await self.publish_snapshot(sync_imported_codex_threads=False)
         if message.method == "thread/closed":
             await self._stop_selected_codex_thread_subscription(
                 persona_id=current.persona_id,
@@ -1253,132 +1773,196 @@ class SessionRuntime:
             )
         return
 
-    async def _hydrate_opened_codex_thread_history(
+    async def _client_request_id_for_selected_thread_turn(
         self,
         *,
-        persona,
         public_thread_id: str,
-        thread_continuity_key: str,
-        resume_handle: AgentResumeHandle,
-        selected_session: ExecutionSession | None,
-        node_id: str,
-        thread: dict[str, object],
-        fallback_timestamp: str | None,
-    ) -> None:
-        turns = _codex_thread_turns(thread)
-        if not turns:
-            return
-        existing_task_ids = {task.task_id for task in await self.blackboard.list_tasks()}
-        existing_run_ids = {run.run_id for run in await self.blackboard.list_runs()}
-
-        execution_session = selected_session
-        if execution_session is None:
-            execution_session_id = _history_identity(
-                "exec-session-codexhist",
-                persona.persona_id,
-                public_thread_id,
-                resume_handle.session_handle,
-            )
-            execution_session = await self.blackboard.get_session(execution_session_id)
-            if execution_session is None:
-                execution_session = ExecutionSession(
-                    execution_session_id=execution_session_id,
-                    task_id="",
-                    base_executor_id="codex",
-                    executor_node_id=node_id,
-                    continuity_key=thread_continuity_key,
-                    latest_resume_handle=resume_handle,
-                )
-
-        run_ids = list(execution_session.run_ids)
-        first_task_id = execution_session.task_id
-        latest_run_id = execution_session.latest_run_id
-        for index, turn in enumerate(turns):
-            turn_id = _codex_turn_id(turn, index)
-            task_id = _history_identity("task-codexhist", persona.persona_id, public_thread_id, turn_id)
-            run_id = _history_identity("run-codexhist", persona.persona_id, public_thread_id, turn_id)
-            if task_id in existing_task_ids or run_id in existing_run_ids:
+        executor_thread_id: str,
+        executor_turn_id: str,
+    ) -> str | None:
+        tasks = await self.blackboard.list_tasks()
+        task_by_id = {task.task_id: task for task in tasks}
+        for run in await self.blackboard.list_runs():
+            task = task_by_id.get(run.task_id)
+            if task is None or _task_thread_public_id(task) != public_thread_id:
                 continue
-            existing_task_ids.add(task_id)
-            existing_run_ids.add(run_id)
-            user_text = _codex_turn_user_text(turn)
-            assistant_text = _codex_turn_assistant_text(turn)
-            summary_text = assistant_text or _text_from_codex_value(turn) or "Codex thread history."
-            title_text = user_text or summary_text or "Codex thread history"
-            timestamp = _codex_turn_timestamp(turn) or fallback_timestamp or datetime.now(tz=UTC).isoformat()
-            status_text = str(turn.get("status") or "").lower()
-            failed = status_text == "failed"
-            task = Task(
-                task_id=task_id,
-                root_task_id=task_id,
-                title=_title_from_draft_text(title_text),
-                goal=user_text or title_text,
-                status=TaskStatus.FAILED if failed else TaskStatus.COMPLETED,
-                preferred_executor="codex",
-                session_affinity=(
-                    str(resume_handle.opaque.get("cwd"))
-                    if isinstance(resume_handle.opaque.get("cwd"), str) and resume_handle.opaque.get("cwd")
-                    else f"ws-{thread_continuity_key}"
-                ),
-                latest_instruction=user_text,
+            source_kind = _task_metadata_string(task, "source_kind")
+            if source_kind not in {"bro_detail_text", "bro_detail_ptt"}:
+                continue
+            run_thread_id = _event_metadata_string(run, "executor_thread_id") or _event_metadata_string(run, "thread_id")
+            run_turn_id = _event_metadata_string(run, "executor_turn_id") or _event_metadata_string(run, "turn_id")
+            if run_thread_id != executor_thread_id or run_turn_id != executor_turn_id:
+                continue
+            client_request_id = _task_metadata_string(task, "client_request_id")
+            if client_request_id is not None:
+                return client_request_id
+
+        direct_candidates: list[tuple[str, str]] = []
+        pending_candidates: list[tuple[str, str]] = []
+        for task in tasks:
+            if _task_thread_public_id(task) != public_thread_id:
+                continue
+            source_kind = _task_metadata_string(task, "source_kind")
+            if source_kind not in {"bro_detail_text", "bro_detail_ptt"}:
+                continue
+            client_request_id = _task_metadata_string(task, "client_request_id")
+            if client_request_id is None:
+                continue
+            candidate = (_task_updated_at(task) or "", client_request_id)
+            direct_candidates.append(candidate)
+            if task.status in {
+                TaskStatus.CREATED,
+                TaskStatus.QUEUED,
+                TaskStatus.WAITING_EXECUTOR,
+                TaskStatus.RUNNING,
+                TaskStatus.WAITING_USER_INPUT,
+            }:
+                pending_candidates.append(candidate)
+        unique_ids = {client_request_id for _, client_request_id in pending_candidates}
+        if len(unique_ids) != 1:
+            unique_ids = {client_request_id for _, client_request_id in direct_candidates}
+            if len(unique_ids) != 1:
+                return None
+            direct_candidates.sort()
+            return direct_candidates[-1][1] if direct_candidates else None
+        pending_candidates.sort()
+        return pending_candidates[-1][1] if pending_candidates else None
+
+    async def _apply_codex_thread_timeline_event(
+        self,
+        message: CodexThreadEventMessage,
+        subscription: SelectedCodexThreadSubscription,
+    ) -> bool:
+        params = message.params
+        turn_id = params.get("turnId") or params.get("turn_id")
+        if not isinstance(turn_id, str) or not turn_id:
+            return False
+        timestamp = _codex_thread_event_timestamp(params)
+        client_request_id = await self._client_request_id_for_selected_thread_turn(
+            public_thread_id=subscription.public_thread_id,
+            executor_thread_id=subscription.codex_thread_id,
+            executor_turn_id=turn_id,
+        )
+        item = params.get("item")
+        if isinstance(item, dict):
+            role = _codex_item_role(item)
+            text = _extract_codex_item_text(item)
+            if role is None or not text:
+                return False
+            item_id = item.get("id")
+            item_id_text = str(item_id) if isinstance(item_id, str) and item_id else "completed"
+            status = item.get("status")
+            timeline_message = BroTimelineMessage(
+                message_id=f"{subscription.public_thread_id}:{turn_id}:{role}",
+                role=role,
+                kind="text",
+                text=text,
+                created_at=timestamp,
+                status=status if isinstance(status, str) and status else "completed",
                 metadata={
-                    "immutable": True,
-                    "source_kind": "codex_thread_history",
-                    "assigned_bro_id": persona.persona_id,
-                    "persona_id": persona.persona_id,
-                    "persona_name": persona.name,
-                    "persona_avatar": persona.avatar,
-                    "bro_detail_session_id": persona.bro_detail_session_id,
-                    "bro_thread_id": thread_continuity_key,
-                    "target_thread_id": public_thread_id,
-                    "executor_node_id": node_id,
-                    "codex_thread_mode": "resume",
-                    "codex_import_thread_id": resume_handle.session_handle,
-                    "codex_history_hydrated": True,
-                    "codex_history_turn_id": turn_id,
-                    "created_at": timestamp,
-                    "updated_at": timestamp,
-                    "suppress_communication_notifications": True,
+                    "executor_turn_id": turn_id,
+                    "codex_item_id": item_id_text,
+                    "codex_item_type": item.get("type") if isinstance(item.get("type"), str) else None,
+                    "source": "selected_thread_event",
                 },
             )
-            run = ExecutionRun(
-                run_id=run_id,
-                task_id=task_id,
-                execution_session_id=execution_session.execution_session_id,
-                executor_type="codex",
-                status=RunStatus.FAILED if failed else RunStatus.COMPLETED,
-                output_summary=None if failed else assistant_text,
-                failure_reason=summary_text if failed else None,
-                metadata={
-                    "source_kind": "codex_thread_history",
-                    "target_thread_id": public_thread_id,
-                    "codex_thread_id": resume_handle.session_handle,
-                    "codex_turn_id": turn_id,
-                },
-            )
-            await self.blackboard.put_task(task)
-            await self.blackboard.put_run(run)
-            await self.blackboard.put_summary(
-                TaskSummary(
-                    task_id=task_id,
-                    operational_summary=summary_text,
-                    conversational_summary=summary_text,
-                    latest_user_visible_status=summary_text,
+            self._upsert_bro_thread_executor_turn(
+                BroTimelineTurn(
+                    turn_id=f"{subscription.public_thread_id}:codex:{turn_id}",
+                    thread_id=subscription.public_thread_id,
+                    persona_id=subscription.persona_id,
+                    executor_id="codex",
+                    owner="executor",
+                    client_request_id=client_request_id,
+                    executor_thread_id=subscription.codex_thread_id,
+                    executor_turn_id=turn_id,
+                    input_modality="text" if role == "user" else "unknown",
+                    user=timeline_message if role == "user" else None,
+                    assistant=timeline_message if role == "assistant" else None,
+                    status="running" if timeline_message.status in {"running", "inProgress"} else "completed",
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    metadata={
+                        "source": "selected_thread_event",
+                        "executor_thread_id": subscription.codex_thread_id,
+                        "executor_turn_id": turn_id,
+                        "client_request_id": client_request_id,
+                    },
                 )
             )
-            if not first_task_id:
-                first_task_id = task_id
-            if run_id not in run_ids:
-                run_ids.append(run_id)
-            latest_run_id = run_id
+            return True
+        if message.method != "item/agentMessage/delta":
+            return False
+        item_id = params.get("itemId") or params.get("item_id")
+        delta = params.get("delta")
+        if not isinstance(item_id, str) or not item_id or not isinstance(delta, str) or not delta:
+            return False
+        key = (subscription.public_thread_id, turn_id, item_id)
+        text = f"{self._bro_thread_live_message_deltas.get(key, '')}{delta}"
+        self._bro_thread_live_message_deltas[key] = text
+        self._upsert_bro_thread_executor_turn(
+            BroTimelineTurn(
+                turn_id=f"{subscription.public_thread_id}:codex:{turn_id}",
+                thread_id=subscription.public_thread_id,
+                persona_id=subscription.persona_id,
+                executor_id="codex",
+                owner="executor",
+                client_request_id=client_request_id,
+                executor_thread_id=subscription.codex_thread_id,
+                executor_turn_id=turn_id,
+                input_modality="unknown",
+                assistant=BroTimelineMessage(
+                    message_id=f"{subscription.public_thread_id}:{turn_id}:assistant",
+                    role="assistant",
+                    kind="text",
+                    text=text,
+                    created_at=timestamp,
+                    status="running",
+                    metadata={
+                        "executor_turn_id": turn_id,
+                        "codex_item_id": item_id,
+                        "codex_item_type": "agentMessage",
+                        "source": "selected_thread_event",
+                    },
+                ),
+                status="running",
+                created_at=timestamp,
+                updated_at=timestamp,
+                metadata={
+                    "source": "selected_thread_event",
+                    "executor_thread_id": subscription.codex_thread_id,
+                    "executor_turn_id": turn_id,
+                    "client_request_id": client_request_id,
+                },
+            )
+        )
+        return True
 
-        execution_session.task_id = first_task_id
-        execution_session.run_ids = run_ids
-        if execution_session.active_run_id is None:
-            execution_session.latest_run_id = latest_run_id
-        if execution_session.latest_resume_handle is None:
-            execution_session.latest_resume_handle = resume_handle
-        await self.blackboard.put_session(execution_session)
+    def _upsert_bro_thread_executor_turn(self, turn: BroTimelineTurn) -> None:
+        turns = list(self._bro_thread_executor_turns.get(turn.thread_id, []))
+        existing_index = next(
+            (
+                index
+                for index, candidate in enumerate(turns)
+                if candidate.turn_id == turn.turn_id
+                or (
+                    candidate.executor_id == turn.executor_id
+                    and candidate.executor_thread_id == turn.executor_thread_id
+                    and candidate.executor_turn_id == turn.executor_turn_id
+                    and turn.executor_turn_id is not None
+                )
+            ),
+            None,
+        )
+        if existing_index is None:
+            turns.append(turn)
+        else:
+            turns[existing_index] = _merge_timeline_turn(turns[existing_index], turn)
+        self._bro_thread_executor_turns[turn.thread_id] = turns
+        if self._bro_thread_timeline_status.get(turn.thread_id) != "failed":
+            self._bro_thread_timeline_status[turn.thread_id] = "loaded"
+            self._bro_thread_timeline_errors.pop(turn.thread_id, None)
+
     @property
     def voice_target_persona_id(self) -> str | None:
         return self._voice_target_persona_id
@@ -1484,7 +2068,7 @@ class SessionRuntime:
                 if (
                     task is not None
                     and task.status in {TaskStatus.CREATED, TaskStatus.QUEUED}
-                    and (target_thread_id is None or task_thread_id == thread_continuity_key)
+                    and task_thread_id == thread_continuity_key
                 ):
                     task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_text")
                     task.metadata["bro_thread_id"] = thread_continuity_key
@@ -1518,7 +2102,8 @@ class SessionRuntime:
                         details={"total_elapsed_ms": _elapsed_ms(started_at)},
                     )
                     return instruction
-                raise ValueError("Selected Bro has no active Codex execution session.")
+                if not create_new_thread:
+                    raise ValueError("Selected Bro has no active Codex execution session.")
             create_started_at = time.perf_counter()
             task = await self._start_executor_text_task(
                 persona=persona,
@@ -1783,6 +2368,8 @@ class SessionRuntime:
         *,
         target_persona_id: str,
         target_thread_id: str | None = None,
+        create_new_thread: bool = False,
+        client_request_id: str | None = None,
         pcm16: bytes,
         mime_type: str,
         duration_ms: int,
@@ -1809,7 +2396,7 @@ class SessionRuntime:
         thread_target_id, thread_continuity_key, thread_session, thread_resume_handle = await self._resolve_bro_thread_target(
             persona=persona,
             target_thread_id=target_thread_id,
-            create_new_thread=False,
+            create_new_thread=create_new_thread,
         )
         audio_instruction_id = f"aud-{uuid4().hex[:12]}"
         audio = ExecutorAudioInstruction(
@@ -1823,7 +2410,11 @@ class SessionRuntime:
             num_channels=num_channels,
             samples_per_channel=samples_per_channel,
             size_bytes=len(pcm16),
-            metadata={"source": "bro_detail_ptt", "target_thread_id": thread_target_id},
+            metadata={
+                "source": "bro_detail_ptt",
+                "target_thread_id": thread_target_id,
+                **({"client_request_id": client_request_id} if client_request_id else {}),
+            },
         )
         execution_session, run = await self._active_codex_execution_for_persona(
             persona.persona_id,
@@ -1862,6 +2453,7 @@ class SessionRuntime:
                     "target_thread_id": thread_target_id,
                     "source_audio_instruction_id": audio.audio_instruction_id,
                     "transcript_text": transcript,
+                    **({"client_request_id": client_request_id} if client_request_id else {}),
                 },
             )
             if persona.current_task_id:
@@ -1870,12 +2462,14 @@ class SessionRuntime:
                 if (
                     pending_task is not None
                     and pending_task.status in {TaskStatus.CREATED, TaskStatus.QUEUED}
-                    and (target_thread_id is None or pending_thread_id == thread_continuity_key)
+                    and pending_thread_id == thread_continuity_key
                 ):
                     pending_task.metadata = _mark_direct_executor_input(pending_task.metadata, "bro_detail_ptt")
                     pending_task.metadata["bro_thread_id"] = thread_continuity_key
                     pending_task.metadata["target_thread_id"] = thread_target_id
                     pending_task.metadata["source_audio_instruction_id"] = audio.audio_instruction_id
+                    if client_request_id:
+                        pending_task.metadata["client_request_id"] = client_request_id
                     pending_task.latest_instruction = self._merge_follow_up_instruction(
                         pending_task.latest_instruction,
                         instruction.text,
@@ -1885,7 +2479,8 @@ class SessionRuntime:
                     self.schedule_execution()
                     await self.publish_snapshot()
                     return audio
-                raise ValueError("Selected Bro has no active Codex execution session.")
+                if not create_new_thread:
+                    raise ValueError("Selected Bro has no active Codex execution session.")
             await self._start_executor_text_task(
                 persona=persona,
                 instruction=instruction,
@@ -1898,6 +2493,7 @@ class SessionRuntime:
                 extra_metadata={
                     "source_audio_instruction_id": audio.audio_instruction_id,
                     "direct_executor_input_sources": ["bro_detail_ptt"],
+                    **({"client_request_id": client_request_id} if client_request_id else {}),
                 },
             )
             self.schedule_execution()
@@ -1909,6 +2505,9 @@ class SessionRuntime:
             task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_ptt")
             task.metadata["bro_thread_id"] = thread_continuity_key
             task.metadata["target_thread_id"] = thread_target_id
+            task.metadata["source_audio_instruction_id"] = audio.audio_instruction_id
+            if client_request_id:
+                task.metadata["client_request_id"] = client_request_id
             await self.blackboard.put_task(task)
         dispatched = await self.executor_node_manager.dispatch_audio_instruction(
             run_id=run.run_id,
@@ -1932,17 +2531,15 @@ class SessionRuntime:
         persona = await self.blackboard.get_persona(persona_id)
         if persona is None:
             return None, None
-        if not persona.current_task_id and target_thread_id is None:
+        if target_thread_id is None:
             return None, None
         for execution_session in await self.blackboard.list_sessions():
             if execution_session.base_executor_id != "codex" or not execution_session.active_run_id:
                 continue
-            if target_thread_id is not None and not _session_matches_thread_id(execution_session, target_thread_id):
+            if not _session_matches_thread_id(execution_session, target_thread_id):
                 continue
             run = await self.blackboard.get_run(execution_session.active_run_id or "")
             if run is None:
-                continue
-            if target_thread_id is None and run.task_id != persona.current_task_id:
                 continue
             if run.executor_type != "codex" or run.status not in AUDIO_ACTIVE_RUN_STATUSES:
                 continue
@@ -1956,6 +2553,9 @@ class SessionRuntime:
         target_thread_id: str | None,
         create_new_thread: bool,
     ) -> tuple[str, str, ExecutionSession | None, AgentResumeHandle | None]:
+        if target_thread_id and create_new_thread:
+            raise ValueError("Direct Bro Detail instruction cannot target an existing thread and create a new thread.")
+
         if create_new_thread:
             thread_id = _new_bro_thread_id()
             return thread_id, thread_id, None, None
@@ -1975,28 +2575,16 @@ class SessionRuntime:
                 and imported_resume_handle is not None
             ):
                 return imported.thread_id, imported.thread_id, None, imported_resume_handle
+            pending_task = await self._find_direct_task_thread_for_persona(
+                persona.persona_id,
+                target_thread_id,
+            )
+            if pending_task is not None:
+                continuity_key = _task_metadata_string(pending_task, "bro_thread_id") or target_thread_id
+                return target_thread_id, continuity_key, None, None
             raise ValueError("Selected Codex thread is not available for this Bro.")
 
-        active_session, _ = await self._active_codex_execution_for_persona(persona.persona_id)
-        if active_session is not None:
-            return (
-                _public_thread_id(active_session),
-                active_session.continuity_key or active_session.execution_session_id,
-                active_session,
-                None,
-            )
-
-        latest_session = await self._latest_codex_thread_session_for_persona(persona.persona_id)
-        if latest_session is not None:
-            return (
-                _public_thread_id(latest_session),
-                latest_session.continuity_key or latest_session.execution_session_id,
-                latest_session,
-                None,
-            )
-
-        thread_id = _new_bro_thread_id()
-        return thread_id, thread_id, None, None
+        raise ValueError("Direct Bro Detail instruction requires explicit thread intent.")
 
     async def _find_codex_thread_session_for_persona(
         self,
@@ -2010,12 +2598,12 @@ class SessionRuntime:
                 return session
         return None
 
-    async def _latest_codex_thread_session_for_persona(self, persona_id: str) -> ExecutionSession | None:
-        for session in reversed(await self.blackboard.list_sessions()):
-            if session.base_executor_id != "codex":
+    async def _find_direct_task_thread_for_persona(self, persona_id: str, thread_id: str) -> Task | None:
+        for task in reversed(await self.blackboard.list_tasks()):
+            if _task_thread_public_id(task) != thread_id:
                 continue
-            if await self._session_belongs_to_persona(session, persona_id):
-                return session
+            if _task_belongs_to_persona(task, persona_id):
+                return task
         return None
 
     async def _session_belongs_to_persona(self, session: ExecutionSession, persona_id: str) -> bool:

@@ -135,6 +135,352 @@ async def test_selected_codex_thread_events_do_not_read_history_on_control_path(
 
 
 @pytest.mark.anyio
+async def test_selected_codex_thread_message_events_replace_latest_assistant_turn_message():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={
+                "turnId": "turn-1",
+                "item": {
+                    "type": "agentMessage",
+                    "id": "commentary-1",
+                    "text": "Checking files.",
+                },
+            },
+        )
+    )
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={
+                "turnId": "turn-1",
+                "item": {
+                    "type": "agentMessage",
+                    "id": "final-1",
+                    "text": "Final answer.",
+                },
+            },
+        )
+    )
+
+    turns = session._bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].turn_id == "thread-public:codex:turn-1"
+    assert turns[0].assistant is not None
+    assert turns[0].assistant.text == "Final answer."
+    assert turns[0].assistant.metadata["codex_item_id"] == "final-1"
+
+
+@pytest.mark.anyio
+async def test_selected_codex_thread_delta_events_replace_previous_turn_item():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    for item_id, delta in [
+        ("commentary-1", "Checking"),
+        ("commentary-1", " files."),
+        ("final-1", "Final"),
+        ("final-1", " answer."),
+    ]:
+        await session.handle_codex_thread_event(
+            CodexThreadEventMessage(
+                subscription_id="codex-sub-1",
+                node_id="node-forge",
+                session_id="session-1",
+                target_persona_id="forge",
+                target_thread_id="thread-public",
+                thread_id="codex-thread-1",
+                method="item/agentMessage/delta",
+                params={"turnId": "turn-1", "itemId": item_id, "delta": delta},
+            )
+        )
+
+    turns = session._bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].turn_id == "thread-public:codex:turn-1"
+    assert turns[0].assistant is not None
+    assert turns[0].assistant.text == "Final answer."
+    assert turns[0].assistant.status == "running"
+    assert turns[0].assistant.metadata["codex_item_id"] == "final-1"
+
+
+@pytest.mark.anyio
+async def test_selected_codex_thread_events_merge_with_newbro_owned_task_timeline():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-direct",
+            root_task_id="task-direct",
+            parent_task_id=None,
+            title="Continue directly",
+            goal="Continue directly",
+            status=TaskStatus.RUNNING,
+            metadata={
+                "persona_id": "forge",
+                "bro_thread_id": "thread-public",
+                "target_thread_id": "thread-public",
+                "source_kind": "bro_detail_text",
+                "client_request_id": "text-client-1",
+            },
+        )
+    )
+    await session.blackboard.put_run(
+        ExecutionRun(
+            run_id="run-direct",
+            task_id="task-direct",
+            execution_session_id="exec-direct",
+            executor_type="codex",
+            status=RunStatus.RUNNING,
+            metadata={
+                "latest_progress_event": {
+                    "executor_thread_id": "codex-thread-1",
+                    "executor_turn_id": "turn-1",
+                }
+            },
+        )
+    )
+    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={
+                "turnId": "turn-1",
+                "item": {
+                    "type": "agentMessage",
+                    "id": "final-1",
+                    "text": "Task-backed response.",
+                },
+            },
+        )
+    )
+
+    assert len(session._bro_thread_executor_turns["thread-public"]) == 1
+    snapshot = await session.snapshot()
+    timeline_turns = [turn for turn in snapshot.bro_timeline_turns if turn.thread_id == "thread-public"]
+    assert len(timeline_turns) == 1
+    assert timeline_turns[0].owner == "newbro"
+    assert timeline_turns[0].assistant is not None
+    assert timeline_turns[0].assistant.text == "Task-backed response."
+
+
+@pytest.mark.anyio
+async def test_selected_codex_thread_events_merge_with_pending_newbro_turn_by_client_request_id():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-direct",
+            root_task_id="task-direct",
+            parent_task_id=None,
+            title="Continue directly",
+            goal="Continue directly",
+            status=TaskStatus.RUNNING,
+            metadata={
+                "persona_id": "forge",
+                "bro_thread_id": "thread-public",
+                "target_thread_id": "thread-public",
+                "source_kind": "bro_detail_text",
+                "client_request_id": "text-client-1",
+            },
+        )
+    )
+    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={
+                "turnId": "turn-1",
+                "item": {
+                    "type": "agentMessage",
+                    "id": "final-1",
+                    "text": "Pending task-backed response.",
+                },
+            },
+        )
+    )
+
+    executor_turns = session._bro_thread_executor_turns["thread-public"]
+    assert len(executor_turns) == 1
+    assert executor_turns[0].client_request_id == "text-client-1"
+    snapshot = await session.snapshot()
+    timeline_turns = [turn for turn in snapshot.bro_timeline_turns if turn.thread_id == "thread-public"]
+    assert len(timeline_turns) == 1
+    assert timeline_turns[0].turn_id == "thread-public:newbro:text-client-1"
+    assert timeline_turns[0].assistant is not None
+    assert timeline_turns[0].assistant.text == "Pending task-backed response."
+
+
+@pytest.mark.anyio
+async def test_selected_codex_thread_late_event_merges_with_completed_direct_turn_by_client_request_id():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-direct",
+            root_task_id="task-direct",
+            parent_task_id=None,
+            title="Continue directly",
+            goal="Continue directly",
+            status=TaskStatus.COMPLETED,
+            metadata={
+                "persona_id": "forge",
+                "bro_thread_id": "thread-public",
+                "target_thread_id": "thread-public",
+                "source_kind": "bro_detail_ptt",
+                "client_request_id": "audio-client-1",
+                "source_audio_instruction_id": "aud-1",
+                "created_at": "2026-05-26T22:01:00+00:00",
+                "updated_at": "2026-05-26T22:01:10+00:00",
+            },
+        )
+    )
+    await session.blackboard.put_run(
+        ExecutionRun(
+            run_id="run-direct",
+            task_id="task-direct",
+            execution_session_id="exec-direct",
+            executor_type="codex",
+            status=RunStatus.COMPLETED,
+            output_summary="Task-backed response.",
+            metadata={},
+        )
+    )
+    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+        fallback_timestamp="2026-05-26T21:00:00+00:00",
+    )
+
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={
+                "turnId": "turn-1",
+                "timestamp": "2026-05-26T22:01:12+00:00",
+                "item": {
+                    "type": "agentMessage",
+                    "id": "final-1",
+                    "text": "Late native response.",
+                },
+            },
+        )
+    )
+
+    executor_turns = session._bro_thread_executor_turns["thread-public"]
+    assert len(executor_turns) == 1
+    assert executor_turns[0].client_request_id == "audio-client-1"
+    assert executor_turns[0].created_at == "2026-05-26T22:01:12+00:00"
+    snapshot = await session.snapshot()
+    timeline_turns = [turn for turn in snapshot.bro_timeline_turns if turn.thread_id == "thread-public"]
+    assert len(timeline_turns) == 1
+    assert timeline_turns[0].turn_id == "thread-public:newbro:audio-client-1"
+    assert timeline_turns[0].user is not None
+    assert timeline_turns[0].user.kind == "audio"
+    assert timeline_turns[0].assistant is not None
+    assert timeline_turns[0].assistant.text == "Late native response."
+
+
+@pytest.mark.anyio
 async def test_session_runtime_registers_codex_when_enabled(tmp_path):
     fake_codex = tmp_path / "codex"
     fake_codex.write_text("#!/bin/sh\nexit 0\n")

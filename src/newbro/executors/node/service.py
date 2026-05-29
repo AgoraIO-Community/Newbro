@@ -628,6 +628,7 @@ class ExecutorNodeService:
             execution_session_id=command.execution_session_id,
             executor_type=command.executor_type,
         )
+        client_request_id = command.audio.metadata.get("client_request_id")
         try:
             if text_handler is not None and self._audio_transcriber.available:
                 transcription = await self._audio_transcriber.transcribe(command.audio)
@@ -648,6 +649,7 @@ class ExecutorNodeService:
                     "transcript_text": transcript,
                     "transcription_language": transcription.language or "",
                     "transcription_duration_seconds": transcription.duration_seconds or 0,
+                    "client_request_id": client_request_id,
                     **(transcription.metadata or {}),
                 }
                 await self._send_json(
@@ -677,6 +679,9 @@ class ExecutorNodeService:
                 )
                 return
             async for event in handler(run, session, event_source):
+                event_metadata = dict(event.metadata)
+                event_metadata.setdefault("client_request_id", client_request_id)
+                event_metadata.setdefault("source_audio_instruction_id", command.audio.audio_instruction_id)
                 await self._send_json(
                     websocket,
                     RunEventMessage(
@@ -686,7 +691,7 @@ class ExecutorNodeService:
                         session_id=session.session_id,
                         event_type=event.event_type.value,
                         message=event.message,
-                        metadata=dict(event.metadata),
+                        metadata=event_metadata,
                         latest_resume_handle=_build_resume_handle(context.executor, session),
                     ).model_dump(mode="json"),
                 )

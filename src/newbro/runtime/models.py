@@ -8,6 +8,7 @@ from newbro.protocol import (
     AgentEvent,
     AttentionItem,
     BroThread,
+    BroTimelineTurn,
     DraftSession,
     TaskExecutionMode,
     ExecutionRun,
@@ -40,6 +41,7 @@ class SessionSnapshot(BaseModel):
     summaries: list[TaskSummary] = Field(default_factory=list)
     notification_candidates: list[NotificationCandidate] = Field(default_factory=list)
     bro_threads: list[BroThread] = Field(default_factory=list)
+    bro_timeline_turns: list[BroTimelineTurn] = Field(default_factory=list)
     personas: list[Persona] = Field(default_factory=list)
     interaction_requests: list[InteractionRequest] = Field(default_factory=list)
     attention_items: list[AttentionItem] = Field(default_factory=list)

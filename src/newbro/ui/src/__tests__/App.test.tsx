@@ -77,6 +77,7 @@ const clientMock = vi.hoisted(() => ({
   getSessionSnapshot: vi.fn(),
   getConversationSnapshot: vi.fn(),
   openBroThread: vi.fn(),
+  closeBroThread: vi.fn(),
   openSessionStream: vi.fn((_sessionId: string, handlers: any) => {
     socketHarness.handlers = handlers;
     return socketHarness.socket as any;
@@ -205,11 +206,66 @@ function emptySessionSnapshot(sessionId: string) {
     summaries: [],
     notification_candidates: [],
     bro_threads: [],
+    bro_timeline_turns: [],
     personas: [],
     interaction_requests: [],
     attention_items: [],
     executor_capabilities: [],
     executor_nodes: [],
+  };
+}
+
+function timelineTurn(overrides: Record<string, any> = {}) {
+  const threadId = overrides.thread_id ?? "codex-import-history";
+  const turnId = overrides.executor_turn_id ?? "turn-1";
+  const userText = overrides.userText as string | undefined;
+  const assistantText = overrides.assistantText as string | undefined;
+  return {
+    turn_id: `${threadId}:codex:${turnId}`,
+    thread_id: threadId,
+    persona_id: "forge",
+    executor_id: "codex",
+    owner: "executor",
+    client_request_id: null,
+    executor_thread_id: overrides.executor_thread_id ?? `native-${threadId}`,
+    executor_turn_id: turnId,
+    input_modality: userText ? "text" : "unknown",
+    user: userText
+      ? {
+          message_id: `${threadId}:${turnId}:user`,
+          role: "user",
+          kind: "text",
+          text: userText,
+          transcript: null,
+          audio_id: null,
+          duration_ms: null,
+          created_at: overrides.created_at ?? "2026-05-26T22:01:00+00:00",
+          updated_at: null,
+          status: "completed",
+          metadata: {},
+        }
+      : null,
+    assistant: assistantText
+      ? {
+          message_id: `${threadId}:${turnId}:assistant`,
+          role: "assistant",
+          kind: "text",
+          text: assistantText,
+          transcript: null,
+          audio_id: null,
+          duration_ms: null,
+          created_at: overrides.updated_at ?? "2026-05-26T22:02:00+00:00",
+          updated_at: null,
+          status: "completed",
+          metadata: {},
+        }
+      : null,
+    task: null,
+    status: overrides.status ?? "completed",
+    created_at: overrides.created_at ?? "2026-05-26T22:01:00+00:00",
+    updated_at: overrides.updated_at ?? "2026-05-26T22:02:00+00:00",
+    metadata: { assistant_title: userText, ...(overrides.metadata ?? {}) },
+    ...overrides,
   };
 }
 
@@ -340,6 +396,7 @@ describe("Newbro artboard shell", () => {
     clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => (
       sessionId === "session-existing" ? forgeSnapshot(sessionId) : emptySessionSnapshot(sessionId)
     ));
+    clientMock.closeBroThread.mockImplementation(async () => forgeSnapshot("session-existing"));
     clientMock.getConversationSnapshot.mockImplementation(async (sessionId: string) => ({
       session_id: sessionId,
       conversation_history: [],
@@ -472,6 +529,38 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByRole("heading", { name: "Forge" })).toBeInTheDocument();
   });
 
+  it("offers a copy connect command action on home when the bro's node is offline", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
+    clientMock.revealExecutorNodeConnectCommand.mockResolvedValueOnce({
+      node: offlineNode,
+      token: "token-revive",
+    });
+    window.history.replaceState({}, "", "/?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const copyBtn = await screen.findByTestId("home-bro-copy-command-forge");
+    fireEvent.click(copyBtn);
+
+    await waitFor(() => expect(clientMock.revealExecutorNodeConnectCommand).toHaveBeenCalledWith("session-existing", "node-forge"));
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("hides the home copy connect command action for connected bros", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing"));
+    window.history.replaceState({}, "", "/?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    await screen.findByTestId("bro-card-forge");
+    expect(screen.queryByTestId("home-bro-copy-command-forge")).not.toBeInTheDocument();
+  });
+
   it("opens a recent Home thread through the Bro detail route", async () => {
     const snapshot = forgeSnapshot("session-existing");
     snapshot.bro_threads = [
@@ -597,7 +686,7 @@ describe("Newbro artboard shell", () => {
     expect(window.location.search).toContain("thread=exec-old");
   });
 
-  it("opens a selected imported thread and renders fetched history", async () => {
+  it("opens a selected imported thread and renders native messages", async () => {
     const snapshot = forgeSnapshot("session-existing");
     snapshot.bro_threads = [
       {
@@ -616,51 +705,26 @@ describe("Newbro artboard shell", () => {
         latest_task_id: null,
         has_resume_handle: true,
         updated_at: "2026-05-26T22:00:00+00:00",
+        timeline_status: "not_loaded",
+        timeline_error: null,
         diagnostics: { codex_thread_id: "codex-native-history" },
       },
     ] as any;
     const importedThread = snapshot.bro_threads[0] as any;
     const hydrated = {
       ...snapshot,
-      tasks: [
-        {
-          task_id: "task-history",
-          root_task_id: "task-history",
-          parent_task_id: null,
-          title: "Imported request",
-          goal: "Imported request",
-          status: "completed",
-          priority: 5,
-          interruptible: true,
-          requires_confirmation: false,
-          preferred_executor: "codex",
-          session_affinity: "/tmp/elsewhere",
-          task_revision: 0,
-          latest_instruction: "Imported request",
-          metadata: {
-            persona_id: "forge",
-            bro_detail_session_id: "detail-forge",
-            bro_thread_id: "codex-import-history",
-            target_thread_id: "codex-import-history",
-            source_kind: "codex_thread_history",
-          },
-        },
+      bro_timeline_turns: [
+        timelineTurn({
+          thread_id: "codex-import-history",
+          userText: "Imported request",
+          assistantText: "Fetched history response.",
+        }),
       ],
       bro_threads: [
         {
           ...importedThread,
-          task_ids: ["task-history"],
-          latest_task_id: "task-history",
-          diagnostics: { codex_thread_id: "codex-native-history", history_hydrated: true },
-        },
-      ],
-      summaries: [
-        {
-          task_id: "task-history",
-          operational_summary: "Fetched history response.",
-          conversational_summary: "Fetched history response.",
-          latest_user_visible_status: "Fetched history response.",
-          needs_user_input: false,
+          timeline_status: "loaded",
+          timeline_error: null,
         },
       ],
     };
@@ -680,8 +744,11 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Imported request").length).toBeGreaterThanOrEqual(2);
     });
-    expect(screen.getByText("Fetched history response.")).toBeInTheDocument();
-    expect(screen.getAllByText("Sent").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Imported request").some((node) => node.closest(".dt-status-title"))).toBe(true);
+    const response = screen.getByText("Fetched history response.");
+    expect(response).toBeInTheDocument();
+    expect(response.closest(".dt-status")).not.toBeNull();
+    expect(screen.getAllByText("You").length).toBeGreaterThanOrEqual(1);
   });
 
   it("keeps the latest selected imported thread history when an earlier open resolves late", async () => {
@@ -703,6 +770,8 @@ describe("Newbro artboard shell", () => {
         latest_task_id: null,
         has_resume_handle: true,
         updated_at: "2026-05-26T22:00:00+00:00",
+        timeline_status: "not_loaded",
+        timeline_error: null,
         diagnostics: { codex_thread_id: "codex-native-first" },
       },
       {
@@ -721,88 +790,40 @@ describe("Newbro artboard shell", () => {
         latest_task_id: null,
         has_resume_handle: true,
         updated_at: "2026-05-26T21:00:00+00:00",
+        timeline_status: "not_loaded",
+        timeline_error: null,
         diagnostics: { codex_thread_id: "codex-native-second" },
       },
     ] as any[];
     (snapshot as any).bro_threads = importedThreads;
     const hydratedFirst = {
       ...snapshot,
-      tasks: [
-        {
-          task_id: "task-history-first",
-          root_task_id: "task-history-first",
-          parent_task_id: null,
-          title: "First imported request",
-          goal: "First imported request",
-          status: "completed",
-          priority: 5,
-          interruptible: true,
-          requires_confirmation: false,
-          preferred_executor: "codex",
-          session_affinity: "/tmp/first",
-          task_revision: 0,
-          latest_instruction: "First imported request",
-          metadata: {
-            persona_id: "forge",
-            bro_detail_session_id: "detail-forge",
-            bro_thread_id: "codex-import-first",
-            target_thread_id: "codex-import-first",
-            source_kind: "codex_thread_history",
-          },
-        },
+      bro_timeline_turns: [
+        timelineTurn({
+          thread_id: "codex-import-first",
+          executor_turn_id: "turn-first",
+          assistantText: "First fetched response.",
+          updated_at: "2026-05-26T22:02:00+00:00",
+        }),
       ],
       bro_threads: [
-        { ...importedThreads[0], task_ids: ["task-history-first"], latest_task_id: "task-history-first" },
+        { ...importedThreads[0], timeline_status: "loaded", timeline_error: null },
         importedThreads[1],
-      ],
-      summaries: [
-        {
-          task_id: "task-history-first",
-          operational_summary: "First fetched response.",
-          conversational_summary: "First fetched response.",
-          latest_user_visible_status: "First fetched response.",
-          needs_user_input: false,
-        },
       ],
     };
     const hydratedSecond = {
       ...snapshot,
-      tasks: [
-        {
-          task_id: "task-history-second",
-          root_task_id: "task-history-second",
-          parent_task_id: null,
-          title: "Second imported request",
-          goal: "Second imported request",
-          status: "completed",
-          priority: 5,
-          interruptible: true,
-          requires_confirmation: false,
-          preferred_executor: "codex",
-          session_affinity: "/tmp/second",
-          task_revision: 0,
-          latest_instruction: "Second imported request",
-          metadata: {
-            persona_id: "forge",
-            bro_detail_session_id: "detail-forge",
-            bro_thread_id: "codex-import-second",
-            target_thread_id: "codex-import-second",
-            source_kind: "codex_thread_history",
-          },
-        },
+      bro_timeline_turns: [
+        timelineTurn({
+          thread_id: "codex-import-second",
+          executor_turn_id: "turn-second",
+          assistantText: "Second fetched response.",
+          updated_at: "2026-05-26T21:02:00+00:00",
+        }),
       ],
       bro_threads: [
         importedThreads[0],
-        { ...importedThreads[1], task_ids: ["task-history-second"], latest_task_id: "task-history-second" },
-      ],
-      summaries: [
-        {
-          task_id: "task-history-second",
-          operational_summary: "Second fetched response.",
-          conversational_summary: "Second fetched response.",
-          latest_user_visible_status: "Second fetched response.",
-          needs_user_input: false,
-        },
+        { ...importedThreads[1], timeline_status: "loaded", timeline_error: null },
       ],
     };
     let resolveFirstOpen: ((value: typeof hydratedFirst) => void) | null = null;
@@ -899,6 +920,123 @@ describe("Newbro artboard shell", () => {
     });
   });
 
+  it("sends New thread desktop PTT audio with new-thread intent and resolves the returned thread", async () => {
+    const initial = {
+      ...activeForgeSnapshot("session-existing"),
+      bro_timeline_turns: [
+        timelineTurn({
+          thread_id: "exec-1",
+          executor_turn_id: "history-1",
+          userText: "Existing thread request",
+          assistantText: "Existing thread response.",
+        }),
+      ],
+    };
+    clientMock.getSessionSnapshot
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce({
+        ...initial,
+        bro_threads: [
+          ...(initial.bro_threads as any[]),
+          {
+            ...(initial.bro_threads[0] as any),
+            thread_id: "thread-new",
+            execution_session_id: null,
+            status: "queued",
+            title: "Fresh audio thread",
+            task_ids: ["task-new"],
+            active_task_id: "task-new",
+            latest_task_id: "task-new",
+          },
+        ],
+        bro_timeline_turns: [],
+      });
+    clientMock.submitExecutorAudioInstruction.mockResolvedValueOnce({
+      audio_instruction_id: "aud-new",
+      target_persona_id: "forge",
+      target_thread_id: "thread-new",
+      status: "accepted",
+      duration_ms: 1,
+      size_bytes: 32,
+      transcript_text: "fresh audio request",
+    });
+    const track = { stop: vi.fn() };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [track] })) },
+    });
+    class MockMediaRecorder {
+      static isTypeSupported = vi.fn(() => true);
+      state = "inactive";
+      mimeType = "audio/webm;codecs=opus";
+      private listeners: Record<string, Array<(event?: any) => void>> = {};
+
+      constructor(_stream: MediaStream, _options: { mimeType: string }) {}
+
+      addEventListener(type: string, listener: (event?: any) => void) {
+        this.listeners[type] = [...(this.listeners[type] ?? []), listener];
+      }
+
+      start() {
+        this.state = "recording";
+      }
+
+      stop() {
+        this.state = "inactive";
+        for (const listener of this.listeners.dataavailable ?? []) {
+          listener({ data: new Blob([new Uint8Array([0, 0, 1, 0])], { type: this.mimeType }) });
+        }
+        for (const listener of this.listeners.stop ?? []) listener();
+      }
+    }
+    class MockAudioContext {
+      async decodeAudioData(_buffer: ArrayBuffer) {
+        return {
+          duration: 0.001,
+          length: 16,
+          numberOfChannels: 1,
+          sampleRate: 16000,
+          getChannelData: () => new Float32Array(16),
+        };
+      }
+
+      async close() {}
+    }
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    const button = screen.getByTestId("voice-session-start");
+    fireEvent.pointerDown(button, { pointerId: 1 });
+    await waitFor(() => expect(screen.getByTestId("voice-session-start")).toHaveClass("dt-cmp-mic-free"));
+    const recordingButton = screen.getByTestId("voice-session-start");
+    fireEvent.pointerUp(recordingButton, { pointerId: 1 });
+    fireEvent.keyUp(recordingButton, { key: " " });
+
+    await waitFor(() => {
+      expect(clientMock.submitExecutorAudioInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        targetThreadId: null,
+        createNewThread: true,
+        pcm16: expect.any(Blob),
+        durationMs: 1,
+        sampleRate: 16000,
+        numChannels: 1,
+        samplesPerChannel: 16,
+        clientRequestId: expect.stringMatching(/^audio-/),
+      });
+    });
+    await waitFor(() => expect(window.location.search).toContain("thread=thread-new"));
+    expect(screen.queryByText("Existing thread response.")).not.toBeInTheDocument();
+    expect(document.querySelector(".nb-audio-transcript")).toHaveTextContent("fresh audio request");
+  });
+
   it("enables desktop typed send for a connected idle Bro", async () => {
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
@@ -912,7 +1050,7 @@ describe("Newbro artboard shell", () => {
       expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
         targetPersonaId: "forge",
         targetThreadId: null,
-        createNewThread: false,
+        createNewThread: true,
         clientRequestId: expect.stringMatching(/^text-/),
         text: "start from idle bro",
       });
@@ -920,7 +1058,7 @@ describe("Newbro artboard shell", () => {
     expect(clientMock.sendSocketMessage).not.toHaveBeenCalled();
   });
 
-  it("renders conversation replies in the unified Bro detail thread", async () => {
+  it("does not render conversation replies in the Bro detail timeline", async () => {
     clientMock.getConversationSnapshot.mockResolvedValueOnce({
       session_id: "session-existing",
       conversation_history: [
@@ -937,7 +1075,10 @@ describe("Newbro artboard shell", () => {
     render(<RouterProvider router={getRouter()} />);
 
     expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
-    expect(await screen.findByText("Conversation reply from Communication Brain")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(clientMock.getConversationSnapshot).toHaveBeenCalledWith("session-existing");
+    });
+    expect(screen.queryByText("Conversation reply from Communication Brain")).not.toBeInTheDocument();
   });
 
   it("keeps desktop typed send enabled for a queued direct Bro task", async () => {
@@ -949,6 +1090,7 @@ describe("Newbro artboard shell", () => {
       status: "queued",
     };
     clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.closeBroThread.mockResolvedValueOnce(snapshot);
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
@@ -983,6 +1125,272 @@ describe("Newbro artboard shell", () => {
     expect(await screen.findByTestId("bro-node-disconnected-warning")).toHaveTextContent("Workshop Mini is not connected");
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
     expect(screen.getByPlaceholderText("Reconnect the node before sending")).toBeDisabled();
+  });
+
+  it("clears the existing thread history when 'New thread' is clicked on the desktop detail page", async () => {
+    const snapshot = {
+      ...forgeSnapshot("session-existing"),
+      tasks: [
+        {
+          task_id: "task-history-1",
+          root_task_id: "task-history-1",
+          parent_task_id: null,
+          title: "Previous request",
+          goal: "Previous request body",
+          status: "completed",
+          priority: 5,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 0,
+          latest_instruction: "Previous request",
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            bro_thread_id: "thread-existing",
+            target_thread_id: "thread-existing",
+            source_kind: "codex_thread_history",
+          },
+        },
+      ],
+      bro_threads: [
+        {
+          thread_id: "thread-existing",
+          persona_id: "forge",
+          persona_name: "Forge",
+          executor_id: "codex",
+          executor_node_id: "node-forge",
+          execution_session_id: "exec-existing",
+          status: "completed",
+          title: "Previous request",
+          preview: "Previous request body",
+          progress: 100,
+          task_ids: ["task-history-1"],
+          active_task_id: null,
+          latest_task_id: "task-history-1",
+          has_resume_handle: true,
+          updated_at: "2026-05-20T12:00:00Z",
+          diagnostics: {},
+        },
+      ],
+      summaries: [
+        {
+          task_id: "task-history-1",
+          operational_summary: "Previous response body.",
+          conversational_summary: "Previous response body.",
+          latest_user_visible_status: "Previous response body.",
+          needs_user_input: false,
+        },
+      ],
+      bro_timeline_turns: [
+        timelineTurn({
+          thread_id: "thread-existing",
+          executor_turn_id: "history-1",
+          userText: "Previous request",
+          assistantText: "Previous response body.",
+          created_at: "2026-05-20T12:00:00Z",
+          updated_at: "2026-05-20T12:01:00Z",
+        }),
+      ],
+    };
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Previous response body.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /New thread with Forge/i }));
+
+    await waitFor(() => expect(screen.queryByText("Previous response body.")).not.toBeInTheDocument());
+    expect(screen.getByText("No messages with Forge yet")).toBeInTheDocument();
+  });
+
+  it("clears the existing thread history when 'New thread' is clicked on mobile", async () => {
+    const snapshot = {
+      ...forgeSnapshot("session-existing"),
+      bro_threads: [
+        {
+          thread_id: "thread-existing",
+          persona_id: "forge",
+          persona_name: "Forge",
+          executor_id: "codex",
+          executor_node_id: "node-forge",
+          execution_session_id: "exec-existing",
+          status: "completed",
+          title: "Previous request",
+          preview: "Previous request body",
+          progress: 100,
+          task_ids: ["task-history-1"],
+          active_task_id: null,
+          latest_task_id: "task-history-1",
+          has_resume_handle: true,
+          updated_at: "2026-05-20T12:00:00Z",
+          diagnostics: {},
+        },
+      ],
+      bro_timeline_turns: [
+        timelineTurn({
+          thread_id: "thread-existing",
+          executor_turn_id: "history-1",
+          userText: "Previous request",
+          assistantText: "Previous response body.",
+          created_at: "2026-05-20T12:00:00Z",
+          updated_at: "2026-05-20T12:01:00Z",
+        }),
+      ],
+    };
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.closeBroThread.mockResolvedValueOnce(snapshot);
+    window.history.replaceState({}, "", "/mobile?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByTestId("mobile-bro-row-forge"));
+    expect(await screen.findByText("Previous response body.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch thread" }));
+    fireEvent.click(screen.getByRole("button", { name: /New thread with Forge/i }));
+
+    await waitFor(() => expect(screen.queryByText("Previous response body.")).not.toBeInTheDocument());
+    expect(screen.getByText("No messages with Forge yet")).toBeInTheDocument();
+    expect(screen.getAllByText("New thread").length).toBeGreaterThan(0);
+  });
+
+  it("keeps the freshly resolved new thread selected after the first send", async () => {
+    const snapshot = {
+      ...forgeSnapshot("session-existing"),
+      tasks: [
+        {
+          task_id: "task-history-1",
+          root_task_id: "task-history-1",
+          parent_task_id: null,
+          title: "Previous request",
+          goal: "Previous request body",
+          status: "completed",
+          priority: 5,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 0,
+          latest_instruction: "Previous request",
+          metadata: {
+            persona_id: "forge",
+            bro_detail_session_id: "detail-forge",
+            bro_thread_id: "thread-existing",
+            target_thread_id: "thread-existing",
+            source_kind: "codex_thread_history",
+          },
+        },
+      ],
+      bro_threads: [
+        {
+          thread_id: "thread-existing",
+          persona_id: "forge",
+          persona_name: "Forge",
+          executor_id: "codex",
+          executor_node_id: "node-forge",
+          execution_session_id: "exec-existing",
+          status: "completed",
+          title: "Previous request",
+          preview: "Previous request body",
+          progress: 100,
+          task_ids: ["task-history-1"],
+          active_task_id: null,
+          latest_task_id: "task-history-1",
+          has_resume_handle: true,
+          updated_at: "2026-05-20T12:00:00Z",
+          diagnostics: {},
+        },
+      ],
+      summaries: [
+        {
+          task_id: "task-history-1",
+          operational_summary: "Previous response body.",
+          conversational_summary: "Previous response body.",
+          latest_user_visible_status: "Previous response body.",
+          needs_user_input: false,
+        },
+      ],
+      bro_timeline_turns: [
+        timelineTurn({
+          thread_id: "thread-existing",
+          executor_turn_id: "history-1",
+          userText: "Previous request",
+          assistantText: "Previous response body.",
+          created_at: "2026-05-20T12:00:00Z",
+          updated_at: "2026-05-20T12:01:00Z",
+        }),
+      ],
+    };
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.submitExecutorTextInstruction.mockResolvedValueOnce({
+      instruction_id: "txt-new",
+      target_persona_id: "forge",
+      target_thread_id: "thread-new",
+      status: "accepted",
+    });
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Previous response body.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /New thread with Forge/i }));
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    clientMock.openBroThread.mockClear();
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "kickoff" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() =>
+      expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", expect.objectContaining({
+        createNewThread: true,
+        text: "kickoff",
+      })),
+    );
+    expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(window.location.search).toContain("thread=thread-new"));
+    expect(screen.queryByText("No messages with Forge yet")).not.toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const openedAfterSubmit = clientMock.openBroThread.mock.calls.map(([, body]: any[]) => body.threadId);
+    expect(openedAfterSubmit).not.toContain("thread-existing");
+    expect(openedAfterSubmit).not.toContain("thread-new");
+  });
+
+  it("shows thread history loading instead of the empty state", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = [
+      {
+        thread_id: "codex-import-loading",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "completed",
+        title: "Loading imported thread",
+        preview: "Remote history",
+        progress: 100,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-26T22:00:00+00:00",
+        timeline_status: "loading",
+        timeline_error: null,
+        diagnostics: { codex_thread_id: "codex-native-loading" },
+      },
+    ] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockImplementation(() => new Promise(() => undefined));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-loading");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Fetching thread history…")).toBeInTheDocument();
+    expect(screen.queryByText("No messages with Forge yet")).not.toBeInTheDocument();
   });
 
   it("enables desktop PTT audio for a connected idle Codex Bro", async () => {
@@ -1046,6 +1454,154 @@ describe("Newbro artboard shell", () => {
     expect(clientMock.sendSocketMessage).not.toHaveBeenCalled();
   });
 
+  it("reconciles desktop PTT audio with the canonical timeline without duplicate bubbles", async () => {
+    const initial = activeForgeSnapshot("session-existing");
+    const canonical = {
+      ...activeForgeSnapshot("session-existing"),
+      bro_timeline_turns: [
+        {
+          turn_id: "exec-1:newbro:audio-client-1",
+          thread_id: "exec-1",
+          persona_id: "forge",
+          executor_id: "codex",
+          owner: "newbro",
+          client_request_id: "audio-client-1",
+          executor_thread_id: "codex-thread-1",
+          executor_turn_id: "turn-1",
+          input_modality: "audio",
+          user: {
+            message_id: "task-audio:user",
+            role: "user",
+            kind: "audio",
+            text: null,
+            transcript: "hello from audio",
+            audio_id: "aud-1",
+            duration_ms: 1000,
+            created_at: "2026-05-26T22:01:00+00:00",
+            updated_at: "2026-05-26T22:01:00+00:00",
+            status: "sent",
+            metadata: {},
+          },
+          assistant: {
+            message_id: "task-audio:assistant",
+            role: "assistant",
+            kind: "text",
+            text: "Task-backed response.",
+            transcript: null,
+            audio_id: null,
+            duration_ms: null,
+            created_at: "2026-05-26T22:01:04+00:00",
+            updated_at: "2026-05-26T22:01:04+00:00",
+            status: "completed",
+            metadata: {},
+          },
+          task: null,
+          status: "completed",
+          created_at: "2026-05-26T22:01:00+00:00",
+          updated_at: "2026-05-26T22:01:04+00:00",
+          metadata: {},
+        },
+      ],
+    } as any;
+    clientMock.getSessionSnapshot
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(canonical);
+    clientMock.submitExecutorAudioInstruction.mockImplementationOnce(async (_sessionId: string, payload: any) => {
+      canonical.bro_timeline_turns[0].client_request_id = payload.clientRequestId;
+      canonical.bro_timeline_turns[0].turn_id = `exec-1:newbro:${payload.clientRequestId}`;
+      return {
+        audio_instruction_id: "aud-1",
+        target_persona_id: "forge",
+        target_thread_id: "exec-1",
+        status: "accepted",
+        duration_ms: 1000,
+        size_bytes: 32,
+        transcript_text: "hello from audio",
+      };
+    });
+    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const track = { stop: vi.fn() };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [track] })) },
+    });
+    class MockMediaRecorder {
+      static isTypeSupported = vi.fn(() => true);
+      state = "inactive";
+      mimeType = "audio/webm;codecs=opus";
+      private listeners: Record<string, Array<(event?: any) => void>> = {};
+
+      constructor(_stream: MediaStream, _options: { mimeType: string }) {}
+
+      addEventListener(type: string, listener: (event?: any) => void) {
+        this.listeners[type] = [...(this.listeners[type] ?? []), listener];
+      }
+
+      start() {
+        this.state = "recording";
+      }
+
+      stop() {
+        this.state = "inactive";
+        for (const listener of this.listeners.dataavailable ?? []) {
+          listener({ data: new Blob([new Uint8Array([0, 0, 1, 0])], { type: this.mimeType }) });
+        }
+        for (const listener of this.listeners.stop ?? []) {
+          listener();
+        }
+      }
+    }
+    class MockAudioContext {
+      async decodeAudioData(_buffer: ArrayBuffer) {
+        return {
+          duration: 0.001,
+          length: 16,
+          numberOfChannels: 1,
+          sampleRate: 16000,
+          getChannelData: () => new Float32Array(16),
+        };
+      }
+
+      async close() {}
+    }
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const button = await screen.findByTestId("voice-session-start");
+    fireEvent.pointerDown(button, { pointerId: 1 });
+    await waitFor(() => expect(screen.getByTestId("voice-session-start")).toHaveClass("dt-cmp-mic-free"));
+    const recordingButton = screen.getByTestId("voice-session-start");
+    fireEvent.pointerUp(recordingButton, { pointerId: 1 });
+    fireEvent.keyUp(recordingButton, { key: " " });
+
+    await waitFor(() => {
+      expect(clientMock.submitExecutorAudioInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        targetThreadId: "exec-1",
+        createNewThread: false,
+        pcm16: expect.any(Blob),
+        durationMs: 1,
+        sampleRate: 16000,
+        numChannels: 1,
+        samplesPerChannel: 16,
+        clientRequestId: expect.stringMatching(/^audio-/),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Voice note")).toHaveLength(1);
+      expect(document.querySelectorAll(".nb-audio-transcript")).toHaveLength(1);
+      expect(document.querySelector(".nb-audio-transcript")).toHaveTextContent("hello from audio");
+      expect(screen.getAllByText("Task-backed response.")).toHaveLength(1);
+    });
+  });
+
   it("keeps desktop PTT audio disabled when connected Codex does not advertise audio support", async () => {
     const unsupportedNode = usableExecutorNode({
       connected_executor_capabilities: [
@@ -1060,6 +1616,7 @@ describe("Newbro artboard shell", () => {
       ],
     });
     clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing", unsupportedNode));
+    clientMock.openBroThread.mockResolvedValueOnce(activeForgeSnapshot("session-existing", unsupportedNode));
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
@@ -1453,6 +2010,8 @@ describe("buildBroThreadRecords", () => {
         latest_task_id: "task-2",
         has_resume_handle: true,
         updated_at: null,
+        timeline_status: "not_loaded",
+        timeline_error: null,
         diagnostics: { codex_thread_id: "codex-thread-1" },
       },
     ]);
@@ -1486,6 +2045,8 @@ describe("buildBroThreadRecords", () => {
         latest_task_id: null,
         has_resume_handle: true,
         updated_at: "2026-05-26T22:00:00+00:00",
+        timeline_status: "not_loaded",
+        timeline_error: null,
         diagnostics: {
           codex_thread_id: "019e67f5-2e79-77c1-8334-5b04b8c81432",
           imported_from_codex_thread_list: true,

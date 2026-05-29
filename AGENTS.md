@@ -36,6 +36,10 @@ Core concepts:
 - Treat protocol models as the source of truth.
 - Runtime V1 is single-executor, but schemas must stay multi-executor compatible.
 
+## Golden Rules
+- **Fix root causes; do not hide problems with fallback behavior.** When a failure exposes ambiguity, missing protocol state, or an invalid ownership boundary, fix the contract or flow directly. Do not add fallback behavior by default. If fallback behavior seems necessary, stop and get explicit user approval before implementing it; approved fallbacks must be intentional product behavior, documented, observable, and tested.
+- **Think at project level before patching.** Before fixing a bug, identify the affected protocol/runtime ownership boundary and sibling flows, such as text/audio, new/existing thread, UI/API/runtime/executor. Make one coherent design change across the affected paths instead of a narrow patch that only satisfies the immediate reproduction.
+
 ## Project Skills
 When developing Newbro, apply these project skills before changing code:
 

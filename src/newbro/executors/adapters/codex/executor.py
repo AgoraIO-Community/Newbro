@@ -327,6 +327,13 @@ class CodexExecutor:
                     session,
                     turn_id,
                     completed_message=f"Completed: {task.title}",
+                    extra_metadata={
+                        "source": "codex",
+                        "thread_id": thread_id,
+                        "executor_thread_id": thread_id,
+                        "turn_id": turn_id,
+                        "executor_turn_id": turn_id,
+                    },
                 ):
                     yield event
         except asyncio.CancelledError:
@@ -372,7 +379,10 @@ class CodexExecutor:
                 **dict(instruction.metadata),
                 "instruction_id": instruction.instruction_id,
                 "source_audio_instruction_id": instruction.source_audio_instruction_id or "",
+                "thread_id": session.thread_id,
+                "executor_thread_id": session.thread_id,
                 "turn_id": turn_id,
+                "executor_turn_id": turn_id,
             }
             yield ExecutorEvent(
                 run_id=run.run_id,

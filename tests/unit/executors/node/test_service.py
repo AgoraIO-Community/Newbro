@@ -319,7 +319,7 @@ async def test_dispatch_audio_instruction_forwards_to_active_executor(monkeypatc
         execution_session_id="exec-1",
         executor_type="codex",
         task_id="task-1",
-        audio=_audio_instruction(),
+        audio=_audio_instruction().model_copy(update={"metadata": {"client_request_id": "audio-client-1"}}),
     )
     try:
         await service._dispatch_audio_instruction(websocket, command)
@@ -332,6 +332,7 @@ async def test_dispatch_audio_instruction_forwards_to_active_executor(monkeypatc
     assert websocket.sent[0]["event_type"] == "progress"
     assert websocket.sent[0]["message"] == "Audio instruction transcribed."
     assert websocket.sent[0]["metadata"]["source_audio_instruction_id"] == "aud-1"
+    assert websocket.sent[0]["metadata"]["client_request_id"] == "audio-client-1"
     assert websocket.sent[0]["metadata"]["target_thread_id"] == "bro-thread-1"
     assert websocket.sent[0]["metadata"]["transcript_text"] == "Please continue from the audio."
     assert len(websocket.sent) == 1

@@ -117,6 +117,8 @@ class RunManager:
         elif event.event_type == ExecutorEventType.COMPLETED:
             run.status = RunStatus.COMPLETED
             run.output_summary = event.message
+            if event.metadata:
+                run.metadata["latest_terminal_event"] = dict(event.metadata)
             task.status = TaskStatus.COMPLETED
             should_append_detail = True
             if self._observability is not None:
@@ -131,6 +133,8 @@ class RunManager:
         elif event.event_type == ExecutorEventType.FAILED:
             run.status = RunStatus.FAILED
             run.failure_reason = event.message
+            if event.metadata:
+                run.metadata["latest_terminal_event"] = dict(event.metadata)
             task.status = TaskStatus.FAILED
             should_append_detail = True
             if self._observability is not None:

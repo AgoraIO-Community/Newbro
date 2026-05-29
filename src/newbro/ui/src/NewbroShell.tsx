@@ -41,6 +41,7 @@ import type {
   ExecutionRun,
   ExecutorNodeRecord,
   AgentEvent,
+  BroTimelineTurn,
   BroThread,
   Persona,
   SessionSnapshot,
@@ -286,6 +287,7 @@ function useNewbroShellState() {
   const [executionSessions, setExecutionSessions] = useState<ExecutionSession[]>([]);
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
   const [broThreads, setBroThreads] = useState<BroThread[]>([]);
+  const [broTimelineTurns, setBroTimelineTurns] = useState<BroTimelineTurn[]>([]);
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [activeShellSessionId, setActiveShellSessionId] = useState<string | null>(null);
@@ -314,6 +316,7 @@ function useNewbroShellState() {
     setExecutionSessions(snapshot.execution_sessions ?? []);
     setExecutionRuns(snapshot.execution_runs ?? []);
     setBroThreads(snapshot.bro_threads ?? []);
+    setBroTimelineTurns(snapshot.bro_timeline_turns ?? []);
     setTaskSummaries(snapshot.summaries ?? []);
     setAgentEvents(snapshot.agent_events ?? []);
     setDraftSession(snapshot.draft_session ?? null);
@@ -328,6 +331,7 @@ function useNewbroShellState() {
     setExecutionSessions([]);
     setExecutionRuns([]);
     setBroThreads([]);
+    setBroTimelineTurns([]);
     setTaskSummaries([]);
     setAgentEvents([]);
     setActiveShellSessionId(null);
@@ -423,8 +427,8 @@ function useNewbroShellState() {
         applySnapshot(snapshot);
       });
     } catch {
-      // Closing a selected thread is cleanup; stale-event suppression on the
-      // backend still protects the newly selected thread if this request fails.
+      // Closing a selected thread is cleanup; backend subscription ids still
+      // protect the newly selected thread if this request fails.
     }
   });
 
@@ -737,6 +741,7 @@ function useNewbroShellState() {
     executionSessions,
     executionRuns,
     broThreads,
+    broTimelineTurns,
     taskSummaries,
     agentEvents,
     shellError,

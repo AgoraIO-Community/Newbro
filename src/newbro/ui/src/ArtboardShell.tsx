@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { ArrowUp, Check, ChevronLeft, Copy, FileText, Layers, LogOut, MessageSquare, Mic, Plus, Radio, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorRunCommand,
@@ -15,11 +15,11 @@ import {
   updatePersona,
 } from "./lib/session-client";
 import { readThreadIdFromUrl, replaceThreadIdInUrl } from "./lib/session-url";
-import { buildBroCardModels, buildBroTaskRecords, buildBroThreadRecords } from "./components/newbro/adapters";
+import { buildBroCardModels, buildBroThreadRecords } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
-import type { BroThread, ExecutionRun, ExecutorNodeRecord, Persona, Task } from "./types";
+import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
 type RuntimePage = "home" | "detail";
@@ -39,6 +39,7 @@ type TextTurnStatus = "sending" | "sent" | "failed";
 
 type AudioTurn = {
   id: string;
+  audioInstructionId?: string;
   broId: string;
   threadId?: string | null;
   status: AudioTurnStatus;
@@ -67,12 +68,6 @@ type ChatMessage = {
   createdAt?: string;
 };
 
-type TimelineEntry =
-  | { kind: "text"; id: string; timestamp?: string; turn: TextTurn; index: number }
-  | { kind: "audio"; id: string; timestamp?: string; turn: AudioTurn; index: number }
-  | { kind: "conversation"; id: string; timestamp?: string; message: ChatMessage; index: number }
-  | { kind: "record"; id: string; timestamp?: string; record: BroTaskRecord; index: number };
-
 const THREAD_LIST_PAGE_SIZE = 25;
 
 function directExecutorMetric(stage: string, details: Record<string, unknown>): void {
@@ -89,7 +84,11 @@ function directExecutorMetric(stage: string, details: Record<string, unknown>): 
 }
 
 function turnMatchesThread<T extends { threadId?: string | null }>(turn: T, threadId: string | null): boolean {
-  return !threadId || !turn.threadId || turn.threadId === threadId;
+  return threadId === null ? !turn.threadId : turn.threadId === threadId;
+}
+
+function timelineTurnMatchesThread(turn: BroTimelineTurn, broId: string, threadId: string | null): boolean {
+  return turn.persona_id === broId && threadId !== null && turn.thread_id === threadId;
 }
 
 type ActiveCodexAudioState = {
@@ -119,59 +118,103 @@ function timelineTimestamp(value: string | undefined): number {
   return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
 }
 
-function timelineKindOrder(kind: TimelineEntry["kind"]): number {
-  if (kind === "text" || kind === "audio") return 0;
-  if (kind === "record") return 1;
-  return 2;
+function turnUserText(turn: BroTimelineTurn): string {
+  if (!turn.user) return "";
+  return (turn.user.kind === "audio" ? turn.user.transcript : turn.user.text)?.trim() ?? "";
 }
 
-function buildTimelineEntries({
-  records,
+function optimisticTextTurnToTimeline(turn: TextTurn): BroTimelineTurn {
+  return {
+    turn_id: `optimistic:${turn.id}`,
+    thread_id: turn.threadId ?? "",
+    persona_id: turn.broId,
+    executor_id: "codex",
+    owner: "newbro",
+    client_request_id: turn.id,
+    executor_thread_id: null,
+    executor_turn_id: null,
+    input_modality: "text",
+    user: {
+      message_id: `optimistic:${turn.id}:user`,
+      role: "user",
+      kind: "text",
+      text: turn.text,
+      transcript: null,
+      audio_id: null,
+      duration_ms: null,
+      created_at: turn.createdAt ?? null,
+      updated_at: turn.createdAt ?? null,
+      status: turn.status,
+      metadata: {},
+    },
+    assistant: null,
+    task: null,
+    status: turn.status === "failed" ? "failed" : turn.status === "sent" ? "running" : "pending",
+    created_at: turn.createdAt ?? null,
+    updated_at: turn.createdAt ?? null,
+    metadata: { optimistic: true },
+  };
+}
+
+function optimisticAudioTurnToTimeline(turn: AudioTurn): BroTimelineTurn {
+  return {
+    turn_id: `optimistic:${turn.id}`,
+    thread_id: turn.threadId ?? "",
+    persona_id: turn.broId,
+    executor_id: "codex",
+    owner: "newbro",
+    client_request_id: turn.id,
+    executor_thread_id: null,
+    executor_turn_id: null,
+    input_modality: "audio",
+    user: {
+      message_id: `optimistic:${turn.id}:user`,
+      role: "user",
+      kind: "audio",
+      text: null,
+      transcript: turn.transcript ?? null,
+      audio_id: turn.audioInstructionId ?? turn.id,
+      duration_ms: turn.durationMs,
+      created_at: turn.createdAt ?? null,
+      updated_at: turn.createdAt ?? null,
+      status: turn.status,
+      metadata: {},
+    },
+    assistant: null,
+    task: null,
+    status: turn.status === "failed" ? "failed" : turn.status === "sent" ? "running" : "pending",
+    created_at: turn.createdAt ?? null,
+    updated_at: turn.createdAt ?? null,
+    metadata: { optimistic: true },
+  };
+}
+
+function buildTimelineTurns({
+  timelineTurns,
   textTurns,
   audioTurns,
-  conversationMessages,
+  broId,
+  threadId,
 }: {
-  records: BroTaskRecord[];
+  timelineTurns: BroTimelineTurn[];
   textTurns: TextTurn[];
   audioTurns: AudioTurn[];
-  conversationMessages: ChatMessage[];
-}): TimelineEntry[] {
-  const entries: TimelineEntry[] = [
-    ...records.map((record, index) => ({
-      kind: "record" as const,
-      id: `record-${record.taskId}`,
-      timestamp: record.timestamp,
-      record,
-      index,
-    })),
-    ...textTurns.map((turn, index) => ({
-      kind: "text" as const,
-      id: `text-${turn.id}`,
-      timestamp: turn.createdAt,
-      turn,
-      index,
-    })),
-    ...audioTurns.map((turn, index) => ({
-      kind: "audio" as const,
-      id: `audio-${turn.id}`,
-      timestamp: turn.createdAt,
-      turn,
-      index,
-    })),
-    ...conversationMessages.map((message, index) => ({
-      kind: "conversation" as const,
-      id: `conversation-${message.id}`,
-      timestamp: message.createdAt,
-      message,
-      index,
-    })),
+  broId: string;
+  threadId: string | null;
+}): BroTimelineTurn[] {
+  const canonical = timelineTurns.filter((turn) => timelineTurnMatchesThread(turn, broId, threadId));
+  const canonicalClientIds = new Set(
+    canonical.map((turn) => turn.client_request_id).filter((value): value is string => Boolean(value)),
+  );
+  const optimistic = [
+    ...textTurns.filter((turn) => !canonicalClientIds.has(turn.id)).map(optimisticTextTurnToTimeline),
+    ...audioTurns.filter((turn) => !canonicalClientIds.has(turn.id)).map(optimisticAudioTurnToTimeline),
   ];
-  return entries.sort((left, right) => {
-    const timeDelta = timelineTimestamp(left.timestamp) - timelineTimestamp(right.timestamp);
+  return [...canonical, ...optimistic].sort((left, right) => {
+    const timeDelta = timelineTimestamp(left.created_at ?? left.updated_at ?? undefined)
+      - timelineTimestamp(right.created_at ?? right.updated_at ?? undefined);
     if (timeDelta !== 0) return timeDelta;
-    const kindDelta = timelineKindOrder(left.kind) - timelineKindOrder(right.kind);
-    if (kindDelta !== 0) return kindDelta;
-    return left.index - right.index;
+    return left.turn_id.localeCompare(right.turn_id);
   });
 }
 
@@ -241,7 +284,9 @@ function TextTurnBubble({ turn, mobile = false }: { turn: TextTurn; mobile?: boo
   const meta = turn.status === "sending" ? "Sending" : turn.status === "failed" ? "Failed" : "Sent";
   return (
     <div className={`${prefix}-turn ${prefix}-turn-you`}>
-      <div className={`${prefix}-bubble ${prefix}-bubble-you${turn.status === "failed" ? " ob-bubble-failed" : ""}`}>{turn.text}</div>
+      <div className={`${prefix}-bubble ${prefix}-bubble-you${turn.status === "failed" ? " ob-bubble-failed" : ""}`}>
+        <MarkdownText>{turn.text}</MarkdownText>
+      </div>
       <div className={metaClass}>
         <MessageMeta
           label={meta}
@@ -300,6 +345,14 @@ function taskRecordIsActive(record: BroTaskRecord): boolean {
   return !["completed", "failed", "cancelled", "paused"].includes(record.status);
 }
 
+const TASK_RECORD_TITLE_MAX_CHARS = 60;
+
+function shortenTaskRecordTitle(value: string): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= TASK_RECORD_TITLE_MAX_CHARS) return collapsed;
+  return collapsed.slice(0, TASK_RECORD_TITLE_MAX_CHARS - 1).trimEnd() + "…";
+}
+
 function TaskRecordCard({ bro, record, mobile = false }: { bro: BroCardModel; record: BroTaskRecord; mobile?: boolean }) {
   const active = taskRecordIsActive(record);
   const prefix = mobile ? "thr" : "dt";
@@ -312,13 +365,17 @@ function TaskRecordCard({ bro, record, mobile = false }: { bro: BroCardModel; re
   const footClass = mobile ? "thr-status-foot" : "dt-status-foot";
   const metaClass = mobile ? "thr-meta" : "dt-bubble-meta";
   const bodyText = record.summary || record.description || bro.progressLabel;
+  const fullTitle = record.title.trim();
+  const title = shortenTaskRecordTitle(fullTitle);
   return (
     <div className={`${prefix}-turn ${prefix}-turn-bro`}>
       <div className={`${statusClass}${active ? "" : ` ${doneClass}`}`}>
-        <div className={`${statusClass}-head`}>
-          {active ? <span className={spinClass} /> : <span className={doneDotClass} />}
-          <span className={titleClass}>{record.title}</span>
-        </div>
+        {title ? (
+          <div className={`${statusClass}-head`}>
+            {active ? <span className={spinClass} /> : <span className={doneDotClass} />}
+            <span className={titleClass} title={fullTitle !== title ? fullTitle : undefined}>{title}</span>
+          </div>
+        ) : null}
         <div className={barClass}><i style={{ width: `${Math.max(8, Math.min(100, Math.round(record.progress)))}%` }} /></div>
         <div className={`${footClass} ${prefix}-task-body`}>
           <MarkdownText>{bodyText}</MarkdownText>
@@ -337,11 +394,99 @@ function ConversationMessageBubble({ bro, message, mobile = false }: { bro: BroC
   const isUser = message.role === "user";
   return (
     <div className={`${prefix}-turn ${isUser ? `${prefix}-turn-you` : `${prefix}-turn-bro`}`}>
-      <div className={`${prefix}-bubble ${isUser ? `${prefix}-bubble-you` : `${prefix}-bubble-bro`}`}>{message.text}</div>
+      <div className={`${prefix}-bubble ${isUser ? `${prefix}-bubble-you` : `${prefix}-bubble-bro`}`}>
+        <MarkdownText>{message.text}</MarkdownText>
+      </div>
       <div className={metaClass}>
         <MessageMeta label={isUser ? "You" : bro.name} />
       </div>
     </div>
+  );
+}
+
+function timelineStatusLabel(status: string): string {
+  const normalized = status?.replace(/_/g, " ").trim();
+  return normalized || "completed";
+}
+
+function timelineTaskStatus(status: string): BroTaskRecord["status"] {
+  if (status === "failed") return "failed";
+  if (status === "cancelled" || status === "canceled") return "cancelled";
+  if (status === "running" || status === "inProgress" || status === "pending") return "running";
+  return "completed";
+}
+
+function timelineMessageText(message: BroTimelineMessage | null): string {
+  if (!message) return "";
+  return (message.kind === "audio" ? message.transcript : message.text)?.trim() ?? "";
+}
+
+function timelineMetadataText(turn: BroTimelineTurn, key: string): string {
+  const value = turn.metadata?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function TimelineUserMessage({ bro, turn, mobile = false }: { bro: BroCardModel; turn: BroTimelineTurn; mobile?: boolean }) {
+  const message = turn.user;
+  if (!message) return null;
+  if (message.kind === "audio") {
+    return (
+      <AudioTurnBubble
+        bro={bro}
+        mobile={mobile}
+        turn={{
+          id: message.audio_id ?? message.message_id,
+          broId: turn.persona_id,
+          threadId: turn.thread_id,
+          status: message.status === "failed" ? "failed" : message.status === "sending" ? "sending" : "sent",
+          durationMs: message.duration_ms ?? 0,
+          createdAt: message.created_at ?? undefined,
+          transcript: message.transcript ?? undefined,
+        }}
+      />
+    );
+  }
+  const text = timelineMessageText(message);
+  if (!text) return null;
+  return (
+    <ConversationMessageBubble
+      bro={bro}
+      message={{
+        role: "user",
+        text,
+        id: message.message_id,
+        createdAt: message.created_at ?? undefined,
+      }}
+      mobile={mobile}
+    />
+  );
+}
+
+function timelineTaskRecord(turn: BroTimelineTurn): BroTaskRecord | null {
+  const task = turn.task;
+  const assistantText = timelineMessageText(turn.assistant);
+  const status = timelineTaskStatus(task?.status ?? turn.status);
+  if (!task && !assistantText) return null;
+  return {
+    taskId: task?.task_id ?? turn.turn_id,
+    title: task?.title ?? (timelineMetadataText(turn, "assistant_title") || turnUserText(turn)),
+    status,
+    statusLabel: timelineStatusLabel(task?.status_label ?? turn.assistant?.status ?? turn.status),
+    progress: task?.progress ?? (status === "completed" ? 100 : status === "running" ? 60 : 30),
+    description: task?.description ?? assistantText,
+    summary: task?.summary ?? assistantText,
+    timestamp: task?.updated_at ?? turn.assistant?.updated_at ?? turn.updated_at ?? undefined,
+    timestampLabel: task?.updated_at ?? turn.assistant?.updated_at ?? turn.updated_at ?? undefined,
+  };
+}
+
+function TimelineTurnView({ bro, turn, mobile = false }: { bro: BroCardModel; turn: BroTimelineTurn; mobile?: boolean }) {
+  const record = timelineTaskRecord(turn);
+  return (
+    <>
+      <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
+      {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
+    </>
   );
 }
 
@@ -369,7 +514,7 @@ function applyAudioTranscripts(turns: AudioTurn[], runs: ExecutionRun[]): AudioT
   if (transcripts.size === 0) return turns;
   let changed = false;
   const next = turns.map((turn) => {
-    const transcript = transcripts.get(turn.id);
+    const transcript = transcripts.get(turn.audioInstructionId ?? "") ?? transcripts.get(turn.id);
     if (!transcript || turn.transcript === transcript) return turn;
     changed = true;
     return { ...turn, transcript };
@@ -451,20 +596,24 @@ function usePushToTalkAudio({
   sessionId,
   broId,
   targetThreadId,
+  createNewThread,
   disabled,
   onTurn,
   onRemoveTurn,
   onError,
+  onThreadResolved,
   onSent,
 }: {
   sessionId: string | null;
   broId: string;
   targetThreadId: string | null;
+  createNewThread: boolean;
   disabled: boolean;
   onTurn: (turn: AudioTurn) => void;
   onRemoveTurn: (turnId: string) => void;
   onError: (message: string) => void;
-  onSent: () => void;
+  onThreadResolved: (threadId: string | null) => void;
+  onSent: () => void | Promise<void>;
 }) {
   const [phase, setPhase] = useState<"idle" | "recording" | "sending">("idle");
   const activeRef = useRef<{
@@ -518,15 +667,17 @@ function usePushToTalkAudio({
       const response = await submitExecutorAudioInstruction(sessionId, {
         targetPersonaId: broId,
         targetThreadId,
+        createNewThread,
         pcm16: pcm.blob,
         durationMs: pcm.durationMs || durationMs,
         sampleRate: pcm.sampleRate,
         numChannels: pcm.numChannels,
         samplesPerChannel: pcm.samplesPerChannel,
+        clientRequestId: active.turnId,
       });
-      onRemoveTurn(active.turnId);
       onTurn({
-        id: response.audio_instruction_id,
+        id: active.turnId,
+        audioInstructionId: response.audio_instruction_id,
         broId,
         threadId: response.target_thread_id ?? targetThreadId,
         status: "sent",
@@ -534,7 +685,8 @@ function usePushToTalkAudio({
         createdAt: active.createdAt,
         transcript: response.transcript_text?.trim() || undefined,
       });
-      onSent();
+      onThreadResolved(response.target_thread_id);
+      await onSent();
     } catch (error: unknown) {
       const message = describeError(error, "Audio could not be sent.");
       onTurn({ id: active.turnId, broId, threadId: targetThreadId, status: "failed", durationMs, createdAt: active.createdAt, error: message });
@@ -702,12 +854,21 @@ function broDetailHref(broId: string, threadId?: string | null): string {
   return `/bros/${encodeURIComponent(broId)}${query}`;
 }
 
+function clickedInsideHomeCardAction(event: MouseEvent<HTMLAnchorElement>): boolean {
+  const target = event.target as Element | null;
+  return Boolean(target && target.closest("[data-home-card-action]"));
+}
+
 function openBroFromHome(
   event: MouseEvent<HTMLAnchorElement>,
   broId: string,
   onOpen: (id: string, threadId?: string) => void,
   threadId?: string,
 ): void {
+  if (clickedInsideHomeCardAction(event)) {
+    event.preventDefault();
+    return;
+  }
   if (
     event.defaultPrevented
     || event.button !== 0
@@ -760,16 +921,14 @@ function Header({
   onHome,
   onLogout,
   account,
-  nodeCount,
 }: {
   active: RuntimePage;
   bro?: BroCardModel | null;
   onHome: () => void;
   onLogout: () => void;
   account: string;
-  nodeCount: number;
 }) {
-  const tone = bro ? homeBroTone(homeBroState(bro)) : nodeCount > 0 ? "calm" : "warn";
+  const tone = bro ? homeBroTone(homeBroState(bro)) : "calm";
   const detailPaused = bro?.liveState === "offline" || bro?.liveState === "unbound";
   return (
     <header className="dt-header" data-testid="newbro-sidebar">
@@ -793,10 +952,12 @@ function Header({
         ) : null}
       </div>
       <div className="dt-header-r">
-        <span className={`dt-header-pill ${bro ? (detailPaused ? "dt-header-pill-paused" : "dt-header-pill-live") : nodeCount > 0 ? "dt-header-pill-ready" : "dt-header-pill-empty"}`}>
-          <span className="dt-header-pill-dot" />
-          {bro ? (detailPaused ? "paused · node offline" : "live · listening") : nodeCount > 0 ? "runtime ready" : "setup needed"}
-        </span>
+        {bro ? (
+          <span className={`dt-header-pill ${detailPaused ? "dt-header-pill-paused" : "dt-header-pill-live"}`}>
+            <span className="dt-header-pill-dot" />
+            {detailPaused ? "paused · node offline" : "live · listening"}
+          </span>
+        ) : null}
         <span className="dt-header-account dt-header-static">
           <span className="dt-header-account-avatar">{account.trim().charAt(0).toUpperCase() || "N"}</span>
           <span className="dt-header-account-name">{account}</span>
@@ -828,7 +989,6 @@ function DesktopFrame({
           active={active}
           bro={bro}
           onHome={onHome}
-          nodeCount={shell.executorNodes.filter((node) => Boolean(node.last_connected_at)).length}
           account={shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in"}
           onLogout={() => { void shell.logout(); }}
         />
@@ -855,7 +1015,7 @@ function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; 
   const tone = homeBroTone(state);
   const progress = Math.max(5, Math.min(100, Math.round(bro.progress)));
   return (
-    <a data-testid={`bro-card-${bro.id}`} className={`dt-bro-card dt-bro-card-${tone}${featured ? " dt-bro-card-featured" : ""}`} href={broDetailHref(bro.id)} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
+    <a data-testid={`bro-card-${bro.id}`} className={`dt-bro-card dt-bro-card-${tone}${featured ? " dt-bro-card-featured" : ""}`} href={broDetailHref(bro.id)} onClickCapture={(event) => { if (clickedInsideHomeCardAction(event)) event.preventDefault(); }} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
       <div className={`dt-bro-card-avatar dt-bro-card-avatar-${tone}`}>
         <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={state} size={42} />
         <span className={`dt-bro-card-pip dt-bro-card-pip-${tone}`} />
@@ -880,6 +1040,7 @@ function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; 
         {state === "working" ? (
           <div className="dt-bro-card-bar"><span className="dt-bro-card-bar-fill" style={{ width: `${progress}%` }} /></div>
         ) : null}
+        <HomeBroCopyAction bro={bro} variant="card" />
       </div>
       <span className="dt-bro-card-arrow">›</span>
     </a>
@@ -889,12 +1050,13 @@ function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; 
 function DesktopRosterRow({ bro, onOpen }: { bro: BroCardModel; onOpen: (id: string) => void }) {
   const state = homeBroState(bro);
   return (
-    <a data-testid={`bro-card-${bro.id}`} className={`dt-roster-row dt-roster-row-${state}`} href={broDetailHref(bro.id)} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
+    <a data-testid={`bro-card-${bro.id}`} className={`dt-roster-row dt-roster-row-${state}`} href={broDetailHref(bro.id)} onClickCapture={(event) => { if (clickedInsideHomeCardAction(event)) event.preventDefault(); }} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
       <div className={`dt-roster-avatar dt-roster-avatar-${state}`}>
         <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={state} size={26} />
       </div>
       <span className="dt-roster-name">{bro.name}</span>
       <span className="dt-roster-last">{homeBroLast(bro, state)}</span>
+      <HomeBroCopyAction bro={bro} variant="row" />
     </a>
   );
 }
@@ -1239,6 +1401,69 @@ function CreateConnectSheet({
   );
 }
 
+function useCopyNodeConnectCommand(args: {
+  sessionId: string | null;
+  broSource: BroCardModel["source"];
+  nodeId: string | null;
+}): { copy: () => Promise<void>; copied: boolean; command: string | null } {
+  const [command, setCommand] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const { sessionId, broSource, nodeId } = args;
+  const copy = useCallback(async () => {
+    if (!sessionId || !nodeId || broSource !== "runtime") return;
+    const issue = await revealExecutorNodeConnectCommand(sessionId, nodeId);
+    const next = buildExecutorRunCommand(issue.node.node_id, issue.token, {
+      enabledExecutors: issue.node.enabled_executors,
+      acpxAgent: issue.node.acpx_agent,
+    });
+    setCommand(next);
+    await navigator.clipboard?.writeText(next).then(() => setCopied(true), () => setCopied(false));
+  }, [sessionId, broSource, nodeId]);
+  return { copy, copied, command };
+}
+
+function HomeBroCopyAction({ bro, variant }: { bro: BroCardModel; variant: "card" | "row" }) {
+  const shell = useNewbroShell();
+  const { copy, copied } = useCopyNodeConnectCommand({
+    sessionId: shell.activeShellSessionId,
+    broSource: bro.source,
+    nodeId: bro.executorNodeId,
+  });
+  if (bro.liveState !== "offline" || bro.source !== "runtime") return null;
+  const handle = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void copy();
+  };
+  if (variant === "card") {
+    return (
+      <button
+        type="button"
+        data-testid={`home-bro-copy-command-${bro.id}`}
+        data-home-card-action="copy-connect"
+        className="dt-bro-card-copy"
+        onClick={handle}
+      >
+        {copied ? <Check size={12} strokeWidth={2.2} /> : <Copy size={12} strokeWidth={2} />}
+        <span>{copied ? "Copied" : "Copy connect command"}</span>
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      data-testid={`home-bro-copy-command-${bro.id}`}
+      data-home-card-action="copy-connect"
+      className="dt-roster-copy"
+      title={copied ? "Copied to clipboard" : "Copy the command that reconnects this Bro's node"}
+      onClick={handle}
+    >
+      {copied ? <Check size={12} strokeWidth={2.2} /> : <Copy size={12} strokeWidth={2} />}
+      <span>{copied ? "Copied" : "Copy connect command"}</span>
+    </button>
+  );
+}
+
 function OfflineBanner({
   bro,
   node,
@@ -1250,18 +1475,11 @@ function OfflineBanner({
   sessionId: string | null;
   mobile?: boolean;
 }) {
-  const [command, setCommand] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  async function reveal() {
-    if (!sessionId || bro.source !== "runtime") return;
-    const issue = await revealExecutorNodeConnectCommand(sessionId, node.node_id);
-    const next = buildExecutorRunCommand(issue.node.node_id, issue.token, {
-      enabledExecutors: issue.node.enabled_executors,
-      acpxAgent: issue.node.acpx_agent,
-    });
-    setCommand(next);
-    await navigator.clipboard?.writeText(next).then(() => setCopied(true), () => setCopied(false));
-  }
+  const { copy, copied, command } = useCopyNodeConnectCommand({
+    sessionId,
+    broSource: bro.source,
+    nodeId: node.node_id,
+  });
   return (
     <section data-testid="bro-node-disconnected-warning" className="ob-offline-banner dt-offline-banner nb-artboard-offline">
       <span className="ob-offline-banner-icon" aria-hidden="true">
@@ -1274,7 +1492,7 @@ function OfflineBanner({
         {mobile && <span className="nb-artboard-offline-hint">Open Newbro on desktop to reconnect the node.</span>}
       </div>
       {!mobile && (
-        <button type="button" data-testid="bro-node-copy-command" className="ob-offline-banner-action" onClick={() => { void reveal(); }}>
+        <button type="button" data-testid="bro-node-copy-command" className="ob-offline-banner-action" onClick={() => { void copy(); }}>
           <span>{copied ? "Copied" : "Copy command"}</span>
           <SendHorizontal size={11} strokeWidth={2.2} />
         </button>
@@ -1285,28 +1503,32 @@ function OfflineBanner({
 
 function ThreadPanel({
   bro,
-  records,
   textTurns,
   audioTurns,
-  conversationMessages,
+  timelineTurns,
+  selectedThread,
   disabled,
   disabledReason,
 }: {
   bro: BroCardModel;
-  records: BroTaskRecord[];
   textTurns: TextTurn[];
   audioTurns: AudioTurn[];
-  conversationMessages: ChatMessage[];
+  timelineTurns: BroTimelineTurn[];
+  selectedThread: BroThreadRecord | null;
   disabled?: boolean;
   disabledReason?: string | null;
 }) {
   const shell = useNewbroShell();
   const draftText = shell.draftSession?.current_draft?.text ?? "";
-  const timelineEntries = buildTimelineEntries({ records, textTurns, audioTurns, conversationMessages });
-  const hasContent = Boolean(draftText) || timelineEntries.length > 0;
+  const renderedTurns = buildTimelineTurns({ timelineTurns, textTurns, audioTurns, broId: bro.id, threadId: selectedThread?.threadId ?? null });
+  const hasContent = Boolean(draftText) || renderedTurns.length > 0;
+  const timelineLoading = selectedThread?.timelineStatus === "loading";
+  const timelineLoadError = selectedThread?.timelineStatus === "failed" ? selectedThread.timelineError : null;
   const showEmptyState = !hasContent
     && !shell.openingThreadId
+    && !timelineLoading
     && !shell.threadOpenError
+    && !timelineLoadError
     && !(disabled && disabledReason);
 
   return (
@@ -1329,11 +1551,27 @@ function ThreadPanel({
           </div>
         </div>
       ) : null}
+      {timelineLoading && !shell.openingThreadId ? (
+        <div className="dt-turn dt-turn-sys" aria-busy="true">
+          <div className="dt-sys-event">
+            <span className="dt-sys-event-spin" aria-hidden="true" />
+            <span>Fetching thread history…</span>
+          </div>
+        </div>
+      ) : null}
       {shell.threadOpenError ? (
         <div className="dt-turn dt-turn-sys">
           <div className="dt-sys-event">
             <span className="dt-sys-event-dot" />
             <span>{shell.threadOpenError}</span>
+          </div>
+        </div>
+      ) : null}
+      {timelineLoadError ? (
+        <div className="dt-turn dt-turn-sys">
+          <div className="dt-sys-event">
+            <span className="dt-sys-event-dot" />
+            <span>{timelineLoadError}</span>
           </div>
         </div>
       ) : null}
@@ -1350,34 +1588,19 @@ function ThreadPanel({
           <div className="dt-bubble-meta">Draft · ready to send</div>
         </div>
       ) : null}
-      {timelineEntries.map((entry) => {
-        if (entry.kind === "text") return <TextTurnBubble key={entry.id} turn={entry.turn} />;
-        if (entry.kind === "audio") return <AudioTurnBubble key={entry.id} bro={bro} turn={entry.turn} />;
-        if (entry.kind === "conversation") {
-          return <ConversationMessageBubble key={entry.id} bro={bro} message={entry.message} />;
-        }
-        return (
-          <SyncedTaskRecordTurn
-            key={entry.id}
-            bro={bro}
-            record={entry.record}
-            textTurns={textTurns}
-            audioTurns={audioTurns}
-          />
-        );
-      })}
+      {renderedTurns.map((turn) => <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} />)}
     </>
   );
 }
 
 function MobileThreadSurface({
   bro,
-  records,
   selectedThreadId,
+  selectedThread,
   createNewThread,
   textTurns,
   audioTurns,
-  conversationMessages,
+  timelineTurns,
   onTextTurn,
   onAudioTurn,
   onRemoveAudioTurn,
@@ -1386,12 +1609,12 @@ function MobileThreadSurface({
   disabledReason,
 }: {
   bro: BroCardModel;
-  records: BroTaskRecord[];
   selectedThreadId: string | null;
+  selectedThread: BroThreadRecord | null;
   createNewThread: boolean;
   textTurns: TextTurn[];
   audioTurns: AudioTurn[];
-  conversationMessages: ChatMessage[];
+  timelineTurns: BroTimelineTurn[];
   onTextTurn: (turn: TextTurn) => void;
   onAudioTurn: (turn: AudioTurn) => void;
   onRemoveAudioTurn: (turnId: string) => void;
@@ -1414,10 +1637,12 @@ function MobileThreadSurface({
     sessionId: shell.activeShellSessionId,
     broId: bro.id,
     targetThreadId: selectedThreadId,
+    createNewThread,
     disabled: micDisabled,
     onTurn: onAudioTurn,
     onRemoveTurn: onRemoveAudioTurn,
     onError: shell.setShellError,
+    onThreadResolved,
     onSent: shell.refreshShellSession,
   });
 
@@ -1489,10 +1714,19 @@ function MobileThreadSurface({
     }
   }
 
-  const timelineEntries = buildTimelineEntries({ records, textTurns, audioTurns, conversationMessages });
+  const renderedTurns = buildTimelineTurns({ timelineTurns, textTurns, audioTurns, broId: bro.id, threadId: selectedThreadId });
+  const hasContent = Boolean(draftText) || renderedTurns.length > 0;
+  const timelineLoading = selectedThread?.timelineStatus === "loading";
+  const timelineLoadError = selectedThread?.timelineStatus === "failed" ? selectedThread.timelineError : null;
+  const showEmptyState = !hasContent
+    && !shell.openingThreadId
+    && !timelineLoading
+    && !shell.threadOpenError
+    && !timelineLoadError
+    && !(disabled && disabledReason);
   const threadScrollVersion = [
     selectedThreadId ?? "new",
-    records.map((record) => `${record.taskId}:${record.status}:${record.timestamp ?? ""}:${record.summary ?? ""}`).join("|"),
+    renderedTurns.map((turn) => `${turn.turn_id}:${turn.status}:${turn.updated_at ?? ""}:${turn.assistant?.text ?? ""}`).join("|"),
     textTurns.map((turn) => `${turn.id}:${turn.status}`).join("|"),
     audioTurns.map((turn) => `${turn.id}:${turn.status}:${turn.transcript ?? ""}`).join("|"),
   ].join("::");
@@ -1511,6 +1745,12 @@ function MobileThreadSurface({
         <h1 className="sr-only">{bro.name}</h1>
         <span className="sr-only">Current draft</span>
         <div className="thr-day"><span>Current session</span></div>
+        {showEmptyState ? (
+          <div className="dt-thread-empty" role="status">
+            <span className="dt-thread-empty-eyebrow">No messages with {bro.name} yet</span>
+            <span className="dt-thread-empty-hint">Type below or hold the mic to talk.</span>
+          </div>
+        ) : null}
         {draftText ? (
           <div className={`thr-turn thr-turn-you${disabled ? " nb-mobile-turn-blocked" : ""}`}>
             <div className={`thr-bubble thr-bubble-you${disabled ? " ob-bubble-failed" : ""}`}>{draftText}</div>
@@ -1540,6 +1780,14 @@ function MobileThreadSurface({
             </div>
           </div>
         ) : null}
+        {timelineLoading && !shell.openingThreadId ? (
+          <div className="thr-turn thr-turn-sys">
+            <div className="ob-sys-event">
+              <span className="ob-sys-event-dot" />
+              <span>Fetching thread history...</span>
+            </div>
+          </div>
+        ) : null}
         {shell.threadOpenError ? (
           <div className="thr-turn thr-turn-sys">
             <div className="ob-sys-event">
@@ -1548,23 +1796,15 @@ function MobileThreadSurface({
             </div>
           </div>
         ) : null}
-        {timelineEntries.map((entry) => {
-          if (entry.kind === "text") return <TextTurnBubble key={entry.id} turn={entry.turn} mobile />;
-          if (entry.kind === "audio") return <AudioTurnBubble key={entry.id} bro={bro} turn={entry.turn} mobile />;
-          if (entry.kind === "conversation") {
-            return <ConversationMessageBubble key={entry.id} bro={bro} message={entry.message} mobile />;
-          }
-          return (
-            <SyncedTaskRecordTurn
-              key={entry.id}
-              bro={bro}
-              record={entry.record}
-              textTurns={textTurns}
-              audioTurns={audioTurns}
-              mobile
-            />
-          );
-        })}
+        {timelineLoadError ? (
+          <div className="thr-turn thr-turn-sys">
+            <div className="ob-sys-event">
+              <span className="ob-sys-event-dot" />
+              <span>{timelineLoadError}</span>
+            </div>
+          </div>
+        ) : null}
+        {renderedTurns.map((turn) => <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} mobile />)}
       </main>
       <form className={`thr-composer nb-mobile-thread-composer${disabled ? " ob-composer-disabled" : ""}`} onSubmit={submitText}>
         {!disabled ? (
@@ -1714,10 +1954,12 @@ function DesktopComposerBar({
     sessionId: shell.activeShellSessionId,
     broId: bro.id,
     targetThreadId: selectedThreadId,
+    createNewThread,
     disabled: micDisabled,
     onTurn: onAudioTurn,
     onRemoveTurn: onRemoveAudioTurn,
     onError: shell.setShellError,
+    onThreadResolved,
     onSent: shell.refreshShellSession,
   });
 
@@ -1965,6 +2207,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const [threadVisibleCount, setThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const openedThreadRef = useRef<string | null>(null);
   const activeThreadRef = useRef<string | null>(null);
+  const recentResolveRef = useRef<string | null>(null);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
@@ -1976,28 +2219,30 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     : null;
   const persona = bro?.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
   const threads = bro?.source === "runtime" ? buildBroThreadRecords(bro.id, shell.broThreads) : [];
-  const selectedThread = !pendingNewThread
-    ? threads.find((thread) => thread.threadId === selectedThreadId) ?? threads[0] ?? null
-    : null;
-  const activeThreadId = pendingNewThread ? null : selectedThread?.threadId ?? null;
+  const matchedThread = threads.find((thread) => thread.threadId === selectedThreadId);
+  const isResolveLag =
+    !pendingNewThread
+    && selectedThreadId !== null
+    && !matchedThread
+    && recentResolveRef.current === selectedThreadId;
+  const selectedThread = pendingNewThread || isResolveLag
+    ? null
+    : matchedThread ?? threads[0] ?? null;
+  const activeThreadId = pendingNewThread
+    ? null
+    : isResolveLag
+      ? selectedThreadId
+      : selectedThread?.threadId ?? null;
   const visibleThreads = useMemo(
     () => threads.slice(0, threadVisibleCount),
     [threadVisibleCount, threads],
   );
-  const records = bro?.source === "runtime"
-    ? buildBroTaskRecords(bro.id, {
-        activeTaskId: persona?.current_task_id ?? null,
-        broDetailSessionId: persona?.bro_detail_session_id ?? null,
-        tasks: shell.tasks,
-        executionRuns: shell.executionRuns,
-        summaries: shell.taskSummaries,
-        taskIds: selectedThread?.taskIds ?? null,
-        limit: 20,
-      })
-    : [];
   const threadScrollVersion = [
     activeThreadId ?? "new",
-    records.map((record) => `${record.taskId}:${record.status}:${record.timestamp ?? ""}:${record.summary ?? ""}`).join("|"),
+    shell.broTimelineTurns
+      .filter((turn) => timelineTurnMatchesThread(turn, broId, activeThreadId))
+      .map((turn) => `${turn.turn_id}:${turn.status}:${turn.updated_at ?? ""}:${turn.assistant?.text ?? ""}`)
+      .join("|"),
     textTurns.filter((turn) => turn.broId === broId && turnMatchesThread(turn, activeThreadId)).map((turn) => `${turn.id}:${turn.status}`).join("|"),
     audioTurns.filter((turn) => turn.broId === broId && turnMatchesThread(turn, activeThreadId)).map((turn) => `${turn.id}:${turn.status}:${turn.transcript ?? ""}`).join("|"),
   ].join("::");
@@ -2005,10 +2250,17 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   useEffect(() => {
     if (pendingNewThread || threads.length === 0) return;
     const exists = selectedThreadId ? threads.some((thread) => thread.threadId === selectedThreadId) : false;
-    if (!exists) {
-      setSelectedThreadId(threads[0].threadId);
-      replaceThreadIdInUrl(threads[0].threadId);
+    if (exists) {
+      if (recentResolveRef.current === selectedThreadId) {
+        recentResolveRef.current = null;
+      }
+      return;
     }
+    if (recentResolveRef.current === selectedThreadId) {
+      return;
+    }
+    setSelectedThreadId(threads[0].threadId);
+    replaceThreadIdInUrl(threads[0].threadId);
   }, [pendingNewThread, selectedThreadId, threads]);
 
   useEffect(() => {
@@ -2040,14 +2292,16 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
 
   function resolveThread(threadId: string | null) {
     if (!threadId) return;
+    recentResolveRef.current = threadId;
     setPendingNewThread(false);
     setSelectedThreadId(threadId);
     replaceThreadIdInUrl(threadId);
-    openedThreadRef.current = null;
+    openedThreadRef.current = threadId;
   }
 
   useEffect(() => {
     if (pendingNewThread || needsConnect || !bro || bro.source !== "runtime" || !activeThreadId) return;
+    if (recentResolveRef.current === activeThreadId) return;
     if (openedThreadRef.current === activeThreadId) return;
     openedThreadRef.current = activeThreadId;
     void shell.openRuntimeBroThread(bro.id, activeThreadId);
@@ -2090,7 +2344,13 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const disabledReason = offline ? `${bro.executorType ?? offline.name} is not connected.` : null;
   const visibleTextTurns = textTurns.filter((turn) => turn.broId === bro.id && turnMatchesThread(turn, activeThreadId));
   const visibleAudioTurns = audioTurns.filter((turn) => turn.broId === bro.id && turnMatchesThread(turn, activeThreadId));
-  const visibleConversationMessages = shell.chatMessages.slice(-8);
+  const visibleTimelineTurns = shell.broTimelineTurns.filter(
+    (turn) => timelineTurnMatchesThread(turn, bro.id, activeThreadId),
+  );
+  const directThreadIntent = {
+    targetThreadId: activeThreadId,
+    createNewThread: activeThreadId === null,
+  };
   const upsertTextTurn = (turn: TextTurn) => {
     setTextTurns((current) => {
       const existing = current.findIndex((candidate) => candidate.id === turn.id);
@@ -2148,10 +2408,10 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
               >
                 <ThreadPanel
                   bro={bro}
-                  records={records}
                   textTurns={visibleTextTurns}
                   audioTurns={visibleAudioTurns}
-                  conversationMessages={visibleConversationMessages}
+                  timelineTurns={visibleTimelineTurns}
+                  selectedThread={selectedThread}
                   disabled={Boolean(offline)}
                   disabledReason={disabledReason}
                 />
@@ -2159,8 +2419,8 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
             </div>
             <DesktopComposerBar
               bro={bro}
-              selectedThreadId={activeThreadId}
-              createNewThread={pendingNewThread}
+              selectedThreadId={directThreadIntent.targetThreadId}
+              createNewThread={directThreadIntent.createNewThread}
               disabled={Boolean(offline)}
               onTextTurn={upsertTextTurn}
               onAudioTurn={upsertAudioTurn}
@@ -2610,44 +2870,60 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   const [drawerThreadVisibleCount, setDrawerThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const openedThreadRef = useRef<string | null>(null);
   const activeThreadRef = useRef<string | null>(null);
+  const recentResolveRef = useRef<string | null>(null);
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const offline = nodeState.kind === "usable_disconnected" ? nodeState.node : null;
   const needsConnect = bro.source === "runtime" && nodeStateNeedsConnect(nodeState) && nodeState.kind !== "no_bound_node";
   const persona = bro.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
   const threads = bro.source === "runtime" ? buildBroThreadRecords(bro.id, shell.broThreads) : [];
-  const selectedThread = !pendingNewThread
-    ? threads.find((thread) => thread.threadId === selectedThreadId) ?? threads[0] ?? null
-    : null;
-  const activeThreadId = pendingNewThread ? null : selectedThread?.threadId ?? null;
+  const matchedThread = threads.find((thread) => thread.threadId === selectedThreadId);
+  const isResolveLag =
+    !pendingNewThread
+    && selectedThreadId !== null
+    && !matchedThread
+    && recentResolveRef.current === selectedThreadId;
+  const selectedThread = pendingNewThread || isResolveLag
+    ? null
+    : matchedThread ?? threads[0] ?? null;
+  const activeThreadId = pendingNewThread
+    ? null
+    : isResolveLag
+      ? selectedThreadId
+      : selectedThread?.threadId ?? null;
   const visibleDrawerThreads = useMemo(
     () => threads.slice(0, drawerThreadVisibleCount),
     [drawerThreadVisibleCount, threads],
   );
   const hiddenDrawerThreadCount = Math.max(0, threads.length - visibleDrawerThreads.length);
-  const records = bro.source === "runtime"
-    ? buildBroTaskRecords(bro.id, {
-        activeTaskId: persona?.current_task_id ?? null,
-        broDetailSessionId: persona?.bro_detail_session_id ?? null,
-        tasks: shell.tasks,
-        executionRuns: shell.executionRuns,
-        summaries: shell.taskSummaries,
-        taskIds: selectedThread?.taskIds ?? null,
-        limit: 20,
-    })
-    : [];
+  const headerThreadTitle = pendingNewThread
+    ? "New thread"
+    : selectedThread?.title ?? (bro.status === "busy" ? bro.taskTitle : "New thread");
   const visibleTextTurns = textTurns.filter((turn) => turn.broId === bro.id && turnMatchesThread(turn, activeThreadId));
   const visibleAudioTurns = audioTurns.filter((turn) => turn.broId === bro.id && turnMatchesThread(turn, activeThreadId));
-  const visibleConversationMessages = shell.chatMessages.slice(-8);
+  const visibleTimelineTurns = shell.broTimelineTurns.filter(
+    (turn) => timelineTurnMatchesThread(turn, bro.id, activeThreadId),
+  );
+  const directThreadIntent = {
+    targetThreadId: activeThreadId,
+    createNewThread: activeThreadId === null,
+  };
   useEffect(() => {
     setAudioTurns((current) => applyAudioTranscripts(current, shell.executionRuns));
   }, [shell.executionRuns]);
   useEffect(() => {
     if (pendingNewThread || threads.length === 0) return;
     const exists = selectedThreadId ? threads.some((thread) => thread.threadId === selectedThreadId) : false;
-    if (!exists) {
-      setSelectedThreadId(threads[0].threadId);
-      replaceThreadIdInUrl(threads[0].threadId);
+    if (exists) {
+      if (recentResolveRef.current === selectedThreadId) {
+        recentResolveRef.current = null;
+      }
+      return;
     }
+    if (recentResolveRef.current === selectedThreadId) {
+      return;
+    }
+    setSelectedThreadId(threads[0].threadId);
+    replaceThreadIdInUrl(threads[0].threadId);
   }, [pendingNewThread, selectedThreadId, threads]);
   useEffect(() => {
     setDrawerThreadVisibleCount(THREAD_LIST_PAGE_SIZE);
@@ -2676,13 +2952,15 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   }
   function resolveThread(threadId: string | null) {
     if (!threadId) return;
+    recentResolveRef.current = threadId;
     setPendingNewThread(false);
     setSelectedThreadId(threadId);
     replaceThreadIdInUrl(threadId);
-    openedThreadRef.current = null;
+    openedThreadRef.current = threadId;
   }
   useEffect(() => {
     if (pendingNewThread || needsConnect || bro.source !== "runtime" || !activeThreadId) return;
+    if (recentResolveRef.current === activeThreadId) return;
     if (openedThreadRef.current === activeThreadId) return;
     openedThreadRef.current = activeThreadId;
     void shell.openRuntimeBroThread(bro.id, activeThreadId);
@@ -2750,7 +3028,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
               <div className="thr-bar-title-row">
                 <span className="thr-bar-name">{bro.name}</span>
                 <span className="thr-bar-sep">·</span>
-                <span className="thr-bar-thread-title">{bro.status === "busy" ? bro.taskTitle : (selectedThread?.title ?? "New thread")}</span>
+                <span className="thr-bar-thread-title">{headerThreadTitle}</span>
               </div>
               <div className={`thr-bar-state thr-bar-state-${offline ? "warn" : "live"}`}>
                 <span className="thr-bar-dot" />
@@ -2841,12 +3119,12 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
         {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} mobile /> : null}
         <MobileThreadSurface
           bro={bro}
-          records={records}
-          selectedThreadId={activeThreadId}
-          createNewThread={pendingNewThread}
+          selectedThreadId={directThreadIntent.targetThreadId}
+          selectedThread={selectedThread}
+          createNewThread={directThreadIntent.createNewThread}
           textTurns={visibleTextTurns}
           audioTurns={visibleAudioTurns}
-          conversationMessages={visibleConversationMessages}
+          timelineTurns={visibleTimelineTurns}
           onTextTurn={upsertTextTurn}
           onAudioTurn={upsertAudioTurn}
           onRemoveAudioTurn={removeAudioTurn}

@@ -51,7 +51,56 @@ class BroThread(BaseModel):
     latest_task_id: str | None = None
     has_resume_handle: bool = False
     updated_at: str | None = None
+    timeline_status: Literal["not_loaded", "loading", "loaded", "failed"] = "not_loaded"
+    timeline_error: str | None = None
     diagnostics: dict[str, object] = Field(default_factory=dict)
+
+
+class BroTimelineMessage(BaseModel):
+    message_id: str
+    role: Literal["user", "assistant"]
+    kind: Literal["text", "audio"] = "text"
+    text: str | None = None
+    transcript: str | None = None
+    audio_id: str | None = None
+    duration_ms: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    status: str = "completed"
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class BroTimelineTask(BaseModel):
+    task_id: str
+    run_id: str | None = None
+    title: str
+    status: str
+    status_label: str
+    progress: int = 0
+    description: str | None = None
+    summary: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class BroTimelineTurn(BaseModel):
+    turn_id: str
+    thread_id: str
+    persona_id: str
+    executor_id: str
+    owner: Literal["newbro", "executor"]
+    client_request_id: str | None = None
+    executor_thread_id: str | None = None
+    executor_turn_id: str | None = None
+    input_modality: Literal["text", "audio", "unknown"] = "unknown"
+    user: BroTimelineMessage | None = None
+    assistant: BroTimelineMessage | None = None
+    task: BroTimelineTask | None = None
+    status: Literal["pending", "running", "completed", "failed", "cancelled"] = "pending"
+    created_at: str | None = None
+    updated_at: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class SessionBinding(BaseModel):

@@ -41,8 +41,10 @@ Fields:
 
 Bro Detail composer push-to-talk audio is not an ASR or draft path. The browser
 records only while the mic control is actively pressed, converts the local
-recording to mono PCM, and uploads one raw audio instruction to the active
-Bro thread. The browser and gateway clients do not run STT.
+recording to mono PCM, and uploads one raw audio instruction with explicit
+thread intent. Existing-thread audio sends `target_thread_id`; first-send
+audio in a pending new thread sends `create_new_thread=true`. The browser and
+gateway clients do not run STT.
 
 The mic is enabled only when all of these facts are true:
 
@@ -55,15 +57,16 @@ The mic is enabled only when all of these facts are true:
 If any condition is false, recording is blocked before microphone capture starts.
 
 The upload endpoint accepts raw PCM only and validates owner auth, target Bro,
-connected Codex node, MIME type, duration, sample rate/channel metadata, and
-size. The current limits are 60 seconds and 25 MB. Accepted audio is encoded as
+connected Codex node, MIME type, duration, sample rate/channel metadata, size,
+and exactly one thread intent: `target_thread_id` or `create_new_thread=true`.
+The current limits are 60 seconds and 25 MB. Accepted audio is encoded as
 JSON-safe PCM content inside the typed executor-node command; the detached node
-does not read a backend-local audio path. If a matching active Codex run exists,
-Newbro dispatches it over the typed executor-node protocol as
-`dispatch_audio_instruction` with an `ExecutorAudioInstruction` payload. If no
-active run exists, Newbro sends `transcribe_audio_instruction`, receives a
-Whisper transcript from the executor node, and creates a queued direct Codex
-task from that transcript.
+does not read a backend-local audio path. If a matching active Codex run exists
+for the resolved thread, Newbro dispatches it over the typed executor-node
+protocol as `dispatch_audio_instruction` with an `ExecutorAudioInstruction`
+payload. If no active run exists for that resolved thread, Newbro sends
+`transcribe_audio_instruction`, receives a Whisper transcript from the executor
+node, and creates a queued direct Codex task from that transcript.
 
 Executor nodes advertise `supports_audio_instruction` only when they can accept
 raw audio and produce a usable executor instruction. In the default path, the
