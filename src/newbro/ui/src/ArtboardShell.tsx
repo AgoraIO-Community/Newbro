@@ -379,13 +379,57 @@ function TaskRecordCard({ bro, record, mobile = false }: { bro: BroCardModel; re
         ) : null}
         <div className={barClass}><i style={{ width: `${Math.max(8, Math.min(100, Math.round(record.progress)))}%` }} /></div>
         <div className={`${footClass} ${prefix}-task-body`}>
-          <MarkdownText>{bodyText}</MarkdownText>
+          {record.plan ? <TaskPlanView plan={record.plan} prefix={prefix} /> : null}
+          {bodyText ? (
+            <div className={`${prefix}-task-narration`}>
+              <MarkdownText>{bodyText}</MarkdownText>
+            </div>
+          ) : null}
         </div>
       </div>
       <div className={metaClass}>
         <MessageMeta label={record.statusLabel} />
       </div>
     </div>
+  );
+}
+
+function TaskPlanView({ plan, prefix }: { plan: NonNullable<BroTaskRecord["plan"]>; prefix: "dt" | "thr" }) {
+  const totalSteps = plan.steps.length;
+  const completedSteps = plan.steps.filter((step) => step.status === "completed").length;
+  const hasText = Boolean(plan.explanation || plan.text);
+  return (
+    <section className={`${prefix}-task-plan-card`}>
+      <div className={`${prefix}-task-chip ${prefix}-task-chip-plan`}>
+        <span className={`${prefix}-task-chip-label`}>Plan</span>
+        {totalSteps > 0 ? (
+          <span className={`${prefix}-task-chip-progress`}>{completedSteps} / {totalSteps}</span>
+        ) : null}
+      </div>
+      {plan.explanation ? (
+        <div className={`${prefix}-task-plan-explanation`}>
+          <MarkdownText>{plan.explanation}</MarkdownText>
+        </div>
+      ) : null}
+      {plan.steps.length > 0 ? (
+        <ol className={`${prefix}-task-plan`}>
+          {plan.steps.map((step, index) => (
+            <li key={`${step.status}-${index}`} className={`${prefix}-task-plan-item ${prefix}-task-plan-item-${step.status}`}>
+              <span className={`${prefix}-task-plan-status ${prefix}-task-plan-status-${step.status}`} aria-hidden="true" />
+              <span className={`${prefix}-task-plan-step`}>{step.step}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {plan.text && plan.text !== plan.explanation ? (
+        <div className={`${prefix}-task-plan-explanation`}>
+          <MarkdownText>{plan.text}</MarkdownText>
+        </div>
+      ) : null}
+      {!hasText && plan.steps.length === 0 ? (
+        <div className={`${prefix}-task-plan-empty`}>Plan pending.</div>
+      ) : null}
+    </section>
   );
 }
 
@@ -427,6 +471,36 @@ function timelineMetadataText(turn: BroTimelineTurn, key: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizePlanStatus(value: unknown): NonNullable<BroTaskRecord["plan"]>["steps"][number]["status"] {
+  if (typeof value === "string") {
+    const normalized = value.replace(/[_-]/g, "").toLowerCase();
+    if (normalized === "inprogress" || normalized === "running" || normalized === "active") return "inProgress";
+    if (normalized === "completed" || normalized === "complete" || normalized === "done") return "completed";
+  }
+  return "pending";
+}
+
+function timelinePlan(value: unknown): BroTaskRecord["plan"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const text = typeof raw.text === "string" && raw.text.trim() ? raw.text.trim() : null;
+  const explanation = typeof raw.explanation === "string" && raw.explanation.trim() ? raw.explanation.trim() : null;
+  const steps = Array.isArray(raw.steps)
+    ? raw.steps.flatMap((step) => {
+        if (typeof step === "string") {
+          const text = step.trim();
+          return text ? [{ step: text, status: "pending" as const }] : [];
+        }
+        if (!step || typeof step !== "object" || Array.isArray(step)) return [];
+        const item = step as Record<string, unknown>;
+        const label = typeof item.step === "string" ? item.step.trim() : "";
+        return label ? [{ step: label, status: normalizePlanStatus(item.status) }] : [];
+      })
+    : [];
+  if (!text && !explanation && steps.length === 0) return undefined;
+  return { text, explanation, steps };
+}
+
 function TimelineUserMessage({ bro, turn, mobile = false }: { bro: BroCardModel; turn: BroTimelineTurn; mobile?: boolean }) {
   const message = turn.user;
   if (!message) return null;
@@ -466,11 +540,15 @@ function TimelineUserMessage({ bro, turn, mobile = false }: { bro: BroCardModel;
 function timelineTaskRecord(turn: BroTimelineTurn): BroTaskRecord | null {
   const task = turn.task;
   const assistantText = timelineMessageText(turn.assistant);
+  const plan = task?.plan ?? timelinePlan(turn.metadata?.codex_plan);
+  const goal = task?.goal?.trim() || timelineMetadataText(turn, "codex_goal");
   const status = timelineTaskStatus(task?.status ?? turn.status);
-  if (!task && !assistantText) return null;
+  if (!task && !assistantText && !plan && !goal) return null;
   return {
     taskId: task?.task_id ?? turn.turn_id,
-    title: task?.title ?? (timelineMetadataText(turn, "assistant_title") || turnUserText(turn)),
+    title: task?.title ?? (timelineMetadataText(turn, "assistant_title") || goal || turnUserText(turn) || "Codex update"),
+    goal: goal || undefined,
+    plan,
     status,
     statusLabel: timelineStatusLabel(task?.status_label ?? turn.assistant?.status ?? turn.status),
     progress: task?.progress ?? (status === "completed" ? 100 : status === "running" ? 60 : 30),

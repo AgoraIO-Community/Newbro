@@ -90,6 +90,14 @@ class RunManager:
                     run.metadata["audio_transcripts"] = transcripts
             if task.status != TaskStatus.RUNNING:
                 task.status = TaskStatus.RUNNING
+        elif event.event_type == ExecutorEventType.PLAN:
+            if run.status != RunStatus.RUNNING:
+                run.status = RunStatus.RUNNING
+            if event.metadata:
+                run.metadata["latest_plan_event"] = dict(event.metadata)
+            if task.status != TaskStatus.RUNNING:
+                task.status = TaskStatus.RUNNING
+            should_append_detail = True
         elif event.event_type == ExecutorEventType.WAITING_EXECUTOR:
             run.status = RunStatus.WAITING_EXECUTOR
             if isinstance(event.message, str) and event.message.strip():
@@ -180,6 +188,8 @@ def _detail_text(task: Task, event: ExecutorEvent) -> str:
         return event.message.strip()
     if event.event_type == ExecutorEventType.PROGRESS:
         return f"Running: {task.title}"
+    if event.event_type == ExecutorEventType.PLAN:
+        return f"Plan updated: {task.title}"
     if event.event_type == ExecutorEventType.WAITING_EXECUTOR:
         return event.message.strip() if isinstance(event.message, str) and event.message.strip() else f"Waiting for executor: {task.title}"
     if event.event_type == ExecutorEventType.BLOCKED:

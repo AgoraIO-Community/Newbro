@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class ExecutorEventType(StrEnum):
     PROGRESS = "progress"
+    PLAN = "plan"
     WAITING_EXECUTOR = "waiting_executor"
     BLOCKED = "blocked"
     COMPLETED = "completed"

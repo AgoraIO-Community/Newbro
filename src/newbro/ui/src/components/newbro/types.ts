@@ -1,4 +1,4 @@
-import type { BroThread, ExecutorNodeRecord, Persona, TaskStatus } from "../../types";
+import type { BroThread, BroTimelinePlan, ExecutorNodeRecord, Persona, TaskStatus } from "../../types";
 
 export type NavItem = {
   label: string;
@@ -32,6 +32,8 @@ export type BroTaskRecord = {
   taskId: string;
   title: string;
   userText?: string;
+  goal?: string;
+  plan?: BroTimelinePlan;
   status: TaskStatus;
   statusLabel: string;
   progress: number;

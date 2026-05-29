@@ -240,6 +240,7 @@ class CodexExecutor:
             thread_id=thread_id,
             include_turns=False,
         )
+        goal_response = await session.client.thread_goal_get(thread_id=thread_id)
         turns_response = await session.client.thread_turns_list(
             thread_id=thread_id,
             limit=THREAD_READ_TURNS_PAGE_LIMIT,
@@ -255,6 +256,9 @@ class CodexExecutor:
         turns = [dict(item) for item in turns_data if isinstance(item, dict)]
         thread = dict(thread)
         thread["turns"] = list(reversed(turns))
+        goal = _extract_codex_goal(goal_response)
+        if goal is not None:
+            thread["goal"] = goal
         return thread
 
     async def subscribe_thread(
@@ -418,6 +422,7 @@ class CodexExecutor:
         assistant_item_phases: dict[str, str | None] = {}
         assistant_item_text: dict[str, str] = {}
         assistant_item_emitted_text: dict[str, str] = {}
+        plan_item_text: dict[str, str] = {}
         event_queue = self._register_turn_queue(turn_id)
         try:
             while True:
@@ -458,6 +463,48 @@ class CodexExecutor:
                 if method == "error":
                     continue
 
+                if method == "turn/plan/updated":
+                    plan = _extract_codex_structured_plan(params)
+                    if plan is not None:
+                        yield ExecutorEvent(
+                            run_id=run.run_id,
+                            session_id=session.session_id,
+                            event_type=ExecutorEventType.PLAN,
+                            message=_codex_plan_message(plan),
+                            metadata={
+                                **extra,
+                                "thread_id": session.thread_id or "",
+                                "source": "codex",
+                                "codex_plan": plan,
+                                "codex_plan_source": "turn/plan/updated",
+                            },
+                        )
+                    continue
+
+                if method == "item/plan/delta":
+                    item_id = params.get("itemId") or params.get("item_id")
+                    delta = params.get("delta")
+                    if not isinstance(item_id, str) or not item_id or not isinstance(delta, str) or not delta:
+                        continue
+                    text = f"{plan_item_text.get(item_id, '')}{delta}"
+                    plan_item_text[item_id] = text
+                    plan = _codex_plan_from_text(text)
+                    yield ExecutorEvent(
+                        run_id=run.run_id,
+                        session_id=session.session_id,
+                        event_type=ExecutorEventType.PLAN,
+                        message=_codex_plan_message(plan),
+                        metadata={
+                            **extra,
+                            "thread_id": session.thread_id or "",
+                            "source": "codex",
+                            "codex_item_id": item_id,
+                            "codex_plan": plan,
+                            "codex_plan_source": "item/plan/delta",
+                        },
+                    )
+                    continue
+
                 if method == "item/agentMessage/delta":
                     item_id = params.get("itemId")
                     delta = params.get("delta")
@@ -490,6 +537,25 @@ class CodexExecutor:
                     item = params.get("item")
                     if isinstance(item, dict):
                         item_type = item.get("type")
+                        if method == "item/completed" and item_type == "plan":
+                            plan = _extract_codex_plan_item(item)
+                            if plan is not None:
+                                item_id = item.get("id")
+                                yield ExecutorEvent(
+                                    run_id=run.run_id,
+                                    session_id=session.session_id,
+                                    event_type=ExecutorEventType.PLAN,
+                                    message=_codex_plan_message(plan),
+                                    metadata={
+                                        **extra,
+                                        "thread_id": session.thread_id or "",
+                                        "source": "codex",
+                                        "codex_item_id": item_id if isinstance(item_id, str) else "",
+                                        "codex_plan": plan,
+                                        "codex_plan_source": "item/completed",
+                                    },
+                                )
+                            continue
                         if item_type in {"assistantMessage", "agentMessage"}:
                             item_id = item.get("id")
                             phase = item.get("phase")
@@ -732,6 +798,126 @@ def _extract_item_text(item: dict[str, object]) -> str | None:
             if isinstance(text, str):
                 parts.append(text)
     return "".join(parts).strip() or None
+
+
+def _extract_codex_goal(response: dict[str, object]) -> str | None:
+    for key in ("goal", "text", "objective"):
+        value = response.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    goal = response.get("goal")
+    if isinstance(goal, dict):
+        for key in ("text", "objective", "goal"):
+            value = goal.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def _normalize_codex_plan_status(value: object) -> str:
+    if isinstance(value, str):
+        normalized = value.replace("_", "").replace("-", "").lower()
+        if normalized in {"inprogress", "running", "active"}:
+            return "inProgress"
+        if normalized in {"completed", "complete", "done"}:
+            return "completed"
+    return "pending"
+
+
+def _extract_codex_plan_step(value: object) -> dict[str, str] | None:
+    if isinstance(value, str):
+        step = value.strip()
+        return {"step": step, "status": "pending"} if step else None
+    if not isinstance(value, dict):
+        return None
+    text = None
+    for key in ("step", "text", "title", "description", "content"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            text = candidate.strip()
+            break
+    if text is None:
+        return None
+    return {
+        "step": text,
+        "status": _normalize_codex_plan_status(value.get("status")),
+    }
+
+
+def _extract_codex_plan_steps(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    steps: list[dict[str, str]] = []
+    for item in value:
+        step = _extract_codex_plan_step(item)
+        if step is not None:
+            steps.append(step)
+    return steps
+
+
+def _codex_plan_from_text(text: str | None) -> dict[str, object]:
+    return {"text": text.strip(), "steps": []} if isinstance(text, str) and text.strip() else {"steps": []}
+
+
+def _extract_codex_structured_plan(params: dict[str, object]) -> dict[str, object] | None:
+    source: dict[str, object] = params
+    raw_plan = params.get("plan")
+    if isinstance(raw_plan, dict):
+        source = raw_plan
+        raw_steps = raw_plan.get("plan") or raw_plan.get("steps") or raw_plan.get("items")
+    else:
+        raw_steps = raw_plan or params.get("steps") or params.get("items")
+    steps = _extract_codex_plan_steps(raw_steps)
+    explanation = None
+    for key in ("explanation", "summary"):
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            explanation = value.strip()
+            break
+    text = None
+    for key in ("text", "content"):
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            text = value.strip()
+            break
+    if not steps and explanation is None and text is None:
+        return None
+    plan: dict[str, object] = {"steps": steps}
+    if text is not None:
+        plan["text"] = text
+    if explanation is not None:
+        plan["explanation"] = explanation
+    return plan
+
+
+def _extract_codex_plan_item(item: dict[str, object]) -> dict[str, object] | None:
+    structured = _extract_codex_structured_plan(item)
+    text = _extract_item_text(item)
+    if structured is None:
+        return _codex_plan_from_text(text) if text else None
+    if text and not structured.get("text"):
+        structured = {**structured, "text": text}
+    return structured
+
+
+def _codex_plan_message(plan: dict[str, object]) -> str | None:
+    text = plan.get("text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    explanation = plan.get("explanation")
+    if isinstance(explanation, str) and explanation.strip():
+        return explanation.strip()
+    steps = plan.get("steps")
+    if isinstance(steps, list):
+        parts = []
+        for step in steps:
+            if isinstance(step, dict):
+                value = step.get("step")
+                if isinstance(value, str) and value.strip():
+                    parts.append(value.strip())
+        if parts:
+            return "\n".join(parts)
+    return None
 
 
 def _should_emit_codex_delta_progress(candidate: str, previous: str) -> bool:

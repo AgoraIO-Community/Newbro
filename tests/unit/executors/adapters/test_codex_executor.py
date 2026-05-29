@@ -464,6 +464,9 @@ def _write_thread_turns_list_fake_codex(tmp_path):
                     assert params.get("threadId") == "thread-open"
                     assert params.get("includeTurns") is False
                     send({{"id": request_id, "result": {{"thread": {{"id": "thread-open", "name": "Open thread"}}}}}})
+                elif method == "thread/goal/get":
+                    assert params.get("threadId") == "thread-open"
+                    send({{"id": request_id, "result": {{"goal": "Open thread goal"}}}})
                 elif method == "thread/turns/list":
                     assert params.get("threadId") == "thread-open"
                     assert params.get("limit") == 100
@@ -538,6 +541,52 @@ def _write_delta_fake_codex(tmp_path):
     return script
 
 
+def _write_plan_fake_codex(tmp_path):
+    script = tmp_path / "fake-codex-plan"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            #!{sys.executable}
+            import json
+            import sys
+
+            def send(payload):
+                sys.stdout.write(json.dumps(payload) + "\\n")
+                sys.stdout.flush()
+
+            for raw in sys.stdin:
+                if not raw.strip():
+                    continue
+                msg = json.loads(raw)
+                method = msg.get("method")
+                request_id = msg.get("id")
+                if method == "initialize":
+                    send({{"id": request_id, "result": {{"ok": True}}}})
+                elif method == "initialized":
+                    continue
+                elif method == "account/read":
+                    send({{"id": request_id, "result": {{"account": {{"type": "apiKey"}}, "requiresOpenaiAuth": True}}}})
+                elif method == "thread/start":
+                    send({{"id": request_id, "result": {{"thread": {{"id": "thread-1"}}}}}})
+                elif method == "turn/start":
+                    send({{"id": request_id, "result": {{"turn": {{"id": "turn-1", "status": "inProgress"}}}}}})
+                    send({{"method": "turn/plan/updated", "params": {{"turnId": "turn-1", "threadId": "thread-1", "explanation": "Implementation plan", "plan": [{{"step": "Read files", "status": "completed"}}, {{"step": "Patch projection", "status": "inProgress"}}]}}}})
+                    send({{"method": "item/plan/delta", "params": {{"turnId": "turn-1", "threadId": "thread-1", "itemId": "plan-1", "delta": "Draft plan"}}}})
+                    send({{"method": "item/completed", "params": {{"turnId": "turn-1", "item": {{"type": "reasoning", "text": "Hidden reasoning must stay hidden."}}}}}})
+                    send({{"method": "item/completed", "params": {{"turnId": "turn-1", "item": {{"type": "plan", "id": "plan-1", "text": "Final plan text."}}}}}})
+                    send({{"method": "item/completed", "params": {{"turnId": "turn-1", "item": {{"type": "agentMessage", "id": "final-1", "text": "Done.", "phase": "final_answer"}}}}}})
+                    send({{"method": "turn/completed", "params": {{"turn": {{"id": "turn-1", "status": "completed", "error": None}}}}}})
+                elif method == "thread/read":
+                    send({{"id": request_id, "result": {{"thread": {{"id": "thread-1", "turns": [{{"id": "turn-1", "items": [{{"type": "agentMessage", "text": "Done.", "phase": "final_answer"}}]}}]}}}}}})
+                else:
+                    send({{"id": request_id, "error": {{"message": "unknown"}}}})
+            """
+        )
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 def _write_counting_fake_codex(tmp_path):
     script = tmp_path / "fake-codex-counting"
     launches = tmp_path / "launches.txt"
@@ -576,6 +625,8 @@ def _write_counting_fake_codex(tmp_path):
                     send({{"id": request_id, "result": {{"data": [], "nextCursor": None}}}})
                 elif method == "thread/read":
                     send({{"id": request_id, "result": {{"thread": {{"id": params.get("threadId"), "name": "Shared"}}}}}})
+                elif method == "thread/goal/get":
+                    send({{"id": request_id, "result": {{"goal": "Shared thread goal"}}}})
                 elif method == "thread/turns/list":
                     send({{"id": request_id, "result": {{"data": []}}}})
                 elif method == "thread/resume":
@@ -864,6 +915,7 @@ async def test_codex_executor_reads_thread_history_with_bounded_turns_list(tmp_p
 
     assert thread["id"] == "thread-open"
     assert thread["name"] == "Open thread"
+    assert thread["goal"] == "Open thread goal"
     assert [turn["id"] for turn in thread["turns"]] == ["turn-old", "turn-new"]
 
 
@@ -961,6 +1013,42 @@ async def test_codex_executor_streams_commentary_delta_as_progress(tmp_path):
     assert events[0].metadata["phase"] == "commentary"
     assert events[1].message == "Found UI package.json and checking scripts."
     assert events[2].message == "Final answer should not become progress."
+    await session.close()
+
+
+@pytest.mark.anyio
+async def test_codex_executor_projects_documented_plan_events_without_reasoning(tmp_path):
+    command = _write_plan_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+    session = await executor.create_session(str(tmp_path))
+    task = Task(
+        task_id="task-plan",
+        root_task_id="task-plan",
+        title="Plan task",
+        goal="Display Codex plan",
+    )
+    run = ExecutionRun(
+        run_id="run-plan",
+        task_id="task-plan",
+        execution_session_id="exec-plan",
+        executor_type="codex",
+    )
+
+    events = [event async for event in executor.run_task(run, task, session)]
+
+    assert [event.event_type.value for event in events] == ["plan", "plan", "plan", "completed"]
+    assert events[0].metadata["codex_plan_source"] == "turn/plan/updated"
+    assert events[0].metadata["codex_plan"] == {
+        "explanation": "Implementation plan",
+        "steps": [
+            {"step": "Read files", "status": "completed"},
+            {"step": "Patch projection", "status": "inProgress"},
+        ],
+    }
+    assert events[1].metadata["codex_plan"] == {"text": "Draft plan", "steps": []}
+    assert events[2].metadata["codex_plan_source"] == "item/completed"
+    assert events[2].metadata["codex_plan"] == {"text": "Final plan text.", "steps": []}
+    assert all(event.message != "Hidden reasoning must stay hidden." for event in events)
     await session.close()
 
 

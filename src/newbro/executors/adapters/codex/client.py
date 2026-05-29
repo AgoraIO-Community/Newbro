@@ -96,6 +96,13 @@ class CodexAppServerClient:
         )
         return _as_dict(result)
 
+    async def thread_goal_get(self, *, thread_id: str) -> dict[str, object]:
+        result = await self._peer.request(
+            "thread/goal/get",
+            {"threadId": thread_id},
+        )
+        return _as_dict(result)
+
     async def thread_turns_list(
         self,
         *,

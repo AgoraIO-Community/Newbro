@@ -51,6 +51,7 @@ class RunEventMessage(BaseModel):
     session_id: str
     event_type: Literal[
         "progress",
+        "plan",
         "waiting_executor",
         "blocked",
         "completed",

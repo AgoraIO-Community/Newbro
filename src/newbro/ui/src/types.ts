@@ -164,6 +164,17 @@ export interface BroTimelineMessage {
   metadata: Record<string, unknown>;
 }
 
+export interface BroTimelinePlanStep {
+  step: string;
+  status: "pending" | "inProgress" | "completed";
+}
+
+export interface BroTimelinePlan {
+  text: string | null;
+  explanation: string | null;
+  steps: BroTimelinePlanStep[];
+}
+
 export interface BroTimelineTask {
   task_id: string;
   run_id: string | null;
@@ -171,6 +182,8 @@ export interface BroTimelineTask {
   status: string;
   status_label: string;
   progress: number;
+  goal: string | null;
+  plan: BroTimelinePlan | null;
   description: string | null;
   summary: string | null;
   created_at: string | null;

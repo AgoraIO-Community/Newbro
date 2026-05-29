@@ -51,6 +51,7 @@ from newbro.protocol import (
     AttentionItemKind,
     BroThread,
     BroTimelineMessage,
+    BroTimelinePlan,
     BroTimelineTask,
     BroTimelineTurn,
     CodexThreadEventMessage,
@@ -331,6 +332,111 @@ def _codex_item_role(item: dict[str, object]) -> Literal["user", "assistant"] | 
     return None
 
 
+def _normalize_codex_plan_status(value: object) -> Literal["pending", "inProgress", "completed"]:
+    if isinstance(value, str):
+        normalized = value.replace("_", "").replace("-", "").lower()
+        if normalized in {"inprogress", "running", "active"}:
+            return "inProgress"
+        if normalized in {"completed", "complete", "done"}:
+            return "completed"
+    return "pending"
+
+
+def _extract_codex_plan_step(value: object) -> dict[str, str] | None:
+    if isinstance(value, str):
+        text = value.strip()
+        return {"step": text, "status": "pending"} if text else None
+    if not isinstance(value, dict):
+        return None
+    text = None
+    for key in ("step", "text", "title", "description", "content"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            text = candidate.strip()
+            break
+    if text is None:
+        return None
+    return {"step": text, "status": _normalize_codex_plan_status(value.get("status"))}
+
+
+def _extract_codex_plan_steps(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    steps: list[dict[str, str]] = []
+    for item in value:
+        step = _extract_codex_plan_step(item)
+        if step is not None:
+            steps.append(step)
+    return steps
+
+
+def _extract_codex_plan(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    source = value
+    raw_plan = value.get("plan")
+    if isinstance(raw_plan, dict):
+        source = raw_plan
+        raw_steps = raw_plan.get("plan") or raw_plan.get("steps") or raw_plan.get("items")
+    else:
+        raw_steps = raw_plan or value.get("steps") or value.get("items")
+    steps = _extract_codex_plan_steps(raw_steps)
+    text = None
+    for key in ("text", "content"):
+        candidate = source.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            text = candidate.strip()
+            break
+    explanation = None
+    for key in ("explanation", "summary"):
+        candidate = source.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            explanation = candidate.strip()
+            break
+    if not text:
+        text = _extract_codex_item_text(value)
+    if not steps and not text and not explanation:
+        return None
+    plan: dict[str, object] = {"steps": steps}
+    if text:
+        plan["text"] = text
+    if explanation:
+        plan["explanation"] = explanation
+    return plan
+
+
+def _timeline_plan(value: object) -> BroTimelinePlan | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        plan = BroTimelinePlan.model_validate(value)
+    except Exception:
+        return None
+    if plan.text or plan.explanation or plan.steps:
+        return plan
+    return None
+
+
+def _run_timeline_plan(run: ExecutionRun | None) -> BroTimelinePlan | None:
+    event = _run_metadata_dict(run, "latest_plan_event")
+    plan_value = event.get("codex_plan")
+    return _timeline_plan(plan_value)
+
+
+def _codex_thread_goal(thread: dict[str, object]) -> str | None:
+    for key in ("goal", "objective"):
+        value = thread.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    goal = thread.get("goal")
+    if isinstance(goal, dict):
+        for key in ("text", "objective", "goal"):
+            value = goal.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
 def _timeline_status(task: Task | None, run: ExecutionRun | None, fallback: str = "pending") -> str:
     status = _thread_status(task, run)
     if status == "blocked":
@@ -409,6 +515,7 @@ def _timeline_turns_from_codex_thread(
     pending_user_message: BroTimelineMessage | None = None
     pending_user_turn_id: str | None = None
     pending_user_timestamp: str | None = None
+    thread_goal = _codex_thread_goal(thread)
 
     def append_user_only_turn() -> None:
         nonlocal pending_user_message, pending_user_turn_id, pending_user_timestamp
@@ -433,6 +540,7 @@ def _timeline_turns_from_codex_thread(
                     "executor_thread_id": executor_thread_id,
                     "executor_turn_id": pending_user_turn_id,
                     "assistant_title": pending_user_message.text,
+                    "codex_goal": thread_goal,
                 },
             )
         )
@@ -451,8 +559,12 @@ def _timeline_turns_from_codex_thread(
             continue
         latest_user_message: BroTimelineMessage | None = None
         latest_assistant_message: BroTimelineMessage | None = None
+        latest_plan: dict[str, object] | None = None
         for item_index, item in enumerate(items):
             if not isinstance(item, dict):
+                continue
+            if item.get("type") == "plan":
+                latest_plan = _extract_codex_plan(item)
                 continue
             role = _codex_item_role(item)
             if role is None:
@@ -480,7 +592,7 @@ def _timeline_turns_from_codex_thread(
                 latest_assistant_message = message
             else:
                 latest_user_message = message
-        if latest_user_message is None and latest_assistant_message is None:
+        if latest_user_message is None and latest_assistant_message is None and latest_plan is None:
             continue
         status_text = str(turn.get("status") or "").lower()
         turn_status: Literal["pending", "running", "completed", "failed", "cancelled"] = "completed"
@@ -527,6 +639,8 @@ def _timeline_turns_from_codex_thread(
                     "executor_turn_id": turn_id_text,
                     "assistant_title": paired_user_message.text if paired_user_message is not None else None,
                     "original_user_executor_turn_id": original_user_turn_id,
+                    "codex_goal": thread_goal,
+                    "codex_plan": latest_plan,
                 },
             )
         )
@@ -873,6 +987,7 @@ def _build_newbro_timeline_turns(
                 metadata={"source_kind": task.metadata.get("source_kind")},
             )
         summary_text = _summary_text_for_timeline(task=task, run=run, summary=summary_by_task_id.get(task.task_id))
+        plan = _run_timeline_plan(run)
         assistant_text = None
         if run is not None:
             assistant_text = run.output_summary or run.failure_reason or run.block_reason or run.latest_progress_message
@@ -915,6 +1030,8 @@ def _build_newbro_timeline_turns(
                     status=task_status,
                     status_label=_task_status_label(task_status),
                     progress=_timeline_task_progress(status),
+                    goal=task.goal.strip() or None,
+                    plan=plan,
                     description=summary_text,
                     summary=summary_text,
                     created_at=created_at,
@@ -947,9 +1064,22 @@ def _merge_timeline_turn(existing: BroTimelineTurn, incoming: BroTimelineTurn) -
     user = existing.user or incoming.user
     assistant = incoming.assistant or existing.assistant
     task = existing.task or incoming.task
+    if existing.task is not None and incoming.task is not None:
+        task = existing.task.model_copy(
+            update={
+                "goal": existing.task.goal or incoming.task.goal,
+                "plan": incoming.task.plan or existing.task.plan,
+                "summary": incoming.task.summary or existing.task.summary,
+                "description": incoming.task.description or existing.task.description,
+            }
+        )
     status = existing.status
     if existing.status in {"pending", "running"} and incoming.status in {"completed", "failed", "cancelled", "running"}:
         status = incoming.status
+    metadata = {**existing.metadata}
+    for key, value in incoming.metadata.items():
+        if value is not None or key not in metadata:
+            metadata[key] = value
     return existing.model_copy(
         update={
             "user": user,
@@ -961,7 +1091,7 @@ def _merge_timeline_turn(existing: BroTimelineTurn, incoming: BroTimelineTurn) -
             "executor_turn_id": existing.executor_turn_id or incoming.executor_turn_id,
             "input_modality": existing.input_modality if existing.input_modality != "unknown" else incoming.input_modality,
             "updated_at": incoming.updated_at or existing.updated_at,
-            "metadata": {**incoming.metadata, **existing.metadata},
+            "metadata": metadata,
         }
     )
 
@@ -1181,6 +1311,8 @@ class SessionRuntime:
     _bro_thread_timeline_status: dict[str, Literal["not_loaded", "loading", "loaded", "failed"]] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_timeline_errors: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_live_message_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
+    _bro_thread_live_plan_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
+    _bro_thread_goals: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def _record_direct_executor_text_metric(
         self,
@@ -1569,6 +1701,9 @@ class SessionRuntime:
                 message,
             )
             return
+        thread_goal = _codex_thread_goal(thread)
+        if thread_goal:
+            self._bro_thread_goals[public_thread_id] = thread_goal
         for turn in _timeline_turns_from_codex_thread(
             thread=thread,
             public_thread_id=public_thread_id,
@@ -1758,12 +1893,21 @@ class SessionRuntime:
         if message.method not in {
             "turn/completed",
             "item/agentMessage/delta",
+            "item/plan/delta",
             "item/completed",
+            "thread/goal/updated",
+            "thread/goal/cleared",
             "thread/status/changed",
             "thread/closed",
         }:
             return
-        if message.method in {"item/agentMessage/delta", "item/completed"}:
+        if message.method in {
+            "item/agentMessage/delta",
+            "item/plan/delta",
+            "item/completed",
+            "thread/goal/updated",
+            "thread/goal/cleared",
+        }:
             if await self._apply_codex_thread_timeline_event(message, current):
                 await self.publish_snapshot(sync_imported_codex_threads=False)
         if message.method == "thread/closed":
@@ -1834,6 +1978,28 @@ class SessionRuntime:
         subscription: SelectedCodexThreadSubscription,
     ) -> bool:
         params = message.params
+        if message.method in {"thread/goal/updated", "thread/goal/cleared"}:
+            if message.method == "thread/goal/cleared":
+                self._bro_thread_goals.pop(subscription.public_thread_id, None)
+            else:
+                goal = _codex_thread_goal(params)
+                if not goal:
+                    goal_value = params.get("goal") or params.get("text") or params.get("objective")
+                    goal = goal_value.strip() if isinstance(goal_value, str) and goal_value.strip() else None
+                if goal:
+                    self._bro_thread_goals[subscription.public_thread_id] = goal
+            existing_turns = self._bro_thread_executor_turns.get(subscription.public_thread_id, [])
+            updated: list[BroTimelineTurn] = []
+            for turn in existing_turns:
+                metadata = dict(turn.metadata)
+                if message.method == "thread/goal/cleared":
+                    metadata.pop("codex_goal", None)
+                else:
+                    metadata["codex_goal"] = self._bro_thread_goals.get(subscription.public_thread_id)
+                updated.append(turn.model_copy(update={"metadata": metadata}))
+            if updated:
+                self._bro_thread_executor_turns[subscription.public_thread_id] = updated
+            return bool(updated)
         turn_id = params.get("turnId") or params.get("turn_id")
         if not isinstance(turn_id, str) or not turn_id:
             return False
@@ -1843,8 +2009,38 @@ class SessionRuntime:
             executor_thread_id=subscription.codex_thread_id,
             executor_turn_id=turn_id,
         )
+        codex_goal = self._bro_thread_goals.get(subscription.public_thread_id)
         item = params.get("item")
         if isinstance(item, dict):
+            if item.get("type") == "plan":
+                plan = _extract_codex_plan(item)
+                if plan is None:
+                    return False
+                self._upsert_bro_thread_executor_turn(
+                    BroTimelineTurn(
+                        turn_id=f"{subscription.public_thread_id}:codex:{turn_id}",
+                        thread_id=subscription.public_thread_id,
+                        persona_id=subscription.persona_id,
+                        executor_id="codex",
+                        owner="executor",
+                        client_request_id=client_request_id,
+                        executor_thread_id=subscription.codex_thread_id,
+                        executor_turn_id=turn_id,
+                        input_modality="unknown",
+                        status="running" if message.method == "item/started" else "completed",
+                        created_at=timestamp,
+                        updated_at=timestamp,
+                        metadata={
+                            "source": "selected_thread_event",
+                            "executor_thread_id": subscription.codex_thread_id,
+                            "executor_turn_id": turn_id,
+                            "client_request_id": client_request_id,
+                            "codex_goal": codex_goal,
+                            "codex_plan": plan,
+                        },
+                    )
+                )
+                return True
             role = _codex_item_role(item)
             text = _extract_codex_item_text(item)
             if role is None or not text:
@@ -1887,6 +2083,40 @@ class SessionRuntime:
                         "executor_thread_id": subscription.codex_thread_id,
                         "executor_turn_id": turn_id,
                         "client_request_id": client_request_id,
+                        "codex_goal": codex_goal,
+                    },
+                )
+            )
+            return True
+        if message.method == "item/plan/delta":
+            item_id = params.get("itemId") or params.get("item_id")
+            delta = params.get("delta")
+            if not isinstance(item_id, str) or not item_id or not isinstance(delta, str) or not delta:
+                return False
+            key = (subscription.public_thread_id, turn_id, item_id)
+            text = f"{self._bro_thread_live_plan_deltas.get(key, '')}{delta}"
+            self._bro_thread_live_plan_deltas[key] = text
+            self._upsert_bro_thread_executor_turn(
+                BroTimelineTurn(
+                    turn_id=f"{subscription.public_thread_id}:codex:{turn_id}",
+                    thread_id=subscription.public_thread_id,
+                    persona_id=subscription.persona_id,
+                    executor_id="codex",
+                    owner="executor",
+                    client_request_id=client_request_id,
+                    executor_thread_id=subscription.codex_thread_id,
+                    executor_turn_id=turn_id,
+                    input_modality="unknown",
+                    status="running",
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    metadata={
+                        "source": "selected_thread_event",
+                        "executor_thread_id": subscription.codex_thread_id,
+                        "executor_turn_id": turn_id,
+                        "client_request_id": client_request_id,
+                        "codex_goal": codex_goal,
+                        "codex_plan": {"text": text, "steps": []},
                     },
                 )
             )
@@ -1933,6 +2163,7 @@ class SessionRuntime:
                     "executor_thread_id": subscription.codex_thread_id,
                     "executor_turn_id": turn_id,
                     "client_request_id": client_request_id,
+                    "codex_goal": codex_goal,
                 },
             )
         )

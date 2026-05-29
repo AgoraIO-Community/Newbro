@@ -127,6 +127,10 @@ Current behavior:
   bottom when opening a thread or receiving new selected-thread content. Task
   output cards render the original markdown-like assistant/task summary
   structure instead of the flattened one-line preview used for compact records.
+  Task output cards also render explicit `Goal` and `Plan` sections when the
+  backend projection provides them. Plans come from documented Codex plan
+  events/items or Newbro run metadata, not from Codex reasoning or inferred
+  commentary.
   Desktop and mobile thread pickers render long thread lists in pages of 25 and
   expose an inline show-more control while auto-expanding enough to keep a
   URL-selected thread visible.

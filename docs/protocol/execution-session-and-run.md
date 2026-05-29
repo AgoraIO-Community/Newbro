@@ -37,7 +37,9 @@ Responsibilities:
 - `BroTimelineTask`
   - task/run state attached to a Newbro-owned timeline turn. Native executor
     history does not create this object unless Newbro actually created the
-    task/run.
+    task/run. It may expose `goal` and `plan`; `goal` is the Newbro task goal
+    for Newbro-owned turns, and `plan` is normalized executor-visible plan
+    state.
 - `QueuedRunRequest`
   - one queued follow-up request for an active lineage
 - `ExecutionSession`
@@ -65,6 +67,11 @@ Core rule:
 - `ExecutionRun.latest_progress_message` is the normalized current
   user-facing progress text; adapters may derive it from executor-native
   streams such as ACPX output chunks or Codex commentary deltas
+- executor-native plan state is separate from progress. Adapters emit
+  `ExecutorEventType.PLAN` for documented planning surfaces, and
+  `RunManager` stores the latest event under
+  `ExecutionRun.metadata.latest_plan_event` without overwriting
+  `latest_progress_message`.
 
 Detached-executor additions:
 
@@ -141,7 +148,13 @@ Bro detail continuity:
   one logical exchange as separate native records. For each native response
   turn, Newbro exposes only the latest assistant/agent message; later
   assistant/agent items or deltas for that same executor turn replace the
-  displayed assistant side instead of adding another timeline entry.
+  displayed assistant side instead of adding another timeline entry. Codex
+  goals and plans are projected only from the documented app-server goal/plan
+  contract: `thread/goal/get` and `thread/goal/*` events for goals,
+  `turn/plan/updated` for structured live plans, `item/plan/delta` for
+  streaming plan text, and final `plan` items from `item/completed` as the
+  authoritative item text. Codex `reasoning` items and reasoning deltas remain
+  internal and must not become goal, plan, or progress text.
   Leaving or replacing the selected thread must call the node's selected-thread
   close path, which in turn calls Codex `thread/unsubscribe`; stale events from
   older subscription ids are ignored. Clients must render Bro Detail from the

@@ -1,4 +1,4 @@
-import type { BroThread, ExecutionRun, Task, TaskStatus, TaskSummary } from "../../types";
+import type { BroThread, BroTimelinePlan, ExecutionRun, Task, TaskStatus, TaskSummary } from "../../types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord, RuntimeExecutorNodeInput, RuntimePersonaInput } from "./types";
 
 const avatarCycle = ["avatar_1", "avatar_2", "avatar_3", "avatar_4"] as const;
@@ -164,6 +164,42 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function normalizePlanStatus(value: unknown): BroTimelinePlan["steps"][number]["status"] {
+  if (typeof value === "string") {
+    const normalized = value.replace(/[_-]/g, "").toLowerCase();
+    if (normalized === "inprogress" || normalized === "running" || normalized === "active") return "inProgress";
+    if (normalized === "completed" || normalized === "complete" || normalized === "done") return "completed";
+  }
+  return "pending";
+}
+
+function planFromUnknown(value: unknown): BroTimelinePlan | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const text = typeof raw.text === "string" && raw.text.trim() ? raw.text.trim() : null;
+  const explanation = typeof raw.explanation === "string" && raw.explanation.trim() ? raw.explanation.trim() : null;
+  const steps = Array.isArray(raw.steps)
+    ? raw.steps.flatMap((step) => {
+        if (typeof step === "string") {
+          const text = step.trim();
+          return text ? [{ step: text, status: "pending" as const }] : [];
+        }
+        if (!step || typeof step !== "object" || Array.isArray(step)) return [];
+        const item = step as Record<string, unknown>;
+        const label = typeof item.step === "string" ? item.step.trim() : "";
+        return label ? [{ step: label, status: normalizePlanStatus(item.status) }] : [];
+      })
+    : [];
+  if (!text && !explanation && steps.length === 0) return undefined;
+  return { text, explanation, steps };
+}
+
+function runPlan(run: ExecutionRun | undefined): BroTimelinePlan | undefined {
+  const event = run?.metadata?.latest_plan_event;
+  if (!event || typeof event !== "object" || Array.isArray(event)) return undefined;
+  return planFromUnknown((event as Record<string, unknown>).codex_plan);
+}
+
 function formatRelativeTime(value: string): string | undefined {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) return undefined;
@@ -249,6 +285,8 @@ function buildTaskRecord(
     taskId: task.task_id,
     title: task.title,
     userText: userText || undefined,
+    goal: task.goal.trim() || undefined,
+    plan: runPlan(run),
     status,
     statusLabel: taskStatusLabel(status),
     progress: taskStatusProgress(status),

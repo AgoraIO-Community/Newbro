@@ -1855,6 +1855,71 @@ describe("buildBroTaskRecords", () => {
     });
   });
 
+  it("projects task goals and Codex plans separately from progress", () => {
+    const records = buildBroTaskRecords("forge", {
+      broDetailSessionId: "detail-forge",
+      tasks: [
+        {
+          task_id: "task-plan",
+          root_task_id: "task-plan",
+          parent_task_id: null,
+          title: "Plan task",
+          goal: "Display Codex plan",
+          status: "running",
+          priority: 0,
+          interruptible: true,
+          requires_confirmation: false,
+          preferred_executor: "codex",
+          session_affinity: null,
+          task_revision: 1,
+          latest_instruction: null,
+          metadata: { persona_id: "forge", bro_detail_session_id: "detail-forge" },
+        },
+      ],
+      executionRuns: [
+        {
+          run_id: "run-plan",
+          task_id: "task-plan",
+          execution_session_id: "exec-plan",
+          executor_type: "codex",
+          status: "running",
+          claimed_by: null,
+          run_revision: 1,
+          latest_progress_message: "Checking files.",
+          output_summary: null,
+          block_reason: null,
+          failure_reason: null,
+          metadata: {
+            latest_plan_event: {
+              source: "codex",
+              codex_plan: {
+                explanation: "Implementation plan",
+                steps: [
+                  { step: "Read files", status: "completed" },
+                  { step: "Patch projection", status: "inProgress" },
+                ],
+              },
+            },
+          },
+        },
+      ],
+      summaries: [],
+    });
+
+    expect(records[0]).toMatchObject({
+      taskId: "task-plan",
+      goal: "Display Codex plan",
+      description: "Checking files.",
+      plan: {
+        explanation: "Implementation plan",
+        steps: [
+          { step: "Read files", status: "completed" },
+          { step: "Patch projection", status: "inProgress" },
+        ],
+      },
+    });
+  });
+
   it("does not render assistant-only imported Codex history as a synced user message", () => {
     const records = buildBroTaskRecords("forge", {
       broDetailSessionId: "detail-forge",

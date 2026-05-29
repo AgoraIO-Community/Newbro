@@ -248,6 +248,82 @@ async def test_selected_codex_thread_delta_events_replace_previous_turn_item():
 
 
 @pytest.mark.anyio
+async def test_selected_codex_thread_projects_plan_and_goal_without_reasoning():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="thread/goal/updated",
+            params={"threadId": "codex-thread-1", "goal": "Ship plan projection"},
+        )
+    )
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={
+                "turnId": "turn-1",
+                "item": {
+                    "type": "reasoning",
+                    "text": "Do not show this.",
+                },
+            },
+        )
+    )
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={
+                "turnId": "turn-1",
+                "item": {
+                    "type": "plan",
+                    "id": "plan-1",
+                    "text": "Use documented plan events.",
+                },
+            },
+        )
+    )
+
+    turns = session._bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].metadata["codex_goal"] == "Ship plan projection"
+    assert turns[0].metadata["codex_plan"] == {"text": "Use documented plan events.", "steps": []}
+    assert turns[0].assistant is None
+
+
+@pytest.mark.anyio
 async def test_selected_codex_thread_events_merge_with_newbro_owned_task_timeline():
     session = create_session_runtime(
         "session-1",

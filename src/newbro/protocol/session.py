@@ -70,6 +70,17 @@ class BroTimelineMessage(BaseModel):
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
+class BroTimelinePlanStep(BaseModel):
+    step: str
+    status: Literal["pending", "inProgress", "completed"] = "pending"
+
+
+class BroTimelinePlan(BaseModel):
+    text: str | None = None
+    explanation: str | None = None
+    steps: list[BroTimelinePlanStep] = Field(default_factory=list)
+
+
 class BroTimelineTask(BaseModel):
     task_id: str
     run_id: str | None = None
@@ -77,6 +88,8 @@ class BroTimelineTask(BaseModel):
     status: str
     status_label: str
     progress: int = 0
+    goal: str | None = None
+    plan: BroTimelinePlan | None = None
     description: str | None = None
     summary: str | None = None
     created_at: str | None = None

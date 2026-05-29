@@ -258,6 +258,12 @@ function TaskHistoryCard({ record }: { record: BroTaskRecord }) {
           <span className="nb-task-title">{record.title}</span>
           <span className={`nb-task-badge nb-task-badge-${tone}`}>{record.statusLabel}</span>
         </div>
+        {record.goal ? <p className="nb-task-desc">Goal: {record.goal}</p> : null}
+        {record.plan?.steps.length ? (
+          <p className="nb-task-desc">Plan: {record.plan.steps.map((step) => step.step).join(" / ")}</p>
+        ) : record.plan?.text ? (
+          <p className="nb-task-desc">Plan: {record.plan.text}</p>
+        ) : null}
         <p className="nb-task-desc">{record.description}</p>
         {record.timeLabel ? (
           <span className="nb-task-time">

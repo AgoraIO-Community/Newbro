@@ -13,6 +13,7 @@ from newbro.protocol import ExecutionRun, RunStatus, Task, TaskStatus
     ("event_type", "message", "expected_run_status", "expected_task_status"),
     [
         (ExecutorEventType.PROGRESS, "Working through step 1.", RunStatus.RUNNING, TaskStatus.RUNNING),
+        (ExecutorEventType.PLAN, "Plan updated.", RunStatus.RUNNING, TaskStatus.RUNNING),
         (
             ExecutorEventType.BLOCKED,
             "Need user confirmation.",
@@ -109,6 +110,48 @@ async def test_run_manager_skips_duplicate_progress_detail_and_task_refresh():
 
     assert detail_entries == []
     assert len(writes_after) == writes_before
+
+
+@pytest.mark.anyio
+async def test_run_manager_stores_plan_event_separately_from_progress():
+    store = InMemoryBlackboard()
+    manager = RunManager()
+    task = Task(task_id="task-1", root_task_id="task-1", title="Draft email", goal="Draft email")
+    run = ExecutionRun(
+        run_id="run-1",
+        task_id="task-1",
+        execution_session_id="session-1",
+        executor_type="codex",
+        latest_progress_message="Reading files.",
+    )
+
+    await manager.apply_event(
+        store,
+        task,
+        run,
+        ExecutorEvent(
+            run_id="run-1",
+            session_id="executor-session-1",
+            event_type=ExecutorEventType.PLAN,
+            message="Plan updated.",
+            metadata={
+                "source": "codex",
+                "codex_plan": {
+                    "steps": [{"step": "Patch files", "status": "inProgress"}],
+                },
+            },
+        ),
+    )
+
+    saved_run = await store.get_run("run-1")
+    assert saved_run is not None
+    assert saved_run.latest_progress_message == "Reading files."
+    assert saved_run.metadata["latest_plan_event"] == {
+        "source": "codex",
+        "codex_plan": {
+            "steps": [{"step": "Patch files", "status": "inProgress"}],
+        },
+    }
 
 
 @pytest.mark.anyio
