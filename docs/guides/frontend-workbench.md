@@ -72,7 +72,8 @@ Current behavior:
 - the `Bros` page edits each worker Bro's base prompt, avatar, and node binding
 - the `Nodes` page creates, edits, rotates, and deletes executor nodes and
   shows the token on create/rotate plus a persistent on-demand
-  `Copy connect command` action on ordinary node cards
+  `Copy install + connect` action on ordinary node cards, with run-only
+  `newbro executor run ...` still available for already-installed machines
 - sidebar navigation preserves the current `sid` query parameter across
   `Home`, `Bros`, `Nodes`, and `Settings`
 - `Interaction memory` hydrates from Newbro durable conversation history when

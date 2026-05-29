@@ -55,9 +55,19 @@ The intended operator flow is:
 1. create the node from the frontend `Nodes` page
 2. optionally run `./newbro executor setup` on the client machine if you want
    to preconfigure local executor families and command paths
-3. copy the generated connect command from the `Nodes` page
+3. copy the generated `Install + connect` command from the `Nodes` page
 4. start the node with that command, for example:
-   `newbro executor run --base-url https://newbro.example.com --node-id node-1234 --token secret`
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --base-url https://newbro.example.com --node-id node-1234 --token secret
+   ```
+
+The UI also exposes a run-only command for machines where `newbro` is already
+installed:
+
+```bash
+newbro executor run --base-url https://newbro.example.com --node-id node-1234 --token secret
+```
 
 If local executor runtime config is still missing when you run that command,
 `./newbro executor run` now launches the same local setup flow automatically

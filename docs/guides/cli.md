@@ -69,6 +69,17 @@ newbro executor run --base-url https://newbro.example.com --node-id node-1234 --
 The published package name is `newbro-cli`, the installed console script is
 `newbro`, and the Python module namespace is `newbro`.
 
+For UI-issued detached-node credentials, the recommended one-line command
+installs or updates the CLI through `uv` and then forwards the remaining
+arguments to `newbro`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --base-url https://newbro.example.com --node-id node-1234 --token secret
+```
+
+Use the run-only `newbro executor run ...` variant when the target machine
+already has a current CLI install.
+
 `~/.newbro/.env` is auto-loaded by the backend at startup. You do not need to
 export variables manually. OpenAI is required for normal development and demo
 runtime, so set `OPENAI_API_KEY` in `~/.newbro/.env` before starting the app.
@@ -77,6 +88,16 @@ runtime, so set `OPENAI_API_KEY` in `~/.newbro/.env` before starting the app.
 
 Detached executor nodes connect back to the Newbro service with credentials
 issued by the Nodes page or the executor-node API.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- \
+  executor run \
+  --base-url https://newbro.example.com \
+  --node-id node-1234 \
+  --token secret
+```
+
+The equivalent run-only command is:
 
 ```bash
 newbro executor run \

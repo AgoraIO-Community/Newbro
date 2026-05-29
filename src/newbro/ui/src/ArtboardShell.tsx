@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { ArrowUp, Check, ChevronLeft, Copy, FileText, Layers, LogOut, MessageSquare, Mic, Plus, Radio, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
 import {
-  buildExecutorRunCommand,
+  buildExecutorConnectCommands,
   clearDraft,
   clearVoiceTarget,
   createExecutorNode,
@@ -13,6 +13,7 @@ import {
   submitExecutorAudioInstruction,
   submitExecutorTextInstruction,
   updatePersona,
+  type ExecutorConnectCommands,
 } from "./lib/session-client";
 import { readThreadIdFromUrl, replaceThreadIdInUrl } from "./lib/session-url";
 import { buildBroCardModels, buildBroThreadRecords } from "./components/newbro/adapters";
@@ -1079,6 +1080,9 @@ function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
         <p className="dt-empty-sub-lg">
           A <strong>bro</strong> is a worker persona bound to an executor on one of your machines. Create one, connect a node, and they'll start working alongside you.
         </p>
+        <p className="dt-empty-sub-lg dt-empty-connect-note">
+          Creating a Bro generates an install/connect command you can run in Terminal on the desktop or always-on machine that should do the work.
+        </p>
         <div className="dt-empty-actions-lg">
           <button type="button" className="ob-cta dt-empty-cta-lg" onClick={onCreate}>
             <Plus size={15} strokeWidth={2.4} aria-hidden="true" />
@@ -1194,19 +1198,19 @@ function CreateConnectSheet({
   bro?: BroCardModel | null;
 }) {
   const [name, setName] = useState(bro?.name ?? "atlas");
-  const [command, setCommand] = useState<string | null>(null);
+  const [commands, setCommands] = useState<ExecutorConnectCommands | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copiedKind, setCopiedKind] = useState<"install" | "run" | null>(null);
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
   const [pendingBroName, setPendingBroName] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
   const finalizingRef = useRef(false);
   const trimmedName = name.trim();
-  const canCreate = trimmedName.length > 0 && !busy && !command && !pendingNodeId && !completed;
+  const canCreate = trimmedName.length > 0 && !busy && !commands && !pendingNodeId && !completed;
 
-  async function copyCommand(value: string) {
-    await navigator.clipboard?.writeText(value).then(() => setCopied(true), () => setCopied(false));
+  async function copyCommand(value: string, kind: "install" | "run") {
+    await navigator.clipboard?.writeText(value).then(() => setCopiedKind(kind), () => setCopiedKind(null));
   }
 
   async function finalizeConnectedNode(nodeId: string, broName: string) {
@@ -1242,15 +1246,15 @@ function CreateConnectSheet({
       const issue = bro?.executorNodeId
         ? await revealExecutorNodeConnectCommand(sessionId, bro.executorNodeId)
         : await createExecutorNode(sessionId, { name: `${nextBroName} local node`, enabled_executors: ["codex"] });
-      const nextCommand = buildExecutorRunCommand(issue.node.node_id, issue.token, {
+      const nextCommands = buildExecutorConnectCommands(issue.node.node_id, issue.token, {
         enabledExecutors: issue.node.enabled_executors,
         acpxAgent: issue.node.acpx_agent,
       });
-      setCommand(nextCommand);
+      setCommands(nextCommands);
       setPendingNodeId(issue.node.last_connected_at ? null : issue.node.node_id);
       setPendingBroName(nextBroName);
       setCompleted(false);
-      await copyCommand(nextCommand);
+      await copyCommand(nextCommands.installConnect, "install");
       await onCreated();
       if (issue.node.last_connected_at) {
         await finalizeConnectedNode(issue.node.node_id, nextBroName);
@@ -1316,7 +1320,7 @@ function CreateConnectSheet({
                     <span className="ob-field-eyebrow">NAME</span>
                     <div className="ob-input ob-input-filled">
                       <span className="ob-input-prefix">@</span>
-                      <input type="text" value={name} disabled={Boolean(bro) || Boolean(command) || busy} onChange={(event) => setName(event.target.value)} />
+                      <input type="text" value={name} disabled={Boolean(bro) || Boolean(commands) || busy} onChange={(event) => setName(event.target.value)} />
                     </div>
                     <span className="ob-field-hint">One word, easy to say out loud. e.g. atlas, scout, forge, muse.</span>
                   </label>
@@ -1341,25 +1345,42 @@ function CreateConnectSheet({
                 <div className="ob-fieldset">
                   <div className="ob-fieldset-eyebrow-row">
                     <span className="ob-field-eyebrow">CONNECT A NODE</span>
-                    <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : command ? "ready" : "on demand"}</span>
+                    <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : commands ? "installs CLI + starts node" : "on demand"}</span>
                   </div>
+                  <p className="ob-connect-note">
+                    <span className="ob-connect-note-desktop">New to Newbro CLI? Copy Install + connect. It installs/updates the CLI, then starts this node.</span>
+                    <span className="ob-connect-note-mobile">Copy or share Install + connect, then run it in Terminal on the desktop/always-on machine that should work for this Bro.</span>
+                  </p>
                   <div className="ob-connect">
                     <div className="ob-connect-cmd">
                       <span className="ob-connect-prompt">$</span>
                       <span className="ob-connect-line">
-                        {command ? command : <>newbro executor run <span className="ob-connect-tok">--token pending</span></>}
+                        {commands ? commands.installConnect : <>curl -fsSL ... | sh -s -- executor run <span className="ob-connect-tok">--token pending</span></>}
                       </span>
-                      <button type="button" className="ob-connect-copy" aria-label="Copy command" disabled={!command} onClick={() => { if (command) void copyCommand(command); }}>
-                        {copied ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
+                    </div>
+                    <div className="ob-connect-actions" aria-label="Connect command copy options">
+                      <button type="button" className="ob-connect-action ob-connect-action-primary" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.installConnect, "install"); }}>
+                        {copiedKind === "install" ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
+                        <span>{copiedKind === "install" ? "Copied install + connect" : "Copy install + connect"}</span>
+                      </button>
+                      <button type="button" className="ob-connect-action" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.runOnly, "run"); }}>
+                        {copiedKind === "run" ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
+                        <span>{copiedKind === "run" ? "Copied run-only command" : "Copy run-only command"}</span>
                       </button>
                     </div>
+                    {commands ? (
+                      <details className="ob-connect-alt">
+                        <summary>Already installed</summary>
+                        <pre>{commands.runOnly}</pre>
+                      </details>
+                    ) : null}
                     <div className="ob-connect-status">
                       <span className="ob-connect-spinner" aria-hidden="true"><span /><span /><span /></span>
                       <span className="ob-connect-status-text">
-                        <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : command ? `Listening for ${pendingBroName || trimmedName}...` : `Ready to connect ${trimmedName || "a Bro"}...`}</strong>
-                        <span>{completed ? "The Bro has been created after the node connected successfully." : command ? `Run that command on the machine where ${pendingBroName || trimmedName} should work. The Bro appears after the first successful connection.` : "Newbro will issue a node command first. The Bro appears after the first successful connection."}</span>
+                        <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : commands ? `Listening for ${pendingBroName || trimmedName}...` : `Ready to connect ${trimmedName || "a Bro"}...`}</strong>
+                        <span>{completed ? "The Bro has been created after the node connected successfully." : commands ? `Run Install + connect on the machine where ${pendingBroName || trimmedName} should work. The Bro appears after the first successful connection.` : "Newbro will issue an install/connect command first. The Bro appears after the first successful connection."}</span>
                       </span>
-                      <span className="ob-connect-time">{completed ? "done" : copied ? "copied" : command ? "ready" : "new"}</span>
+                      <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "installs CLI + starts node" : "new"}</span>
                     </div>
                   </div>
                   <div className="ob-connect-meta">
@@ -1382,16 +1403,16 @@ function CreateConnectSheet({
           <footer className="ob-sheet-foot">
             <span className="dt-modal-foot-status nb-create-connect-foot-status">
               <span className="dt-modal-foot-dot" />
-              {completed ? "Connected once · Bro ready" : command ? "Waiting for first node connection" : "Command will be generated on demand"}
+              {completed ? "Connected once · Bro ready" : commands ? "Waiting for first node connection" : "Install/connect command will be generated on demand"}
             </span>
-            {command && completed ? (
+            {commands && completed ? (
               <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" onClick={() => { void onCreated().finally(onClose); }}>
                 Done
               </button>
             ) : (
               <button type="button" data-testid="bro-setup-create-node" className={`ob-cta ob-cta-block${busy ? " ob-cta-pending" : ""}`} disabled={!canCreate} onClick={() => { void createAndConnect(); }}>
                 {busy ? <span className="ob-cta-spinner" aria-hidden="true" /> : null}
-                <span>{busy ? "Preparing..." : command ? "Waiting for first connection..." : "Create and connect"}</span>
+                <span>{busy ? "Preparing..." : commands ? "Waiting for first connection..." : "Create and connect"}</span>
               </button>
             )}
           </footer>
@@ -1405,35 +1426,46 @@ function useCopyNodeConnectCommand(args: {
   sessionId: string | null;
   broSource: BroCardModel["source"];
   nodeId: string | null;
-}): { copy: () => Promise<void>; copied: boolean; command: string | null } {
-  const [command, setCommand] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+}): { copyInstall: () => Promise<void>; copyRunOnly: () => Promise<void>; copiedKind: "install" | "run" | null; commands: ExecutorConnectCommands | null } {
+  const [commands, setCommands] = useState<ExecutorConnectCommands | null>(null);
+  const [copiedKind, setCopiedKind] = useState<"install" | "run" | null>(null);
   const { sessionId, broSource, nodeId } = args;
-  const copy = useCallback(async () => {
-    if (!sessionId || !nodeId || broSource !== "runtime") return;
+  const revealCommands = useCallback(async () => {
+    if (!sessionId || !nodeId || broSource !== "runtime") return null;
     const issue = await revealExecutorNodeConnectCommand(sessionId, nodeId);
-    const next = buildExecutorRunCommand(issue.node.node_id, issue.token, {
+    const next = buildExecutorConnectCommands(issue.node.node_id, issue.token, {
       enabledExecutors: issue.node.enabled_executors,
       acpxAgent: issue.node.acpx_agent,
     });
-    setCommand(next);
-    await navigator.clipboard?.writeText(next).then(() => setCopied(true), () => setCopied(false));
+    setCommands(next);
+    return next;
   }, [sessionId, broSource, nodeId]);
-  return { copy, copied, command };
+  const copyInstall = useCallback(async () => {
+    const next = commands ?? await revealCommands();
+    if (!next) return;
+    await navigator.clipboard?.writeText(next.installConnect).then(() => setCopiedKind("install"), () => setCopiedKind(null));
+  }, [commands, revealCommands]);
+  const copyRunOnly = useCallback(async () => {
+    const next = commands ?? await revealCommands();
+    if (!next) return;
+    await navigator.clipboard?.writeText(next.runOnly).then(() => setCopiedKind("run"), () => setCopiedKind(null));
+  }, [commands, revealCommands]);
+  return { copyInstall, copyRunOnly, copiedKind, commands };
 }
 
 function HomeBroCopyAction({ bro, variant }: { bro: BroCardModel; variant: "card" | "row" }) {
   const shell = useNewbroShell();
-  const { copy, copied } = useCopyNodeConnectCommand({
+  const { copyInstall, copiedKind } = useCopyNodeConnectCommand({
     sessionId: shell.activeShellSessionId,
     broSource: bro.source,
     nodeId: bro.executorNodeId,
   });
   if (bro.liveState !== "offline" || bro.source !== "runtime") return null;
+  const copied = copiedKind === "install";
   const handle = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    void copy();
+    void copyInstall();
   };
   if (variant === "card") {
     return (
@@ -1445,7 +1477,7 @@ function HomeBroCopyAction({ bro, variant }: { bro: BroCardModel; variant: "card
         onClick={handle}
       >
         {copied ? <Check size={12} strokeWidth={2.2} /> : <Copy size={12} strokeWidth={2} />}
-        <span>{copied ? "Copied" : "Copy connect command"}</span>
+        <span>{copied ? "Copied" : "Copy install + connect"}</span>
       </button>
     );
   }
@@ -1455,11 +1487,11 @@ function HomeBroCopyAction({ bro, variant }: { bro: BroCardModel; variant: "card
       data-testid={`home-bro-copy-command-${bro.id}`}
       data-home-card-action="copy-connect"
       className="dt-roster-copy"
-      title={copied ? "Copied to clipboard" : "Copy the command that reconnects this Bro's node"}
+      title={copied ? "Copied to clipboard" : "Copy the install/update command that reconnects this Bro's node"}
       onClick={handle}
     >
       {copied ? <Check size={12} strokeWidth={2.2} /> : <Copy size={12} strokeWidth={2} />}
-      <span>{copied ? "Copied" : "Copy connect command"}</span>
+      <span>{copied ? "Copied" : "Copy install + connect"}</span>
     </button>
   );
 }
@@ -1475,11 +1507,13 @@ function OfflineBanner({
   sessionId: string | null;
   mobile?: boolean;
 }) {
-  const { copy, copied, command } = useCopyNodeConnectCommand({
+  const { copyInstall, copyRunOnly, copiedKind, commands } = useCopyNodeConnectCommand({
     sessionId,
     broSource: bro.source,
     nodeId: node.node_id,
   });
+  const installCopied = copiedKind === "install";
+  const runCopied = copiedKind === "run";
   return (
     <section data-testid="bro-node-disconnected-warning" className="ob-offline-banner dt-offline-banner nb-artboard-offline">
       <span className="ob-offline-banner-icon" aria-hidden="true">
@@ -1488,14 +1522,27 @@ function OfflineBanner({
       <div className="ob-offline-banner-body">
         <strong>{node.name} is not connected.</strong>
         <span>{bro.name} can't take new messages until the node reconnects. The current draft stays saved.</span>
-        {!mobile && command ? <pre className="nb-artboard-command">{command}</pre> : null}
-        {mobile && <span className="nb-artboard-offline-hint">Open Newbro on desktop to reconnect the node.</span>}
+        <span>{mobile ? "Copy or share Install + connect from desktop, then run it in Terminal on the machine that should work for this Bro." : "Copy Install + connect to reinstall/update the CLI and restart this node."}</span>
+        {!mobile && commands ? (
+          <>
+            <pre className="nb-artboard-command">{commands.installConnect}</pre>
+            <details className="nb-artboard-command-alt">
+              <summary>Already installed</summary>
+              <pre>{commands.runOnly}</pre>
+            </details>
+          </>
+        ) : null}
       </div>
       {!mobile && (
-        <button type="button" data-testid="bro-node-copy-command" className="ob-offline-banner-action" onClick={() => { void copy(); }}>
-          <span>{copied ? "Copied" : "Copy command"}</span>
-          <SendHorizontal size={11} strokeWidth={2.2} />
-        </button>
+        <div className="ob-offline-banner-actions">
+          <button type="button" data-testid="bro-node-copy-command" className="ob-offline-banner-action" onClick={() => { void copyInstall(); }}>
+            <span>{installCopied ? "Copied" : "Copy install + connect"}</span>
+            <SendHorizontal size={11} strokeWidth={2.2} />
+          </button>
+          <button type="button" data-testid="bro-node-copy-run-only-command" className="ob-offline-banner-action ob-offline-banner-action-secondary" onClick={() => { void copyRunOnly(); }}>
+            <span>{runCopied ? "Copied" : "Run-only"}</span>
+          </button>
+        </div>
       )}
     </section>
   );
@@ -2524,7 +2571,7 @@ function AddBroTile({ editing, onClick }: { editing: boolean; onClick: () => voi
       </span>
       <span className="home-add-body">
         <span className="home-add-title">Add a bro</span>
-        <span className="home-add-sub">Name them, then connect a node</span>
+        <span className="home-add-sub">Generates an install/connect command</span>
       </span>
       <span className="home-add-arrow">›</span>
     </button>
@@ -2763,7 +2810,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
                 <div className="ob-hero-body">
                   <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
                   <h2 className="ob-hero-h">You don't have a bro yet.</h2>
-                  <p className="ob-hero-sub">Create a worker persona, bind it to a user-owned executor node, and it will appear here after Newbro can use it.</p>
+                  <p className="ob-hero-sub">Create a worker persona, bind it to a user-owned executor node, and Newbro will generate an install/connect command for the machine that should work for this Bro.</p>
                   <div className="ob-hero-actions">
                     <button type="button" className="ob-cta ob-cta-block" onClick={() => setAddOpen(true)}>
                       <Plus size={15} strokeWidth={2.4} />
@@ -3005,7 +3052,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
             <section className="nb-mobile-first-run">
               <span className="home-section-eyebrow">Connect · {bro.name}</span>
               <h2>Set up this Bro before talking.</h2>
-              <p>Create or reveal a local executor command and run it on the machine where this Bro should work.</p>
+              <p>Create or reveal Install + connect and run it on the machine where this Bro should work.</p>
               <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onBack} onCreated={shell.refreshShellSession} bro={bro} />
             </section>
           </main>

@@ -40,7 +40,8 @@ Executor-node note:
   node id, enabled executor families, and issued enrollment credentials
 - detached nodes authenticate to Newbro with `node_id` and `token` on
   `WS /api/executors/control`
-- the executor node's Newbro URL is a client-side runtime input passed to
+- the executor node's Newbro URL is a client-side runtime input passed through
+  the UI's install/update-and-connect command or run-only
   `newbro executor run --base-url ...`, not server-owned node metadata
 - local executor-family/tool config no longer uses an `executor_node.enabled`
   toggle; `newbro executor run` may trigger the same local setup flow when

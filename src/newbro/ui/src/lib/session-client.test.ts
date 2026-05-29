@@ -97,20 +97,36 @@ describe("session-client transport base URL handling", () => {
     );
   });
 
-  it("builds an executor run command from the effective backend base URL", async () => {
+  it("builds executor connect command variants from the effective backend base URL", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.com/runtime/");
     const client = await import("./session-client");
 
+    const options = {
+      enabledExecutors: ["acpx"],
+      acpxAgent: "openclaw",
+      audioLanguage: "zh",
+      whisperModel: "small",
+    };
+
+    expect(client.buildExecutorRunCommand("node-1", "tok'en", options)).toBe(
+      "newbro executor run --base-url 'https://api.example.com/runtime' --node-id 'node-1' --token 'tok'\"'\"'en' --enabled-executor 'acpx' --acpx-agent 'openclaw' --audio-language 'zh' --whisper-model 'small'",
+    );
+    expect(client.buildExecutorInstallConnectCommand("node-1", "tok'en", options)).toBe(
+      "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --base-url 'https://api.example.com/runtime' --node-id 'node-1' --token 'tok'\"'\"'en' --enabled-executor 'acpx' --acpx-agent 'openclaw' --audio-language 'zh' --whisper-model 'small'",
+    );
     expect(
-      client.buildExecutorRunCommand("node-1", "tok'en", {
+      client.buildExecutorConnectCommands("node-1", "tok'en", {
         enabledExecutors: ["acpx"],
         acpxAgent: "openclaw",
         audioLanguage: "zh",
         whisperModel: "small",
       }),
-    ).toBe(
-      "newbro executor run --base-url 'https://api.example.com/runtime' --node-id 'node-1' --token 'tok'\"'\"'en' --enabled-executor 'acpx' --acpx-agent 'openclaw' --audio-language 'zh' --whisper-model 'small'",
-    );
+    ).toEqual({
+      installConnect:
+        "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --base-url 'https://api.example.com/runtime' --node-id 'node-1' --token 'tok'\"'\"'en' --enabled-executor 'acpx' --acpx-agent 'openclaw' --audio-language 'zh' --whisper-model 'small'",
+      runOnly:
+        "newbro executor run --base-url 'https://api.example.com/runtime' --node-id 'node-1' --token 'tok'\"'\"'en' --enabled-executor 'acpx' --acpx-agent 'openclaw' --audio-language 'zh' --whisper-model 'small'",
+    });
   });
 
   it("uses the Newbro service port for executor commands during local Vite dev", async () => {

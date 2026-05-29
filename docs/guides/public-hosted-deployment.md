@@ -95,13 +95,16 @@ user because email is only a label in this first public path.
 Creating the first Bro requires a usable user-owned executor node. A node
 becomes usable only after it has connected successfully at least once. The
 first-run setup panel issues a user-owned node id and token, prints a copyable
-local command, and creates the Bro persona only after the service observes the
-node's first successful connection. The user runs:
+install/connect command, and creates the Bro persona only after the service
+observes the node's first successful connection. The default command
+installs/updates the CLI and then starts the node:
 
 ```bash
-python3 -m pip install --user --upgrade newbro-cli
-newbro executor run --base-url https://newbro.example.com --node-id node-1234 --token secret
+curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --base-url https://newbro.example.com --node-id node-1234 --token secret
 ```
+
+The same UI also exposes a run-only `newbro executor run ...` command for
+machines where the CLI is already installed.
 
 Already-bound Bros open into the normal Bro Detail workspace only after the
 bound node has connected at least once. If that usable node is currently

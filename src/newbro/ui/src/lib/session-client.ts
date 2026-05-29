@@ -11,6 +11,8 @@ import type {
 } from "../types";
 
 const API_PREFIX = "/api";
+const NEWBRO_CLI_INSTALL_URL =
+  "https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh";
 const configuredApiBaseUrl = getConfiguredApiBaseUrl();
 
 function getConfiguredApiBaseUrl(): URL | null {
@@ -40,18 +42,24 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
-export function buildExecutorRunCommand(
+export interface ExecutorRunCommandOptions {
+  enabledExecutors?: string[];
+  acpxAgent?: string | null;
+  audioLanguage?: string | null;
+  whisperModel?: string | null;
+}
+
+export interface ExecutorConnectCommands {
+  installConnect: string;
+  runOnly: string;
+}
+
+function buildExecutorRunArgs(
   nodeId: string,
   token: string,
-  options?: {
-    enabledExecutors?: string[];
-    acpxAgent?: string | null;
-    audioLanguage?: string | null;
-    whisperModel?: string | null;
-  },
-): string {
-  const command = [
-    "newbro",
+  options?: ExecutorRunCommandOptions,
+): string[] {
+  const args = [
     "executor",
     "run",
     "--base-url",
@@ -62,18 +70,54 @@ export function buildExecutorRunCommand(
     shellQuote(token),
   ];
   for (const executorType of options?.enabledExecutors ?? []) {
-    command.push("--enabled-executor", shellQuote(executorType));
+    args.push("--enabled-executor", shellQuote(executorType));
   }
   if (options?.acpxAgent) {
-    command.push("--acpx-agent", shellQuote(options.acpxAgent));
+    args.push("--acpx-agent", shellQuote(options.acpxAgent));
   }
   if (options?.audioLanguage) {
-    command.push("--audio-language", shellQuote(options.audioLanguage));
+    args.push("--audio-language", shellQuote(options.audioLanguage));
   }
   if (options?.whisperModel) {
-    command.push("--whisper-model", shellQuote(options.whisperModel));
+    args.push("--whisper-model", shellQuote(options.whisperModel));
   }
-  return command.join(" ");
+  return args;
+}
+
+export function buildExecutorRunCommand(
+  nodeId: string,
+  token: string,
+  options?: ExecutorRunCommandOptions,
+): string {
+  return ["newbro", ...buildExecutorRunArgs(nodeId, token, options)].join(" ");
+}
+
+export function buildExecutorInstallConnectCommand(
+  nodeId: string,
+  token: string,
+  options?: ExecutorRunCommandOptions,
+): string {
+  return [
+    "curl",
+    "-fsSL",
+    NEWBRO_CLI_INSTALL_URL,
+    "|",
+    "sh",
+    "-s",
+    "--",
+    ...buildExecutorRunArgs(nodeId, token, options),
+  ].join(" ");
+}
+
+export function buildExecutorConnectCommands(
+  nodeId: string,
+  token: string,
+  options?: ExecutorRunCommandOptions,
+): ExecutorConnectCommands {
+  return {
+    installConnect: buildExecutorInstallConnectCommand(nodeId, token, options),
+    runOnly: buildExecutorRunCommand(nodeId, token, options),
+  };
 }
 
 function withTrailingSlash(value: string): string {

@@ -2,6 +2,10 @@
 
 Short log of important design decisions and changes for Newbro.
 
+## 2026-05-29
+
+- Changed UI-issued executor-node connect commands to default to a one-line install/update-and-connect flow backed by `scripts/install-newbro-cli.sh`, while keeping run-only `newbro executor run ...` commands available for already-installed machines.
+
 ## 2026-04-04
 
 - Established the concept-first architecture around `Communication Brain`, `Execution Brain`, `Shared Blackboard`, and protocol-first boundaries.

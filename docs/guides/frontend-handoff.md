@@ -116,8 +116,9 @@ Known intentional deltas:
 - Sign-in uses the prototype's segmented invitation-code idea with a fixed
   8 digit numeric code, currently `12345678` for local development.
 - Create/connect uses the real executor-node and persona APIs and shows the
-  issued `newbro executor run ...` command instead of the static prototype
-  command copy.
+  issued install/update-and-connect command plus a run-only
+  `newbro executor run ...` command instead of the static prototype command
+  copy.
 - Counts, names, node status, draft content, and warnings reflect live runtime
   snapshots rather than the prototype's fixed sample data.
 
