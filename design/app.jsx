@@ -109,6 +109,11 @@ function App() {
               <BroDetailActiveDesktop />
             </div>
           </DCArtboard>
+          <DCArtboard id="dt-thread-plan" label="Bro detail — plan mode proposal (⇧⇥)" width={1440} height={900}>
+            <div style={{ position: "relative", width: "100%", height: "100%", background: "transparent" }}>
+              <BroDetailActiveDesktop initialPlanMode initialProposal />
+            </div>
+          </DCArtboard>
         </DCSection>
 
         <DCSection
@@ -193,6 +198,11 @@ function App() {
           <DCArtboard id="threads" label="Threads — chat thread" width={440} height={920}>
             <div style={{ position: "relative", width: "100%", height: "100%", display: "grid", placeItems: "center", background: "transparent" }}>
               <ThreadsVariant />
+            </div>
+          </DCArtboard>
+          <DCArtboard id="threads-plan" label="Bro detail — plan mode proposal (⇧⇥)" width={440} height={920}>
+            <div style={{ position: "relative", width: "100%", height: "100%", display: "grid", placeItems: "center", background: "transparent" }}>
+              <ThreadsVariant initialPlanMode initialProposal />
             </div>
           </DCArtboard>
         </DCSection>

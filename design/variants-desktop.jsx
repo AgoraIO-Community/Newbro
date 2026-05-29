@@ -580,7 +580,7 @@ window.CreateBroDesktop = CreateBroDesktop;
 // of the head row; a hint on the right. The bar itself holds the
 // text field, an optional mic button (PTT/Free), and a coral send.
 // ─────────────────────────────────────────────────────────────
-function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atlas" }) {
+function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atlas", planMode = false, onTogglePlan, onSendPlan }) {
   // Two modes:
   //   "ptt"  — push-to-talk, merged with text. Type or hold space.
   //   "free" — open channel, voice only. No typing.
@@ -597,10 +597,25 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
   const subMode    = v ? v.freeSubMode    : localSub;
   const setSubMode = v ? v.setFreeSubMode : setLocalSub;
 
+  // Local composer text so Enter / send / Shift+Tab can be wired.
+  const [text, setText] = React.useState("");
+  const submit = () => {
+    const t = text.trim();
+    if (!t) return;
+    if (planMode && onSendPlan) { onSendPlan(t); setText(""); return; }
+    setText("");
+  };
+  const handleKey = (e) => {
+    // Shift+Tab toggles plan mode (desktop shortcut)
+    if (e.key === "Tab" && e.shiftKey) { e.preventDefault(); onTogglePlan && onTogglePlan(); return; }
+    if (e.key === "Enter" && text.trim()) { e.preventDefault(); submit(); }
+  };
+
   return (
-    <div className={`dt-cmp dt-cmp-${voiceMode}${disabled ? " dt-cmp-disabled" : ""}`}>
+    <div className={`dt-cmp dt-cmp-${voiceMode}${disabled ? " dt-cmp-disabled" : ""}${planMode ? " dt-cmp-plan" : ""}`}>
       <div className="dt-cmp-head">
-        <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} role="tablist" aria-label="Input mode">
+        <div className="dt-cmp-headl">
+          <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} role="tablist" aria-label="Input mode">
           {opts.map((o) => {
             const on = voiceMode === o.v;
             return (
@@ -618,6 +633,25 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
               </button>
             );
           })}
+          </div>
+          {!disabled && (
+            <button
+              type="button"
+              className={`dt-cmp-planchip${planMode ? " dt-cmp-planchip-on" : ""}`}
+              onClick={() => onTogglePlan && onTogglePlan()}
+              aria-pressed={planMode}
+              title="Plan mode · Shift+Tab — Atlas proposes before acting"
+            >
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="9" width="6" height="6" rx="1.5"/>
+                <rect x="15" y="4" width="6" height="6" rx="1.5"/>
+                <rect x="15" y="14" width="6" height="6" rx="1.5"/>
+                <path d="M9 12h3M12 7v10M12 7h3M12 17h3"/>
+              </svg>
+              <span className="dt-cmp-planchip-label">Plan mode</span>
+              <kbd className="dt-kbd dt-cmp-planchip-kbd">⇧⇥</kbd>
+            </button>
+          )}
         </div>
 
         {voiceMode === "free" && !disabled && (
@@ -654,11 +688,13 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
         <span className="dt-cmp-hint">
           {disabled
             ? <span>Sending paused while the node is offline.</span>
-            : voiceMode === "ptt"
-              ? <span>Hold <kbd className="dt-kbd">Space</kbd> to talk · <kbd className="dt-kbd">↵</kbd> to send</span>
-              : subMode === "silent"
-                ? <span>{broName} listens, replies when you finish</span>
-                : <span>{broName} may chime in mid-turn</span>}
+            : planMode
+              ? <span><strong>Plan mode</strong> · {broName} proposes a plan before acting</span>
+              : voiceMode === "ptt"
+                ? <span>Hold <kbd className="dt-kbd">Space</kbd> to talk · <kbd className="dt-kbd">⇧⇥</kbd> to plan</span>
+                : subMode === "silent"
+                  ? <span>{broName} listens, replies when you finish</span>
+                  : <span>{broName} may chime in mid-turn</span>}
         </span>
       </div>
 
@@ -669,10 +705,15 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
             type="text"
             className="dt-cmp-input"
             disabled={disabled}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKey}
             placeholder={
               disabled
                 ? `${broName} can't take new messages — reconnect the node to resume`
-                : `Hold space to talk, or type a message to ${broName}…`
+                : planMode
+                  ? `Describe the task — ${broName} will plan it first…`
+                  : `Hold space to talk, or type a message to ${broName}…`
             }
           />
           <button
@@ -687,7 +728,7 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
               {disabled && <path d="M3 3l18 18"/>}
             </svg>
           </button>
-          <button type="button" className="dt-cmp-send" disabled={disabled} aria-label="Send">
+          <button type="button" className="dt-cmp-send" disabled={disabled} aria-label="Send" onClick={submit}>
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 19V5M5 12l7-7 7 7"/>
             </svg>
@@ -729,6 +770,100 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Codex plan mode (Shift+Tab): Atlas proposes a plan and waits for
+// approval before acting. Proposal card + the desktop proposal data.
+// ─────────────────────────────────────────────────────────────
+const DT_PROPOSAL = {
+  summary: "I see a few ways to run this. Pick the one you want — or keep planning and I'll refine.",
+  options: [
+    {
+      id: "cheapest",
+      label: "Cheapest, flexible dates",
+      tag: "from $382",
+      body: "Widen the window to Nov 12–20 and sweep all three sources for refundable economy. Best fares route through ORD or DEN with one stop — you'd likely take a red-eye out and save ~$120 vs. nonstop. I'll flag any fare that needs a basic-economy downgrade so you can veto it.",
+    },
+    {
+      id: "fastest",
+      label: "Fastest, nonstop only",
+      tag: "from $508",
+      body: "Lock to your exact Nov 14–18 dates and only consider nonstops on United, JetBlue, and Delta. Total door-to-door time drops about 3h each way. Fewer seats at this price, so I'd hold the best one for 24h while you decide.",
+    },
+    {
+      id: "flexible",
+      label: "Most flexible, fully refundable",
+      tag: "from $588",
+      body: "Prioritize fully refundable, free-change fares even if a bit pricier — good if the trip might move. I'll prefer carriers where you have status and skip saver fares that block same-day changes.",
+    },
+  ],
+};
+const DTPlanBranchIcon = ({ size = 14 }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="9" width="6" height="6" rx="1.5"/>
+    <rect x="15" y="4" width="6" height="6" rx="1.5"/>
+    <rect x="15" y="14" width="6" height="6" rx="1.5"/>
+    <path d="M9 12h3M12 7v10M12 7h3M12 17h3"/>
+  </svg>
+);
+
+function DTPlanProposal({ proposal, approved, onApprove, onKeep }) {
+  const [sel, setSel] = React.useState(proposal.options[0].id);
+  const chosen = proposal.options.find((o) => o.id === sel) || proposal.options[0];
+  return (
+    <div className="dt-turn dt-turn-bro dt-turn-plan">
+      <div className={`dt-planprop${approved ? " dt-planprop-on" : ""}`}>
+        <div className="dt-planprop-head">
+          <span className="dt-planprop-glyph" aria-hidden="true"><DTPlanBranchIcon size={15} /></span>
+          <span className="dt-planprop-title">Proposed plans</span>
+          <span className="dt-planprop-tag">{proposal.options.length} OPTIONS</span>
+        </div>
+        <p className="dt-planprop-summary">{proposal.summary}</p>
+        <div className="dt-planopts" role="radiogroup" aria-label="Plan options">
+          {proposal.options.map((o, i) => {
+            const on = o.id === sel;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                className={`dt-planopt${on ? " dt-planopt-on" : ""}`}
+                onClick={() => !approved && setSel(o.id)}
+                disabled={approved && !on}
+              >
+                <span className="dt-planopt-radio" aria-hidden="true" />
+                <span className="dt-planopt-body">
+                  <span className="dt-planopt-top">
+                    <span className="dt-planopt-letter">{String.fromCharCode(65 + i)}</span>
+                    <span className="dt-planopt-label">{o.label}</span>
+                    {o.tag && <span className="dt-planopt-tag">{o.tag}</span>}
+                  </span>
+                  <span className="dt-planopt-text">{o.body}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {approved ? (
+          <div className="dt-planprop-running">
+            <span className="dt-planprop-running-spin" aria-hidden="true" />
+            Running “{chosen.label}” — Atlas will report back
+          </div>
+        ) : (
+          <div className="dt-planprop-actions">
+            <button type="button" className="dt-planprop-approve" onClick={() => onApprove(chosen)}>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12.5L10 18L20 6"/></svg>
+              Approve &amp; run
+            </button>
+            <button type="button" className="dt-planprop-keep" onClick={onKeep}>Keep planning</button>
+          </div>
+        )}
+      </div>
+      <div className="dt-bubble-meta">{approved ? "Plan approved · executing" : "Pick a plan · awaiting your approval"}</div>
     </div>
   );
 }
@@ -1284,8 +1419,16 @@ function DTAgentActivity({ state }) {
     </aside>
   );
 }
-function BroDetailActiveDesktop() {
+function BroDetailActiveDesktop({ initialPlanMode = false, initialProposal = false } = {}) {
   const [mode, setMode] = React.useState("ptt");
+  const [planMode, setPlanMode] = React.useState(initialPlanMode);
+  const [proposal, setProposal] = React.useState(initialProposal);
+  const [approved, setApproved] = React.useState(false);
+  const [planTurn, setPlanTurn] = React.useState(
+    initialProposal ? "Find me SFO → JFK options for Nov 14–18, under $500 round-trip." : null
+  );
+  const sendPlan = (text) => { setPlanTurn(text); setProposal(true); setApproved(false); };
+  const approvePlan = () => { setApproved(true); setPlanMode(false); };
   return (
     <div className="dt-frame dt-shell">
       <DesktopHeader
@@ -1308,34 +1451,64 @@ function BroDetailActiveDesktop() {
             <div className="dt-pane-content">
               <div className="dt-thread-day"><span>Today · 14:22</span></div>
 
-              <div className="dt-turn dt-turn-you">
-                <div className="dt-bubble dt-bubble-you">
-                  Compare three SFO → JFK options for Friday — red-eye okay.
-                </div>
-                <div className="dt-bubble-meta">Voice · 0:06 · transcribed</div>
-              </div>
-
-              <div className="dt-turn dt-turn-bro">
-                <div className="dt-bubble dt-bubble-bro">
-                  Got it. Pulling fares from United, Delta, JetBlue. Back in a minute.
-                </div>
-                <div className="dt-bubble-meta">Atlas · 14:22</div>
-              </div>
-
-              <div className="dt-turn dt-turn-bro">
-                <div className="dt-status">
-                  <div className="dt-status-head">
-                    <span className="dt-status-spin" />
-                    <span className="dt-status-title">Pulling JetBlue fares</span>
-                    <span className="dt-status-pct">64%</span>
+              {proposal ? (
+                <React.Fragment>
+                  {planTurn && (
+                    <div className="dt-turn dt-turn-you">
+                      <span className="dt-plantag" aria-label="Sent in plan mode">
+                        <DTPlanBranchIcon size={11} />
+                        Plan mode
+                      </span>
+                      <div className="dt-bubble dt-bubble-you dt-bubble-plan">{planTurn}</div>
+                      <div className="dt-bubble-meta">Plan request · just now</div>
+                    </div>
+                  )}
+                  <DTPlanProposal
+                    proposal={DT_PROPOSAL}
+                    approved={approved}
+                    onApprove={approvePlan}
+                    onKeep={() => setProposal(true)}
+                  />
+                </React.Fragment>
+              ) : (
+                <React.Fragment>
+                  <div className="dt-turn dt-turn-you">
+                    <div className="dt-bubble dt-bubble-you">
+                      Compare three SFO → JFK options for Friday — red-eye okay.
+                    </div>
+                    <div className="dt-bubble-meta">Voice · 0:06 · transcribed</div>
                   </div>
-                  <div className="dt-status-bar"><i style={{ width: "64%" }} /></div>
-                  <div className="dt-status-foot">step 3 of 4 · est. 1m left</div>
-                </div>
-              </div>
+
+                  <div className="dt-turn dt-turn-bro">
+                    <div className="dt-bubble dt-bubble-bro">
+                      Got it. Pulling fares from United, Delta, JetBlue. Back in a minute.
+                    </div>
+                    <div className="dt-bubble-meta">Atlas · 14:22</div>
+                  </div>
+
+                  <div className="dt-turn dt-turn-bro">
+                    <div className="dt-status">
+                      <div className="dt-status-head">
+                        <span className="dt-status-spin" />
+                        <span className="dt-status-title">Pulling JetBlue fares</span>
+                        <span className="dt-status-pct">64%</span>
+                      </div>
+                      <div className="dt-status-bar"><i style={{ width: "64%" }} /></div>
+                      <div className="dt-status-foot">step 3 of 4 · est. 1m left</div>
+                    </div>
+                  </div>
+                </React.Fragment>
+              )}
             </div>
           </div>
-          <DTComposerBar mode={mode} onMode={setMode} broName="Atlas" />
+          <DTComposerBar
+            mode={mode}
+            onMode={setMode}
+            broName="Atlas"
+            planMode={planMode}
+            onTogglePlan={() => setPlanMode((o) => !o)}
+            onSendPlan={sendPlan}
+          />
         </section>
       </main>
     </div>

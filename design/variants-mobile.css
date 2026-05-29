@@ -1598,8 +1598,8 @@
 .thr {
   height: 100%; width: 100%;
   background: #fafafa;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   font-family: var(--nb-font-sans);
   color: var(--nb-ink);
   padding-top: 56px; /* leave room for iOS status bar */
@@ -1825,6 +1825,8 @@
 }
 
 .thr-thread {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 18px 14px 12px;
   display: flex; flex-direction: column; gap: 16px;
@@ -2781,3 +2783,274 @@
 }
 .thr-mic-btn-send .thr-mic-halo,
 .thr-mic-btn-send .thr-mic-halo-2 { animation: none; }
+
+/* ════════════════════════════════════════════════════════════
+   THREADS — Codex coding-agent controls (goal · plan mode · slash)
+   ════════════════════════════════════════════════════════════ */
+.thr-bar { flex-shrink: 0; }
+.thr-composer { flex-shrink: 0; }
+
+/* ── Plan-mode chip — icon-only at rest, expands to a coral label
+   when on, mirroring the input-mode switch's expanding-tab feel ── */
+.thr-toolbar {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px;
+}
+.thr-planchip {
+  display: inline-flex; align-items: center;
+  height: 40px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.05);
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+  color: rgba(0,0,0,0.55);
+  cursor: pointer;
+  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  transition: background 0.22s var(--nb-ease-out), color 0.22s var(--nb-ease-out),
+              padding 0.24s var(--nb-ease-out), border-color 0.22s var(--nb-ease-out),
+              box-shadow 0.22s var(--nb-ease-out);
+}
+.thr-planchip:hover { color: rgba(0,0,0,0.85); }
+.thr-planchip-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.thr-planchip-label {
+  max-width: 0;
+  opacity: 0;
+  margin-left: 0;
+  transition: max-width 0.28s var(--nb-ease-out), opacity 0.2s var(--nb-ease-out), margin-left 0.28s var(--nb-ease-out);
+}
+.thr-planchip-on {
+  background: linear-gradient(180deg, #ff8c5a 0%, #ff6a3d 60%, #e85528 100%);
+  border-color: transparent;
+  color: white;
+  box-shadow: 0 2px 6px rgba(255,106,61,0.35), inset 0 1px 0 rgba(255,255,255,0.4);
+  padding: 0 14px 0 12px;
+}
+.thr-planchip-on .thr-planchip-label {
+  max-width: 140px;
+  opacity: 1;
+  margin-left: 7px;
+}
+
+/* input pill picks up a subtle coral cue while plan mode is on */
+.thr-ptt-input-plan {
+  background: var(--nb-coral-tint);
+  border-color: var(--nb-coral-border);
+}
+.thr-ptt-input-field-plan::placeholder { color: var(--nb-coral-hover); opacity: 0.8; }
+
+/* tag above a user message that was sent in plan mode */
+.thr-plantag {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 9px 2px 6px;
+  border-radius: 999px;
+  background: var(--nb-coral-tint);
+  border: 1px solid var(--nb-coral-border);
+  color: var(--nb-coral-hover);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.thr-plantag svg { flex-shrink: 0; }
+/* the bubble itself gets a soft coral halo so the plan turn stands out */
+.thr-bubble-plan {
+  box-shadow: 0 0 0 2px var(--nb-paper), 0 0 0 3.5px var(--nb-coral-border);
+}
+
+/* ── Plan proposal card (plan-mode output) ───────────────────── */
+.plan-prop {
+  background: #fff;
+  border: 1px solid var(--nb-line);
+  border-radius: 16px;
+  border-top-left-radius: 5px;
+  overflow: hidden;
+  box-shadow: var(--nb-shadow, 0 1px 2px rgba(17,24,39,0.05));
+  max-width: 312px;
+}
+.plan-prop-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 14px 10px;
+  border-bottom: 1px solid var(--nb-line-soft);
+  background: var(--nb-coral-tint);
+}
+.plan-prop-glyph {
+  width: 24px; height: 24px;
+  border-radius: 7px;
+  background: var(--nb-coral);
+  color: #fff;
+  display: grid; place-items: center;
+  flex-shrink: 0;
+}
+.plan-prop-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--nb-ink);
+  flex: 1;
+}
+.plan-prop-tag {
+  font-family: var(--nb-font-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--nb-coral);
+  background: #fff;
+  border: 1px solid var(--nb-coral-border);
+  border-radius: 5px;
+  padding: 2px 5px;
+}
+.plan-prop-summary {
+  margin: 0;
+  padding: 11px 14px 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--nb-ink-soft);
+  letter-spacing: -0.005em;
+  text-wrap: pretty;
+}
+.plan-opts {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 6px 14px 12px;
+}
+.plan-opt {
+  display: flex; align-items: flex-start; gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: var(--nb-paper-sub);
+  border: 1.5px solid var(--nb-line);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.plan-opt:hover { border-color: var(--nb-line-hover); }
+.plan-opt-on {
+  background: var(--nb-coral-tint);
+  border-color: var(--nb-coral);
+  box-shadow: 0 1px 4px rgba(255,106,61,0.16);
+}
+.plan-opt:disabled { cursor: default; opacity: 0.5; }
+.plan-opt-on:disabled { opacity: 1; }
+.plan-opt-radio {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--nb-line-hover);
+  background: #fff;
+  flex-shrink: 0;
+  margin-top: 2px;
+  transition: border-color 0.15s;
+  position: relative;
+}
+.plan-opt-on .plan-opt-radio {
+  border-color: var(--nb-coral);
+}
+.plan-opt-on .plan-opt-radio::after {
+  content: "";
+  position: absolute; inset: 2.5px;
+  border-radius: 50%;
+  background: var(--nb-coral);
+}
+.plan-opt-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.plan-opt-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.plan-opt-letter {
+  font-family: var(--nb-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--nb-coral-hover);
+  background: #fff;
+  border: 1px solid var(--nb-coral-border);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.plan-opt-label {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--nb-ink);
+}
+.plan-opt-tag {
+  margin-left: auto;
+  font-family: var(--nb-font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--nb-ink-soft);
+  white-space: nowrap;
+}
+.plan-opt-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--nb-ink-soft);
+  letter-spacing: -0.005em;
+  text-wrap: pretty;
+}
+.plan-prop-actions {
+  display: flex; gap: 8px;
+  padding: 0 14px 14px;
+}
+.plan-prop-approve {
+  flex: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--nb-coral);
+  border: 0;
+  color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(255,106,61,0.3);
+  transition: background 0.15s, transform 0.1s;
+}
+.plan-prop-approve:hover { background: var(--nb-coral-hover); }
+.plan-prop-approve:active { transform: scale(0.98); }
+.plan-prop-keep {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid var(--nb-line);
+  color: var(--nb-ink-soft);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.plan-prop-keep:hover { background: var(--nb-wash-alt); border-color: var(--nb-line-hover); color: var(--nb-ink); }
+.plan-prop-running {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 14px 14px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--nb-live-soft);
+  border: 1px solid var(--nb-live-edge);
+  color: var(--nb-live-ink);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.plan-prop-running-spin {
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(16,185,129,0.3);
+  border-top-color: var(--nb-live-ink);
+  animation: ob-spin 0.85s linear infinite;
+  flex-shrink: 0;
+}
+.plan-prop-on .plan-prop-head { background: var(--nb-live-soft); }
+.plan-prop-on .plan-prop-glyph { background: var(--nb-live); }
+.plan-prop-on .plan-prop-tag { color: var(--nb-live-ink); border-color: var(--nb-live-edge); }

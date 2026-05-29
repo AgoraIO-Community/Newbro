@@ -11,7 +11,35 @@
 // ═════════════════════════════════════════════════════════════
 // shared bits
 // ═════════════════════════════════════════════════════════════
-const M_BRO = { name: "Atlas", role: "Travel researcher", node: "Studio Mac" };
+const M_BRO = { name: "Atlas", role: "Travel researcher", node: "Studio Mac", executor: "Codex" };
+
+// ── Coding-agent controls (Codex only) ────────────────────────
+//   PLAN — "plan mode" (⇧⇥ on desktop): Atlas researches and drafts
+//          a few candidate approaches, then WAITS for you to pick one
+//          and approve before acting.
+const ATLAS_PROPOSAL = {
+  summary: "I see a few ways to run this. Pick the one you want — or keep planning and I'll refine.",
+  options: [
+    {
+      id: "cheapest",
+      label: "Cheapest, flexible dates",
+      tag: "from $382",
+      body: "Widen the window to Nov 12–20 and sweep all three sources for refundable economy. Best fares route through ORD or DEN with one stop — you'd likely take a red-eye out and save ~$120 vs. nonstop. I'll flag any fare that needs a basic-economy downgrade so you can veto it.",
+    },
+    {
+      id: "fastest",
+      label: "Fastest, nonstop only",
+      tag: "from $508",
+      body: "Lock to your exact Nov 14–18 dates and only consider nonstops on United, JetBlue, and Delta. Total door-to-door time drops about 3h each way. Fewer seats at this price, so I'd hold the best one for 24h while you decide.",
+    },
+    {
+      id: "flexible",
+      label: "Most flexible, fully refundable",
+      tag: "from $588",
+      body: "Prioritize fully refundable, free-change fares even if a bit pricier — good if the trip might move. I'll prefer carriers where you have status and skip saver fares that block same-day changes.",
+    },
+  ],
+};
 
 const stateMeta = {
   idle:      { label: "Standby",     tone: "calm",  short: "standby" },
@@ -1137,11 +1165,107 @@ const ATLAS_THREADS = [
   { id: "sf-hotel",  title: "Hotel SF Nov",      state: "done",    when: "Wed" },
 ];
 
-function ThreadsVariant() {
+// ─────────────────────────────────────────────────────────────
+// Codex plan mode (⇧⇥), surfaced in the thread: Atlas proposes a
+// plan and waits for approval before acting. Only shown for bros
+// bound to a Codex executor.
+// ─────────────────────────────────────────────────────────────
+
+// ── Plan proposal — Codex plan-mode output: a few candidate plans
+//    you choose between, then approve. ───────────────────────────
+function PlanProposal({ proposal, approved, onApprove, onKeep }) {
+  const [sel, setSel] = React.useState(proposal.options[0].id);
+  const chosen = proposal.options.find((o) => o.id === sel) || proposal.options[0];
+  return (
+    <div className="thr-turn thr-turn-bro">
+      <div className={`plan-prop${approved ? " plan-prop-on" : ""}`}>
+        <div className="plan-prop-head">
+          <span className="plan-prop-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="9" width="6" height="6" rx="1.5"/>
+              <rect x="15" y="4" width="6" height="6" rx="1.5"/>
+              <rect x="15" y="14" width="6" height="6" rx="1.5"/>
+              <path d="M9 12h3M12 7v10M12 7h3M12 17h3"/>
+            </svg>
+          </span>
+          <span className="plan-prop-title">Proposed plans</span>
+          <span className="plan-prop-tag">{proposal.options.length} OPTIONS</span>
+        </div>
+        <p className="plan-prop-summary">{proposal.summary}</p>
+        <div className="plan-opts" role="radiogroup" aria-label="Plan options">
+          {proposal.options.map((o, i) => {
+            const on = o.id === sel;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                className={`plan-opt${on ? " plan-opt-on" : ""}`}
+                onClick={() => !approved && setSel(o.id)}
+                disabled={approved && !on}
+              >
+                <span className="plan-opt-radio" aria-hidden="true" />
+                <span className="plan-opt-body">
+                  <span className="plan-opt-top">
+                    <span className="plan-opt-letter">{String.fromCharCode(65 + i)}</span>
+                    <span className="plan-opt-label">{o.label}</span>
+                    {o.tag && <span className="plan-opt-tag">{o.tag}</span>}
+                  </span>
+                  <span className="plan-opt-text">{o.body}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {approved ? (
+          <div className="plan-prop-running">
+            <span className="plan-prop-running-spin" aria-hidden="true" />
+            Running “{chosen.label}” — I'll report back
+          </div>
+        ) : (
+          <div className="plan-prop-actions">
+            <button type="button" className="plan-prop-approve" onClick={() => onApprove(chosen)}>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12.5L10 18L20 6"/></svg>
+              Approve &amp; run
+            </button>
+            <button type="button" className="plan-prop-keep" onClick={onKeep}>Keep planning</button>
+          </div>
+        )}
+      </div>
+      <div className="thr-meta">{approved ? "Plan approved · executing" : "Pick a plan · awaiting your approval"}</div>
+    </div>
+  );
+}
+
+function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {}) {
   const v = useVoice();
   if (!v) return null;
   const { mode, transcript, draft, reply, vu, script, inputMode, setInputMode, freeSubMode, setFreeSubMode, textValue, setTextValue, sendText, freeStart, stepIdx, progress, hasArtifact, audioDuration, turnKind, turnDuration, interjection } = v;
   const meta = stateMeta[mode];
+
+  // Codex-only plan mode.
+  const isCodex = M_BRO.executor === "Codex";
+  const [planMode, setPlanMode]   = React.useState(initialPlanMode); // ⇧⇥ plan mode
+  const [proposal, setProposal]   = React.useState(initialProposal);// plan-mode card shown
+  const [approved, setApproved]   = React.useState(false);
+  const [planTurn, setPlanTurn]   = React.useState(initialProposal ? "Find me SFO → JFK options for Nov 14–18, under $500 round-trip." : null);
+
+  // Composer text is LOCAL to this thread instance — the voice context's
+  // textValue is shared across all mounted variants, so driving the
+  // composer through it would leak state between artboards.
+  const [localText, setLocalText] = React.useState("");
+
+  const handleSend = (raw) => {
+    const text = (raw || "").trim();
+    if (!text) return;
+    // plan mode → Atlas proposes instead of acting
+    if (planMode)  { setPlanTurn(text); setProposal(true); setApproved(false); setLocalText(""); return; }
+    setLocalText("");
+    sendText(text);
+  };
+
+  const approvePlan = () => { setApproved(true); setPlanMode(false); };
 
   // Active thread state — switching only updates the picker visual + header
   // subtitle for now. The voice-state context drives the conversation body.
@@ -1370,11 +1494,60 @@ function ThreadsVariant() {
               </div>
             </div>
           )}
+
+          {/* Codex plan-mode proposal — Atlas proposes, you approve */}
+          {isCodex && proposal && (
+            <React.Fragment>
+              {planTurn && (
+                <div className="thr-turn thr-turn-you">
+                  <span className="thr-plantag" aria-label="Sent in plan mode">
+                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="9" width="6" height="6" rx="1.5"/>
+                      <rect x="15" y="4" width="6" height="6" rx="1.5"/>
+                      <rect x="15" y="14" width="6" height="6" rx="1.5"/>
+                      <path d="M9 12h3M12 7v10M12 7h3M12 17h3"/>
+                    </svg>
+                    Plan mode
+                  </span>
+                  <div className="thr-bubble thr-bubble-you thr-bubble-plan">{planTurn}</div>
+                  <div className="thr-meta">Plan request · just now</div>
+                </div>
+              )}
+              <PlanProposal
+                proposal={ATLAS_PROPOSAL}
+                approved={approved}
+                onApprove={approvePlan}
+                onKeep={() => setProposal(true)}
+              />
+            </React.Fragment>
+          )}
         </main>
 
         {/* composer */}
         <footer className="thr-composer">
-          <MobileModeSwitch value={inputMode} onChange={setInputMode} />
+          <div className="thr-toolbar">
+            <MobileModeSwitch value={inputMode} onChange={setInputMode} />
+            {isCodex && inputMode !== "free" && (
+              <button
+                type="button"
+                className={`thr-planchip${planMode ? " thr-planchip-on" : ""}`}
+                onClick={() => setPlanMode((o) => !o)}
+                aria-pressed={planMode}
+                aria-label="Plan mode"
+                title="Plan mode · ⇧⇥ — Atlas proposes before acting"
+              >
+                <span className="thr-planchip-icon">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="9" width="6" height="6" rx="1.5"/>
+                    <rect x="15" y="4" width="6" height="6" rx="1.5"/>
+                    <rect x="15" y="14" width="6" height="6" rx="1.5"/>
+                    <path d="M9 12h3M12 7v10M12 7h3M12 17h3"/>
+                  </svg>
+                </span>
+                <span className="thr-planchip-label">Plan mode</span>
+              </button>
+            )}
+          </div>
           {/* free-mode sub-toggle (only visible in free mode) */}
           {inputMode === "free" && (
             <FreeSubToggle value={freeSubMode} onChange={setFreeSubMode} />
@@ -1402,22 +1575,25 @@ function ThreadsVariant() {
                     </span>
                   </div>
                 ) : (
-                  <div className="thr-ptt-input">
+                  <div className={`thr-ptt-input${planMode ? " thr-ptt-input-plan" : ""}`}>
                     <input
                       type="text"
-                      className="thr-ptt-input-field"
-                      placeholder="Message Atlas — or hold the mic to talk"
-                      value={textValue}
-                      onChange={(e) => setTextValue(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter" && textValue.trim()) { e.preventDefault(); sendText(textValue); } }}
+                      className={`thr-ptt-input-field${planMode ? " thr-ptt-input-field-plan" : ""}`}
+                      placeholder={
+                        planMode ? "Describe the task — Atlas will plan first…"
+                        : "Message Atlas — or hold the mic to talk"
+                      }
+                      value={localText}
+                      onChange={(e) => setLocalText(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && localText.trim()) { e.preventDefault(); handleSend(localText); } }}
                     />
                   </div>
                 )}
-                {(textValue.trim() && mode !== "listening") ? (
+                {(localText.trim() && mode !== "listening") ? (
                   <button
                     type="button"
                     className="thr-mic-btn thr-mic-btn-send"
-                    onClick={() => sendText(textValue)}
+                    onClick={() => handleSend(localText)}
                     aria-label="Send message"
                   >
                     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
