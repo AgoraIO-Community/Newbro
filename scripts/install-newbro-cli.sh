@@ -50,7 +50,7 @@ install_uv() {
 
 install_newbro_cli() {
   log "Installing/updating newbro-cli"
-  uv tool install --python 3.12 --upgrade newbro-cli
+  uv tool install --python 3.12 --upgrade --force newbro-cli
   add_user_tool_paths
   if ! have_cmd newbro; then
     die "newbro-cli installed but newbro is still not available on PATH."

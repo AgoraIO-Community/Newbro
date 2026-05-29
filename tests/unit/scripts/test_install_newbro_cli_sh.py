@@ -23,6 +23,17 @@ echo "uv $*" >> "$FAKE_LOG"
 """
 
 
+def fake_uv_requiring_force_script() -> str:
+    return """#!/usr/bin/env sh
+set -eu
+echo "uv $*" >> "$FAKE_LOG"
+case " $* " in
+  *" --force "*) ;;
+  *) echo "missing --force" >&2; exit 42 ;;
+esac
+"""
+
+
 def fake_newbro_script() -> str:
     return """#!/usr/bin/env sh
 set -eu
@@ -92,10 +103,43 @@ def test_install_newbro_cli_uses_existing_uv_and_runs_forwarded_args(tmp_path: P
 
     assert completed.returncode == 0, completed.stderr
     assert log_file.read_text(encoding="utf-8").splitlines() == [
-        "uv tool install --python 3.12 --upgrade newbro-cli",
+        "uv tool install --python 3.12 --upgrade --force newbro-cli",
         "newbro executor run --base-url https://newbro.example.com --node-id node-1 --token secret",
     ]
     assert "Using uv at" in completed.stdout
+
+
+def test_install_newbro_cli_forces_over_existing_newbro_executable(tmp_path: Path):
+    fake_bin = tmp_path / "bin"
+    home = tmp_path / "home"
+    log_file = tmp_path / "install.log"
+    fake_bin.mkdir()
+    home.mkdir()
+    write_executable(fake_bin / "uv", fake_uv_requiring_force_script())
+    write_executable(fake_bin / "newbro", fake_newbro_script())
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "FAKE_LOG": str(log_file),
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        }
+    )
+
+    completed = subprocess.run(
+        ["sh", str(INSTALL_SCRIPT), "--version"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert log_file.read_text(encoding="utf-8").splitlines() == [
+        "uv tool install --python 3.12 --upgrade --force newbro-cli",
+        "newbro --version",
+    ]
 
 
 def test_install_newbro_cli_installs_uv_when_missing(tmp_path: Path):
@@ -126,7 +170,7 @@ def test_install_newbro_cli_installs_uv_when_missing(tmp_path: Path):
     assert completed.returncode == 0, completed.stderr
     assert log_file.read_text(encoding="utf-8").splitlines() == [
         "curl -LsSf https://astral.sh/uv/install.sh",
-        "uv tool install --python 3.12 --upgrade newbro-cli",
+        "uv tool install --python 3.12 --upgrade --force newbro-cli",
         "newbro --help",
     ]
     assert "Installing uv" in completed.stdout
@@ -160,6 +204,6 @@ def test_install_newbro_cli_without_args_installs_only(tmp_path: Path):
 
     assert completed.returncode == 0, completed.stderr
     assert log_file.read_text(encoding="utf-8").splitlines() == [
-        "uv tool install --python 3.12 --upgrade newbro-cli",
+        "uv tool install --python 3.12 --upgrade --force newbro-cli",
     ]
     assert "Done. Run: newbro --help" in completed.stdout
