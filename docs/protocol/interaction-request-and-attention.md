@@ -43,6 +43,7 @@ Current kinds:
 - `permission`
 - `question`
 - `confirmation`
+- `plan_proposal`
 
 Current statuses:
 
@@ -67,6 +68,11 @@ Current fields include:
 - `details`
 - `available_actions`
 - `answer_schema`
+
+For Bro Detail requests, `details` may include client-safe placement hints such
+as `persona_id`, `target_thread_id`, `client_request_id`, and `source_kind`.
+Clients use these only to place the request in the right Bro/thread surface;
+resolution still targets `request_id`.
 - `resume_strategy`
 - `opaque`
 - `created_at`
@@ -80,6 +86,10 @@ Current fields include:
   - actions: `answer`
 - `confirmation`
   - actions: `confirm`, `cancel`
+- `plan_proposal`
+  - actions: `approve`, `deny`
+  - `approve` means run the selected proposal option
+  - `deny` means keep planning/refine, not cancel the task
 
 `opaque` is currently used to carry executor-native continuation data when
 available.
@@ -103,6 +113,7 @@ Current kinds:
 - `permission_request`
 - `question_request`
 - `confirmation_request`
+- `plan_proposal_request`
 - `task_paused`
 - `task_resumed`
 - `task_blocked`
@@ -209,6 +220,7 @@ When Codex sends one of these live app-server requests:
 - `execCommandApproval`
 - `applyPatchApproval`
 - `question/request_user_input`
+- `item/tool/requestUserInput`
 
 the adapter:
 
@@ -223,6 +235,23 @@ When the user resolves the request:
 3. the same live Codex session continues the same turn
 
 This is the preferred path for Codex approval and question flows.
+
+For Bro Detail plan-mode turns, final Codex `item/completed` events with
+`item.type = "plan"` become `InteractionRequest(kind="plan_proposal")` because
+the app-server final plan item is the authoritative plan artifact. The
+client-safe proposal summary/options live in `details.proposal`; approving that
+proposal clears `task.metadata.plan_mode`, sets task metadata mode to
+`modify_allowed`, and queues a follow-up execution turn using the approved
+plan. Choosing `deny` keeps `plan_mode=true`, keeps mode `proposal_only`, and
+queues a follow-up planning turn. The resolved proposal request records the
+acknowledgement; active execution/refinement state belongs to the task/run
+timeline or to a new pending `InteractionRequest`, not to the old proposal
+card. These final-plan approval points are
+non-native: the executor emits the blocked event and ends that executor run
+instead of waiting for a native callback. Codex `requestUserInput` callbacks
+with structured options also become plan proposals; in that native callback
+path the executor payload stays in `opaque.native_response`, is sanitized
+before it reaches clients, and can continue the same Codex turn.
 
 ### Generic Fallback
 

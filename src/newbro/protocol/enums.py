@@ -81,6 +81,7 @@ class InteractionRequestKind(StrEnum):
     PERMISSION = "permission"
     QUESTION = "question"
     CONFIRMATION = "confirmation"
+    PLAN_PROPOSAL = "plan_proposal"
 
 
 class InteractionRequestStatus(StrEnum):
@@ -104,6 +105,7 @@ class AttentionItemKind(StrEnum):
     PERMISSION_REQUEST = "permission_request"
     QUESTION_REQUEST = "question_request"
     CONFIRMATION_REQUEST = "confirmation_request"
+    PLAN_PROPOSAL_REQUEST = "plan_proposal_request"
     TASK_PAUSED = "task_paused"
     TASK_RESUMED = "task_resumed"
     TASK_BLOCKED = "task_blocked"

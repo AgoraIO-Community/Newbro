@@ -202,7 +202,40 @@ describe("session-client transport base URL handling", () => {
         target_persona_id: "forge",
         target_thread_id: null,
         create_new_thread: false,
+        plan_mode: false,
         text: "continue directly",
+      }),
+    });
+  });
+
+  it("submits plan-mode executor text instructions through the HTTP executor endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
+      okJsonResponse({
+        instruction_id: "txt-plan",
+        target_persona_id: "forge",
+        target_thread_id: "bro-thread-1",
+        status: "accepted",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./session-client");
+    await client.submitExecutorTextInstruction("session-1", {
+      targetPersonaId: "forge",
+      targetThreadId: "bro-thread-1",
+      planMode: true,
+      text: "plan first",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/session-1/executor-text-instructions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_persona_id: "forge",
+        target_thread_id: "bro-thread-1",
+        create_new_thread: false,
+        plan_mode: true,
+        text: "plan first",
       }),
     });
   });

@@ -18,6 +18,7 @@ class ExecutorTextInstructionRequest(BaseModel):
     target_thread_id: str | None = Field(default=None, min_length=1)
     create_new_thread: bool = False
     client_request_id: str | None = Field(default=None, min_length=1, max_length=120)
+    plan_mode: bool = False
 
 
 class ExecutorTextInstructionResponse(BaseModel):
@@ -60,6 +61,7 @@ async def submit_executor_text_instruction(
             "target_thread_id": body.target_thread_id,
             "create_new_thread": body.create_new_thread,
             "text_length": len(text),
+            "plan_mode": body.plan_mode,
         },
     )
     LOGGER.info(
@@ -78,6 +80,7 @@ async def submit_executor_text_instruction(
             target_thread_id=body.target_thread_id,
             create_new_thread=body.create_new_thread,
             client_request_id=body.client_request_id,
+            plan_mode=body.plan_mode,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

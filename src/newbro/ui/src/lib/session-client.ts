@@ -340,6 +340,7 @@ export async function submitExecutorTextInstruction(
     targetThreadId?: string | null;
     createNewThread?: boolean;
     clientRequestId?: string | null;
+    planMode?: boolean;
     text: string;
   },
 ): Promise<{ instruction_id: string; target_persona_id: string; target_thread_id: string | null; status: string }> {
@@ -347,6 +348,7 @@ export async function submitExecutorTextInstruction(
     target_persona_id: payload.targetPersonaId,
     target_thread_id: payload.targetThreadId ?? null,
     create_new_thread: payload.createNewThread ?? false,
+    plan_mode: payload.planMode ?? false,
     text: payload.text,
   };
   if (payload.clientRequestId) {

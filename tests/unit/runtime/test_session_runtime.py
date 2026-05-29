@@ -471,6 +471,73 @@ async def test_selected_codex_thread_events_merge_with_pending_newbro_turn_by_cl
 
 
 @pytest.mark.anyio
+async def test_selected_codex_thread_plan_deltas_are_coalesced_but_final_plan_is_projected():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    for delta in ("Draft", " plan"):
+        await session.handle_codex_thread_event(
+            CodexThreadEventMessage(
+                subscription_id="codex-sub-1",
+                node_id="node-forge",
+                session_id="session-1",
+                target_persona_id="forge",
+                target_thread_id="thread-public",
+                thread_id="codex-thread-1",
+                method="item/plan/delta",
+                params={
+                    "turnId": "turn-plan",
+                    "itemId": "plan-1",
+                    "delta": delta,
+                },
+            )
+        )
+
+    assert session._bro_thread_executor_turns.get("thread-public") is None
+
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={
+                "turnId": "turn-plan",
+                "item": {
+                    "type": "plan",
+                    "id": "plan-1",
+                    "text": "Final selected-thread plan.",
+                },
+            },
+        )
+    )
+
+    turns = session._bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].metadata["codex_plan"] == {
+        "text": "Final selected-thread plan.",
+        "steps": [],
+    }
+
+
+@pytest.mark.anyio
 async def test_selected_codex_thread_late_event_merges_with_completed_direct_turn_by_client_request_id():
     session = create_session_runtime(
         "session-1",
@@ -604,6 +671,63 @@ class BackgroundTestExecutor:
         )
 
 
+class PlanProposalLifecycleExecutor:
+    def __init__(self, executor_type: str = "plan-lifecycle") -> None:
+        self._capabilities = ExecutorCapabilities(
+            executor_type=executor_type,
+            supports_follow_up=True,
+        )
+        self.calls: list[dict[str, object]] = []
+
+    def get_capabilities(self) -> ExecutorCapabilities:
+        return self._capabilities
+
+    async def create_session(self, workspace_id: str | None = None) -> ExecutorSession:
+        return ExecutorSession(
+            session_id=f"{self._capabilities.executor_type}-session",
+            executor_type=self._capabilities.executor_type,
+        )
+
+    async def cancel_run(self, run_id: str) -> None:
+        return None
+
+    async def pause_run(self, run_id: str) -> None:
+        return None
+
+    async def run_task(self, run, task, session):
+        self.calls.append({
+            "latest_instruction": task.latest_instruction,
+            "metadata": dict(task.metadata),
+        })
+        if task.metadata.get("plan_mode") is True:
+            yield ExecutorEvent(
+                run_id=run.run_id,
+                session_id=session.session_id,
+                event_type=ExecutorEventType.BLOCKED,
+                message="Review the proposed lifecycle plan before execution.",
+                metadata={
+                    "interaction_kind": "plan_proposal",
+                    "proposal": {
+                        "summary": "Review the proposed lifecycle plan before execution.",
+                        "options": [
+                            {
+                                "id": "approved_codex_plan",
+                                "label": "Run proposed plan",
+                                "description": "Implement the approved lifecycle plan.",
+                            }
+                        ],
+                    },
+                },
+            )
+            return
+        yield ExecutorEvent(
+            run_id=run.run_id,
+            session_id=session.session_id,
+            event_type=ExecutorEventType.COMPLETED,
+            message="Implemented the approved lifecycle plan.",
+        )
+
+
 class CancelTrackingExecutor:
     def __init__(self) -> None:
         self._capabilities = ExecutorCapabilities(executor_type="cancellable", supports_cancel=True)
@@ -723,6 +847,36 @@ class FakeNativeCodexSession:
 
     def mark_blocked_resolved(self) -> None:
         self.session.mark_blocked_resolved()
+
+
+async def _wait_for_runtime_state(predicate, timeout: float = 4.0):
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        result = await predicate()
+        if result:
+            return result
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError("Timed out waiting for expected runtime state.")
+        await asyncio.sleep(0.05)
+
+
+async def _pending_plan_request(session, task_id: str):
+    requests = await session.blackboard.list_interaction_requests()
+    for request in requests:
+        if (
+            request.task_id == task_id
+            and request.kind == InteractionRequestKind.PLAN_PROPOSAL
+            and request.status == InteractionRequestStatus.PENDING
+        ):
+            return request
+    return None
+
+
+async def _completed_task(session, task_id: str):
+    task = await session.blackboard.get_task(task_id)
+    if task is not None and task.status == TaskStatus.COMPLETED:
+        return task
+    return None
 
 
 @pytest.mark.anyio
@@ -1341,3 +1495,218 @@ async def test_session_runtime_follow_up_resolution_detaches_live_codex_session(
     assert (
         session.execution_brain.get_live_session("exec-session-follow-up") is None
     )
+
+
+@pytest.mark.anyio
+async def test_session_runtime_plan_proposal_approval_requeues_execution_mode_and_drops_live_session():
+    session = create_session_runtime(
+        "session-6g",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(codex_executor_enabled=True),
+    )
+    native = FakeNativeCodexSession()
+    native.session.thread_id = "thread-plan-approval"
+    session.execution_brain._loop._sessions._live_sessions["exec-session-plan-approval"] = (
+        native.session
+    )
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-plan-approval",
+            root_task_id="task-plan-approval",
+            title="Plan approval task",
+            goal="Plan approval task",
+            status=TaskStatus.WAITING_USER_INPUT,
+            preferred_executor="codex",
+            metadata={"plan_mode": True, "mode": "proposal_only"},
+        )
+    )
+    await session.blackboard.put_session(
+        RuntimeExecutionSession(
+            execution_session_id="exec-session-plan-approval",
+            task_id="task-plan-approval",
+            base_executor_id="codex",
+            active_run_id="run-plan-approval",
+            latest_run_id="run-plan-approval",
+            run_ids=["run-plan-approval"],
+        )
+    )
+    await session.blackboard.put_binding(
+        SessionBinding(
+            task_id="task-plan-approval",
+            execution_session_id="exec-session-plan-approval",
+            session_id="codex-session-native",
+            claimed_by="worker-session-6g",
+            claim_expires_at="2026-04-16T00:10:00+00:00",
+            binding_status=BindingStatus.ACTIVE,
+        )
+    )
+    await session.blackboard.put_run(
+        ExecutionRun(
+            run_id="run-plan-approval",
+            task_id="task-plan-approval",
+            execution_session_id="exec-session-plan-approval",
+            executor_type="codex",
+            status=RunStatus.BLOCKED,
+            block_reason="Review the proposed plan before execution.",
+        )
+    )
+    await session.blackboard.put_interaction_request(
+        InteractionRequest(
+            request_id="ireq-plan-approval",
+            task_id="task-plan-approval",
+            execution_session_id="exec-session-plan-approval",
+            run_id="run-plan-approval",
+            executor_type="codex",
+            kind=InteractionRequestKind.PLAN_PROPOSAL,
+            status=InteractionRequestStatus.PENDING,
+            prompt="Review the proposed plan before execution.",
+            details={
+                "proposal": {
+                    "summary": "Review the proposed plan before execution.",
+                    "options": [
+                        {
+                            "id": "approved_codex_plan",
+                            "label": "Run proposed plan",
+                            "description": "Final plan text.",
+                        }
+                    ],
+                }
+            },
+            available_actions=["approve", "deny"],
+            opaque={},
+            created_at="2026-04-06T00:00:00+00:00",
+        )
+    )
+
+    affected = await session.resolve_interaction_request(
+        "ireq-plan-approval",
+        action="approve",
+        option_id="approved_codex_plan",
+    )
+
+    task = await session.blackboard.get_task("task-plan-approval")
+    execution_session = await session.blackboard.get_session("exec-session-plan-approval")
+
+    assert affected == ["task-plan-approval"]
+    assert native.client.calls == []
+    assert native.client.closed is True
+    assert session.execution_brain.get_live_session("exec-session-plan-approval") is None
+    assert task is not None and task.status == TaskStatus.QUEUED
+    assert "plan_mode" not in task.metadata
+    assert task.metadata["mode"] == "modify_allowed"
+    assert task.latest_instruction is not None
+    assert "Proceed with that plan." in task.latest_instruction
+    assert execution_session is not None and execution_session.active_run_id is None
+
+
+@pytest.mark.anyio
+async def test_session_runtime_plan_proposal_approval_runs_follow_up_to_completion():
+    session = create_session_runtime(
+        "session-6g-lifecycle",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    executor = PlanProposalLifecycleExecutor()
+    session.registry.register(executor)
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-plan-lifecycle",
+            root_task_id="task-plan-lifecycle",
+            title="Plan lifecycle task",
+            goal="Plan lifecycle task",
+            status=TaskStatus.QUEUED,
+            preferred_executor="plan-lifecycle",
+            metadata={"plan_mode": True, "mode": "proposal_only"},
+        )
+    )
+
+    session.schedule_execution()
+    pending_request = await _wait_for_runtime_state(
+        lambda: _pending_plan_request(session, "task-plan-lifecycle")
+    )
+
+    affected = await session.resolve_interaction_request(
+        pending_request.request_id,
+        action="approve",
+        option_id="approved_codex_plan",
+    )
+    session.schedule_execution()
+    completed_task = await _wait_for_runtime_state(
+        lambda: _completed_task(session, "task-plan-lifecycle")
+    )
+
+    requests = await session.blackboard.list_interaction_requests()
+    execution_sessions = await session.blackboard.list_sessions()
+    assert len(execution_sessions) == 1
+    assert execution_sessions[0].latest_run_id is not None
+    latest_run = await session.blackboard.get_run(execution_sessions[0].latest_run_id)
+    assert latest_run is not None
+
+    assert affected == ["task-plan-lifecycle"]
+    assert completed_task.status == TaskStatus.COMPLETED
+    assert len(executor.calls) == 2
+    assert executor.calls[0]["metadata"] == {"plan_mode": True, "mode": "proposal_only"}
+    assert executor.calls[1]["metadata"] == {"mode": "modify_allowed"}
+    assert isinstance(executor.calls[1]["latest_instruction"], str)
+    assert "Proceed with that plan." in executor.calls[1]["latest_instruction"]
+    assert latest_run.status == RunStatus.COMPLETED
+    assert latest_run.output_summary == "Implemented the approved lifecycle plan."
+    assert [request.status for request in requests] == [InteractionRequestStatus.APPROVED]
+    assert not [
+        request
+        for request in requests
+        if request.kind == InteractionRequestKind.PLAN_PROPOSAL
+        and request.status == InteractionRequestStatus.PENDING
+    ]
+
+
+@pytest.mark.anyio
+async def test_session_runtime_plan_proposal_denial_requeues_planning_mode():
+    session = create_session_runtime(
+        "session-6h",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-plan-denial",
+            root_task_id="task-plan-denial",
+            title="Plan denial task",
+            goal="Plan denial task",
+            status=TaskStatus.WAITING_USER_INPUT,
+            preferred_executor="codex",
+            metadata={"plan_mode": True, "mode": "proposal_only"},
+        )
+    )
+    await session.blackboard.put_interaction_request(
+        InteractionRequest(
+            request_id="ireq-plan-denial",
+            task_id="task-plan-denial",
+            execution_session_id="exec-session-plan-denial",
+            run_id="run-plan-denial",
+            executor_type="codex",
+            kind=InteractionRequestKind.PLAN_PROPOSAL,
+            status=InteractionRequestStatus.PENDING,
+            prompt="Review the proposed plan before execution.",
+            available_actions=["approve", "deny"],
+            opaque={},
+            created_at="2026-04-06T00:00:00+00:00",
+        )
+    )
+
+    affected = await session.resolve_interaction_request("ireq-plan-denial", action="deny")
+
+    task = await session.blackboard.get_task("task-plan-denial")
+
+    assert affected == ["task-plan-denial"]
+    assert task is not None and task.status == TaskStatus.QUEUED
+    assert task.metadata["plan_mode"] is True
+    assert task.metadata["mode"] == "proposal_only"
+    assert task.latest_instruction is not None
+    assert "keep planning" in task.latest_instruction

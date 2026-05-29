@@ -3231,6 +3231,45 @@
   box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 0 0 1px var(--nb-line);
 }
 .dt-cmp-modes-off { opacity: 0.55; }
+.dt-cmp-headl { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.dt-cmp-planchip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 9px 5px 11px;
+  border-radius: 999px;
+  background: var(--nb-paper-sub);
+  border: 1px solid var(--nb-line);
+  color: var(--nb-ink-soft);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.16s, border-color 0.16s, color 0.16s, box-shadow 0.16s;
+}
+.dt-cmp-planchip:hover { border-color: var(--nb-line-hover); color: var(--nb-ink); }
+.dt-cmp-planchip-kbd {
+  font-size: 10px;
+  background: rgba(0,0,0,0.05);
+  border-color: rgba(0,0,0,0.08);
+}
+.dt-cmp-planchip-on {
+  background: var(--nb-coral-tint);
+  border-color: var(--nb-coral-border);
+  color: var(--nb-coral-hover);
+  font-weight: 600;
+}
+.dt-cmp-planchip-on .dt-cmp-planchip-kbd {
+  background: rgba(255,106,61,0.14);
+  border-color: var(--nb-coral-border);
+  color: var(--nb-coral-hover);
+}
+.dt-cmp-plan .dt-cmp-bar {
+  border-color: var(--nb-coral-border);
+  background: var(--nb-coral-tint);
+}
+.dt-cmp-plan .dt-cmp-bar:focus-within {
+  box-shadow: 0 0 0 3px rgba(255,106,61,0.1), 0 4px 14px rgba(0,0,0,0.04);
+}
+.dt-cmp-plan .dt-cmp-input::placeholder { color: var(--nb-coral-hover); opacity: 0.75; }
 
 /* free-mode sub-toggle inside the composer head — appears only when
    "Open channel" is selected. A compact horizontal segment matching
@@ -3526,6 +3565,174 @@
   50% { transform: scaleY(1.15); }
 }
 
+.dt-plantag {
+  display: inline-flex; align-items: center; gap: 5px;
+  align-self: flex-end;
+  padding: 3px 10px 3px 7px;
+  border-radius: 999px;
+  background: var(--nb-coral-tint);
+  border: 1px solid var(--nb-coral-border);
+  color: var(--nb-coral-hover);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.dt-bubble-plan {
+  box-shadow: 0 0 0 2px var(--nb-wash), 0 0 0 3.5px var(--nb-coral-border);
+}
+.dt-turn-plan { max-width: 520px; }
+.dt-planprop {
+  width: 100%;
+  background: var(--nb-paper);
+  border: 1px solid var(--nb-line);
+  border-radius: 16px;
+  border-bottom-left-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(17,24,39,0.05);
+}
+.dt-planprop-on .dt-planprop-head { background: var(--nb-live-soft); }
+.dt-planprop-on .dt-planprop-glyph { background: var(--nb-live); }
+.dt-planprop-on .dt-planprop-tag { color: var(--nb-live-ink); border-color: var(--nb-live-edge); }
+.dt-planprop-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 13px 16px 12px;
+  background: var(--nb-coral-tint);
+  border-bottom: 1px solid var(--nb-line-soft);
+}
+.dt-planprop-glyph {
+  width: 26px; height: 26px;
+  border-radius: 8px;
+  background: var(--nb-coral);
+  color: #fff;
+  display: grid; place-items: center;
+  flex-shrink: 0;
+}
+.dt-planprop-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--nb-ink);
+  flex: 1;
+}
+.dt-planprop-tag {
+  font-family: var(--nb-font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--nb-coral);
+  background: var(--nb-paper);
+  border: 1px solid var(--nb-coral-border);
+  border-radius: 5px;
+  padding: 2px 6px;
+}
+.dt-planprop-summary {
+  margin: 0;
+  padding: 13px 16px 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--nb-ink-soft);
+}
+.dt-planopts {
+  display: flex; flex-direction: column; gap: 9px;
+  padding: 6px 16px 14px;
+}
+.dt-planopt {
+  display: flex; align-items: flex-start; gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 13px 14px;
+  border-radius: 12px;
+  background: var(--nb-paper-sub);
+  border: 1.5px solid var(--nb-line);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.dt-planopt:hover { border-color: var(--nb-line-hover); }
+.dt-planopt-on {
+  background: var(--nb-coral-tint);
+  border-color: var(--nb-coral);
+  box-shadow: 0 1px 5px rgba(255,106,61,0.16);
+}
+.dt-planopt:disabled { cursor: default; opacity: 0.5; }
+.dt-planopt-on:disabled { opacity: 1; }
+.dt-planopt-radio {
+  width: 17px; height: 17px;
+  border-radius: 50%;
+  border: 2px solid var(--nb-line-hover);
+  background: #fff;
+  flex-shrink: 0;
+  margin-top: 2px;
+  position: relative;
+}
+.dt-planopt-on .dt-planopt-radio { border-color: var(--nb-coral); }
+.dt-planopt-on .dt-planopt-radio::after {
+  content: "";
+  position: absolute; inset: 2.5px;
+  border-radius: 50%;
+  background: var(--nb-coral);
+}
+.dt-planopt-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.dt-planopt-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.dt-planopt-letter {
+  font-family: var(--nb-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--nb-coral-hover);
+  background: #fff;
+  border: 1px solid var(--nb-coral-border);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.dt-planopt-label { font-size: 13px; font-weight: 700; color: var(--nb-ink); }
+.dt-planopt-text { font-size: 12px; line-height: 1.5; color: var(--nb-ink-soft); }
+.dt-planprop-actions {
+  display: flex; gap: 8px;
+  padding: 0 16px 16px;
+}
+.dt-planprop-approve,
+.dt-planprop-keep {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 38px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dt-planprop-approve {
+  flex: 1;
+  background: var(--nb-coral);
+  border: 0;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(255,106,61,0.3);
+}
+.dt-planprop-approve:hover { background: var(--nb-coral-hover); }
+.dt-planprop-keep {
+  padding: 0 14px;
+  background: #fff;
+  border: 1px solid var(--nb-line);
+  color: var(--nb-ink-soft);
+}
+.dt-planprop-keep:hover { background: var(--nb-wash-alt); border-color: var(--nb-line-hover); color: var(--nb-ink); }
+.dt-planprop-running {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 16px 16px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--nb-live-soft);
+  border: 1px solid var(--nb-live-edge);
+  color: var(--nb-live-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.dt-planprop-running-spin {
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(16,185,129,0.3);
+  border-top-color: var(--nb-live-ink);
+  animation: ob-spin 0.85s linear infinite;
+  flex-shrink: 0;
+}
+
 /* ═══════════════════════════════════════════════
    Focus rings — keyboard navigation
    ═══════════════════════════════════════════════ */
@@ -3536,6 +3743,7 @@
 .dt-header-brand:focus-visible,
 .dt-header-icon-btn:focus-visible,
 .dt-cmp-mode:focus-visible,
+.dt-cmp-planchip:focus-visible,
 .dt-cmp-send:focus-visible,
 .dt-cmp-mic:focus-visible,
 .dt-recent:focus-visible {

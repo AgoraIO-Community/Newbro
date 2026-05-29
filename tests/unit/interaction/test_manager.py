@@ -278,6 +278,86 @@ async def test_interaction_manager_requires_answer_text_for_answer_action():
 
 
 @pytest.mark.anyio
+async def test_interaction_manager_builds_and_resolves_plan_proposal():
+    store = InMemoryBlackboard()
+    manager = InteractionManager(store)
+    task = Task(
+        task_id="task-plan",
+        root_task_id="task-plan",
+        title="Plan task",
+        goal="Plan task",
+        metadata={
+            "persona_id": "persona-forge",
+            "target_thread_id": "thread-public",
+            "client_request_id": "text-client-1",
+            "source_kind": "bro_detail_text",
+        },
+    )
+    run = ExecutionRun(
+        run_id="run-plan",
+        task_id="task-plan",
+        execution_session_id="exec-plan",
+        executor_type="codex",
+        status=RunStatus.BLOCKED,
+        block_reason="Pick a plan",
+        metadata={
+            "blocked_event": {
+                "interaction_kind": "plan_proposal",
+                "proposal": {
+                    "summary": "Pick a plan",
+                    "options": [
+                        {"id": "small", "label": "Small", "description": "Minimal change"},
+                        {"id": "full", "label": "Full", "description": "Complete feature"},
+                    ],
+                },
+                "native_response": {
+                    "request_id": "native-1",
+                    "method": "item/tool/requestUserInput",
+                    "params": {"threadId": "thread-1"},
+                },
+            },
+        },
+    )
+    await store.put_task(task)
+    await store.put_run(run)
+
+    await manager.handle_blackboard_write(
+        BlackboardWriteEvent(kind=BlackboardWriteKind.RUN, entity_id="run-plan", task_id="task-plan")
+    )
+
+    request = (await store.list_interaction_requests())[0]
+    attention = (await store.list_attention_items())[0]
+    assert request.kind == InteractionRequestKind.PLAN_PROPOSAL
+    assert request.available_actions == ["approve", "deny"]
+    assert request.details["proposal"] == {
+        "summary": "Pick a plan",
+        "options": [
+            {"id": "small", "label": "Small", "description": "Minimal change"},
+            {"id": "full", "label": "Full", "description": "Complete feature"},
+        ],
+    }
+    assert request.details["persona_id"] == "persona-forge"
+    assert request.details["target_thread_id"] == "thread-public"
+    assert request.details["client_request_id"] == "text-client-1"
+    assert request.details["source_kind"] == "bro_detail_text"
+    assert attention.kind == AttentionItemKind.PLAN_PROPOSAL_REQUEST
+    assert attention.actions == [
+        {"action": "approve", "label": "Approve & run"},
+        {"action": "deny", "label": "Keep planning"},
+    ]
+
+    resolution = await manager.resolve_request(
+        request.request_id,
+        action="approve",
+        option_id="full",
+    )
+
+    assert resolution.answer_text == "Full - Complete feature"
+    assert resolution.request.status == InteractionRequestStatus.APPROVED
+    assert resolution.request.details["selected_option_id"] == "full"
+
+
+@pytest.mark.anyio
 async def test_interaction_manager_cancel_requests_for_task_marks_request_and_attention():
     store = InMemoryBlackboard()
     manager = InteractionManager(store)

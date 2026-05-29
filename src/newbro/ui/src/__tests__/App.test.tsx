@@ -86,6 +86,7 @@ const clientMock = vi.hoisted(() => ({
   sendSocketDraftAsrTurn: vi.fn(),
   submitExecutorAudioInstruction: vi.fn(),
   submitExecutorTextInstruction: vi.fn(),
+  resolveInteractionRequest: vi.fn(),
   createPersona: vi.fn(),
   updatePersona: vi.fn(),
   createExecutorNode: vi.fn(),
@@ -377,6 +378,88 @@ function activeForgeSnapshot(sessionId: string, node = usableExecutorNode()) {
   };
 }
 
+function planProposalThreadSnapshot(
+  sessionId: string,
+  requestStatus: "pending" | "approved" | "denied",
+  overrides: Record<string, any> = {},
+) {
+  const snapshot = forgeSnapshot(sessionId);
+  const taskStatus = overrides.taskStatus ?? (requestStatus === "approved" ? "completed" : "waiting_user_input");
+  const proposalSummary = overrides.proposalSummary ?? "Review the unique lifecycle plan before execution.";
+  const taskDescription = overrides.taskDescription ?? null;
+  snapshot.bro_threads = [
+    {
+      thread_id: "thread-plan",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: "exec-plan",
+      status: overrides.threadStatus ?? (taskStatus === "completed" ? "completed" : "waiting_user_input"),
+      title: overrides.threadTitle ?? "Planning thread",
+      preview: overrides.threadPreview ?? (taskDescription ?? "Plan ready"),
+      progress: taskStatus === "completed" ? 100 : 60,
+      task_ids: ["task-plan"],
+      active_task_id: "task-plan",
+      latest_task_id: "task-plan",
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "native-plan" },
+    },
+  ] as any;
+  snapshot.bro_timeline_turns = [
+    timelineTurn({
+      thread_id: "thread-plan",
+      executor_turn_id: "native-turn",
+      userText: "Draft a plan.",
+      task: {
+        task_id: "task-plan",
+        run_id: requestStatus === "approved" ? "run-follow-up" : "run-plan",
+        title: overrides.taskTitle ?? "Plan task",
+        status: taskStatus,
+        status_label: overrides.taskStatusLabel ?? (taskStatus === "completed" ? "Completed" : "Waiting for input"),
+        progress: taskStatus === "completed" ? 100 : 60,
+        goal: "Draft a plan.",
+        plan: null,
+        description: taskDescription,
+        summary: taskDescription,
+        created_at: "2026-05-26T22:01:00+00:00",
+        updated_at: "2026-05-26T22:02:00+00:00",
+        metadata: {},
+      },
+    }),
+  ] as any;
+  snapshot.interaction_requests = [
+    {
+      request_id: "ireq-plan",
+      task_id: "task-plan",
+      execution_session_id: "exec-plan",
+      run_id: "run-plan",
+      executor_type: "codex",
+      kind: "plan_proposal",
+      status: requestStatus,
+      prompt: proposalSummary,
+      details: {
+        persona_id: "forge",
+        target_thread_id: "thread-plan",
+        proposal: {
+          summary: proposalSummary,
+          options: [{ id: "approved_codex_plan", label: "Run proposed plan", description: "Final plan." }],
+        },
+      },
+      available_actions: ["approve", "deny"],
+      answer_schema: null,
+      resume_strategy: "follow_up",
+      opaque: {},
+      created_at: "2026-05-26T22:02:00+00:00",
+      resolved_at: requestStatus === "pending" ? null : "2026-05-26T22:03:00+00:00",
+    },
+  ] as any;
+  return snapshot;
+}
+
 describe("Newbro artboard shell", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -426,6 +509,7 @@ describe("Newbro artboard shell", () => {
       target_thread_id: "exec-1",
       status: "accepted",
     });
+    clientMock.resolveInteractionRequest.mockResolvedValue({ request_id: "ireq-plan", affected_task_ids: ["task-plan"] });
     clientMock.updatePersona.mockResolvedValue({});
   });
 
@@ -1422,6 +1506,219 @@ describe("Newbro artboard shell", () => {
 
     expect(await screen.findByText("Fetching thread history…")).toBeInTheDocument();
     expect(screen.queryByText("No messages with Forge yet")).not.toBeInTheDocument();
+  });
+
+  it("renders an active-thread plan proposal even without a matching timeline turn", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = [
+      {
+        thread_id: "thread-plan",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "running",
+        title: "Planning thread",
+        preview: "Plan in progress",
+        progress: 60,
+        task_ids: ["task-plan"],
+        active_task_id: "task-plan",
+        latest_task_id: "task-plan",
+        has_resume_handle: true,
+        updated_at: "2026-05-26T22:00:00+00:00",
+        timeline_status: "loaded",
+        timeline_error: null,
+        diagnostics: { codex_thread_id: "native-plan" },
+      },
+    ] as any;
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "thread-plan",
+        executor_turn_id: "native-turn",
+        userText: "Draft a plan.",
+        assistantText: "Working on the plan.",
+      }),
+    ] as any;
+    snapshot.interaction_requests = [
+      {
+        request_id: "ireq-plan",
+        task_id: "task-plan",
+        execution_session_id: "exec-plan",
+        run_id: "run-plan",
+        executor_type: "codex",
+        kind: "plan_proposal",
+        status: "pending",
+        prompt: "Review the unique fallback plan before execution.",
+        details: {
+          persona_id: "forge",
+          target_thread_id: "thread-plan",
+          proposal: {
+            summary: "Review the unique fallback plan before execution.",
+            options: [{ id: "approved_codex_plan", label: "Run proposed plan", description: "Final plan." }],
+          },
+        },
+        available_actions: ["approve", "deny"],
+        answer_schema: null,
+        resume_strategy: "follow_up",
+        opaque: {},
+        created_at: "2026-05-26T22:02:00+00:00",
+        resolved_at: null,
+      },
+    ] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Review the unique fallback plan before execution.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Approve & run/i })).toBeInTheDocument();
+  });
+
+  it("disables plan proposal controls while approval resolves", async () => {
+    const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
+      proposalSummary: "Review the unique clickable plan before execution.",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    clientMock.resolveInteractionRequest.mockImplementationOnce(() => new Promise(() => undefined));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const approve = await screen.findByRole("button", { name: /Approve & run/i });
+    const keepPlanning = screen.getByRole("button", { name: /Keep planning/i });
+    fireEvent.click(approve);
+
+    await waitFor(() => expect(clientMock.resolveInteractionRequest).toHaveBeenCalledWith("session-existing", "ireq-plan", {
+      action: "approve",
+      answer_text: "Run proposed plan - Final plan.",
+      option_id: "approved_codex_plan",
+    }));
+    expect(approve).toBeDisabled();
+    expect(keepPlanning).toBeDisabled();
+  });
+
+  it("does not render approved plan proposals as executing cards", async () => {
+    const snapshot = planProposalThreadSnapshot("session-existing", "approved", {
+      proposalSummary: "Review the unique approved stale plan before execution.",
+      taskDescription: "Implemented the approved plan.",
+      threadPreview: "Implemented the approved plan.",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect((await screen.findAllByText("Implemented the approved plan.")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Plan approved · executing")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review the unique approved stale plan before execution.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Approve & run/i })).not.toBeInTheDocument();
+  });
+
+  it("does not render denied plan proposals as refining cards", async () => {
+    const snapshot = planProposalThreadSnapshot("session-existing", "denied", {
+      proposalSummary: "Review the unique denied stale plan before execution.",
+      taskTitle: "Refining proposal",
+      taskStatus: "queued",
+      taskStatusLabel: "Queued",
+      threadStatus: "running",
+      threadPreview: "Refining proposal",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect((await screen.findAllByText("Refining proposal")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Kept planning · refining")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review the unique denied stale plan before execution.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Keep planning/i })).not.toBeInTheDocument();
+  });
+
+  it("does not duplicate an active-thread plan proposal when a matching timeline turn renders it inline", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = [
+      {
+        thread_id: "thread-plan",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "waiting_user_input",
+        title: "Planning thread",
+        preview: "Plan ready",
+        progress: 60,
+        task_ids: ["task-plan"],
+        active_task_id: "task-plan",
+        latest_task_id: "task-plan",
+        has_resume_handle: true,
+        updated_at: "2026-05-26T22:00:00+00:00",
+        timeline_status: "loaded",
+        timeline_error: null,
+        diagnostics: { codex_thread_id: "native-plan" },
+      },
+    ] as any;
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "thread-plan",
+        executor_turn_id: "native-turn",
+        userText: "Draft a plan.",
+        task: {
+          task_id: "task-plan",
+          run_id: "run-plan",
+          title: "Plan task",
+          status: "waiting_user_input",
+          status_label: "Waiting for input",
+          progress: 60,
+          goal: "Draft a plan.",
+          plan: null,
+          description: null,
+          summary: null,
+          created_at: "2026-05-26T22:01:00+00:00",
+          updated_at: "2026-05-26T22:02:00+00:00",
+          metadata: {},
+        },
+      }),
+    ] as any;
+    snapshot.interaction_requests = [
+      {
+        request_id: "ireq-plan",
+        task_id: "task-plan",
+        execution_session_id: "exec-plan",
+        run_id: "run-plan",
+        executor_type: "codex",
+        kind: "plan_proposal",
+        status: "pending",
+        prompt: "Review the unique inline plan before execution.",
+        details: {
+          persona_id: "forge",
+          target_thread_id: "thread-plan",
+          proposal: {
+            summary: "Review the unique inline plan before execution.",
+            options: [{ id: "approved_codex_plan", label: "Run proposed plan", description: "Final plan." }],
+          },
+        },
+        available_actions: ["approve", "deny"],
+        answer_schema: null,
+        resume_strategy: "follow_up",
+        opaque: {},
+        created_at: "2026-05-26T22:02:00+00:00",
+        resolved_at: null,
+      },
+    ] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Review the unique inline plan before execution.")).toBeInTheDocument();
+    expect(screen.getAllByText("Review the unique inline plan before execution.")).toHaveLength(1);
   });
 
   it("enables desktop PTT audio for a connected idle Codex Bro", async () => {

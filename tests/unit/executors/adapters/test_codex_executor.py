@@ -7,6 +7,8 @@ import textwrap
 import pytest
 
 from newbro.executors.adapters.codex import CodexExecutor
+from newbro.executors.adapters.codex.client import CodexAppServerClient
+from newbro.executors.adapters.codex.executor import _extract_blocked_request
 from newbro.protocol import ExecutionRun, ExecutorTextInstruction, Task
 
 
@@ -151,6 +153,28 @@ def _write_fake_codex(
                             }},
                         }}
                     )
+                elif method == "collaborationMode/list":
+                    send(
+                        {{
+                            "id": request_id,
+                            "result": {{
+                                "data": [
+                                    {{
+                                        "name": "Default",
+                                        "mode": "default",
+                                        "model": "gpt-5.1-codex",
+                                        "reasoning_effort": "medium",
+                                    }},
+                                    {{
+                                        "name": "Plan",
+                                        "mode": "plan",
+                                        "model": "gpt-5.1-codex",
+                                        "reasoning_effort": "medium",
+                                    }},
+                                ]
+                            }},
+                        }}
+                    )
                 elif method == "turn/start":
                     turn_counter += 1
                     turn_id = f"turn-{{turn_counter}}"
@@ -214,6 +238,45 @@ def _write_fake_codex(
                                         "id": turn_id,
                                         "status": "failed",
                                         "error": {{"message": "fake failure"}},
+                                    }}
+                                }},
+                            }}
+                        )
+                    elif "Plan mode assert" in prompt:
+                        assert params.get("collaborationMode", {{}}).get("mode") == "plan"
+                        assert params.get("collaborationMode", {{}}).get("settings", {{}}).get("model") == "gpt-5.1-codex"
+                        assert params.get("collaborationMode", {{}}).get("settings", {{}}).get("reasoning_effort") == "medium"
+                        turns_by_thread.setdefault(thread_id, []).append(
+                            {{
+                                "id": turn_id,
+                                "items": [
+                                    {{
+                                        "type": "agentMessage",
+                                        "text": "Plan mode was used.",
+                                    }}
+                                ],
+                            }}
+                        )
+                        send(
+                            {{
+                                "method": "item/completed",
+                                "params": {{
+                                    "turnId": turn_id,
+                                    "item": {{
+                                        "type": "agentMessage",
+                                        "text": "Plan mode was used.",
+                                    }},
+                                }},
+                            }}
+                        )
+                        send(
+                            {{
+                                "method": "turn/completed",
+                                "params": {{
+                                    "turn": {{
+                                        "id": turn_id,
+                                        "status": "completed",
+                                        "error": None,
                                     }}
                                 }},
                             }}
@@ -712,6 +775,32 @@ async def test_codex_executor_sends_transcribed_audio_instruction_as_text_follow
     await session.close()
 
 
+@pytest.mark.anyio
+async def test_codex_executor_resolves_plan_collaboration_mode_when_thread_model_missing(tmp_path):
+    command = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+    session = await executor.create_session(str(tmp_path))
+    task = Task(
+        task_id="task-plan",
+        root_task_id="task-plan",
+        title="Plan mode assert",
+        goal="Plan mode assert",
+        metadata={"plan_mode": True},
+    )
+    run = ExecutionRun(
+        run_id="run-plan",
+        task_id="task-plan",
+        execution_session_id="exec-plan",
+        executor_type="codex",
+    )
+
+    events = [event async for event in executor.run_task(run, task, session)]
+
+    assert [event.event_type.value for event in events] == ["progress", "completed"]
+    assert events[-1].message == "Plan mode was used."
+    await session.close()
+
+
 def test_codex_executor_uses_raw_direct_bro_detail_prompt(tmp_path):
     command = _write_fake_codex(tmp_path)
     executor = CodexExecutor(command=str(command))
@@ -728,6 +817,88 @@ def test_codex_executor_uses_raw_direct_bro_detail_prompt(tmp_path):
     )
 
     assert executor._build_prompt(task) == "Hello hello"
+
+
+class _CapturingPeer:
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, dict[str, object]]] = []
+
+    async def request(self, method: str, params: dict[str, object]) -> dict[str, object]:
+        self.requests.append((method, params))
+        return {"turn": {"id": "turn-1"}}
+
+
+@pytest.mark.anyio
+async def test_codex_client_sends_native_plan_collaboration_mode():
+    peer = _CapturingPeer()
+    client = CodexAppServerClient(peer)  # type: ignore[arg-type]
+
+    await client.turn_start(
+        thread_id="thread-1",
+        prompt="Plan this first",
+        collaboration_mode="plan",
+        model="gpt-5.1-codex",
+        reasoning_effort="medium",
+    )
+
+    _, params = peer.requests[0]
+    assert params["collaborationMode"] == {
+        "mode": "plan",
+        "settings": {
+            "model": "gpt-5.1-codex",
+            "reasoning_effort": "medium",
+            "developer_instructions": None,
+        },
+    }
+
+
+@pytest.mark.anyio
+async def test_codex_client_does_not_silently_drop_requested_collaboration_mode():
+    peer = _CapturingPeer()
+    client = CodexAppServerClient(peer)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="requires a model"):
+        await client.turn_start(
+            thread_id="thread-1",
+            prompt="Plan this first",
+            collaboration_mode="plan",
+            model=None,
+        )
+
+    assert peer.requests == []
+
+
+def test_codex_user_input_request_becomes_plan_proposal():
+    blocked = _extract_blocked_request(
+        request_id="request-1",
+        method="item/tool/requestUserInput",
+        params={
+            "threadId": "thread-1",
+            "questions": [
+                {
+                    "id": "decision",
+                    "question": "Pick a plan",
+                    "options": [
+                        {"label": "Small", "description": "Minimal change"},
+                        {"label": "Full", "description": "Complete feature"},
+                    ],
+                }
+            ],
+        },
+        plan_mode=True,
+    )
+
+    assert blocked is not None
+    metadata = blocked["metadata"]
+    assert metadata["interaction_kind"] == "plan_proposal"
+    assert metadata["proposal"] == {
+        "question_id": "decision",
+        "summary": "Pick a plan",
+        "options": [
+            {"id": "Small", "label": "Small", "description": "Minimal change", "letter": "A"},
+            {"id": "Full", "label": "Full", "description": "Complete feature", "letter": "B"},
+        ],
+    }
 
 
 @pytest.mark.anyio
@@ -1036,7 +1207,7 @@ async def test_codex_executor_projects_documented_plan_events_without_reasoning(
 
     events = [event async for event in executor.run_task(run, task, session)]
 
-    assert [event.event_type.value for event in events] == ["plan", "plan", "plan", "completed"]
+    assert [event.event_type.value for event in events] == ["plan", "plan", "completed"]
     assert events[0].metadata["codex_plan_source"] == "turn/plan/updated"
     assert events[0].metadata["codex_plan"] == {
         "explanation": "Implementation plan",
@@ -1045,10 +1216,54 @@ async def test_codex_executor_projects_documented_plan_events_without_reasoning(
             {"step": "Patch projection", "status": "inProgress"},
         ],
     }
-    assert events[1].metadata["codex_plan"] == {"text": "Draft plan", "steps": []}
-    assert events[2].metadata["codex_plan_source"] == "item/completed"
-    assert events[2].metadata["codex_plan"] == {"text": "Final plan text.", "steps": []}
+    assert all(event.metadata.get("codex_plan_source") != "item/plan/delta" for event in events)
+    assert events[1].metadata["codex_plan_source"] == "item/completed"
+    assert events[1].metadata["codex_plan"] == {"text": "Final plan text.", "steps": []}
     assert all(event.message != "Hidden reasoning must stay hidden." for event in events)
+    await session.close()
+
+
+@pytest.mark.anyio
+async def test_codex_executor_blocks_for_approval_after_plan_mode_final_plan(tmp_path):
+    command = _write_plan_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+    session = await executor.create_session(str(tmp_path))
+    session.metadata["codex_model"] = "gpt-5.1-codex"
+    task = Task(
+        task_id="task-plan-mode",
+        root_task_id="task-plan-mode",
+        title="Plan-mode task",
+        goal="Display Codex plan for approval",
+        metadata={"plan_mode": True},
+    )
+    run = ExecutionRun(
+        run_id="run-plan-mode",
+        task_id="task-plan-mode",
+        execution_session_id="exec-plan-mode",
+        executor_type="codex",
+    )
+
+    events = []
+    async for event in executor.run_task(run, task, session):
+        events.append(event)
+
+    assert [event.event_type.value for event in events] == ["plan", "plan", "blocked"]
+    blocked = events[-1]
+    assert blocked.message == "Review the proposed plan before execution."
+    assert blocked.metadata["interaction_kind"] == "plan_proposal"
+    assert blocked.metadata["blocked_method"] == "item/completed:plan"
+    assert blocked.metadata["proposal"] == {
+        "summary": "Review the proposed plan before execution.",
+        "options": [
+            {
+                "id": "approved_codex_plan",
+                "label": "Run proposed plan",
+                "description": "Final plan text.",
+                "letter": "A",
+            }
+        ],
+        "codex_plan": {"text": "Final plan text.", "steps": []},
+    }
     await session.close()
 
 

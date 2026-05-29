@@ -30,6 +30,7 @@ from .sanitization import (
 class InteractionResolution:
     request: InteractionRequest
     follow_up_instruction: str
+    answer_text: str | None = None
 
 
 class InteractionManager:
@@ -93,6 +94,13 @@ class InteractionManager:
         if action not in request.available_actions:
             allowed = ", ".join(request.available_actions) or "none"
             raise ValueError(f"Action '{action}' is not allowed. Allowed: {allowed}.")
+        if request.kind == InteractionRequestKind.PLAN_PROPOSAL:
+            answer_text = _plan_proposal_answer_text(
+                request=request,
+                action=action,
+                answer_text=answer_text,
+                option_id=option_id,
+            )
         if action == "answer" and not (answer_text and answer_text.strip()):
             raise ValueError("answer_text is required for answer actions.")
 
@@ -121,6 +129,7 @@ class InteractionManager:
                 action=action,
                 answer_text=answer_text,
             ),
+            answer_text=answer_text,
         )
 
     async def add_task_signal_attention(
@@ -227,6 +236,7 @@ def _build_attention_from_request(*, task: Task, request: InteractionRequest) ->
         InteractionRequestKind.PERMISSION: AttentionItemKind.PERMISSION_REQUEST,
         InteractionRequestKind.QUESTION: AttentionItemKind.QUESTION_REQUEST,
         InteractionRequestKind.CONFIRMATION: AttentionItemKind.CONFIRMATION_REQUEST,
+        InteractionRequestKind.PLAN_PROPOSAL: AttentionItemKind.PLAN_PROPOSAL_REQUEST,
     }[request.kind]
     return AttentionItem(
         attention_id=f"attention-{uuid4().hex[:8]}",
@@ -245,18 +255,36 @@ def _build_attention_from_request(*, task: Task, request: InteractionRequest) ->
 
 def _request_details(*, task: Task, blocked_event: object) -> dict[str, object]:
     details: dict[str, object] = {}
+    for source_key, detail_key in (
+        ("persona_id", "persona_id"),
+        ("assigned_bro_id", "persona_id"),
+        ("target_thread_id", "target_thread_id"),
+        ("bro_thread_id", "target_thread_id"),
+        ("client_request_id", "client_request_id"),
+        ("source_kind", "source_kind"),
+    ):
+        if detail_key in details:
+            continue
+        value = task.metadata.get(source_key)
+        if isinstance(value, str) and value:
+            details[detail_key] = value
     persona_name = task.metadata.get("persona_name")
     if isinstance(persona_name, str) and persona_name:
         details["persona_name"] = persona_name
     sanitized_blocked_event = sanitize_blocked_event_for_client(blocked_event)
     if sanitized_blocked_event is not None:
         details["blocked_event"] = sanitized_blocked_event
+    proposal = _proposal_details_from_blocked_event(blocked_event)
+    if proposal is not None:
+        details["proposal"] = proposal
     return details
 
 
 def _classify_prompt(prompt: str, blocked_event: object) -> InteractionRequestKind:
     if isinstance(blocked_event, dict):
         explicit = blocked_event.get("interaction_kind")
+        if explicit == "plan_proposal":
+            return InteractionRequestKind.PLAN_PROPOSAL
         if explicit == "permission":
             return InteractionRequestKind.PERMISSION
         if explicit == "confirmation":
@@ -274,6 +302,8 @@ def _classify_prompt(prompt: str, blocked_event: object) -> InteractionRequestKi
 def _actions_for_kind(kind: InteractionRequestKind) -> list[str]:
     if kind == InteractionRequestKind.PERMISSION:
         return ["approve", "deny"]
+    if kind == InteractionRequestKind.PLAN_PROPOSAL:
+        return ["approve", "deny"]
     if kind == InteractionRequestKind.CONFIRMATION:
         return ["confirm", "cancel"]
     return ["answer"]
@@ -282,13 +312,18 @@ def _actions_for_kind(kind: InteractionRequestKind) -> list[str]:
 def _attention_actions_for_request(request: InteractionRequest) -> list[dict[str, object]]:
     actions: list[dict[str, object]] = []
     for action in request.available_actions:
-        label = {
-            "approve": "Allow",
-            "deny": "Deny",
-            "answer": "Answer",
-            "confirm": "Confirm",
-            "cancel": "Cancel",
-        }.get(action, action.replace("_", " ").title())
+        if request.kind == InteractionRequestKind.PLAN_PROPOSAL and action == "deny":
+            label = "Keep planning"
+        elif request.kind == InteractionRequestKind.PLAN_PROPOSAL and action == "approve":
+            label = "Approve & run"
+        else:
+            label = {
+                "approve": "Allow",
+                "deny": "Deny",
+                "answer": "Answer",
+                "confirm": "Confirm",
+                "cancel": "Cancel",
+            }.get(action, action.replace("_", " ").title())
         actions.append({"action": action, "label": label})
     return actions
 
@@ -300,6 +335,8 @@ def _request_title(task: Task, kind: InteractionRequestKind) -> str:
         return f"{subject} needs permission"
     if kind == InteractionRequestKind.CONFIRMATION:
         return f"{subject} needs confirmation"
+    if kind == InteractionRequestKind.PLAN_PROPOSAL:
+        return f"{subject} proposed a plan"
     return f"{subject} needs your input"
 
 
@@ -344,9 +381,100 @@ def _build_follow_up_instruction(
             "The user cancelled the pending action. Do not perform it. "
             "Continue only if there is another safe path."
         )
+    if request.kind == InteractionRequestKind.PLAN_PROPOSAL:
+        if action == "approve":
+            return (
+                f"The user approved this plan: {(answer_text or '').strip()}. "
+                "Proceed with that plan."
+            )
+        return "The user asked you to keep planning. Refine the plan and ask again before acting."
     if answer_text is None:
         raise ValueError("answer_text is required for answer actions.")
     return f"The user answered the pending question: {answer_text.strip()}. Continue from where you left off."
+
+
+def _proposal_details_from_blocked_event(blocked_event: object) -> dict[str, object] | None:
+    if not isinstance(blocked_event, dict):
+        return None
+    proposal = blocked_event.get("proposal")
+    if isinstance(proposal, dict):
+        return proposal
+    native_response = blocked_event.get("native_response")
+    if not isinstance(native_response, dict):
+        return None
+    params = native_response.get("params")
+    if not isinstance(params, dict):
+        return None
+    return _proposal_details_from_native_params(params)
+
+
+def _proposal_details_from_native_params(params: dict[str, object]) -> dict[str, object] | None:
+    questions = params.get("questions")
+    if not isinstance(questions, list):
+        return None
+    for question in questions:
+        if not isinstance(question, dict):
+            continue
+        question_id = question.get("id")
+        question_text = question.get("question") or question.get("prompt") or question.get("header")
+        options = question.get("options")
+        normalized_options: list[dict[str, object]] = []
+        if isinstance(options, list):
+            for index, option in enumerate(options):
+                if not isinstance(option, dict):
+                    continue
+                label = option.get("label")
+                description = option.get("description")
+                if not isinstance(label, str) or not label.strip():
+                    continue
+                option_id = option.get("id")
+                normalized_options.append(
+                    {
+                        "id": str(option_id) if isinstance(option_id, str) and option_id else label.strip(),
+                        "label": label.strip(),
+                        "description": description.strip() if isinstance(description, str) else "",
+                        "letter": chr(65 + index),
+                    }
+                )
+        return {
+            **({"question_id": question_id} if isinstance(question_id, str) and question_id else {}),
+            "summary": question_text.strip() if isinstance(question_text, str) and question_text.strip() else "Review the proposed plan.",
+            "options": normalized_options,
+        }
+    return None
+
+
+def _plan_proposal_answer_text(
+    *,
+    request: InteractionRequest,
+    action: str,
+    answer_text: str | None,
+    option_id: str | None,
+) -> str:
+    if answer_text and answer_text.strip():
+        return answer_text.strip()
+    if action == "deny":
+        return "Keep planning. Refine the proposal instead of acting yet."
+    proposal = request.details.get("proposal")
+    if isinstance(proposal, dict):
+        options = proposal.get("options")
+        if isinstance(options, list):
+            for option in options:
+                if not isinstance(option, dict):
+                    continue
+                candidate_id = option.get("id")
+                if option_id and candidate_id != option_id:
+                    continue
+                label = option.get("label")
+                description = option.get("description")
+                parts = [
+                    value.strip()
+                    for value in (label, description)
+                    if isinstance(value, str) and value.strip()
+                ]
+                if parts:
+                    return " - ".join(parts)
+    return "Approve and run the proposed plan."
 
 
 def _now_iso() -> str:

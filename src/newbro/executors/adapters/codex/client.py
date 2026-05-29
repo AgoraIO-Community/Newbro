@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Literal
 
 from .jsonrpc import JsonRpcPeer
 
@@ -154,24 +154,43 @@ class CodexAppServerClient:
         result = await self._peer.request("thread/list", params)
         return _as_dict(result)
 
+    async def collaboration_mode_list(self) -> dict[str, object]:
+        result = await self._peer.request("collaborationMode/list", {})
+        return _as_dict(result)
+
     async def turn_start(
         self,
         *,
         thread_id: str,
         prompt: str,
+        collaboration_mode: Literal["plan", "default"] | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, object]:
+        params: dict[str, object] = {
+            "threadId": thread_id,
+            "input": [
+                {
+                    "type": "text",
+                    "text": prompt,
+                    "textElements": [],
+                }
+            ],
+        }
+        if collaboration_mode is not None:
+            if not model:
+                raise ValueError("Codex collaborationMode requires a model.")
+            params["collaborationMode"] = {
+                "mode": collaboration_mode,
+                "settings": {
+                    "model": model,
+                    "reasoning_effort": reasoning_effort,
+                    "developer_instructions": None,
+                },
+            }
         result = await self._peer.request(
             "turn/start",
-            {
-                "threadId": thread_id,
-                "input": [
-                    {
-                        "type": "text",
-                        "text": prompt,
-                        "textElements": [],
-                    }
-                ],
-            },
+            params,
         )
         return _as_dict(result)
 
@@ -239,7 +258,12 @@ def _build_request_response(
         if action == "approve":
             return {"permissions": permissions, "scope": "session"}
         return {"permissions": {}, "scope": "turn"}
-    if "user_input" in normalized or ("request" in normalized and "question" in normalized):
+    if (
+        "user_input" in normalized
+        or "requestuserinput" in normalized
+        or "request_user_input" in normalized
+        or ("request" in normalized and "question" in normalized)
+    ):
         answers: dict[str, object] = {}
         questions = params.get("questions")
         if isinstance(questions, list):

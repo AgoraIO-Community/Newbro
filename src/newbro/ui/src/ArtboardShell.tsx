@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import { ArrowUp, Check, ChevronLeft, Copy, FileText, Layers, LogOut, MessageSquare, Mic, Plus, Radio, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
+import { ArrowUp, Check, ChevronLeft, Copy, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorConnectCommands,
   clearDraft,
@@ -20,7 +20,7 @@ import { buildBroCardModels, buildBroThreadRecords } from "./components/newbro/a
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
-import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, Persona, Task } from "./types";
+import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
 type RuntimePage = "home" | "detail";
@@ -57,6 +57,7 @@ type TextTurn = {
   threadId?: string | null;
   text: string;
   status: TextTurnStatus;
+  planMode?: boolean;
   createdAt?: string;
   timestampLabel?: string;
   error?: string;
@@ -66,6 +67,7 @@ type ChatMessage = {
   role: "user" | "assistant";
   text: string;
   id: string;
+  planMode?: boolean;
   createdAt?: string;
 };
 
@@ -146,14 +148,14 @@ function optimisticTextTurnToTimeline(turn: TextTurn): BroTimelineTurn {
       created_at: turn.createdAt ?? null,
       updated_at: turn.createdAt ?? null,
       status: turn.status,
-      metadata: {},
+      metadata: turn.planMode ? { plan_mode: true } : {},
     },
     assistant: null,
     task: null,
     status: turn.status === "failed" ? "failed" : turn.status === "sent" ? "running" : "pending",
     created_at: turn.createdAt ?? null,
     updated_at: turn.createdAt ?? null,
-    metadata: { optimistic: true },
+    metadata: { optimistic: true, ...(turn.planMode ? { plan_mode: true } : {}) },
   };
 }
 
@@ -285,7 +287,13 @@ function TextTurnBubble({ turn, mobile = false }: { turn: TextTurn; mobile?: boo
   const meta = turn.status === "sending" ? "Sending" : turn.status === "failed" ? "Failed" : "Sent";
   return (
     <div className={`${prefix}-turn ${prefix}-turn-you`}>
-      <div className={`${prefix}-bubble ${prefix}-bubble-you${turn.status === "failed" ? " ob-bubble-failed" : ""}`}>
+      {turn.planMode ? (
+        <span className={`${prefix}-plantag`} aria-label="Sent in plan mode">
+          <GitBranch size={12} strokeWidth={2.2} aria-hidden="true" />
+          Plan mode
+        </span>
+      ) : null}
+      <div className={`${prefix}-bubble ${prefix}-bubble-you${turn.planMode ? ` ${prefix}-bubble-plan` : ""}${turn.status === "failed" ? " ob-bubble-failed" : ""}`}>
         <MarkdownText>{turn.text}</MarkdownText>
       </div>
       <div className={metaClass}>
@@ -433,13 +441,205 @@ function TaskPlanView({ plan, prefix }: { plan: NonNullable<BroTaskRecord["plan"
   );
 }
 
+type PlanProposalOption = {
+  id: string;
+  label: string;
+  description: string;
+  letter?: string;
+};
+
+function planProposalDetails(request: InteractionRequest): { summary: string; options: PlanProposalOption[] } {
+  const proposal = request.details?.proposal;
+  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) {
+    return { summary: request.prompt, options: [] };
+  }
+  const raw = proposal as Record<string, unknown>;
+  const summary = typeof raw.summary === "string" && raw.summary.trim() ? raw.summary.trim() : request.prompt;
+  const options = Array.isArray(raw.options)
+    ? raw.options.flatMap((option, index) => {
+        if (!option || typeof option !== "object" || Array.isArray(option)) return [];
+        const item = option as Record<string, unknown>;
+        const label = typeof item.label === "string" ? item.label.trim() : "";
+        if (!label) return [];
+        const id = typeof item.id === "string" && item.id.trim() ? item.id.trim() : label;
+        return [{
+          id,
+          label,
+          description: typeof item.description === "string" ? item.description.trim() : "",
+          letter: typeof item.letter === "string" && item.letter.trim() ? item.letter.trim() : String.fromCharCode(65 + index),
+        }];
+      })
+    : [];
+  return { summary, options };
+}
+
+function optionAnswerText(option: PlanProposalOption | null): string | undefined {
+  if (!option) return undefined;
+  return [option.label, option.description].filter(Boolean).join(" - ");
+}
+
+function PlanProposalCard({ request, mobile = false }: { request: InteractionRequest; mobile?: boolean }) {
+  const shell = useNewbroShell();
+  const prefix = mobile ? "thr" : "dt";
+  const { summary, options } = planProposalDetails(request);
+  const selectedFromRequest = typeof request.details?.selected_option_id === "string" ? request.details.selected_option_id : null;
+  const [selectedId, setSelectedId] = useState<string | null>(selectedFromRequest ?? options[0]?.id ?? null);
+  const [resolving, setResolving] = useState(false);
+  const selected = options.find((option) => option.id === selectedId) ?? options[0] ?? null;
+  const pending = request.status === "pending";
+  async function resolve(action: "approve" | "deny") {
+    if (!pending || resolving) return;
+    const answerText = action === "approve"
+      ? optionAnswerText(selected) ?? "Approve and run the proposed plan."
+      : "Keep planning. Refine the proposal instead of acting yet.";
+    setResolving(true);
+    try {
+      await shell.resolveInteractionRequest(request.request_id, {
+        action,
+        answer_text: answerText,
+        option_id: selected?.id,
+      });
+    } finally {
+      setResolving(false);
+    }
+  }
+  if (!pending) return null;
+  return (
+    <div className={`${prefix}-turn ${prefix}-turn-bro ${prefix}-turn-plan`}>
+      <div className={mobile ? "plan-prop" : "dt-planprop"}>
+        <div className={mobile ? "plan-prop-head" : "dt-planprop-head"}>
+          <span className={mobile ? "plan-prop-glyph" : "dt-planprop-glyph"} aria-hidden="true">
+            <GitBranch size={14} strokeWidth={2.2} />
+          </span>
+          <span className={mobile ? "plan-prop-title" : "dt-planprop-title"}>Proposed plans</span>
+          <span className={mobile ? "plan-prop-tag" : "dt-planprop-tag"}>
+            {options.length > 0 ? `${options.length} OPTIONS` : "REVIEW"}
+          </span>
+        </div>
+        <p className={mobile ? "plan-prop-summary" : "dt-planprop-summary"}>{summary}</p>
+        {options.length > 0 ? (
+          <div className={mobile ? "plan-opts" : "dt-planopts"} role="radiogroup" aria-label="Plan options">
+            {options.map((option) => {
+              const on = option.id === selectedId;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  className={`${mobile ? "plan-opt" : "dt-planopt"}${on ? ` ${mobile ? "plan-opt-on" : "dt-planopt-on"}` : ""}`}
+                  onClick={() => !resolving && setSelectedId(option.id)}
+                  disabled={resolving}
+                >
+                  <span className={mobile ? "plan-opt-radio" : "dt-planopt-radio"} aria-hidden="true" />
+                  <span className={mobile ? "plan-opt-body" : "dt-planopt-body"}>
+                    <span className={mobile ? "plan-opt-top" : "dt-planopt-top"}>
+                      <span className={mobile ? "plan-opt-letter" : "dt-planopt-letter"}>{option.letter}</span>
+                      <span className={mobile ? "plan-opt-label" : "dt-planopt-label"}>{option.label}</span>
+                    </span>
+                    {option.description ? <span className={mobile ? "plan-opt-text" : "dt-planopt-text"}>{option.description}</span> : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        <div className={mobile ? "plan-prop-actions" : "dt-planprop-actions"}>
+          <button
+            type="button"
+            className={mobile ? "plan-prop-approve" : "dt-planprop-approve"}
+            onClick={() => { void resolve("approve"); }}
+            disabled={resolving}
+          >
+            <Check size={14} strokeWidth={2.4} aria-hidden="true" />
+            Approve &amp; run
+          </button>
+          <button
+            type="button"
+            className={mobile ? "plan-prop-keep" : "dt-planprop-keep"}
+            onClick={() => { void resolve("deny"); }}
+            disabled={resolving}
+          >
+            Keep planning
+          </button>
+        </div>
+      </div>
+      <div className={mobile ? "thr-meta" : "dt-bubble-meta"}>
+        Pick a plan · awaiting your approval
+      </div>
+    </div>
+  );
+}
+
+function interactionRequestDetailText(request: InteractionRequest, key: string): string | null {
+  const value = request.details?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isVisiblePlanProposalRequest(request: InteractionRequest): boolean {
+  return request.kind === "plan_proposal" && request.status === "pending";
+}
+
+function planProposalRequestMatchesTurn(request: InteractionRequest, turn: BroTimelineTurn): boolean {
+  if (!isVisiblePlanProposalRequest(request)) return false;
+  const requestClientId = interactionRequestDetailText(request, "client_request_id");
+  return request.task_id === turn.task?.task_id
+    || request.run_id === turn.task?.run_id
+    || request.task_id === turn.metadata?.task_id
+    || request.run_id === turn.metadata?.run_id
+    || (requestClientId !== null && requestClientId === turn.client_request_id);
+}
+
+function planProposalRequestMatchesThread(
+  request: InteractionRequest,
+  broId: string,
+  threadId: string | null,
+  turns: BroTimelineTurn[],
+): boolean {
+  if (!isVisiblePlanProposalRequest(request) || threadId === null) return false;
+  const personaId = interactionRequestDetailText(request, "persona_id");
+  if (personaId !== null && personaId !== broId) return false;
+  const targetThreadId = interactionRequestDetailText(request, "target_thread_id");
+  if (targetThreadId !== null) return targetThreadId === threadId;
+  return turns.some((turn) => timelineTurnMatchesThread(turn, broId, threadId) && planProposalRequestMatchesTurn(request, turn));
+}
+
+function inlinePlanProposalRequestIds(requests: InteractionRequest[], turns: BroTimelineTurn[]): Set<string> {
+  const ids = new Set<string>();
+  for (const request of requests) {
+    if (turns.some((turn) => planProposalRequestMatchesTurn(request, turn))) {
+      ids.add(request.request_id);
+    }
+  }
+  return ids;
+}
+
+function unplacedPlanProposalRequests(
+  requests: InteractionRequest[],
+  broId: string,
+  threadId: string | null,
+  turns: BroTimelineTurn[],
+): InteractionRequest[] {
+  const inlineIds = inlinePlanProposalRequestIds(requests, turns);
+  return requests.filter((request) => (
+    !inlineIds.has(request.request_id)
+    && planProposalRequestMatchesThread(request, broId, threadId, turns)
+  ));
+}
+
 function ConversationMessageBubble({ bro, message, mobile = false }: { bro: BroCardModel; message: ChatMessage; mobile?: boolean }) {
   const prefix = mobile ? "thr" : "dt";
   const metaClass = mobile ? "thr-meta" : "dt-bubble-meta";
   const isUser = message.role === "user";
   return (
     <div className={`${prefix}-turn ${isUser ? `${prefix}-turn-you` : `${prefix}-turn-bro`}`}>
-      <div className={`${prefix}-bubble ${isUser ? `${prefix}-bubble-you` : `${prefix}-bubble-bro`}`}>
+      {isUser && message.planMode ? (
+        <span className={`${prefix}-plantag`} aria-label="Sent in plan mode">
+          <GitBranch size={12} strokeWidth={2.2} aria-hidden="true" />
+          Plan mode
+        </span>
+      ) : null}
+      <div className={`${prefix}-bubble ${isUser ? `${prefix}-bubble-you${message.planMode ? ` ${prefix}-bubble-plan` : ""}` : `${prefix}-bubble-bro`}`}>
         <MarkdownText>{message.text}</MarkdownText>
       </div>
       <div className={metaClass}>
@@ -469,6 +669,10 @@ function timelineMessageText(message: BroTimelineMessage | null): string {
 function timelineMetadataText(turn: BroTimelineTurn, key: string): string {
   const value = turn.metadata?.[key];
   return typeof value === "string" ? value.trim() : "";
+}
+
+function timelinePlanMode(turn: BroTimelineTurn): boolean {
+  return turn.metadata?.plan_mode === true || turn.user?.metadata?.plan_mode === true || turn.task?.metadata?.plan_mode === true;
 }
 
 function normalizePlanStatus(value: unknown): NonNullable<BroTaskRecord["plan"]>["steps"][number]["status"] {
@@ -530,6 +734,7 @@ function TimelineUserMessage({ bro, turn, mobile = false }: { bro: BroCardModel;
         role: "user",
         text,
         id: message.message_id,
+        planMode: timelinePlanMode(turn),
         createdAt: message.created_at ?? undefined,
       }}
       mobile={mobile}
@@ -560,11 +765,16 @@ function timelineTaskRecord(turn: BroTimelineTurn): BroTaskRecord | null {
 }
 
 function TimelineTurnView({ bro, turn, mobile = false }: { bro: BroCardModel; turn: BroTimelineTurn; mobile?: boolean }) {
+  const shell = useNewbroShell();
   const record = timelineTaskRecord(turn);
+  const proposalRequests = shell.interactionRequests.filter((request) => planProposalRequestMatchesTurn(request, turn));
   return (
     <>
       <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
       {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
+      {proposalRequests.map((request) => (
+        <PlanProposalCard key={request.request_id} request={request} mobile={mobile} />
+      ))}
     </>
   );
 }
@@ -1646,7 +1856,13 @@ function ThreadPanel({
   const shell = useNewbroShell();
   const draftText = shell.draftSession?.current_draft?.text ?? "";
   const renderedTurns = buildTimelineTurns({ timelineTurns, textTurns, audioTurns, broId: bro.id, threadId: selectedThread?.threadId ?? null });
-  const hasContent = Boolean(draftText) || renderedTurns.length > 0;
+  const fallbackProposalRequests = unplacedPlanProposalRequests(
+    shell.interactionRequests,
+    bro.id,
+    selectedThread?.threadId ?? null,
+    renderedTurns,
+  );
+  const hasContent = Boolean(draftText) || renderedTurns.length > 0 || fallbackProposalRequests.length > 0;
   const timelineLoading = selectedThread?.timelineStatus === "loading";
   const timelineLoadError = selectedThread?.timelineStatus === "failed" ? selectedThread.timelineError : null;
   const showEmptyState = !hasContent
@@ -1714,6 +1930,9 @@ function ThreadPanel({
         </div>
       ) : null}
       {renderedTurns.map((turn) => <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} />)}
+      {fallbackProposalRequests.map((request) => (
+        <PlanProposalCard key={request.request_id} request={request} />
+      ))}
     </>
   );
 }
@@ -1749,6 +1968,7 @@ function MobileThreadSurface({
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
+  const [planMode, setPlanMode] = useState(false);
   const threadBodyRef = useRef<HTMLElement | null>(null);
   const draftText = draft;
   const connected = shell.voiceSession.phase === "connected";
@@ -1789,8 +2009,9 @@ function MobileThreadSurface({
       target_thread_id: selectedThreadId,
       create_new_thread: createNewThread,
       text_length: text.length,
+      plan_mode: planMode,
     });
-    onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending", createdAt });
+    onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending", createdAt, planMode });
     directExecutorMetric("ui.text.local_turn_rendered", {
       client_request_id: turnId,
       elapsed_ms: Math.round(performance.now() - startedAt),
@@ -1802,6 +2023,7 @@ function MobileThreadSurface({
         targetThreadId: selectedThreadId,
         createNewThread,
         clientRequestId: turnId,
+        ...(planMode ? { planMode: true } : {}),
         text,
       });
       directExecutorMetric("ui.text.http.accepted", {
@@ -1811,7 +2033,7 @@ function MobileThreadSurface({
         elapsed_ms: Math.round(performance.now() - startedAt),
       });
       onThreadResolved(response.target_thread_id);
-      onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent", createdAt });
+      onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent", createdAt, planMode });
       await shell.refreshShellSession();
       directExecutorMetric("ui.text.refresh.completed", {
         client_request_id: turnId,
@@ -1825,7 +2047,7 @@ function MobileThreadSurface({
         elapsed_ms: Math.round(performance.now() - startedAt),
         error: message,
       });
-      onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", createdAt, error: message });
+      onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", createdAt, error: message, planMode });
       shell.setShellError(message);
     }
   }
@@ -1840,7 +2062,13 @@ function MobileThreadSurface({
   }
 
   const renderedTurns = buildTimelineTurns({ timelineTurns, textTurns, audioTurns, broId: bro.id, threadId: selectedThreadId });
-  const hasContent = Boolean(draftText) || renderedTurns.length > 0;
+  const fallbackProposalRequests = unplacedPlanProposalRequests(
+    shell.interactionRequests,
+    bro.id,
+    selectedThreadId,
+    renderedTurns,
+  );
+  const hasContent = Boolean(draftText) || renderedTurns.length > 0 || fallbackProposalRequests.length > 0;
   const timelineLoading = selectedThread?.timelineStatus === "loading";
   const timelineLoadError = selectedThread?.timelineStatus === "failed" ? selectedThread.timelineError : null;
   const showEmptyState = !hasContent
@@ -1852,6 +2080,7 @@ function MobileThreadSurface({
   const threadScrollVersion = [
     selectedThreadId ?? "new",
     renderedTurns.map((turn) => `${turn.turn_id}:${turn.status}:${turn.updated_at ?? ""}:${turn.assistant?.text ?? ""}`).join("|"),
+    fallbackProposalRequests.map((request) => `${request.request_id}:${request.status}`).join("|"),
     textTurns.map((turn) => `${turn.id}:${turn.status}`).join("|"),
     audioTurns.map((turn) => `${turn.id}:${turn.status}:${turn.transcript ?? ""}`).join("|"),
   ].join("::");
@@ -1930,8 +2159,11 @@ function MobileThreadSurface({
           </div>
         ) : null}
         {renderedTurns.map((turn) => <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} mobile />)}
+        {fallbackProposalRequests.map((request) => (
+          <PlanProposalCard key={request.request_id} request={request} mobile />
+        ))}
       </main>
-      <form className={`thr-composer nb-mobile-thread-composer${disabled ? " ob-composer-disabled" : ""}`} onSubmit={submitText}>
+      <form className={`thr-composer nb-mobile-thread-composer${disabled ? " ob-composer-disabled" : ""}${planMode ? " thr-composer-plan" : ""}`} onSubmit={submitText}>
         {!disabled ? (
           <div className="mob-mode mob-mode-light" role="tablist" aria-label="Input mode">
             <button
@@ -1956,6 +2188,19 @@ function MobileThreadSurface({
               <span className="mob-mode-icon"><Radio size={15} strokeWidth={2} /></span>
               <span className="mob-mode-label">Always on</span>
             </button>
+            {inputMode !== "free" ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={planMode}
+                className={`mob-mode-btn thr-planchip${planMode ? " mob-mode-btn-on thr-planchip-on" : ""}`}
+                onClick={() => setPlanMode((current) => !current)}
+                title={`Plan mode — ${bro.name} proposes before acting`}
+              >
+                <span className="mob-mode-icon"><GitBranch size={15} strokeWidth={2} /></span>
+                <span className="mob-mode-label">Plan mode</span>
+              </button>
+            ) : null}
           </div>
         ) : null}
         {disabled ? (
@@ -1984,12 +2229,17 @@ function MobileThreadSurface({
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
                   onKeyDown={(event) => {
+                    if (event.key === "Tab" && event.shiftKey) {
+                      event.preventDefault();
+                      if (!disabled) setPlanMode((current) => !current);
+                      return;
+                    }
                     if (event.key === "Enter" && draft.trim()) {
                       event.preventDefault();
                       void submitDraftText();
                     }
                   }}
-                  placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? `Message ${bro.name} - or hold the mic to talk` : textState.reason}
+                  placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? (planMode ? `Describe the task - ${bro.name} will plan it first` : `Message ${bro.name} - or hold the mic to talk`) : textState.reason}
                   disabled={disabled}
                 />
               </div>
@@ -2069,6 +2319,7 @@ function DesktopComposerBar({
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
+  const [planMode, setPlanMode] = useState(false);
   const connected = shell.voiceSession.phase === "connected";
   const loading = shell.voiceSession.phase === "loading";
   const audioState = activeCodexAudioState(shell, bro);
@@ -2102,8 +2353,9 @@ function DesktopComposerBar({
       target_thread_id: selectedThreadId,
       create_new_thread: createNewThread,
       text_length: text.length,
+      plan_mode: planMode,
     });
-    onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending", createdAt });
+    onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "sending", createdAt, planMode });
     directExecutorMetric("ui.text.local_turn_rendered", {
       client_request_id: turnId,
       elapsed_ms: Math.round(performance.now() - startedAt),
@@ -2115,6 +2367,7 @@ function DesktopComposerBar({
         targetThreadId: selectedThreadId,
         createNewThread,
         clientRequestId: turnId,
+        ...(planMode ? { planMode: true } : {}),
         text,
       });
       directExecutorMetric("ui.text.http.accepted", {
@@ -2124,7 +2377,7 @@ function DesktopComposerBar({
         elapsed_ms: Math.round(performance.now() - startedAt),
       });
       onThreadResolved(response.target_thread_id);
-      onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent", createdAt });
+      onTextTurn({ id: turnId, broId: bro.id, threadId: response.target_thread_id ?? selectedThreadId, text, status: "sent", createdAt, planMode });
       await shell.refreshShellSession();
       directExecutorMetric("ui.text.refresh.completed", {
         client_request_id: turnId,
@@ -2138,27 +2391,48 @@ function DesktopComposerBar({
         elapsed_ms: Math.round(performance.now() - startedAt),
         error: message,
       });
-      onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", createdAt, error: message });
+      onTextTurn({ id: turnId, broId: bro.id, threadId: selectedThreadId, text, status: "failed", createdAt, error: message, planMode });
       shell.setShellError(message);
     }
   }
 
   return (
-    <form className={`dt-cmp${disabled ? " dt-cmp-disabled" : ""}`} onSubmit={submitText}>
+    <form className={`dt-cmp${disabled ? " dt-cmp-disabled" : ""}${planMode ? " dt-cmp-plan" : ""}`} onSubmit={submitText}>
       <div className="dt-cmp-head">
-        <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} aria-label="Voice mode">
-          <button type="button" className="dt-cmp-mode dt-cmp-mode-on">
-            <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-ptt${!connected && !disabled ? " dt-cmp-mode-dot-on" : ""}`} />
-            Push to talk
-          </button>
-          <button type="button" className="dt-cmp-mode" disabled={disabled}>
-            <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-free${connected ? " dt-cmp-mode-dot-on" : ""}`} />
-            Open channel
-          </button>
+        <div className="dt-cmp-headl">
+          <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} aria-label="Voice mode">
+            <button type="button" className="dt-cmp-mode dt-cmp-mode-on">
+              <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-ptt${!connected && !disabled ? " dt-cmp-mode-dot-on" : ""}`} />
+              Push to talk
+            </button>
+            <button type="button" className="dt-cmp-mode" disabled={disabled}>
+              <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-free${connected ? " dt-cmp-mode-dot-on" : ""}`} />
+              Open channel
+            </button>
+          </div>
+          {!disabled ? (
+            <button
+              type="button"
+              className={`dt-cmp-planchip${planMode ? " dt-cmp-planchip-on" : ""}`}
+              aria-pressed={planMode}
+              title={`Plan mode · Shift+Tab — ${bro.name} proposes before acting`}
+              onClick={() => setPlanMode((current) => !current)}
+            >
+              <GitBranch size={13} strokeWidth={2.2} aria-hidden="true" />
+              <span className="dt-cmp-planchip-label">Plan mode</span>
+              <kbd className="dt-kbd dt-cmp-planchip-kbd">⇧⇥</kbd>
+            </button>
+          ) : null}
         </div>
         <span className="dt-cmp-hint">
-          <kbd className="dt-kbd">space</kbd>
-          {disabled ? "node required before sending" : "type sends directly"}
+          {planMode && !disabled ? (
+            <span><strong>Plan mode</strong> · {bro.name} proposes a plan before acting</span>
+          ) : (
+            <>
+              <kbd className="dt-kbd">space</kbd>
+              {disabled ? "node required before sending" : "type sends directly"}
+            </>
+          )}
         </span>
       </div>
       <div className="dt-cmp-bar">
@@ -2168,7 +2442,13 @@ function DesktopComposerBar({
           className="dt-cmp-input"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? `Type to ${bro.name}...` : textState.reason}
+          onKeyDown={(event) => {
+            if (event.key === "Tab" && event.shiftKey) {
+              event.preventDefault();
+              if (!disabled) setPlanMode((current) => !current);
+            }
+          }}
+          placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? (planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
           disabled={disabled}
         />
         <button
@@ -2367,6 +2647,10 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     shell.broTimelineTurns
       .filter((turn) => timelineTurnMatchesThread(turn, broId, activeThreadId))
       .map((turn) => `${turn.turn_id}:${turn.status}:${turn.updated_at ?? ""}:${turn.assistant?.text ?? ""}`)
+      .join("|"),
+    shell.interactionRequests
+      .filter((request) => planProposalRequestMatchesThread(request, broId, activeThreadId, shell.broTimelineTurns))
+      .map((request) => `${request.request_id}:${request.status}`)
       .join("|"),
     textTurns.filter((turn) => turn.broId === broId && turnMatchesThread(turn, activeThreadId)).map((turn) => `${turn.id}:${turn.status}`).join("|"),
     audioTurns.filter((turn) => turn.broId === broId && turnMatchesThread(turn, activeThreadId)).map((turn) => `${turn.id}:${turn.status}:${turn.transcript ?? ""}`).join("|"),

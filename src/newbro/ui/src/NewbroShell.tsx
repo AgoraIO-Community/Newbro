@@ -21,6 +21,7 @@ import {
   closeBroThread,
   openBroThread,
   openSessionStream,
+  resolveInteractionRequest,
   sendSocketDraftAsrTurn,
   sendSocketMessage,
   setVoiceTarget,
@@ -41,8 +42,10 @@ import type {
   ExecutionRun,
   ExecutorNodeRecord,
   AgentEvent,
+  AttentionItem,
   BroTimelineTurn,
   BroThread,
+  InteractionRequest,
   Persona,
   SessionSnapshot,
   Task,
@@ -288,6 +291,8 @@ function useNewbroShellState() {
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
   const [broThreads, setBroThreads] = useState<BroThread[]>([]);
   const [broTimelineTurns, setBroTimelineTurns] = useState<BroTimelineTurn[]>([]);
+  const [interactionRequests, setInteractionRequests] = useState<InteractionRequest[]>([]);
+  const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [activeShellSessionId, setActiveShellSessionId] = useState<string | null>(null);
@@ -317,6 +322,8 @@ function useNewbroShellState() {
     setExecutionRuns(snapshot.execution_runs ?? []);
     setBroThreads(snapshot.bro_threads ?? []);
     setBroTimelineTurns(snapshot.bro_timeline_turns ?? []);
+    setInteractionRequests(snapshot.interaction_requests ?? []);
+    setAttentionItems(snapshot.attention_items ?? []);
     setTaskSummaries(snapshot.summaries ?? []);
     setAgentEvents(snapshot.agent_events ?? []);
     setDraftSession(snapshot.draft_session ?? null);
@@ -332,6 +339,8 @@ function useNewbroShellState() {
     setExecutionRuns([]);
     setBroThreads([]);
     setBroTimelineTurns([]);
+    setInteractionRequests([]);
+    setAttentionItems([]);
     setTaskSummaries([]);
     setAgentEvents([]);
     setActiveShellSessionId(null);
@@ -620,6 +629,20 @@ function useNewbroShellState() {
     return requestId;
   }, []);
 
+  const resolveShellInteractionRequest = useCallback(async (
+    interactionRequestId: string,
+    payload: {
+      action: "approve" | "deny" | "answer" | "confirm" | "cancel";
+      answer_text?: string;
+      option_id?: string;
+      reason?: string;
+    },
+  ): Promise<void> => {
+    if (!activeShellSessionId) return;
+    await resolveInteractionRequest(activeShellSessionId, interactionRequestId, payload);
+    await loadShellSession(activeShellSessionId);
+  }, [activeShellSessionId, loadShellSession]);
+
   const startMobileVoiceSession = useEffectEvent(async (targetBroId: string | null) => {
     if (!activeShellSessionId) {
       setShellWarning("Voice needs an active session before it can start.");
@@ -742,6 +765,8 @@ function useNewbroShellState() {
     executionRuns,
     broThreads,
     broTimelineTurns,
+    interactionRequests,
+    attentionItems,
     taskSummaries,
     agentEvents,
     shellError,
@@ -757,6 +782,7 @@ function useNewbroShellState() {
     stopMobileVoiceSession,
     sendMessage,
     submitDraftAsrTurn,
+    resolveInteractionRequest: resolveShellInteractionRequest,
     signupWithCode,
     logout,
     refreshShellSession,

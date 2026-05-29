@@ -95,6 +95,16 @@ Current behavior:
   session messages, draft ASR, or draft Send endpoints. The composer must send
   explicit thread intent for both text and PTT audio: selected threads use
   `targetThreadId`, and an empty/pending new thread uses `createNewThread=true`
+- Bro Detail typed input supports plan mode on desktop and mobile. When enabled,
+  direct text sends `planMode=true`, renders the user bubble with a plan-mode
+  tag in optimistic and canonical history, and expects Codex to propose before
+  acting through native collaboration mode. Proposal choices render from
+  `InteractionRequest(kind="plan_proposal").details.proposal`; clients must not
+  infer options from free-form assistant text. Pending proposal cards render
+  inline with their task turn when possible; if the active Bro Detail thread has
+  a pending proposal that cannot be matched to a rendered turn yet, clients
+  render it as a thread-level approval card using `details.target_thread_id` and
+  `details.persona_id`.
 - Bro Detail desktop left rail and mobile drawer render real Codex-backed
   `bro_threads` from the runtime snapshot, not task records. Selecting a thread
   calls the open-thread endpoint, writes `thread` into the URL, and direct
@@ -131,6 +141,12 @@ Current behavior:
   backend projection provides them. Plans come from documented Codex plan
   events/items or Newbro run metadata, not from Codex reasoning or inferred
   commentary.
+  Pending `plan_proposal` requests render proposal cards with option selection,
+  `Approve & run`, and `Keep planning`; `Keep planning` resolves the request
+  with `deny` but means refine the proposal, not cancel the task. Resolved
+  `plan_proposal` requests are acknowledgements only; Bro Detail removes the
+  proposal card after snapshot refresh and shows follow-up execution state
+  through the task/run timeline or a new pending request.
   Desktop and mobile thread pickers render long thread lists in pages of 25 and
   expose an inline show-more control while auto-expanding enough to keep a
   URL-selected thread visible.

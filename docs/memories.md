@@ -5,6 +5,10 @@ Short log of important design decisions and changes for Newbro.
 ## 2026-05-29
 
 - Changed UI-issued executor-node connect commands to default to a one-line install/update-and-connect flow backed by `scripts/install-newbro-cli.sh`, while keeping run-only `newbro executor run ...` commands available for already-installed machines.
+- Added Bro Detail plan mode for direct typed Codex turns: desktop/mobile composers can send `plan_mode`, timelines tag plan-mode user messages, Codex native collaboration mode is used, missing model settings are resolved through `collaborationMode/list`, final Codex plan items become approval proposals, and structured Codex proposal requests render as approve-or-keep-planning interactions.
+- Changed Codex final-plan approvals so approved proposals requeue execution with `plan_mode` cleared and modify mode set, denied proposals requeue planning, final completed plan proposals end the blocked executor run instead of waiting for a native callback, and low-value streamed plan deltas are coalesced while final plan items remain authoritative.
+- Changed Bro Detail plan proposal placement so interaction requests carry safe persona/thread hints and active-thread proposal cards render even when no task-backed timeline turn can host them yet; selected-thread live plan deltas are coalesced while final plan items remain authoritative.
+- Changed Bro Detail plan proposal handling so resolved approved/denied proposal requests are acknowledgements only; active execution/refinement appears through the task/run timeline or a new pending request.
 
 ## 2026-04-04
 

@@ -103,6 +103,16 @@ Bro detail continuity:
   never both. The backend does not infer active/latest thread ownership for
   direct sends. Follow-up tasks created for a selected `BroThread` reuse the
   thread's execution-session continuity and Codex resume handle
+- direct Bro Detail text may set `plan_mode=true`. Newbro stores that flag on
+  the direct instruction, task metadata, and Bro timeline user message metadata.
+  The Codex adapter sends native app-server `collaborationMode.mode = "plan"`
+  for that turn, resolving the required model settings from the resumed thread
+  or `collaborationMode/list`. If plan collaboration settings cannot be
+  resolved, the adapter fails the turn instead of running a normal execution.
+  Ordinary direct text turns send `"default"` when model settings are known so
+  plan mode does not stick to later work in the same native thread. Plan-mode
+  tasks use `TaskMode.PROPOSAL_ONLY` until the user approves a proposal
+  interaction.
 - New direct Bro Detail inputs create a `BroThread` projection as soon as the
   queued task is durable, even before the scheduler creates the backing
   `ExecutionSession`, so the current thread is visible immediately after send
@@ -153,8 +163,10 @@ Bro detail continuity:
   contract: `thread/goal/get` and `thread/goal/*` events for goals,
   `turn/plan/updated` for structured live plans, `item/plan/delta` for
   streaming plan text, and final `plan` items from `item/completed` as the
-  authoritative item text. Codex `reasoning` items and reasoning deltas remain
-  internal and must not become goal, plan, or progress text.
+  authoritative item text. Newbro may coalesce `item/plan/delta` before writing
+  plan detail records, but it must always project the final completed plan item.
+  Codex `reasoning` items and reasoning deltas remain internal and must not
+  become goal, plan, or progress text.
   Leaving or replacing the selected thread must call the node's selected-thread
   close path, which in turn calls Codex `thread/unsubscribe`; stale events from
   older subscription ids are ignored. Clients must render Bro Detail from the

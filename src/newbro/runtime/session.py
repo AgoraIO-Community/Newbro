@@ -65,6 +65,7 @@ from newbro.protocol import (
     ExecutorTextInstruction,
     InteractionType,
     InteractionRequest,
+    InteractionRequestKind,
     MutationType,
     NotificationDeliveryStatus,
     RunStatus,
@@ -959,6 +960,11 @@ def _build_newbro_timeline_turns(
             _event_metadata_string(run, "executor_turn_id")
             or _event_metadata_string(run, "turn_id")
         )
+        plan_mode = task.metadata.get("plan_mode") is True
+        message_metadata = {
+            "source_kind": task.metadata.get("source_kind"),
+            **({"plan_mode": True} if plan_mode else {}),
+        }
         input_modality = _task_input_modality(task)
         user_text = _direct_user_text(task)
         audio_id = _task_metadata_string(task, "source_audio_instruction_id")
@@ -973,7 +979,7 @@ def _build_newbro_timeline_turns(
                 status="sent" if status != "failed" else "failed",
                 created_at=created_at,
                 updated_at=updated_at,
-                metadata={"source_kind": task.metadata.get("source_kind")},
+                metadata=message_metadata,
             )
         else:
             user_message = BroTimelineMessage(
@@ -984,7 +990,7 @@ def _build_newbro_timeline_turns(
                 status="sent" if status != "failed" else "failed",
                 created_at=created_at,
                 updated_at=updated_at,
-                metadata={"source_kind": task.metadata.get("source_kind")},
+                metadata=message_metadata,
             )
         summary_text = _summary_text_for_timeline(task=task, run=run, summary=summary_by_task_id.get(task.task_id))
         plan = _run_timeline_plan(run)
@@ -1039,6 +1045,7 @@ def _build_newbro_timeline_turns(
                     metadata={
                         "source_kind": task.metadata.get("source_kind"),
                         "target_thread_id": public_thread_id,
+                        **({"plan_mode": True} if plan_mode else {}),
                     },
                 ),
                 status=status,  # type: ignore[arg-type]
@@ -1047,6 +1054,7 @@ def _build_newbro_timeline_turns(
                 metadata={
                     "source": "newbro_task",
                     "task_id": task.task_id,
+                    **({"plan_mode": True} if plan_mode else {}),
                     **({"run_id": run.run_id} if run is not None else {}),
                 },
             )
@@ -1103,6 +1111,15 @@ def _sort_timeline_turns(turns: list[BroTimelineTurn]) -> list[BroTimelineTurn]:
         return (parsed, turn.turn_id)
 
     return sorted(turns, key=key)
+
+
+def _should_emit_selected_thread_plan_delta(candidate: str, previous: str) -> bool:
+    if candidate == previous:
+        return False
+    if not previous:
+        return len(candidate) >= 240 or candidate.endswith(("\n\n", ".", "。", "!", "！", "?", "？"))
+    added = candidate[len(previous) :]
+    return len(added) >= 240 or candidate.endswith(("\n\n", ".", "。", "!", "！", "?", "？"))
 
 
 class DateParseCache:
@@ -1312,6 +1329,7 @@ class SessionRuntime:
     _bro_thread_timeline_errors: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_live_message_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_live_plan_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
+    _bro_thread_live_plan_emitted_text: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_goals: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def _record_direct_executor_text_metric(
@@ -2096,6 +2114,11 @@ class SessionRuntime:
             key = (subscription.public_thread_id, turn_id, item_id)
             text = f"{self._bro_thread_live_plan_deltas.get(key, '')}{delta}"
             self._bro_thread_live_plan_deltas[key] = text
+            candidate = text.strip()
+            previous = self._bro_thread_live_plan_emitted_text.get(key, "")
+            if not candidate or not _should_emit_selected_thread_plan_delta(candidate, previous):
+                return False
+            self._bro_thread_live_plan_emitted_text[key] = candidate
             self._upsert_bro_thread_executor_turn(
                 BroTimelineTurn(
                     turn_id=f"{subscription.public_thread_id}:codex:{turn_id}",
@@ -2209,6 +2232,7 @@ class SessionRuntime:
         target_thread_id: str | None = None,
         create_new_thread: bool = False,
         client_request_id: str | None = None,
+        plan_mode: bool = False,
     ) -> ExecutorTextInstruction:
         started_at = time.perf_counter()
         self._record_direct_executor_text_metric(
@@ -2219,6 +2243,7 @@ class SessionRuntime:
             details={
                 "create_new_thread": create_new_thread,
                 "text_length": len(text.strip()),
+                "plan_mode": plan_mode,
             },
         )
         persona = await self.blackboard.get_persona(target_persona_id)
@@ -2272,6 +2297,7 @@ class SessionRuntime:
                 "source": "bro_detail_text",
                 "target_thread_id": thread_target_id,
                 "client_request_id": client_request_id,
+                "plan_mode": plan_mode,
             },
         )
 
@@ -2305,6 +2331,10 @@ class SessionRuntime:
                     task.metadata["bro_thread_id"] = thread_continuity_key
                     task.metadata["target_thread_id"] = thread_target_id
                     task.metadata["client_request_id"] = client_request_id
+                    task.metadata["plan_mode"] = plan_mode
+                    task.metadata["mode"] = (
+                        TaskMode.PROPOSAL_ONLY.value if plan_mode else TaskMode.MODIFY_ALLOWED.value
+                    )
                     task.latest_instruction = self._merge_follow_up_instruction(task.latest_instruction, instruction.text)
                     task.goal = task.goal or instruction.text
                     await self.blackboard.put_task(task)
@@ -2343,7 +2373,7 @@ class SessionRuntime:
                 thread_continuity_key=thread_continuity_key,
                 selected_execution_session=thread_session,
                 selected_resume_handle=thread_resume_handle,
-                extra_metadata={"client_request_id": client_request_id},
+                extra_metadata={"client_request_id": client_request_id, "plan_mode": plan_mode},
             )
             self._record_direct_executor_text_metric(
                 step="runtime.task_created",
@@ -2385,6 +2415,8 @@ class SessionRuntime:
         if task is not None:
             task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_text")
             task.metadata["client_request_id"] = client_request_id
+            task.metadata["plan_mode"] = plan_mode
+            task.metadata["mode"] = TaskMode.PROPOSAL_ONLY.value if plan_mode else TaskMode.MODIFY_ALLOWED.value
             await self.blackboard.put_task(task)
 
         dispatch_started_at = time.perf_counter()
@@ -2458,7 +2490,11 @@ class SessionRuntime:
             "executor_node_id": persona.executor_node_id,
             "instruction_id": instruction.instruction_id,
             "codex_thread_mode": "resume" if selected_execution_session is not None or selected_resume_handle is not None else "start",
-            "mode": TaskMode.MODIFY_ALLOWED.value,
+            "mode": (
+                TaskMode.PROPOSAL_ONLY.value
+                if instruction.metadata.get("plan_mode") is True
+                else TaskMode.MODIFY_ALLOWED.value
+            ),
             "created_at": created_at,
             "updated_at": created_at,
             "suppress_communication_notifications": True,
@@ -4144,7 +4180,7 @@ class SessionRuntime:
         native_resolved = await self._respond_to_native_interaction_request(
             resolution.request,
             action=action,
-            answer_text=answer_text,
+            answer_text=resolution.answer_text,
         )
         if native_resolved:
             await self.blackboard.put_interaction_request(
@@ -4156,6 +4192,13 @@ class SessionRuntime:
             raise KeyError(f"Task '{resolution.request.task_id}' not found.")
 
         await self._detach_follow_up_live_session(resolution.request)
+        if resolution.request.kind == InteractionRequestKind.PLAN_PROPOSAL:
+            if action == "approve":
+                task.metadata.pop("plan_mode", None)
+                task.metadata["mode"] = TaskMode.MODIFY_ALLOWED.value
+            elif action == "deny":
+                task.metadata["plan_mode"] = True
+                task.metadata["mode"] = TaskMode.PROPOSAL_ONLY.value
         task.latest_instruction = self._merge_follow_up_instruction(
             task.latest_instruction,
             resolution.follow_up_instruction,

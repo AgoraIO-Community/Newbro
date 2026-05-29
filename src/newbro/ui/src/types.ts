@@ -43,7 +43,7 @@ export type TaskCommandType =
   | "resume_task"
   | "retry_task";
 
-export type InteractionRequestKind = "permission" | "question" | "confirmation";
+export type InteractionRequestKind = "permission" | "question" | "confirmation" | "plan_proposal";
 export type InteractionRequestStatus =
   | "pending"
   | "approved"
@@ -57,6 +57,7 @@ export type AttentionItemKind =
   | "permission_request"
   | "question_request"
   | "confirmation_request"
+  | "plan_proposal_request"
   | "task_paused"
   | "task_resumed"
   | "task_blocked"

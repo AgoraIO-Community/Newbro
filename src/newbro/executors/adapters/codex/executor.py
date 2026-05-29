@@ -322,7 +322,15 @@ class CodexExecutor:
                     session,
                     fork_existing=task.metadata.get("codex_thread_mode") != "resume",
                 )
-                turn = await session.client.turn_start(thread_id=thread_id, prompt=prompt)
+                collaboration_kwargs = await _collaboration_kwargs_for_turn(
+                    session,
+                    plan_mode=task.metadata.get("plan_mode") is True,
+                )
+                turn = await session.client.turn_start(
+                    thread_id=thread_id,
+                    prompt=prompt,
+                    **collaboration_kwargs,
+                )
                 turn_id = _get_nested(turn, "turn", "id")
                 if not isinstance(turn_id, str):
                     raise RuntimeError("Codex turn/start did not return a turn id.")
@@ -337,6 +345,7 @@ class CodexExecutor:
                         "executor_thread_id": thread_id,
                         "turn_id": turn_id,
                         "executor_turn_id": turn_id,
+                        **({"plan_mode": True} if task.metadata.get("plan_mode") is True else {}),
                     },
                 ):
                     yield event
@@ -368,6 +377,10 @@ class CodexExecutor:
         if not text:
             raise RuntimeError("Follow-up instruction text is empty.")
         async with session.turn_lock:
+            collaboration_kwargs = await _collaboration_kwargs_for_turn(
+                session,
+                plan_mode=instruction.metadata.get("plan_mode") is True,
+            )
             turn = await session.client.turn_start(
                 thread_id=session.thread_id,
                 prompt=(
@@ -375,6 +388,7 @@ class CodexExecutor:
                     f"{text}\n\n"
                     "Act on this instruction in the existing execution thread."
                 ),
+                **collaboration_kwargs,
             )
             turn_id = _get_nested(turn, "turn", "id")
             if not isinstance(turn_id, str):
@@ -423,6 +437,7 @@ class CodexExecutor:
         assistant_item_text: dict[str, str] = {}
         assistant_item_emitted_text: dict[str, str] = {}
         plan_item_text: dict[str, str] = {}
+        plan_item_emitted_text: dict[str, str] = {}
         event_queue = self._register_turn_queue(turn_id)
         try:
             while True:
@@ -488,6 +503,11 @@ class CodexExecutor:
                         continue
                     text = f"{plan_item_text.get(item_id, '')}{delta}"
                     plan_item_text[item_id] = text
+                    candidate = text.strip()
+                    previous = plan_item_emitted_text.get(item_id, "")
+                    if not candidate or not _should_emit_codex_plan_delta(candidate, previous):
+                        continue
+                    plan_item_emitted_text[item_id] = candidate
                     plan = _codex_plan_from_text(text)
                     yield ExecutorEvent(
                         run_id=run.run_id,
@@ -541,11 +561,12 @@ class CodexExecutor:
                             plan = _extract_codex_plan_item(item)
                             if plan is not None:
                                 item_id = item.get("id")
+                                plan_message = _codex_plan_message(plan)
                                 yield ExecutorEvent(
                                     run_id=run.run_id,
                                     session_id=session.session_id,
                                     event_type=ExecutorEventType.PLAN,
-                                    message=_codex_plan_message(plan),
+                                    message=plan_message,
                                     metadata={
                                         **extra,
                                         "thread_id": session.thread_id or "",
@@ -555,6 +576,24 @@ class CodexExecutor:
                                         "codex_plan_source": "item/completed",
                                     },
                                 )
+                                if extra.get("plan_mode") is True:
+                                    proposal = _proposal_from_codex_plan(plan)
+                                    yield ExecutorEvent(
+                                        run_id=run.run_id,
+                                        session_id=session.session_id,
+                                        event_type=ExecutorEventType.BLOCKED,
+                                        message=proposal["summary"],
+                                        metadata={
+                                            **extra,
+                                            "thread_id": session.thread_id or "",
+                                            "source": "codex",
+                                            "interaction_kind": "plan_proposal",
+                                            "blocked_method": "item/completed:plan",
+                                            "prompt": proposal["summary"],
+                                            "proposal": proposal,
+                                        },
+                                    )
+                                    return
                             continue
                         if item_type in {"assistantMessage", "agentMessage"}:
                             item_id = item.get("id")
@@ -592,6 +631,7 @@ class CodexExecutor:
                     request_id=event.get("id"),
                     method=method,
                     params=params,
+                    plan_mode=extra.get("plan_mode") is True,
                 )
                 if blocked_request is not None:
                     session.begin_blocked_wait()
@@ -635,7 +675,8 @@ class CodexExecutor:
         if session.thread_id:
             if not fork_existing:
                 if not session.metadata.get("codex_thread_resumed"):
-                    await session.client.thread_resume(thread_id=session.thread_id)
+                    result = await session.client.thread_resume(thread_id=session.thread_id)
+                    _capture_thread_settings(session, result)
                     session.metadata["codex_thread_resumed"] = True
                 return session.thread_id
             try:
@@ -651,6 +692,7 @@ class CodexExecutor:
         if not isinstance(thread_id, str):
             raise RuntimeError("Codex did not return a thread id.")
         session.thread_id = thread_id
+        _capture_thread_settings(session, result)
         session.metadata["codex_thread_resumed"] = True
         return thread_id
 
@@ -920,6 +962,116 @@ def _codex_plan_message(plan: dict[str, object]) -> str | None:
     return None
 
 
+def _proposal_from_codex_plan(plan: dict[str, object]) -> dict[str, object]:
+    message = _codex_plan_message(plan) or "Review the proposed plan."
+    return {
+        "summary": "Review the proposed plan before execution.",
+        "options": [
+            {
+                "id": "approved_codex_plan",
+                "label": "Run proposed plan",
+                "description": message,
+                "letter": "A",
+            }
+        ],
+        "codex_plan": plan,
+    }
+
+
+def _session_codex_model(session: CodexExecutorSession) -> str | None:
+    value = session.metadata.get("codex_model")
+    return value if isinstance(value, str) and value else None
+
+
+def _session_codex_reasoning_effort(session: CodexExecutorSession) -> str | None:
+    value = session.metadata.get("codex_reasoning_effort")
+    return value if isinstance(value, str) and value else None
+
+
+def _session_collaboration_model(session: CodexExecutorSession, mode: str) -> str | None:
+    value = session.metadata.get(f"codex_collaboration_{mode}_model")
+    return value if isinstance(value, str) and value else None
+
+
+def _session_collaboration_reasoning_effort(session: CodexExecutorSession, mode: str) -> str | None:
+    value = session.metadata.get(f"codex_collaboration_{mode}_reasoning_effort")
+    return value if isinstance(value, str) and value else None
+
+
+def _capture_thread_settings(session: CodexExecutorSession, response: dict[str, object]) -> None:
+    model = response.get("model")
+    if isinstance(model, str) and model:
+        session.metadata["codex_model"] = model
+    reasoning = response.get("reasoningEffort")
+    if not isinstance(reasoning, str):
+        reasoning = response.get("reasoning_effort")
+    if isinstance(reasoning, str) and reasoning:
+        session.metadata["codex_reasoning_effort"] = reasoning
+
+
+def _collaboration_mode_for_plan_flag(plan_mode: bool) -> str:
+    return "plan" if plan_mode else "default"
+
+
+async def _collaboration_kwargs_for_turn(
+    session: CodexExecutorSession,
+    *,
+    plan_mode: bool,
+) -> dict[str, object]:
+    mode = _collaboration_mode_for_plan_flag(plan_mode)
+    model = _session_collaboration_model(session, mode) or _session_codex_model(session)
+    reasoning_effort = (
+        _session_collaboration_reasoning_effort(session, mode)
+        or _session_codex_reasoning_effort(session)
+    )
+    if model is None and plan_mode:
+        await _capture_collaboration_mode_settings(session)
+        model = _session_collaboration_model(session, mode) or _session_codex_model(session)
+        reasoning_effort = (
+            _session_collaboration_reasoning_effort(session, mode)
+            or _session_codex_reasoning_effort(session)
+        )
+    if model is None:
+        if plan_mode:
+            raise RuntimeError("Codex plan mode is unavailable: collaboration mode settings have no model.")
+        return {}
+    return {
+        "collaboration_mode": mode,
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+    }
+
+
+async def _capture_collaboration_mode_settings(session: CodexExecutorSession) -> None:
+    response = await session.client.collaboration_mode_list()
+    data = response.get("data")
+    if not isinstance(data, list):
+        raise RuntimeError("Codex collaborationMode/list returned an unsupported response shape.")
+    for item in data:
+        if isinstance(item, dict):
+            _capture_collaboration_mode_mask(session, item)
+
+
+def _capture_collaboration_mode_mask(session: CodexExecutorSession, item: dict[str, object]) -> None:
+    mode = item.get("mode")
+    if not isinstance(mode, str) or mode not in {"plan", "default"}:
+        name = item.get("name")
+        if not isinstance(name, str):
+            return
+        candidate = name.strip().lower()
+        if candidate not in {"plan", "default"}:
+            return
+        mode = candidate
+    model = item.get("model")
+    if isinstance(model, str) and model:
+        session.metadata[f"codex_collaboration_{mode}_model"] = model
+    reasoning_effort = item.get("reasoning_effort")
+    if not isinstance(reasoning_effort, str):
+        reasoning_effort = item.get("reasoningEffort")
+    if isinstance(reasoning_effort, str) and reasoning_effort:
+        session.metadata[f"codex_collaboration_{mode}_reasoning_effort"] = reasoning_effort
+
+
 def _should_emit_codex_delta_progress(candidate: str, previous: str) -> bool:
     if candidate == previous:
         return False
@@ -927,6 +1079,15 @@ def _should_emit_codex_delta_progress(candidate: str, previous: str) -> bool:
         return len(candidate) >= 24 or candidate.endswith((".", "。", "!", "！", "?", "？", "\n"))
     added = candidate[len(previous) :]
     return len(added) >= 24 or candidate.endswith((".", "。", "!", "！", "?", "？", "\n"))
+
+
+def _should_emit_codex_plan_delta(candidate: str, previous: str) -> bool:
+    if candidate == previous:
+        return False
+    if not previous:
+        return len(candidate) >= 240 or candidate.endswith(("\n\n", ".", "。", "!", "！", "?", "？"))
+    added = candidate[len(previous) :]
+    return len(added) >= 240 or candidate.endswith(("\n\n", ".", "。", "!", "！", "?", "？"))
 
 
 def _extract_question_text(params: dict[str, object]) -> str | None:
@@ -944,22 +1105,67 @@ def _extract_question_text(params: dict[str, object]) -> str | None:
     return None
 
 
+def _extract_plan_proposal(params: dict[str, object]) -> dict[str, object] | None:
+    questions = params.get("questions")
+    if not isinstance(questions, list):
+        return None
+    for question in questions:
+        if not isinstance(question, dict):
+            continue
+        question_id = question.get("id")
+        question_text = question.get("question") or question.get("prompt") or question.get("header")
+        options = question.get("options")
+        normalized_options: list[dict[str, object]] = []
+        if isinstance(options, list):
+            for index, option in enumerate(options):
+                if not isinstance(option, dict):
+                    continue
+                label = option.get("label")
+                description = option.get("description")
+                if not isinstance(label, str) or not label.strip():
+                    continue
+                option_id = option.get("id")
+                normalized_options.append(
+                    {
+                        "id": str(option_id) if isinstance(option_id, str) and option_id else label.strip(),
+                        "label": label.strip(),
+                        "description": description.strip() if isinstance(description, str) else "",
+                        "letter": chr(65 + index),
+                    }
+                )
+        return {
+            **({"question_id": question_id} if isinstance(question_id, str) and question_id else {}),
+            "summary": question_text.strip() if isinstance(question_text, str) and question_text.strip() else "Review the proposed plan.",
+            "options": normalized_options,
+        }
+    return None
+
+
 def _extract_blocked_request(
     request_id: object,
     *,
     method: str,
     params: dict[str, object],
+    plan_mode: bool = False,
 ) -> dict[str, object] | None:
     normalized = method.lower()
-    if "user_input" in normalized or ("request" in normalized and "question" in normalized):
+    if (
+        "user_input" in normalized
+        or "requestuserinput" in normalized
+        or "request_user_input" in normalized
+        or ("request" in normalized and "question" in normalized)
+    ):
         question_text = _extract_question_text(params) or "Codex is waiting for user input."
+        proposal = _extract_plan_proposal(params) if plan_mode else None
+        interaction_kind = "plan_proposal" if proposal is not None or plan_mode else _classify_blocked_prompt(question_text)
         return {
             "message": question_text,
             "metadata": {
                 "thread_id": str(params.get("threadId") or ""),
                 "prompt": question_text,
-                "interaction_kind": _classify_blocked_prompt(question_text),
+                "interaction_kind": interaction_kind,
                 "blocked_method": method,
+                **({"proposal": proposal} if proposal is not None else {}),
                 "native_response": {
                     "request_id": request_id,
                     "method": method,

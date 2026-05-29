@@ -50,6 +50,60 @@ class BlockingExecutor:
         )
 
 
+class PlanProposalLifecycleExecutor:
+    def __init__(self) -> None:
+        self._capabilities = ExecutorCapabilities(
+            executor_type="plan-lifecycle",
+            supports_follow_up=True,
+        )
+        self.calls: list[dict[str, object]] = []
+
+    def get_capabilities(self) -> ExecutorCapabilities:
+        return self._capabilities
+
+    async def create_session(self, workspace_id: str | None = None) -> ExecutorSession:
+        return ExecutorSession(session_id="plan-lifecycle-session", executor_type="plan-lifecycle")
+
+    async def cancel_run(self, run_id: str) -> None:
+        return None
+
+    async def pause_run(self, run_id: str) -> None:
+        return None
+
+    async def run_task(self, run, task, session):
+        self.calls.append({
+            "latest_instruction": task.latest_instruction,
+            "metadata": dict(task.metadata),
+        })
+        if task.metadata.get("plan_mode") is True:
+            yield ExecutorEvent(
+                run_id=run.run_id,
+                session_id=session.session_id,
+                event_type=ExecutorEventType.BLOCKED,
+                message="Review the API lifecycle plan before execution.",
+                metadata={
+                    "interaction_kind": "plan_proposal",
+                    "proposal": {
+                        "summary": "Review the API lifecycle plan before execution.",
+                        "options": [
+                            {
+                                "id": "approved_codex_plan",
+                                "label": "Run proposed plan",
+                                "description": "Implement the approved API lifecycle plan.",
+                            }
+                        ],
+                    },
+                },
+            )
+            return
+        yield ExecutorEvent(
+            run_id=run.run_id,
+            session_id=session.session_id,
+            event_type=ExecutorEventType.COMPLETED,
+            message="API follow-up completed.",
+        )
+
+
 def _build_app():
     app = create_app()
     app.state.runtime_container = RuntimeContainer(
@@ -110,6 +164,63 @@ async def test_resolve_interaction_request_endpoint_resolves_pending_request():
             lambda snap: snap["tasks"][0]["status"] == "completed",
         )
         assert completed["interaction_requests"][0]["status"] == "approved"
+
+
+@pytest.mark.anyio
+async def test_resolve_plan_proposal_approval_drives_follow_up_to_completion():
+    app = _build_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        session = app.state.runtime_container.get_session(session_id)
+        executor = PlanProposalLifecycleExecutor()
+        session.registry.register(executor)
+        await session.blackboard.put_task(
+            Task(
+                task_id="task-plan-api",
+                root_task_id="task-plan-api",
+                title="API plan lifecycle",
+                goal="API plan lifecycle",
+                status=TaskStatus.QUEUED,
+                preferred_executor="plan-lifecycle",
+                metadata={"plan_mode": True, "mode": "proposal_only"},
+            )
+        )
+        session.schedule_execution()
+
+        waiting = await _wait_for_snapshot(
+            client,
+            session_id,
+            lambda snap: any(
+                request["kind"] == "plan_proposal"
+                and request["status"] == "pending"
+                for request in snap["interaction_requests"]
+            ),
+        )
+        request_id = waiting["interaction_requests"][0]["request_id"]
+
+        response = await client.post(
+            f"/api/sessions/{session_id}/interaction-requests/{request_id}/resolve",
+            json={"action": "approve", "option_id": "approved_codex_plan"},
+        )
+        assert response.status_code == 200
+
+        completed = await _wait_for_snapshot(
+            client,
+            session_id,
+            lambda snap: snap["tasks"][0]["status"] == "completed",
+        )
+        assert len(executor.calls) == 2
+        assert executor.calls[1]["metadata"] == {"mode": "modify_allowed"}
+        assert isinstance(executor.calls[1]["latest_instruction"], str)
+        assert "Proceed with that plan." in executor.calls[1]["latest_instruction"]
+        assert completed["tasks"][0]["metadata"] == {"mode": "modify_allowed"}
+        assert completed["execution_runs"][-1]["status"] == "completed"
+        assert completed["execution_runs"][-1]["output_summary"] == "API follow-up completed."
+        assert [
+            request["status"]
+            for request in completed["interaction_requests"]
+            if request["kind"] == "plan_proposal"
+        ] == ["approved"]
 
 
 @pytest.mark.anyio
