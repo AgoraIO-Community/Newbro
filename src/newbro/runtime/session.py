@@ -442,6 +442,17 @@ def _task_workspace_id(task: Task | None) -> str | None:
     return None
 
 
+def _is_ephemeral_codex_thread(codex_thread: "CodexThreadListItem") -> bool:
+    """Return True only when Codex explicitly flagged the thread as ephemeral.
+
+    Codex puts the flag at `diagnostics["ephemeral"]` (see
+    `executors/node/service.py:1124`). We treat the strict boolean `True` as
+    ephemeral and pass through every other value — including `False`, `None`,
+    a missing key, or a non-boolean — as non-ephemeral.
+    """
+    return codex_thread.diagnostics.get("ephemeral") is True
+
+
 def _thread_timestamp_from_turn(turn: dict[str, object]) -> str | None:
     for key in ("createdAt", "created_at", "timestamp", "updatedAt", "updated_at"):
         value = turn.get(key)
@@ -1723,9 +1734,15 @@ class SessionRuntime:
                 except Exception as exc:
                     LOGGER.warning("Failed to import Codex threads from node %s: %s", node_id, exc)
                     continue
+                skipped_ephemeral_count = 0
+                imported_thread_count = 0
                 for codex_thread in codex_threads:
                     if codex_thread.thread_id in existing_codex_thread_ids:
                         continue
+                    if _is_ephemeral_codex_thread(codex_thread):
+                        skipped_ephemeral_count += 1
+                        continue
+                    imported_thread_count += 1
                     for persona in node_personas:
                         public_thread_id = self._codex_thread_public_id_aliases.get(
                             _codex_thread_alias_key(persona.persona_id, codex_thread.thread_id)
@@ -1775,6 +1792,19 @@ class SessionRuntime:
                             diagnostics=diagnostics,
                         )
                         imported_resume_handles[public_thread_id] = resume_handle
+                self.observability.logger.emit_event(
+                    level="INFO",
+                    event_name="runtime.codex_thread_sync",
+                    component="runtime.bro_threads",
+                    summary="Codex thread import sync",
+                    conversation_id=self.session_id,
+                    details={
+                        "executor_node_id": node_id,
+                        "total_thread_count": len(codex_threads),
+                        "imported_thread_count": imported_thread_count,
+                        "skipped_ephemeral_count": skipped_ephemeral_count,
+                    },
+                )
             self._imported_codex_threads = imported_threads
             self._imported_codex_thread_resume_handles = imported_resume_handles
             self._last_codex_thread_sync_monotonic = time.monotonic()
