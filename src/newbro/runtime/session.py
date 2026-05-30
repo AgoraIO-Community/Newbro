@@ -443,13 +443,6 @@ def _task_workspace_id(task: Task | None) -> str | None:
 
 
 def _is_ephemeral_codex_thread(codex_thread: "CodexThreadListItem") -> bool:
-    """Return True only when Codex explicitly flagged the thread as ephemeral.
-
-    Codex puts the flag at `diagnostics["ephemeral"]` (see
-    `executors/node/service.py:1124`). We treat the strict boolean `True` as
-    ephemeral and pass through every other value — including `False`, `None`,
-    a missing key, or a non-boolean — as non-ephemeral.
-    """
     return codex_thread.diagnostics.get("ephemeral") is True
 
 
@@ -1800,7 +1793,7 @@ class SessionRuntime:
                     conversation_id=self.session_id,
                     details={
                         "executor_node_id": node_id,
-                        "total_thread_count": len(codex_threads),
+                        "raw_thread_count": len(codex_threads),
                         "imported_thread_count": imported_thread_count,
                         "skipped_ephemeral_count": skipped_ephemeral_count,
                     },
