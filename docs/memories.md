@@ -9,6 +9,8 @@ Short log of important design decisions and changes for Newbro.
 - Changed Codex final-plan approvals so approved proposals requeue execution with `plan_mode` cleared and modify mode set, denied proposals requeue planning, final completed plan proposals end the blocked executor run instead of waiting for a native callback, and low-value streamed plan deltas are coalesced while final plan items remain authoritative.
 - Changed Bro Detail plan proposal placement so interaction requests carry safe persona/thread hints and active-thread proposal cards render even when no task-backed timeline turn can host them yet; selected-thread live plan deltas are coalesced while final plan items remain authoritative.
 - Changed Bro Detail plan proposal handling so resolved approved/denied proposal requests are acknowledgements only; active execution/refinement appears through the task/run timeline or a new pending request.
+- Changed imported Codex native-history projection so structured final `plan` items mark the timeline turn and paired user message with `metadata.plan_mode=true`, including split user-only then plan-bearing native turns.
+- Changed Bro Detail plan proposal approval so `Implement it` creates a user-visible approval turn keyed by `client_request_id` while executor follow-up still receives the full approved plan context.
 
 ## 2026-04-04
 
@@ -271,6 +273,7 @@ Short log of important design decisions and changes for Newbro.
 - Changed Bro Detail imported-thread opening to skip global Codex thread-list refreshes for cached imported threads and start selected-thread subscription outside the HTTP open response path.
 - Changed Bro Detail selected Codex thread history reads to use `thread/read` metadata plus bounded `thread/turns/list` pages instead of full `thread/read includeTurns` payloads.
 - Changed the detached Codex executor node to reuse one long-lived Codex app-server process for thread list/read/start/resume and selected-thread event routing; subscriptions are local event interests instead of separate app-server processes.
+- Changed Bro Detail selected-thread plan projection so live structured Codex plan items pair with the originating user turn, mark the user turn as plan mode, and render plan approval before result cards.
 
 ## 2026-05-28
 

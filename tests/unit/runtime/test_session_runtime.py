@@ -31,7 +31,11 @@ from newbro.protocol import (
 from newbro.executors.core import ExecutorCapabilities, ExecutorEvent, ExecutorEventType, ExecutorSession
 from newbro.protocol import Task, TaskStatus
 from newbro.runtime import Settings
-from newbro.runtime.session import SelectedCodexThreadSubscription, create_session_runtime
+from newbro.runtime.session import (
+    SelectedCodexThreadSubscription,
+    _timeline_turns_from_codex_thread,
+    create_session_runtime,
+)
 
 
 @pytest.mark.anyio
@@ -86,6 +90,118 @@ async def test_session_runtime_publish_snapshot_uses_cached_codex_threads_by_def
     assert initial.type == "snapshot"
 
     session.unsubscribe(queue)
+
+
+def test_codex_native_history_marks_user_turn_with_final_plan_item_as_plan_mode():
+    turns = _timeline_turns_from_codex_thread(
+        thread={
+            "turns": [
+                {
+                    "id": "turn-plan",
+                    "createdAt": "2026-05-26T22:01:00+00:00",
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "id": "user-1",
+                            "text": "Plan the cleanup first.",
+                        },
+                        {
+                            "type": "plan",
+                            "id": "plan-1",
+                            "text": "Audit, edit, verify.",
+                        },
+                    ],
+                }
+            ]
+        },
+        public_thread_id="thread-public",
+        executor_thread_id="codex-thread-1",
+        persona_id="forge",
+        executor_id="codex",
+    )
+
+    assert len(turns) == 1
+    assert turns[0].metadata["plan_mode"] is True
+    assert turns[0].metadata["codex_plan"] == {"text": "Audit, edit, verify.", "steps": []}
+    assert turns[0].user is not None
+    assert turns[0].user.metadata["plan_mode"] is True
+
+
+def test_codex_native_history_marks_split_user_turn_when_next_turn_has_plan_item():
+    turns = _timeline_turns_from_codex_thread(
+        thread={
+            "turns": [
+                {
+                    "id": "turn-user",
+                    "createdAt": "2026-05-26T22:01:00+00:00",
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "id": "user-1",
+                            "text": "Plan before changing files.",
+                        }
+                    ],
+                },
+                {
+                    "id": "turn-plan",
+                    "createdAt": "2026-05-26T22:02:00+00:00",
+                    "items": [
+                        {
+                            "type": "plan",
+                            "id": "plan-1",
+                            "text": "Read contracts, patch projection, test.",
+                        }
+                    ],
+                },
+            ]
+        },
+        public_thread_id="thread-public",
+        executor_thread_id="codex-thread-1",
+        persona_id="forge",
+        executor_id="codex",
+    )
+
+    assert len(turns) == 1
+    assert turns[0].executor_turn_id == "turn-plan"
+    assert turns[0].metadata["original_user_executor_turn_id"] == "turn-user"
+    assert turns[0].metadata["plan_mode"] is True
+    assert turns[0].user is not None
+    assert turns[0].user.text == "Plan before changing files."
+    assert turns[0].user.metadata["plan_mode"] is True
+
+
+def test_codex_native_history_does_not_mark_ordinary_turns_as_plan_mode():
+    turns = _timeline_turns_from_codex_thread(
+        thread={
+            "turns": [
+                {
+                    "id": "turn-ordinary",
+                    "createdAt": "2026-05-26T22:01:00+00:00",
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "id": "user-1",
+                            "text": "Summarize status.",
+                        },
+                        {
+                            "type": "agentMessage",
+                            "id": "assistant-1",
+                            "text": "Status summarized.",
+                        },
+                    ],
+                }
+            ]
+        },
+        public_thread_id="thread-public",
+        executor_thread_id="codex-thread-1",
+        persona_id="forge",
+        executor_id="codex",
+    )
+
+    assert len(turns) == 1
+    assert "plan_mode" not in turns[0].metadata
+    assert turns[0].user is not None
+    assert "plan_mode" not in turns[0].user.metadata
 
 
 @pytest.mark.anyio
@@ -535,6 +651,135 @@ async def test_selected_codex_thread_plan_deltas_are_coalesced_but_final_plan_is
         "text": "Final selected-thread plan.",
         "steps": [],
     }
+    assert turns[0].metadata["plan_mode"] is True
+
+
+@pytest.mark.anyio
+async def test_selected_codex_thread_split_user_turn_pairs_with_final_plan_item():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={
+                "turnId": "turn-user",
+                "timestamp": "2026-05-26T22:01:00+00:00",
+                "item": {
+                    "type": "userMessage",
+                    "id": "user-1",
+                    "text": "Plan this before changing files.",
+                },
+            },
+        )
+    )
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/completed",
+            params={
+                "turnId": "turn-plan",
+                "timestamp": "2026-05-26T22:02:00+00:00",
+                "item": {
+                    "type": "plan",
+                    "id": "plan-1",
+                    "text": "Read contracts, patch projection, run tests.",
+                },
+            },
+        )
+    )
+
+    turns = session._bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].executor_turn_id == "turn-plan"
+    assert turns[0].metadata["original_user_executor_turn_id"] == "turn-user"
+    assert turns[0].metadata["plan_mode"] is True
+    assert turns[0].metadata["codex_plan"] == {
+        "text": "Read contracts, patch projection, run tests.",
+        "steps": [],
+    }
+    assert turns[0].user is not None
+    assert turns[0].user.text == "Plan this before changing files."
+    assert turns[0].user.metadata["plan_mode"] is True
+    snapshot = await session.snapshot()
+    thread_turns = [turn for turn in snapshot.bro_timeline_turns if turn.thread_id == "thread-public"]
+    assert len(thread_turns) == 1
+    assert thread_turns[0].user is not None
+    assert thread_turns[0].user.text == "Plan this before changing files."
+
+
+@pytest.mark.anyio
+async def test_selected_codex_thread_same_turn_plan_marks_existing_user_message_plan_mode():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    for item in [
+        {"type": "userMessage", "id": "user-1", "text": "Plan this turn."},
+        {"type": "plan", "id": "plan-1", "text": "First inspect, then edit."},
+    ]:
+        await session.handle_codex_thread_event(
+            CodexThreadEventMessage(
+                subscription_id="codex-sub-1",
+                node_id="node-forge",
+                session_id="session-1",
+                target_persona_id="forge",
+                target_thread_id="thread-public",
+                thread_id="codex-thread-1",
+                method="item/completed",
+                params={
+                    "turnId": "turn-1",
+                    "timestamp": "2026-05-26T22:01:00+00:00",
+                    "item": item,
+                },
+            )
+        )
+
+    turns = session._bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].metadata["plan_mode"] is True
+    assert turns[0].user is not None
+    assert turns[0].user.text == "Plan this turn."
+    assert turns[0].user.metadata["plan_mode"] is True
+    assert turns[0].metadata["codex_plan"] == {"text": "First inspect, then edit.", "steps": []}
 
 
 @pytest.mark.anyio
@@ -1348,6 +1593,98 @@ async def test_session_runtime_native_interaction_resolution_sets_native_resume_
 
 
 @pytest.mark.anyio
+async def test_session_runtime_native_plan_proposal_approval_uses_native_response_without_requeue_echo():
+    session = create_session_runtime(
+        "session-6d-native-plan",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    native = FakeNativeCodexSession()
+    session.execution_brain._loop._sessions._live_sessions["exec-session-native-plan"] = native.session
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-native-plan",
+            root_task_id="task-native-plan",
+            title="Native plan task",
+            goal="Native plan task",
+            status=TaskStatus.WAITING_USER_INPUT,
+            preferred_executor="codex",
+            metadata={
+                "plan_mode": True,
+                "mode": "proposal_only",
+                "persona_id": "forge",
+                "target_thread_id": "thread-native-plan",
+            },
+        )
+    )
+    await session.blackboard.put_interaction_request(
+        InteractionRequest(
+            request_id="ireq-native-plan",
+            task_id="task-native-plan",
+            execution_session_id="exec-session-native-plan",
+            run_id="run-native-plan",
+            executor_type="codex",
+            kind=InteractionRequestKind.PLAN_PROPOSAL,
+            status=InteractionRequestStatus.PENDING,
+            prompt="Review the native plan before execution.",
+            details={
+                "proposal": {
+                    "summary": "Review the native plan before execution.",
+                    "options": [
+                        {
+                            "id": "approved_codex_plan",
+                            "label": "Run proposed plan",
+                            "description": "Native plan payload.",
+                        }
+                    ],
+                }
+            },
+            available_actions=["approve", "deny"],
+            opaque={
+                "native_response": {
+                    "request_id": 5,
+                    "method": "item/plan/requestApproval",
+                    "params": {
+                        "threadId": "thread-1",
+                        "turnId": "turn-1",
+                        "itemId": "plan-1",
+                    },
+                }
+            },
+            created_at="2026-04-06T00:00:00+00:00",
+        )
+    )
+
+    affected = await session.resolve_interaction_request(
+        "ireq-native-plan",
+        action="approve",
+        option_id="approved_codex_plan",
+        client_request_id="native-plan-approval-client",
+        user_visible_text="Implement it",
+    )
+
+    request = await session.blackboard.get_interaction_request("ireq-native-plan")
+    task = await session.blackboard.get_task("task-native-plan")
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+
+    assert affected == ["task-native-plan"]
+    assert request is not None and request.resume_strategy == "native_response"
+    assert native.client.calls
+    assert native.client.calls[0]["answer_text"] == "Run proposed plan - Native plan payload."
+    assert task is not None
+    assert task.status == TaskStatus.WAITING_USER_INPUT
+    assert task.metadata["plan_mode"] is True
+    assert "client_request_id" not in task.metadata
+    assert not [
+        turn
+        for turn in snapshot.bro_timeline_turns
+        if turn.client_request_id == "native-plan-approval-client"
+    ]
+
+
+@pytest.mark.anyio
 async def test_session_runtime_native_interaction_resolution_preserves_permissions_payload():
     session = create_session_runtime(
         "session-6e",
@@ -1519,7 +1856,12 @@ async def test_session_runtime_plan_proposal_approval_requeues_execution_mode_an
             goal="Plan approval task",
             status=TaskStatus.WAITING_USER_INPUT,
             preferred_executor="codex",
-            metadata={"plan_mode": True, "mode": "proposal_only"},
+            metadata={
+                "plan_mode": True,
+                "mode": "proposal_only",
+                "persona_id": "forge",
+                "target_thread_id": "thread-plan-approval",
+            },
         )
     )
     await session.blackboard.put_session(
@@ -1584,6 +1926,8 @@ async def test_session_runtime_plan_proposal_approval_requeues_execution_mode_an
         "ireq-plan-approval",
         action="approve",
         option_id="approved_codex_plan",
+        client_request_id="approval-client-1",
+        user_visible_text="Implement it",
     )
 
     task = await session.blackboard.get_task("task-plan-approval")
@@ -1596,9 +1940,18 @@ async def test_session_runtime_plan_proposal_approval_requeues_execution_mode_an
     assert task is not None and task.status == TaskStatus.QUEUED
     assert "plan_mode" not in task.metadata
     assert task.metadata["mode"] == "modify_allowed"
+    assert task.metadata["client_request_id"] == "approval-client-1"
+    assert task.metadata["user_visible_text"] == "Implement it"
+    assert task.metadata["source_kind"] == "bro_detail_plan_approval"
     assert task.latest_instruction is not None
     assert "Proceed with that plan." in task.latest_instruction
     assert execution_session is not None and execution_session.active_run_id is None
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    approval_turn = next(
+        turn for turn in snapshot.bro_timeline_turns if turn.client_request_id == "approval-client-1"
+    )
+    assert approval_turn.user is not None
+    assert approval_turn.user.text == "Implement it"
 
 
 @pytest.mark.anyio
@@ -1650,7 +2003,11 @@ async def test_session_runtime_plan_proposal_approval_runs_follow_up_to_completi
     assert completed_task.status == TaskStatus.COMPLETED
     assert len(executor.calls) == 2
     assert executor.calls[0]["metadata"] == {"plan_mode": True, "mode": "proposal_only"}
-    assert executor.calls[1]["metadata"] == {"mode": "modify_allowed"}
+    assert executor.calls[1]["metadata"] == {
+        "mode": "modify_allowed",
+        "user_visible_text": "Implement it",
+        "source_kind": "bro_detail_plan_approval",
+    }
     assert isinstance(executor.calls[1]["latest_instruction"], str)
     assert "Proceed with that plan." in executor.calls[1]["latest_instruction"]
     assert latest_run.status == RunStatus.COMPLETED
@@ -1662,6 +2019,82 @@ async def test_session_runtime_plan_proposal_approval_runs_follow_up_to_completi
         if request.kind == InteractionRequestKind.PLAN_PROPOSAL
         and request.status == InteractionRequestStatus.PENDING
     ]
+
+
+@pytest.mark.anyio
+async def test_session_runtime_plan_proposal_approval_defaults_visible_text_to_acknowledgement():
+    session = create_session_runtime(
+        "session-6g-visible-default",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-plan-visible-default",
+            root_task_id="task-plan-visible-default",
+            title="Plan visible default task",
+            goal="Plan visible default task",
+            status=TaskStatus.WAITING_USER_INPUT,
+            preferred_executor="codex",
+            metadata={
+                "plan_mode": True,
+                "mode": "proposal_only",
+                "persona_id": "forge",
+                "target_thread_id": "thread-plan-visible-default",
+            },
+        )
+    )
+    await session.blackboard.put_interaction_request(
+        InteractionRequest(
+            request_id="ireq-plan-visible-default",
+            task_id="task-plan-visible-default",
+            execution_session_id="exec-session-plan-visible-default",
+            run_id="run-plan-visible-default",
+            executor_type="codex",
+            kind=InteractionRequestKind.PLAN_PROPOSAL,
+            status=InteractionRequestStatus.PENDING,
+            prompt="Review the proposed plan before execution.",
+            details={
+                "proposal": {
+                    "summary": "Review the proposed plan before execution.",
+                    "options": [
+                        {
+                            "id": "approved_codex_plan",
+                            "label": "Run proposed plan",
+                            "description": "Full approved plan payload.",
+                        }
+                    ],
+                }
+            },
+            available_actions=["approve", "deny"],
+            opaque={},
+            created_at="2026-04-06T00:00:00+00:00",
+        )
+    )
+
+    affected = await session.resolve_interaction_request(
+        "ireq-plan-visible-default",
+        action="approve",
+        option_id="approved_codex_plan",
+        client_request_id="approval-client-default",
+    )
+
+    task = await session.blackboard.get_task("task-plan-visible-default")
+    assert affected == ["task-plan-visible-default"]
+    assert task is not None
+    assert task.metadata["user_visible_text"] == "Implement it"
+    assert task.latest_instruction is not None
+    assert "Full approved plan payload." in task.latest_instruction
+    assert "Proceed with that plan." in task.latest_instruction
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    approval_turn = next(
+        turn for turn in snapshot.bro_timeline_turns if turn.client_request_id == "approval-client-default"
+    )
+    assert approval_turn.user is not None
+    assert approval_turn.user.text == "Implement it"
 
 
 @pytest.mark.anyio

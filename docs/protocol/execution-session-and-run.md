@@ -165,6 +165,13 @@ Bro detail continuity:
   streaming plan text, and final `plan` items from `item/completed` as the
   authoritative item text. Newbro may coalesce `item/plan/delta` before writing
   plan detail records, but it must always project the final completed plan item.
+  Imported native history and selected-thread live events mark a timeline turn
+  and its paired user message with `metadata.plan_mode = true` when the native
+  turn includes a structured final `plan` item; if Codex split the user-only
+  turn from the following plan-bearing turn, the original paired user message
+  receives the same metadata and is moved into the plan-bearing timeline turn.
+  This signal comes only from structured app-server plan items, not transcript
+  text, titles, or keyword inference.
   Codex `reasoning` items and reasoning deltas remain internal and must not
   become goal, plan, or progress text.
   Leaving or replacing the selected thread must call the node's selected-thread

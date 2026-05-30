@@ -114,6 +114,7 @@ from .models import (
 
 FALLBACK_ASSISTANT_ERROR_MESSAGE = "Sorry, something went wrong while generating the reply."
 LOGGER = logging.getLogger(__name__)
+PLAN_APPROVAL_VISIBLE_TEXT = "Implement it"
 MAX_TASK_INSTRUCTION_CHARS = 4000
 AUDIO_ACTIVE_RUN_STATUSES = {RunStatus.ASSIGNED, RunStatus.RUNNING, RunStatus.BLOCKED}
 SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS = 2.0
@@ -424,6 +425,12 @@ def _run_timeline_plan(run: ExecutionRun | None) -> BroTimelinePlan | None:
     return _timeline_plan(plan_value)
 
 
+def _mark_timeline_message_plan_mode(message: BroTimelineMessage | None) -> BroTimelineMessage | None:
+    if message is None:
+        return None
+    return message.model_copy(update={"metadata": {**message.metadata, "plan_mode": True}})
+
+
 def _codex_thread_goal(thread: dict[str, object]) -> str | None:
     for key in ("goal", "objective"):
         value = thread.get(key)
@@ -489,6 +496,9 @@ def _task_input_modality(task: Task) -> Literal["text", "audio", "unknown"]:
 
 
 def _direct_user_text(task: Task) -> str:
+    visible_text = _task_metadata_string(task, "user_visible_text")
+    if visible_text is not None:
+        return visible_text
     goal = task.goal.strip()
     title = task.title.strip()
     instruction = (task.latest_instruction or "").strip()
@@ -561,10 +571,12 @@ def _timeline_turns_from_codex_thread(
         latest_user_message: BroTimelineMessage | None = None
         latest_assistant_message: BroTimelineMessage | None = None
         latest_plan: dict[str, object] | None = None
+        has_plan_item = False
         for item_index, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
             if item.get("type") == "plan":
+                has_plan_item = True
                 latest_plan = _extract_codex_plan(item)
                 continue
             role = _codex_item_role(item)
@@ -603,7 +615,7 @@ def _timeline_turns_from_codex_thread(
             turn_status = "failed"
         elif status_text in {"cancelled", "canceled"}:
             turn_status = "cancelled"
-        if latest_assistant_message is None and latest_user_message is not None:
+        if latest_assistant_message is None and latest_user_message is not None and not has_plan_item:
             append_user_only_turn()
             pending_user_message = latest_user_message
             pending_user_turn_id = turn_id_text
@@ -611,7 +623,11 @@ def _timeline_turns_from_codex_thread(
             continue
         paired_user_message = latest_user_message
         original_user_turn_id: str | None = None
-        if latest_assistant_message is not None and paired_user_message is None and pending_user_message is not None:
+        if (
+            (latest_assistant_message is not None or has_plan_item)
+            and paired_user_message is None
+            and pending_user_message is not None
+        ):
             paired_user_message = pending_user_message
             original_user_turn_id = pending_user_turn_id
             pending_user_message = None
@@ -619,6 +635,19 @@ def _timeline_turns_from_codex_thread(
             pending_user_timestamp = None
         elif latest_assistant_message is not None:
             append_user_only_turn()
+        if has_plan_item:
+            paired_user_message = _mark_timeline_message_plan_mode(paired_user_message)
+        metadata = {
+            "source": "native_history",
+            "executor_thread_id": executor_thread_id,
+            "executor_turn_id": turn_id_text,
+            "assistant_title": paired_user_message.text if paired_user_message is not None else None,
+            "original_user_executor_turn_id": original_user_turn_id,
+            "codex_goal": thread_goal,
+            "codex_plan": latest_plan,
+        }
+        if has_plan_item:
+            metadata["plan_mode"] = True
         timeline_turns.append(
             BroTimelineTurn(
                 turn_id=f"{public_thread_id}:{executor_id}:{turn_id_text}",
@@ -634,15 +663,7 @@ def _timeline_turns_from_codex_thread(
                 status=turn_status,
                 created_at=paired_user_message.created_at if paired_user_message is not None else timestamp,
                 updated_at=timestamp,
-                metadata={
-                    "source": "native_history",
-                    "executor_thread_id": executor_thread_id,
-                    "executor_turn_id": turn_id_text,
-                    "assistant_title": paired_user_message.text if paired_user_message is not None else None,
-                    "original_user_executor_turn_id": original_user_turn_id,
-                    "codex_goal": thread_goal,
-                    "codex_plan": latest_plan,
-                },
+                metadata=metadata,
             )
         )
     append_user_only_turn()
@@ -1088,6 +1109,8 @@ def _merge_timeline_turn(existing: BroTimelineTurn, incoming: BroTimelineTurn) -
     for key, value in incoming.metadata.items():
         if value is not None or key not in metadata:
             metadata[key] = value
+    if metadata.get("plan_mode") is True:
+        user = _mark_timeline_message_plan_mode(user)
     return existing.model_copy(
         update={
             "user": user,
@@ -2034,6 +2057,12 @@ class SessionRuntime:
                 plan = _extract_codex_plan(item)
                 if plan is None:
                     return False
+                paired_user_message, original_user_turn_id = self._pop_selected_thread_pending_user_turn(
+                    public_thread_id=subscription.public_thread_id,
+                    executor_thread_id=subscription.codex_thread_id,
+                    plan_turn_id=turn_id,
+                    plan_timestamp=timestamp,
+                )
                 self._upsert_bro_thread_executor_turn(
                     BroTimelineTurn(
                         turn_id=f"{subscription.public_thread_id}:codex:{turn_id}",
@@ -2044,9 +2073,10 @@ class SessionRuntime:
                         client_request_id=client_request_id,
                         executor_thread_id=subscription.codex_thread_id,
                         executor_turn_id=turn_id,
-                        input_modality="unknown",
+                        input_modality="text" if paired_user_message is not None else "unknown",
+                        user=_mark_timeline_message_plan_mode(paired_user_message),
                         status="running" if message.method == "item/started" else "completed",
-                        created_at=timestamp,
+                        created_at=paired_user_message.created_at if paired_user_message is not None else timestamp,
                         updated_at=timestamp,
                         metadata={
                             "source": "selected_thread_event",
@@ -2055,6 +2085,9 @@ class SessionRuntime:
                             "client_request_id": client_request_id,
                             "codex_goal": codex_goal,
                             "codex_plan": plan,
+                            "plan_mode": True,
+                            "assistant_title": paired_user_message.text if paired_user_message is not None else None,
+                            "original_user_executor_turn_id": original_user_turn_id,
                         },
                     )
                 )
@@ -2140,6 +2173,7 @@ class SessionRuntime:
                         "client_request_id": client_request_id,
                         "codex_goal": codex_goal,
                         "codex_plan": {"text": text, "steps": []},
+                        "plan_mode": True,
                     },
                 )
             )
@@ -2191,6 +2225,41 @@ class SessionRuntime:
             )
         )
         return True
+
+    def _pop_selected_thread_pending_user_turn(
+        self,
+        *,
+        public_thread_id: str,
+        executor_thread_id: str,
+        plan_turn_id: str,
+        plan_timestamp: str,
+    ) -> tuple[BroTimelineMessage | None, str | None]:
+        turns = list(self._bro_thread_executor_turns.get(public_thread_id, []))
+        plan_time = DateParseCache.parse(plan_timestamp)
+        for index in range(len(turns) - 1, -1, -1):
+            candidate = turns[index]
+            if candidate.executor_id != "codex":
+                continue
+            if candidate.executor_thread_id != executor_thread_id:
+                continue
+            if candidate.executor_turn_id == plan_turn_id:
+                continue
+            if candidate.user is None or candidate.assistant is not None or candidate.task is not None:
+                continue
+            if candidate.metadata.get("source") != "selected_thread_event":
+                continue
+            if candidate.metadata.get("codex_plan") is not None:
+                continue
+            candidate_time = DateParseCache.parse(candidate.created_at or candidate.updated_at or "")
+            if candidate_time > plan_time:
+                continue
+            turns.pop(index)
+            if turns:
+                self._bro_thread_executor_turns[public_thread_id] = turns
+            else:
+                self._bro_thread_executor_turns.pop(public_thread_id, None)
+            return candidate.user, candidate.executor_turn_id
+        return None, None
 
     def _upsert_bro_thread_executor_turn(self, turn: BroTimelineTurn) -> None:
         turns = list(self._bro_thread_executor_turns.get(turn.thread_id, []))
@@ -4169,6 +4238,8 @@ class SessionRuntime:
         answer_text: str | None = None,
         option_id: str | None = None,
         reason: str | None = None,
+        client_request_id: str | None = None,
+        user_visible_text: str | None = None,
     ) -> list[str]:
         resolution = await self.interaction_manager.resolve_request(
             request_id,
@@ -4196,6 +4267,11 @@ class SessionRuntime:
             if action == "approve":
                 task.metadata.pop("plan_mode", None)
                 task.metadata["mode"] = TaskMode.MODIFY_ALLOWED.value
+                visible_text = (user_visible_text or "").strip() or PLAN_APPROVAL_VISIBLE_TEXT
+                if client_request_id:
+                    task.metadata["client_request_id"] = client_request_id
+                task.metadata["user_visible_text"] = visible_text
+                task.metadata["source_kind"] = "bro_detail_plan_approval"
             elif action == "deny":
                 task.metadata["plan_mode"] = True
                 task.metadata["mode"] = TaskMode.PROPOSAL_ONLY.value

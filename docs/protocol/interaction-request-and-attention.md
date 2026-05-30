@@ -201,9 +201,19 @@ POST /api/sessions/{session_id}/interaction-requests/{request_id}/resolve
   "request_id": "...",
   "interaction_request_id": "...",
   "action": "approve|deny|answer|confirm|cancel",
-  "answer_text": "..."
+  "answer_text": "...",
+  "client_request_id": "...",
+  "user_visible_text": "..."
 }
 ```
+
+`client_request_id` and `user_visible_text` are optional. For Bro Detail
+`plan_proposal` approvals, clients use them to project the approval as a
+user-visible timeline turn while preserving the richer follow-up instruction
+sent to the executor. If a Bro Detail `plan_proposal` approval omits
+`user_visible_text`, Newbro projects the acknowledgement as `Implement it`; it
+must not render the full approved plan or follow-up instruction as the user
+message.
 
 ## Executor-Specific Continuation
 

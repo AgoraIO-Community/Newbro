@@ -182,7 +182,12 @@ async def test_resolve_plan_proposal_approval_drives_follow_up_to_completion():
                 goal="API plan lifecycle",
                 status=TaskStatus.QUEUED,
                 preferred_executor="plan-lifecycle",
-                metadata={"plan_mode": True, "mode": "proposal_only"},
+                metadata={
+                    "plan_mode": True,
+                    "mode": "proposal_only",
+                    "persona_id": "forge",
+                    "target_thread_id": "thread-plan-api",
+                },
             )
         )
         session.schedule_execution()
@@ -200,7 +205,12 @@ async def test_resolve_plan_proposal_approval_drives_follow_up_to_completion():
 
         response = await client.post(
             f"/api/sessions/{session_id}/interaction-requests/{request_id}/resolve",
-            json={"action": "approve", "option_id": "approved_codex_plan"},
+            json={
+                "action": "approve",
+                "option_id": "approved_codex_plan",
+                "client_request_id": "approval-client-api",
+                "user_visible_text": "Implement it",
+            },
         )
         assert response.status_code == 200
 
@@ -210,12 +220,30 @@ async def test_resolve_plan_proposal_approval_drives_follow_up_to_completion():
             lambda snap: snap["tasks"][0]["status"] == "completed",
         )
         assert len(executor.calls) == 2
-        assert executor.calls[1]["metadata"] == {"mode": "modify_allowed"}
+        assert executor.calls[1]["metadata"] == {
+            "mode": "modify_allowed",
+            "persona_id": "forge",
+            "target_thread_id": "thread-plan-api",
+            "client_request_id": "approval-client-api",
+            "user_visible_text": "Implement it",
+            "source_kind": "bro_detail_plan_approval",
+        }
         assert isinstance(executor.calls[1]["latest_instruction"], str)
         assert "Proceed with that plan." in executor.calls[1]["latest_instruction"]
-        assert completed["tasks"][0]["metadata"] == {"mode": "modify_allowed"}
+        assert completed["tasks"][0]["metadata"] == {
+            "mode": "modify_allowed",
+            "persona_id": "forge",
+            "target_thread_id": "thread-plan-api",
+            "client_request_id": "approval-client-api",
+            "user_visible_text": "Implement it",
+            "source_kind": "bro_detail_plan_approval",
+        }
         assert completed["execution_runs"][-1]["status"] == "completed"
         assert completed["execution_runs"][-1]["output_summary"] == "API follow-up completed."
+        approval_turn = next(
+            turn for turn in completed["bro_timeline_turns"] if turn["client_request_id"] == "approval-client-api"
+        )
+        assert approval_turn["user"]["text"] == "Implement it"
         assert [
             request["status"]
             for request in completed["interaction_requests"]

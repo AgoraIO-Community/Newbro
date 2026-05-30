@@ -213,12 +213,13 @@ function buildTimelineTurns({
     ...textTurns.filter((turn) => !canonicalClientIds.has(turn.id)).map(optimisticTextTurnToTimeline),
     ...audioTurns.filter((turn) => !canonicalClientIds.has(turn.id)).map(optimisticAudioTurnToTimeline),
   ];
-  return [...canonical, ...optimistic].sort((left, right) => {
+  const sortedOptimistic = optimistic.sort((left, right) => {
     const timeDelta = timelineTimestamp(left.created_at ?? left.updated_at ?? undefined)
       - timelineTimestamp(right.created_at ?? right.updated_at ?? undefined);
     if (timeDelta !== 0) return timeDelta;
     return left.turn_id.localeCompare(right.turn_id);
   });
+  return [...canonical, ...sortedOptimistic];
 }
 
 function MessageMeta({
@@ -448,6 +449,8 @@ type PlanProposalOption = {
   letter?: string;
 };
 
+const PLAN_APPROVAL_VISIBLE_TEXT = "Implement it";
+
 function planProposalDetails(request: InteractionRequest): { summary: string; options: PlanProposalOption[] } {
   const proposal = request.details?.proposal;
   if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) {
@@ -478,7 +481,19 @@ function optionAnswerText(option: PlanProposalOption | null): string | undefined
   return [option.label, option.description].filter(Boolean).join(" - ");
 }
 
-function PlanProposalCard({ request, mobile = false }: { request: InteractionRequest; mobile?: boolean }) {
+function PlanProposalCard({
+  request,
+  mobile = false,
+  broId,
+  threadId,
+  onTextTurn,
+}: {
+  request: InteractionRequest;
+  mobile?: boolean;
+  broId?: string;
+  threadId?: string | null;
+  onTextTurn?: (turn: TextTurn) => void;
+}) {
   const shell = useNewbroShell();
   const prefix = mobile ? "thr" : "dt";
   const { summary, options } = planProposalDetails(request);
@@ -492,13 +507,57 @@ function PlanProposalCard({ request, mobile = false }: { request: InteractionReq
     const answerText = action === "approve"
       ? optionAnswerText(selected) ?? "Approve and run the proposed plan."
       : "Keep planning. Refine the proposal instead of acting yet.";
+    const optimisticBroId = broId ?? interactionRequestDetailText(request, "persona_id");
+    const optimisticThreadId = threadId ?? interactionRequestDetailText(request, "target_thread_id");
+    const clientRequestId = action === "approve"
+      ? `plan-approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      : null;
+    const createdAt = new Date().toISOString();
+    if (action === "approve" && clientRequestId && optimisticBroId) {
+      onTextTurn?.({
+        id: clientRequestId,
+        broId: optimisticBroId,
+        threadId: optimisticThreadId,
+        text: PLAN_APPROVAL_VISIBLE_TEXT,
+        status: "sending",
+        createdAt,
+      });
+    }
     setResolving(true);
     try {
       await shell.resolveInteractionRequest(request.request_id, {
         action,
         answer_text: answerText,
         option_id: selected?.id,
+        ...(clientRequestId ? {
+          client_request_id: clientRequestId,
+          user_visible_text: PLAN_APPROVAL_VISIBLE_TEXT,
+        } : {}),
       });
+      if (action === "approve" && clientRequestId && optimisticBroId) {
+        onTextTurn?.({
+          id: clientRequestId,
+          broId: optimisticBroId,
+          threadId: optimisticThreadId,
+          text: PLAN_APPROVAL_VISIBLE_TEXT,
+          status: "sent",
+          createdAt,
+        });
+      }
+    } catch (error: unknown) {
+      const message = describeError(error, "Plan approval could not be sent.");
+      if (action === "approve" && clientRequestId && optimisticBroId) {
+        onTextTurn?.({
+          id: clientRequestId,
+          broId: optimisticBroId,
+          threadId: optimisticThreadId,
+          text: PLAN_APPROVAL_VISIBLE_TEXT,
+          status: "failed",
+          createdAt,
+          error: message,
+        });
+      }
+      shell.setShellError(message);
     } finally {
       setResolving(false);
     }
@@ -552,7 +611,7 @@ function PlanProposalCard({ request, mobile = false }: { request: InteractionReq
             disabled={resolving}
           >
             <Check size={14} strokeWidth={2.4} aria-hidden="true" />
-            Approve &amp; run
+            {PLAN_APPROVAL_VISIBLE_TEXT}
           </button>
           <button
             type="button"
@@ -764,17 +823,34 @@ function timelineTaskRecord(turn: BroTimelineTurn): BroTaskRecord | null {
   };
 }
 
-function TimelineTurnView({ bro, turn, mobile = false }: { bro: BroCardModel; turn: BroTimelineTurn; mobile?: boolean }) {
+function TimelineTurnView({
+  bro,
+  turn,
+  mobile = false,
+  onTextTurn,
+}: {
+  bro: BroCardModel;
+  turn: BroTimelineTurn;
+  mobile?: boolean;
+  onTextTurn?: (turn: TextTurn) => void;
+}) {
   const shell = useNewbroShell();
   const record = timelineTaskRecord(turn);
   const proposalRequests = shell.interactionRequests.filter((request) => planProposalRequestMatchesTurn(request, turn));
   return (
     <>
       <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
-      {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
       {proposalRequests.map((request) => (
-        <PlanProposalCard key={request.request_id} request={request} mobile={mobile} />
+        <PlanProposalCard
+          key={request.request_id}
+          request={request}
+          mobile={mobile}
+          broId={turn.persona_id}
+          threadId={turn.thread_id}
+          onTextTurn={onTextTurn}
+        />
       ))}
+      {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
     </>
   );
 }
@@ -1842,6 +1918,7 @@ function ThreadPanel({
   audioTurns,
   timelineTurns,
   selectedThread,
+  onTextTurn,
   disabled,
   disabledReason,
 }: {
@@ -1850,6 +1927,7 @@ function ThreadPanel({
   audioTurns: AudioTurn[];
   timelineTurns: BroTimelineTurn[];
   selectedThread: BroThreadRecord | null;
+  onTextTurn?: (turn: TextTurn) => void;
   disabled?: boolean;
   disabledReason?: string | null;
 }) {
@@ -1929,9 +2007,17 @@ function ThreadPanel({
           <div className="dt-bubble-meta">Draft · ready to send</div>
         </div>
       ) : null}
-      {renderedTurns.map((turn) => <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} />)}
+      {renderedTurns.map((turn) => (
+        <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} onTextTurn={onTextTurn} />
+      ))}
       {fallbackProposalRequests.map((request) => (
-        <PlanProposalCard key={request.request_id} request={request} />
+        <PlanProposalCard
+          key={request.request_id}
+          request={request}
+          broId={bro.id}
+          threadId={selectedThread?.threadId ?? null}
+          onTextTurn={onTextTurn}
+        />
       ))}
     </>
   );
@@ -2158,9 +2244,18 @@ function MobileThreadSurface({
             </div>
           </div>
         ) : null}
-        {renderedTurns.map((turn) => <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} mobile />)}
+        {renderedTurns.map((turn) => (
+          <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} mobile onTextTurn={onTextTurn} />
+        ))}
         {fallbackProposalRequests.map((request) => (
-          <PlanProposalCard key={request.request_id} request={request} mobile />
+          <PlanProposalCard
+            key={request.request_id}
+            request={request}
+            mobile
+            broId={bro.id}
+            threadId={selectedThreadId}
+            onTextTurn={onTextTurn}
+          />
         ))}
       </main>
       <form className={`thr-composer nb-mobile-thread-composer${disabled ? " ob-composer-disabled" : ""}${planMode ? " thr-composer-plan" : ""}`} onSubmit={submitText}>
@@ -2821,6 +2916,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
                   audioTurns={visibleAudioTurns}
                   timelineTurns={visibleTimelineTurns}
                   selectedThread={selectedThread}
+                  onTextTurn={upsertTextTurn}
                   disabled={Boolean(offline)}
                   disabledReason={disabledReason}
                 />

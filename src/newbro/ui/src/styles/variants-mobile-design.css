@@ -1494,6 +1494,22 @@
   border-bottom-right-radius: 6px;
   box-shadow: 0 2px 8px rgba(255,106,61,0.25);
 }
+.thr-bubble-you a {
+  color: #fff;
+  font-weight: 650;
+  text-decoration-color: rgba(255,255,255,0.72);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+.thr-bubble-you a:hover {
+  color: #fff;
+  text-decoration-color: #fff;
+}
+.thr-bubble-you a:focus-visible {
+  outline: 2px solid rgba(255,255,255,0.82);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 .thr-bubble-bro {
   background: white;
   color: var(--nb-ink);

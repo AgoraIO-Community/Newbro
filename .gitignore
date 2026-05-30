@@ -18,6 +18,7 @@ src/newbro/ui/dist/
 src/newbro/ui/*.tsbuildinfo
 src/newbro/ui/*.d.ts
 src/newbro/ui/vite.config.js
+src/synapse/
 example-ui/node_modules/
 example-ui/.vite/
 example-ui/dist/

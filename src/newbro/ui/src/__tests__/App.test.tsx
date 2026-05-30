@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { RouterProvider } from "@tanstack/react-router";
 import App from "../App";
 import { buildBroCardModels } from "../components/newbro";
@@ -246,7 +246,7 @@ function timelineTurn(overrides: Record<string, any> = {}) {
           created_at: overrides.created_at ?? "2026-05-26T22:01:00+00:00",
           updated_at: null,
           status: "completed",
-          metadata: {},
+          metadata: overrides.userMetadata ?? {},
         }
       : null,
     assistant: assistantText
@@ -827,6 +827,8 @@ describe("Newbro artboard shell", () => {
           thread_id: "codex-import-history",
           userText: "Imported request",
           assistantText: "Fetched history response.",
+          userMetadata: { plan_mode: true },
+          metadata: { plan_mode: true },
         }),
       ],
       bro_threads: [
@@ -854,10 +856,70 @@ describe("Newbro artboard shell", () => {
       expect(screen.getAllByText("Imported request").length).toBeGreaterThanOrEqual(2);
     });
     expect(screen.getAllByText("Imported request").some((node) => node.closest(".dt-status-title"))).toBe(true);
+    const importedRequestBubble = screen
+      .getAllByText("Imported request")
+      .find((node) => node.closest(".dt-turn-you"));
+    expect(importedRequestBubble).toBeTruthy();
+    expect(
+      within(importedRequestBubble!.closest(".dt-turn-you") as HTMLElement).getByText("Plan mode"),
+    ).toBeInTheDocument();
     const response = screen.getByText("Fetched history response.");
     expect(response).toBeInTheDocument();
     expect(response.closest(".dt-status")).not.toBeNull();
     expect(screen.getAllByText("You").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders urls in imported user messages as links inside user bubbles", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = [
+      {
+        thread_id: "codex-import-a57f75dd1703fa8e",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "completed",
+        title: "Imported URL thread",
+        preview: "Open this url",
+        progress: 100,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-26T22:00:00+00:00",
+        timeline_status: "not_loaded",
+        timeline_error: null,
+        diagnostics: { codex_thread_id: "codex-import-a57f75dd1703fa8e" },
+      },
+    ] as any;
+    const importedThread = snapshot.bro_threads[0] as any;
+    const url = "https://example.com/research";
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValueOnce({
+      ...snapshot,
+      bro_timeline_turns: [
+        timelineTurn({
+          thread_id: "codex-import-a57f75dd1703fa8e",
+          userText: `Please review ${url}`,
+          assistantText: "I reviewed it.",
+        }),
+      ],
+      bro_threads: [
+        {
+          ...importedThread,
+          timeline_status: "loaded",
+          timeline_error: null,
+        },
+      ],
+    });
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-a57f75dd1703fa8e");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const link = await screen.findByRole("link", { name: url });
+    expect(link).toHaveAttribute("href", url);
+    expect(link.closest(".dt-bubble-you")).not.toBeNull();
   });
 
   it("keeps the latest selected imported thread history when an earlier open resolves late", async () => {
@@ -1573,7 +1635,7 @@ describe("Newbro artboard shell", () => {
     render(<RouterProvider router={getRouter()} />);
 
     expect(await screen.findByText("Review the unique fallback plan before execution.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Approve & run/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Implement it/i })).toBeInTheDocument();
   });
 
   it("disables plan proposal controls while approval resolves", async () => {
@@ -1587,15 +1649,20 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    const approve = await screen.findByRole("button", { name: /Approve & run/i });
+    const approve = await screen.findByRole("button", { name: /Implement it/i });
     const keepPlanning = screen.getByRole("button", { name: /Keep planning/i });
     fireEvent.click(approve);
 
-    await waitFor(() => expect(clientMock.resolveInteractionRequest).toHaveBeenCalledWith("session-existing", "ireq-plan", {
-      action: "approve",
-      answer_text: "Run proposed plan - Final plan.",
-      option_id: "approved_codex_plan",
-    }));
+    await waitFor(() => {
+      expect(clientMock.resolveInteractionRequest).toHaveBeenCalledWith("session-existing", "ireq-plan", {
+        action: "approve",
+        answer_text: "Run proposed plan - Final plan.",
+        option_id: "approved_codex_plan",
+        client_request_id: expect.stringMatching(/^plan-approval-/),
+        user_visible_text: "Implement it",
+      });
+    });
+    expect(screen.getAllByText("Implement it").some((node) => node.closest(".dt-turn-you"))).toBe(true);
     expect(approve).toBeDisabled();
     expect(keepPlanning).toBeDisabled();
   });
@@ -1615,7 +1682,7 @@ describe("Newbro artboard shell", () => {
     expect((await screen.findAllByText("Implemented the approved plan.")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Plan approved · executing")).not.toBeInTheDocument();
     expect(screen.queryByText("Review the unique approved stale plan before execution.")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Approve & run/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Implement it/i })).not.toBeInTheDocument();
   });
 
   it("does not render denied plan proposals as refining cards", async () => {
@@ -1719,6 +1786,84 @@ describe("Newbro artboard shell", () => {
 
     expect(await screen.findByText("Review the unique inline plan before execution.")).toBeInTheDocument();
     expect(screen.getAllByText("Review the unique inline plan before execution.")).toHaveLength(1);
+  });
+
+  it("preserves backend canonical timeline order for selected threads", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = [
+      {
+        thread_id: "thread-canonical-order",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "completed",
+        title: "Canonical order thread",
+        preview: "Canonical order",
+        progress: 100,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-26T22:00:00+00:00",
+        timeline_status: "loaded",
+        timeline_error: null,
+        diagnostics: { codex_thread_id: "native-canonical-order" },
+      },
+    ] as any;
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "thread-canonical-order",
+        executor_turn_id: "turn-backend-first",
+        userText: "Backend ordered first unique message",
+        created_at: "2026-05-26T22:05:00+00:00",
+        updated_at: "2026-05-26T22:05:00+00:00",
+      }),
+      timelineTurn({
+        thread_id: "thread-canonical-order",
+        executor_turn_id: "turn-backend-second",
+        userText: "Backend ordered second unique message",
+        created_at: "2026-05-26T22:01:00+00:00",
+        updated_at: "2026-05-26T22:01:00+00:00",
+      }),
+    ] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-canonical-order");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const first = await screen.findByText("Backend ordered first unique message");
+    const second = screen.getByText("Backend ordered second unique message");
+    expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("renders inline plan proposals before the result card for the same turn", async () => {
+    const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
+      proposalSummary: "Review the unique ordered inline plan before execution.",
+      taskTitle: "Unique ordered plan task",
+      taskDescription: "Unique ordered task result.",
+    });
+    const turn = snapshot.bro_timeline_turns[0] as any;
+    turn.metadata = { ...turn.metadata, plan_mode: true };
+    turn.user.metadata = { ...turn.user.metadata, plan_mode: true };
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    await screen.findByText("Review the unique ordered inline plan before execution.");
+    const userText = screen.getAllByText("Draft a plan.").find((node) => node.closest(".dt-turn-you"));
+    expect(userText).toBeTruthy();
+    const userTurn = userText!.closest(".dt-turn-you") as HTMLElement;
+    expect(within(userTurn).getByText("Plan mode")).toBeInTheDocument();
+    const proposalTurn = screen.getByText("Review the unique ordered inline plan before execution.").closest(".dt-turn-plan") as HTMLElement;
+    const resultCard = screen.getByText("Unique ordered plan task").closest(".dt-status") as HTMLElement;
+
+    expect(userTurn.compareDocumentPosition(proposalTurn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(proposalTurn.compareDocumentPosition(resultCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("enables desktop PTT audio for a connected idle Codex Bro", async () => {

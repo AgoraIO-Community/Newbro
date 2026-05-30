@@ -40,6 +40,8 @@ async def resolve_interaction_request(
                 answer_text=request.answer_text,
                 option_id=request.option_id,
                 reason=request.reason,
+                client_request_id=request.client_request_id,
+                user_visible_text=request.user_visible_text,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

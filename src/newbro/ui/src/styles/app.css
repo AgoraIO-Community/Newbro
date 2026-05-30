@@ -3265,6 +3265,10 @@
     align-items: start;
   }
 
+  .nb-create-connect-cols > .dt-modal-col {
+    min-width: 0;
+  }
+
   .nb-first-run-sheet-frame .ob-sheet-foot {
     justify-content: space-between;
     gap: 14px;
@@ -3300,6 +3304,7 @@
     display: flex;
     flex-direction: column;
     gap: 18px;
+    min-width: 0;
   }
 
   .nb-create-connect-foot-status {

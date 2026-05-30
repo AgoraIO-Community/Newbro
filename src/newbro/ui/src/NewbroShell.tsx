@@ -636,6 +636,8 @@ function useNewbroShellState() {
       answer_text?: string;
       option_id?: string;
       reason?: string;
+      client_request_id?: string;
+      user_visible_text?: string;
     },
   ): Promise<void> => {
     if (!activeShellSessionId) return;

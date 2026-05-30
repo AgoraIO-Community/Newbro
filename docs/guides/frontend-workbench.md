@@ -142,8 +142,11 @@ Current behavior:
   events/items or Newbro run metadata, not from Codex reasoning or inferred
   commentary.
   Pending `plan_proposal` requests render proposal cards with option selection,
-  `Approve & run`, and `Keep planning`; `Keep planning` resolves the request
-  with `deny` but means refine the proposal, not cancel the task. Resolved
+  `Implement it`, and `Keep planning`; `Implement it` renders an optimistic
+  user text turn with visible text `Implement it` and resolves the interaction
+  request with `approve`, `client_request_id`, and `user_visible_text`.
+  `Keep planning` resolves the request with `deny` but means refine the
+  proposal, not cancel the task. Resolved
   `plan_proposal` requests are acknowledgements only; Bro Detail removes the
   proposal card after snapshot refresh and shows follow-up execution state
   through the task/run timeline or a new pending request.

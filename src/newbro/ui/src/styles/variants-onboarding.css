@@ -698,6 +698,8 @@
 .ob-connect {
   display: flex; flex-direction: column;
   gap: 0;
+  min-width: 0;
+  max-width: 100%;
   background: var(--nb-paper);
   border: 1px solid var(--nb-line);
   border-radius: var(--nb-radius-xl);
@@ -706,6 +708,8 @@
 }
 .ob-connect-cmd {
   display: flex; align-items: center; gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   padding: 11px 12px;
   background: #16181d;
   color: #d6d8de;
@@ -715,7 +719,14 @@
   position: relative;
 }
 .ob-connect-prompt { color: #ff9a78; font-weight: 700; }
-.ob-connect-line { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-connect-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .ob-connect-tok { color: #ffae8b; }
 .ob-connect-copy {
   width: 26px; height: 26px;
@@ -797,12 +808,15 @@
 .ob-connect-actions {
   display: flex;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   padding: 10px 12px;
   border-top: 1px solid var(--nb-line);
   background: var(--nb-paper);
 }
 
 .ob-connect-action {
+  flex: 1 1 0;
   min-width: 0;
   height: 32px;
   display: inline-flex;
@@ -821,6 +835,17 @@
   cursor: pointer;
 }
 
+.ob-connect-action svg {
+  flex: 0 0 auto;
+}
+
+.ob-connect-action span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ob-connect-action-primary {
   border-color: rgba(255, 122, 89, 0.34);
   background: var(--nb-coral);
@@ -833,6 +858,8 @@
 }
 
 .ob-connect-alt {
+  min-width: 0;
+  max-width: 100%;
   border-top: 1px solid var(--nb-line);
   background: var(--nb-paper);
 }
@@ -846,6 +873,7 @@
 }
 
 .ob-connect-alt pre {
+  min-width: 0;
   max-width: 100%;
   margin: 0;
   overflow-x: auto;

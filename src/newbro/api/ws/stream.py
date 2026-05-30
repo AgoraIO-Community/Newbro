@@ -361,6 +361,8 @@ async def _handle_resolve_interaction_request(
             answer_text=action.answer_text,
             option_id=action.option_id,
             reason=action.reason,
+            client_request_id=action.client_request_id,
+            user_visible_text=action.user_visible_text,
         )
     except KeyError as exc:
         await session.publish_private_event(

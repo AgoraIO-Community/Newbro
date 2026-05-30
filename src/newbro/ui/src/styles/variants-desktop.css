@@ -1303,6 +1303,22 @@
   color: white;
   border-bottom-right-radius: 6px;
 }
+.dt-bubble-you a {
+  color: #fff;
+  font-weight: 650;
+  text-decoration-color: rgba(255,255,255,0.72);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+.dt-bubble-you a:hover {
+  color: #fff;
+  text-decoration-color: #fff;
+}
+.dt-bubble-you a:focus-visible {
+  outline: 2px solid rgba(255,255,255,0.82);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 .dt-bubble-bro {
   background: var(--nb-paper-sub);
   color: var(--nb-ink);

@@ -482,6 +482,8 @@ export function sendSocketInteractionResolution(
     answerText?: string;
     optionId?: string;
     reason?: string;
+    clientRequestId?: string;
+    userVisibleText?: string;
   } = {},
 ) {
   socket.send(
@@ -493,6 +495,8 @@ export function sendSocketInteractionResolution(
       answer_text: options.answerText,
       option_id: options.optionId,
       reason: options.reason,
+      client_request_id: options.clientRequestId,
+      user_visible_text: options.userVisibleText,
     }),
   );
 }
@@ -527,6 +531,8 @@ export async function resolveInteractionRequest(
     answer_text?: string;
     option_id?: string;
     reason?: string;
+    client_request_id?: string;
+    user_visible_text?: string;
   },
 ) {
   const response = await fetch(

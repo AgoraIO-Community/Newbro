@@ -55,6 +55,8 @@ class ResolveInteractionRequest(BaseModel):
     answer_text: str | None = None
     option_id: str | None = None
     reason: str | None = None
+    client_request_id: str | None = None
+    user_visible_text: str | None = None
 
 
 class ResolveInteractionRequestResponse(BaseModel):
@@ -89,6 +91,8 @@ class ResolveInteractionRequestSocketAction(BaseModel):
     answer_text: str | None = None
     option_id: str | None = None
     reason: str | None = None
+    client_request_id: str | None = None
+    user_visible_text: str | None = None
 
 
 class SubmitAsrTurnSocketAction(BaseModel):
