@@ -10,6 +10,7 @@ from newbro.protocol import (
     ExecutionSession,
     InteractionRequest,
     NotificationCandidate,
+    OutboundTurnRequest,
     Persona,
     SessionBinding,
     Task,
@@ -120,6 +121,15 @@ class BlackboardStore(Protocol):
 
     async def list_notification_candidates(self) -> list[NotificationCandidate]:
         """List notification candidates across the session."""
+
+    async def put_outbound_turn_request(self, request: OutboundTurnRequest) -> None:
+        """Store or replace an outbound executor turn request."""
+
+    async def get_outbound_turn_request(self, request_id: str) -> OutboundTurnRequest | None:
+        """Fetch one outbound executor turn request."""
+
+    async def list_outbound_turn_requests(self) -> list[OutboundTurnRequest]:
+        """List outbound executor turn requests."""
 
     async def put_persona(self, persona: Persona) -> None:
         """Store or replace a persona."""

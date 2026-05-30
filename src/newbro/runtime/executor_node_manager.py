@@ -10,6 +10,7 @@ from uuid import uuid4
 from newbro.executors.core import ExecutorEvent, ExecutorEventType
 from newbro.protocol import (
     AckMessage,
+    AgentResumeHandle,
     AudioInstructionTranscribedMessage,
     CancelRunCommand,
     CodexThreadEventMessage,
@@ -18,6 +19,7 @@ from newbro.protocol import (
     CodexThreadSubscribedMessage,
     CodexThreadsListedMessage,
     CodexThreadUnsubscribedMessage,
+    CodexTurnEventMessage,
     DispatchAudioInstructionCommand,
     DispatchRunCommand,
     DispatchTextInstructionCommand,
@@ -30,6 +32,7 @@ from newbro.protocol import (
     ReadCodexThreadCommand,
     RegisterNodeMessage,
     RunEventMessage,
+    StartCodexTurnCommand,
     SubscribeCodexThreadCommand,
     SupplyInteractionResponseCommand,
     TranscribeAudioInstructionCommand,
@@ -435,6 +438,43 @@ class ExecutorNodeManager:
             return False
         return True
 
+    async def start_codex_turn(
+        self,
+        *,
+        request_id: str,
+        node_id: str,
+        target_persona_id: str,
+        target_thread_id: str,
+        instruction: ExecutorTextInstruction,
+        thread_id: str | None = None,
+        create_new_thread: bool = False,
+        workspace_id: str | None = None,
+        latest_resume_handle: AgentResumeHandle | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> bool:
+        connection = await self._connection_for_node(node_id)
+        if connection is None:
+            return False
+        if "codex" not in connection.executors:
+            return False
+        command = StartCodexTurnCommand(
+            request_id=request_id,
+            target_persona_id=target_persona_id,
+            target_thread_id=target_thread_id,
+            thread_id=thread_id,
+            create_new_thread=create_new_thread,
+            workspace_id=workspace_id,
+            instruction=instruction,
+            latest_resume_handle=latest_resume_handle,
+            metadata=dict(metadata or {}),
+        )
+        try:
+            await self._send_json(connection, command.model_dump(mode="json"))
+        except Exception:
+            await self.disconnect(websocket=connection.websocket, reason="codex_turn_start_failed")
+            return False
+        return True
+
     async def request_codex_threads(
         self,
         *,
@@ -609,12 +649,21 @@ class ExecutorNodeManager:
             await self._registry.note_seen(node_id)
         return AckMessage(message_type=message.type, detail="queued")
 
+    async def publish_codex_turn_event(self, websocket: Any, message: CodexTurnEventMessage) -> AckMessage:
+        node_id = await self._node_id_for_websocket(websocket)
+        if node_id != message.node_id:
+            return AckMessage(message_type=message.type, ok=False, detail="unauthorized_node")
+        if node_id is not None:
+            await self._registry.note_seen(node_id)
+        return AckMessage(message_type=message.type, detail="queued")
+
     async def supply_interaction_response(
         self,
         request: InteractionRequest,
         *,
         action: str,
         answer_text: str | None,
+        answers: dict[str, list[str]] | None = None,
         node_id: str | None = None,
     ) -> bool:
         native_response = request.opaque.get("native_response")
@@ -644,6 +693,7 @@ class ExecutorNodeManager:
             run_id=request.run_id,
             action=action,
             answer_text=answer_text,
+            answers=answers,
             native_response=native_response,
         )
         try:

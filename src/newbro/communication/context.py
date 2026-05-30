@@ -188,7 +188,6 @@ class CommunicationContextBuilder:
                 "name": p.name,
                 "avatar": p.avatar,
                 "status": p.status,
-                "current_task_id": p.current_task_id,
             }
             for p in personas
         ]

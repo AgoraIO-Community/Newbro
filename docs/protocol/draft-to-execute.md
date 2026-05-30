@@ -1,14 +1,14 @@
 # Draft-to-Execute Protocol
 
 `newbro v1` uses a quiet, voice/ASR-driven draft-to-execute workflow.
-Bro Detail push-to-talk is the exception: typed input starts a direct Codex task
+Bro Detail push-to-talk is the exception: typed input starts a direct Codex turn
 when the selected Bro is idle, or sends a typed executor-node text instruction
 to the selected Bro's active executor session when Codex is already running. The
 composer mic sends raw audio to the selected Bro's executor node. The executor
 node transcribes the recording with local Whisper. If the selected Bro is idle,
-Newbro creates the same kind of direct Codex task that typed PTT creates; if
-Codex is already running, Newbro queues the transcript as direct Codex work in
-the selected thread instead of routing through Communication Brain.
+Newbro starts a task-free outbound Codex turn from that transcript; if Codex is
+already running, Newbro queues the transcript as direct Codex work in the
+selected thread instead of routing through Communication Brain.
 Neither path prepares a Draft, requires a separate Send confirmation, or creates
 Communication Brain notification candidates for executor output.
 
@@ -66,14 +66,16 @@ for the resolved thread, Newbro dispatches it over the typed executor-node
 protocol as `dispatch_audio_instruction` with an `ExecutorAudioInstruction`
 payload. If no active run exists for that resolved thread, Newbro sends
 `transcribe_audio_instruction`, receives a Whisper transcript from the executor
-node, and creates a queued direct Codex task from that transcript.
+node, stores an `OutboundTurnRequest`, and starts a task-free Codex turn from
+that transcript with `start_codex_turn`.
 
 Executor nodes advertise `supports_audio_instruction` only when they can accept
 raw audio and produce a usable executor instruction. In the default path, the
 node decodes the command's audio content and transcribes it with local Whisper.
 Active-run audio returns a Whisper progress event that Newbro converts into a
 queued direct Codex task for the selected thread; idle audio returns a direct
-transcription response and Newbro starts that queued task immediately. This path
+transcription response and Newbro starts an outbound Codex turn immediately.
+This path
 does not require Codex realtime audio or API-key realtime auth. Newbro does not
 call Agora
 prepare/activate, RTC, RTM, ConvoAI, Agora STT, Draft ASR, or Draft Send for
@@ -83,7 +85,7 @@ Executor-node Whisper transcription resamples browser PCM to Whisper's expected
 16 kHz input rate, uses VAD/no-speech filtering, and does not condition a new
 voice note on prior transcript text. If the recording is too short or Whisper
 reports no clear speech, Newbro fails the voice note instead of creating a
-direct Codex task from a likely hallucinated transcript.
+direct Codex turn from a likely hallucinated transcript.
 
 Direct typed/PTT task `goal` and `latest_instruction` store only user-authored
 input or executor-node transcripts. Persona/base-prompt text is executor
@@ -287,11 +289,11 @@ revision exists, the stale Send is rejected before dispatch and no older draft i
 converted into a task.
 
 When `assigned_bro_id` matches a runtime `Persona`, Send assigns the created
-task to that Bro by setting the task's persona metadata and marking the persona
-`busy` with `current_task_id`. The task still uses the runtime executor type as
-its executor; the Bro id is not treated as an executor id. If the Bro is bound
-to an executor node, the node binding is copied into task metadata so execution
-can wait on or dispatch to that node.
+task to that Bro by setting the task's persona metadata and marking the
+persona `busy` as display state. The task still uses the runtime executor type
+as its executor; the Bro id is not treated as an executor id. If the Bro is
+bound to an executor node, the node binding is copied into task metadata so
+execution can wait on or dispatch to that node.
 
 Each runtime Bro carries a `bro_detail_session_id` generation. Send copies that
 generation into task metadata and uses it as the task's executor-session

@@ -12,6 +12,7 @@ from newbro.blackboard.store import BlackboardWriteEvent, BlackboardWriteKind
 from newbro.protocol import (
     AgentResumeHandle,
     AudioInstructionTranscribedMessage,
+    BroThread,
     ExecutionRun,
     ExecutionSession,
     ExecutorNodeExecutor,
@@ -60,7 +61,6 @@ async def _put_connected_audio_forge(runtime_session, manager, websocket: FakeWe
             executor_node_id="node-forge",
             bro_detail_session_id="detail-forge",
             status="idle",
-            current_task_id=None,
         )
     )
 
@@ -119,6 +119,81 @@ async def test_executor_audio_instruction_rejects_thread_target_contradiction(tm
 
     assert response.status_code == 409
     assert "cannot target an existing thread and create a new thread" in response.text
+
+
+@pytest.mark.anyio
+async def test_direct_ptt_selected_imported_thread_does_not_create_task_before_executor_acceptance(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-audio-import-outbound")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        await _put_connected_audio_forge(runtime_session, app.state.runtime_container.executor_node_manager, websocket)
+
+        runtime_session._imported_codex_threads["codex-import-audio-1"] = BroThread(
+            thread_id="codex-import-audio-1",
+            persona_id="forge",
+            title="Imported",
+            status="completed",
+            has_resume_handle=True,
+        )
+        runtime_session._imported_codex_thread_resume_handles["codex-import-audio-1"] = AgentResumeHandle(
+            executor_id="codex",
+            session_handle="native-thread-1",
+            opaque={"cwd": "/tmp/work"},
+        )
+
+        post_task = asyncio.create_task(
+            client.post(
+                f"/api/sessions/{session_id}/executor-audio-instructions",
+                params={
+                    "target_persona_id": "forge",
+                    "target_thread_id": "codex-import-audio-1",
+                    "client_request_id": "client-audio-1",
+                    "duration_ms": 1,
+                    "sample_rate": 24000,
+                    "num_channels": 1,
+                    "samples_per_channel": 24,
+                },
+                content=b"\x00\x00" * 24,
+                headers={"Content-Type": "audio/pcm"},
+            )
+        )
+        for _ in range(100):
+            if websocket.sent:
+                break
+            await asyncio.sleep(0.01)
+        assert websocket.sent[0]["type"] == "transcribe_audio_instruction"
+        app.state.runtime_container.executor_node_manager.publish_audio_instruction_transcribed(
+            AudioInstructionTranscribedMessage(
+                request_id=websocket.sent[0]["request_id"],
+                node_id="node-forge",
+                executor_type="codex",
+                transcript_text="continue from recorded audio",
+                language="en",
+                duration_seconds=0.1,
+            )
+        )
+        response = await post_task
+
+    assert response.status_code == 200
+    assert await runtime_session.blackboard.list_tasks() == []
+    requests = await runtime_session.blackboard.list_outbound_turn_requests()
+    assert len(requests) == 1
+    assert requests[0].client_request_id == "client-audio-1"
+    assert requests[0].input_modality == "audio"
+    assert requests[0].audio_instruction_id == response.json()["audio_instruction_id"]
+    assert requests[0].text == "continue from recorded audio"
+    assert requests[0].status == "accepted"
+    assert websocket.sent[1]["type"] == "start_codex_turn"
+    assert websocket.sent[1]["target_thread_id"] == "codex-import-audio-1"
+    assert websocket.sent[1]["latest_resume_handle"]["session_handle"] == "native-thread-1"
+    assert websocket.sent[1]["metadata"]["source_audio_instruction_id"] == response.json()["audio_instruction_id"]
+    assert "task_id" not in websocket.sent[1]
+    assert "run_id" not in websocket.sent[1]
+    assert "execution_session_id" not in websocket.sent[1]
 
 
 @pytest.mark.anyio
@@ -210,7 +285,6 @@ async def test_executor_audio_upload_rejects_connected_codex_without_audio_suppo
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="busy",
-                current_task_id="task-1",
             )
         )
         await runtime_session.blackboard.put_task(
@@ -278,7 +352,6 @@ async def test_active_codex_audio_session_allows_continuation_run_task(tmp_path)
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="busy",
-                current_task_id="task-current",
             )
         )
         await runtime_session.blackboard.put_task(
@@ -356,7 +429,6 @@ async def test_executor_audio_instruction_dispatches_to_executor_without_message
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="busy",
-                current_task_id="task-current",
             )
         )
         await runtime_session.blackboard.put_task(
@@ -431,7 +503,7 @@ async def test_executor_audio_instruction_dispatches_to_executor_without_message
 
 
 @pytest.mark.anyio
-async def test_executor_audio_instruction_starts_direct_task_for_connected_idle_bro(
+async def test_executor_audio_instruction_starts_outbound_turn_for_connected_idle_bro(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -465,8 +537,17 @@ async def test_executor_audio_instruction_starts_direct_task_for_connected_idle_
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="idle",
-                current_task_id=None,
             )
+        )
+        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+            thread_id="workspace-thread",
+            persona_id="forge",
+            persona_name="Forge",
+            executor_id="codex",
+            executor_node_id="node-forge",
+            workspace_id="/tmp/work",
+            workspace_name="work",
+            title="Known workspace",
         )
         scheduled = False
 
@@ -482,6 +563,7 @@ async def test_executor_audio_instruction_starts_direct_task_for_connected_idle_
                 params={
                     "target_persona_id": "forge",
                     "create_new_thread": True,
+                    "workspace_id": "/tmp/work",
                     "duration_ms": 1,
                     "sample_rate": 24000,
                     "num_channels": 1,
@@ -518,27 +600,30 @@ async def test_executor_audio_instruction_starts_direct_task_for_connected_idle_
     assert response.json()["status"] == "accepted"
     assert response.json()["transcript_text"] == "start from recorded audio"
     assert conversation["conversation_history"] == []
-    assert scheduled
+    assert not scheduled
+    assert len(websocket.sent) == 2
+    assert websocket.sent[1]["type"] == "start_codex_turn"
+    assert websocket.sent[1]["create_new_thread"] is True
+    assert websocket.sent[1]["workspace_id"] == "/tmp/work"
+    assert websocket.sent[1]["instruction"]["source_audio_instruction_id"] == response.json()["audio_instruction_id"]
+    assert "task_id" not in websocket.sent[1]
+    assert "run_id" not in websocket.sent[1]
+    assert "execution_session_id" not in websocket.sent[1]
     tasks = await runtime_session.blackboard.list_tasks()
-    assert len(tasks) == 1
-    task = tasks[0]
-    assert task.status == TaskStatus.QUEUED
-    assert task.preferred_executor == "codex"
-    assert task.latest_instruction == "start from recorded audio"
-    assert task.metadata["source_kind"] == "bro_detail_ptt"
-    assert task.metadata["source_audio_instruction_id"] == response.json()["audio_instruction_id"]
-    assert task.metadata["direct_executor_input_sources"] == ["bro_detail_ptt"]
-    assert task.metadata["suppress_communication_notifications"] is True
-    projected_thread = next(
-        thread for thread in snapshot["bro_threads"] if thread["thread_id"] == response.json()["target_thread_id"]
-    )
-    assert projected_thread["execution_session_id"] is None
-    assert projected_thread["status"] == "queued"
-    assert projected_thread["task_ids"] == [task.task_id]
+    assert tasks == []
+    requests = await runtime_session.blackboard.list_outbound_turn_requests()
+    assert len(requests) == 1
+    assert requests[0].input_modality == "audio"
+    assert requests[0].audio_instruction_id == response.json()["audio_instruction_id"]
+    assert requests[0].target_thread_id == response.json()["target_thread_id"]
+    assert requests[0].workspace_id == "/tmp/work"
+    assert requests[0].text == "start from recorded audio"
+    assert requests[0].status == "accepted"
+    assert not any(thread["thread_id"] == response.json()["target_thread_id"] for thread in snapshot["bro_threads"])
 
 
 @pytest.mark.anyio
-async def test_executor_audio_create_new_thread_ignores_active_thread_and_queues_transcript(
+async def test_executor_audio_create_new_thread_ignores_active_thread_and_starts_outbound_turn(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -560,8 +645,17 @@ async def test_executor_audio_create_new_thread_ignores_active_thread_and_queues
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="busy",
-                current_task_id="task-active",
             )
+        )
+        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+            thread_id="workspace-thread",
+            persona_id="forge",
+            persona_name="Forge",
+            executor_id="codex",
+            executor_node_id="node-forge",
+            workspace_id="/tmp/work",
+            workspace_name="work",
+            title="Known workspace",
         )
         old_metadata = {
             "persona_id": "forge",
@@ -614,6 +708,7 @@ async def test_executor_audio_create_new_thread_ignores_active_thread_and_queues
                 params={
                     "target_persona_id": "forge",
                     "create_new_thread": True,
+                    "workspace_id": "/tmp/work",
                     "duration_ms": 1,
                     "sample_rate": 24000,
                     "num_channels": 1,
@@ -645,7 +740,12 @@ async def test_executor_audio_create_new_thread_ignores_active_thread_and_queues
     assert response.status_code == 200
     new_thread_id = response.json()["target_thread_id"]
     assert new_thread_id != "exec-old"
-    assert scheduled
+    assert not scheduled
+    assert len(websocket.sent) == 2
+    assert websocket.sent[1]["type"] == "start_codex_turn"
+    assert websocket.sent[1]["target_thread_id"] == new_thread_id
+    assert websocket.sent[1]["instruction"]["text"] == "start a fresh audio thread"
+    assert "task_id" not in websocket.sent[1]
     old_task = await runtime_session.blackboard.get_task("task-active")
     assert old_task is not None
     assert old_task.status == TaskStatus.RUNNING
@@ -655,10 +755,12 @@ async def test_executor_audio_create_new_thread_ignores_active_thread_and_queues
     assert old_session.active_run_id == "run-active"
     tasks = await runtime_session.blackboard.list_tasks()
     new_tasks = [task for task in tasks if task.task_id != "task-active"]
-    assert len(new_tasks) == 1
-    assert new_tasks[0].metadata["target_thread_id"] == new_thread_id
-    assert new_tasks[0].metadata["source_kind"] == "bro_detail_ptt"
-    assert new_tasks[0].latest_instruction == "start a fresh audio thread"
+    assert new_tasks == []
+    requests = await runtime_session.blackboard.list_outbound_turn_requests()
+    assert len(requests) == 1
+    assert requests[0].target_thread_id == new_thread_id
+    assert requests[0].text == "start a fresh audio thread"
+    assert requests[0].status == "accepted"
 
 
 @pytest.mark.anyio
@@ -693,7 +795,6 @@ async def test_executor_audio_instruction_targets_selected_codex_thread_without_
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="busy",
-                current_task_id="task-current",
             )
         )
         await runtime_session.blackboard.put_task(

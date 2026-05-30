@@ -22,6 +22,28 @@ class QueuedRunRequest(BaseModel):
     requested_by_message_id: str | None = None
 
 
+class OutboundTurnRequest(BaseModel):
+    request_id: str
+    persona_id: str
+    executor_id: str = "codex"
+    executor_node_id: str
+    target_thread_id: str | None = None
+    create_new_thread: bool = False
+    workspace_id: str | None = None
+    client_request_id: str | None = None
+    input_modality: Literal["text", "audio"] = "text"
+    text: str | None = None
+    audio_instruction_id: str | None = None
+    plan_mode: bool = False
+    status: Literal["pending", "accepted", "running", "completed", "failed"] = "pending"
+    error: str | None = None
+    executor_thread_id: str | None = None
+    executor_turn_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
 class ExecutionSession(BaseModel):
     execution_session_id: str
     task_id: str
@@ -41,6 +63,8 @@ class BroThread(BaseModel):
     persona_name: str | None = None
     executor_id: str = "codex"
     executor_node_id: str | None = None
+    workspace_id: str | None = None
+    workspace_name: str | None = None
     execution_session_id: str | None = None
     status: Literal["pending", "queued", "running", "blocked", "completed", "failed", "cancelled"] = "pending"
     title: str

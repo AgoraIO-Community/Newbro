@@ -178,16 +178,19 @@ class CodexAppServerClient:
             ],
         }
         if collaboration_mode is not None:
-            if not model:
+            if not model and collaboration_mode != "default":
                 raise ValueError("Codex collaborationMode requires a model.")
-            params["collaborationMode"] = {
-                "mode": collaboration_mode,
-                "settings": {
-                    "model": model,
-                    "reasoning_effort": reasoning_effort,
-                    "developer_instructions": None,
-                },
-            }
+            if model:
+                params["collaborationMode"] = {
+                    "mode": collaboration_mode,
+                    "settings": {
+                        "model": model,
+                        "reasoning_effort": reasoning_effort,
+                        "developer_instructions": None,
+                    },
+                }
+            else:
+                params["collaborationMode"] = {"mode": collaboration_mode}
         result = await self._peer.request(
             "turn/start",
             params,
@@ -208,6 +211,7 @@ class CodexAppServerClient:
         params: dict[str, object],
         action: str,
         answer_text: str | None = None,
+        answers: dict[str, list[str]] | None = None,
     ) -> None:
         await self._peer.respond(
             request_id,
@@ -216,6 +220,7 @@ class CodexAppServerClient:
                 params=params,
                 action=action,
                 answer_text=answer_text,
+                answers=answers,
             ),
         )
 
@@ -232,6 +237,7 @@ def _build_request_response(
     params: dict[str, object],
     action: str,
     answer_text: str | None,
+    answers: dict[str, list[str]] | None = None,
 ) -> dict[str, object]:
     normalized = method.lower()
     if normalized in {"item/commandexecution/requestapproval", "execcommandapproval"}:
@@ -264,14 +270,21 @@ def _build_request_response(
         or "request_user_input" in normalized
         or ("request" in normalized and "question" in normalized)
     ):
-        answers: dict[str, object] = {}
+        response_answers: dict[str, object] = {}
         questions = params.get("questions")
         if isinstance(questions, list):
             for question in questions:
                 if isinstance(question, dict):
                     question_id = question.get("id")
                     if isinstance(question_id, str) and question_id:
-                        answers[question_id] = {"answers": [answer_text or ""]}
-                        break
-        return {"answers": answers}
+                        selected = answers.get(question_id) if answers is not None else None
+                        if selected is not None:
+                            response_answers[question_id] = {
+                                "answers": [
+                                    value for value in selected if isinstance(value, str)
+                                ]
+                            }
+                        elif not response_answers:
+                            response_answers[question_id] = {"answers": [answer_text or ""]}
+        return {"answers": response_answers}
     return {}

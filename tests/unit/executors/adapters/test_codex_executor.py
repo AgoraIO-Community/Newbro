@@ -8,8 +8,102 @@ import pytest
 
 from newbro.executors.adapters.codex import CodexExecutor
 from newbro.executors.adapters.codex.client import CodexAppServerClient
+from newbro.executors.adapters.codex.client import _build_request_response
 from newbro.executors.adapters.codex.executor import _extract_blocked_request
-from newbro.protocol import ExecutionRun, ExecutorTextInstruction, Task
+from newbro.protocol import AgentResumeHandle, ExecutionRun, ExecutorTextInstruction, StartCodexTurnCommand, Task
+
+
+def test_codex_native_user_input_response_uses_answer_text_as_selected_option_label():
+    response = _build_request_response(
+        method="question/request_user_input",
+        params={"questions": [{"id": "output_format", "options": [{"id": "pdf", "label": "Detailed PDF"}]}]},
+        action="approve",
+        answer_text="Detailed PDF",
+    )
+
+    assert response == {"answers": {"output_format": {"answers": ["Detailed PDF"]}}}
+
+
+def test_codex_native_user_input_response_uses_structured_answers_for_all_questions():
+    response = _build_request_response(
+        method="item/tool/requestUserInput",
+        params={
+            "questions": [
+                {"id": "audience", "options": [{"id": "leadership", "label": "Boss / leadership"}]},
+                {"id": "period", "options": [{"id": "latest", "label": "Latest update"}]},
+            ]
+        },
+        action="approve",
+        answer_text="Audience: Boss / leadership; Period: Latest update",
+        answers={
+            "audience": ["Boss / leadership"],
+            "period": ["Latest update"],
+        },
+    )
+
+    assert response == {
+        "answers": {
+            "audience": {"answers": ["Boss / leadership"]},
+            "period": {"answers": ["Latest update"]},
+        }
+    }
+
+
+def test_codex_request_user_input_plan_proposal_preserves_all_questions():
+    blocked = _extract_blocked_request(
+        "native-questions",
+        method="item/tool/requestUserInput",
+        params={
+            "questions": [
+                {
+                    "id": "audience",
+                    "header": "Audience",
+                    "question": "Who is this for?",
+                    "options": [{"id": "boss", "label": "Boss / leadership", "description": "Executive summary."}],
+                },
+                {
+                    "id": "period",
+                    "header": "Period",
+                    "question": "Which period?",
+                    "options": [{"id": "latest", "label": "Latest update", "description": "Most recent state."}],
+                },
+            ]
+        },
+        plan_mode=True,
+    )
+
+    assert blocked is not None
+    proposal = blocked["metadata"]["proposal"]
+    assert proposal["question_id"] == "audience"
+    assert proposal["summary"] == "Who is this for?"
+    assert proposal["questions"] == [
+        {
+            "question_id": "audience",
+            "header": "Audience",
+            "summary": "Who is this for?",
+            "options": [
+                {
+                    "id": "boss",
+                    "label": "Boss / leadership",
+                    "description": "Executive summary.",
+                    "letter": "A",
+                }
+            ],
+        },
+        {
+            "question_id": "period",
+            "header": "Period",
+            "summary": "Which period?",
+            "options": [
+                {
+                    "id": "latest",
+                    "label": "Latest update",
+                    "description": "Most recent state.",
+                    "letter": "A",
+                }
+            ],
+        },
+    ]
 
 
 def _write_fake_codex(
@@ -265,6 +359,62 @@ def _write_fake_codex(
                                     "item": {{
                                         "type": "agentMessage",
                                         "text": "Plan mode was used.",
+                                    }},
+                                }},
+                            }}
+                        )
+                        send(
+                            {{
+                                "method": "turn/completed",
+                                "params": {{
+                                    "turn": {{
+                                        "id": turn_id,
+                                        "status": "completed",
+                                        "error": None,
+                                    }}
+                                }},
+                            }}
+                        )
+                    elif "Default mode assert" in prompt:
+                        if params.get("collaborationMode", {{}}).get("mode") != "default":
+                            turns_by_thread.setdefault(thread_id, []).append(
+                                {{
+                                    "id": turn_id,
+                                    "items": [],
+                                }}
+                            )
+                            send(
+                                {{
+                                    "method": "turn/completed",
+                                    "params": {{
+                                        "turn": {{
+                                            "id": turn_id,
+                                            "status": "failed",
+                                            "error": {{"message": "default collaboration mode missing"}},
+                                        }}
+                                    }},
+                                }}
+                            )
+                            continue
+                        turns_by_thread.setdefault(thread_id, []).append(
+                            {{
+                                "id": turn_id,
+                                "items": [
+                                    {{
+                                        "type": "agentMessage",
+                                        "text": "Default mode was used.",
+                                    }}
+                                ],
+                            }}
+                        )
+                        send(
+                            {{
+                                "method": "item/completed",
+                                "params": {{
+                                    "turnId": turn_id,
+                                    "item": {{
+                                        "type": "agentMessage",
+                                        "text": "Default mode was used.",
                                     }},
                                 }},
                             }}
@@ -776,6 +926,126 @@ async def test_codex_executor_sends_transcribed_audio_instruction_as_text_follow
 
 
 @pytest.mark.anyio
+async def test_codex_executor_starts_turn_request_without_task_run_or_execution_session(tmp_path):
+    command_path = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command_path))
+    command = StartCodexTurnCommand(
+        request_id="out-turn-1",
+        target_persona_id="forge",
+        target_thread_id="public-thread-1",
+        thread_id="thread-1",
+        workspace_id=str(tmp_path),
+        instruction=ExecutorTextInstruction(
+            instruction_id="txt-1",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            text="Please use the latest screenshot.",
+            source_audio_instruction_id="aud-1",
+            metadata={"client_request_id": "client-1", "plan_mode": False},
+        ),
+    )
+
+    events = [event async for event in executor.start_turn_request(command)]
+
+    assert [event.event_type.value for event in events] == ["progress", "progress", "completed"]
+    assert events[0].run_id == "out-turn-1"
+    assert events[0].session_id == "out-turn-1"
+    assert events[0].metadata["client_request_id"] == "client-1"
+    assert events[0].metadata["instruction_id"] == "txt-1"
+    assert events[-1].message == "Done from Codex."
+    assert events[-1].metadata["executor_thread_id"] == "thread-1"
+    assert events[-1].metadata["executor_turn_id"] == "turn-1"
+    assert events[-1].metadata["source_audio_instruction_id"] == "aud-1"
+    await executor._close_app_session()
+
+
+@pytest.mark.anyio
+async def test_codex_executor_rejects_invalid_turn_request_resume_handle_without_thread_fallback(tmp_path):
+    command_path = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command_path))
+    command = StartCodexTurnCommand(
+        request_id="out-turn-invalid-resume",
+        target_persona_id="forge",
+        target_thread_id="public-thread-1",
+        workspace_id=str(tmp_path),
+        latest_resume_handle=AgentResumeHandle(
+            executor_id="acpx",
+            session_handle="acpx-record-1",
+        ),
+        instruction=ExecutorTextInstruction(
+            instruction_id="txt-invalid-resume",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            text="Please use the latest screenshot.",
+        ),
+    )
+
+    events = [event async for event in executor.start_turn_request(command)]
+
+    assert [event.event_type.value for event in events] == ["failed"]
+    assert "valid Codex resume handle" in str(events[0].message)
+    assert events[0].metadata.get("executor_thread_id") is None
+    await executor._close_app_session()
+
+
+@pytest.mark.anyio
+async def test_codex_executor_rejects_new_thread_turn_request_without_workspace_before_session_creation(monkeypatch):
+    executor = CodexExecutor(command="unused")
+    create_session_called = False
+
+    async def fail_if_called(workspace_id):
+        nonlocal create_session_called
+        create_session_called = True
+        raise AssertionError("create_session must not be called without workspace_id")
+
+    monkeypatch.setattr(executor, "create_session", fail_if_called)
+    command = StartCodexTurnCommand(
+        request_id="out-turn-new-no-workspace",
+        target_persona_id="forge",
+        target_thread_id="public-thread-1",
+        create_new_thread=True,
+        workspace_id=None,
+        instruction=ExecutorTextInstruction(
+            instruction_id="txt-new-thread",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            text="Start in a new thread.",
+        ),
+    )
+
+    events = [event async for event in executor.start_turn_request(command)]
+
+    assert [event.event_type.value for event in events] == ["failed"]
+    assert "workspace_id" in str(events[0].message)
+    assert create_session_called is False
+
+
+@pytest.mark.anyio
+async def test_codex_executor_starts_non_plan_turn_request_with_explicit_default_mode(tmp_path):
+    command_path = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command_path))
+    command = StartCodexTurnCommand(
+        request_id="out-turn-default-mode",
+        target_persona_id="forge",
+        target_thread_id="public-thread-1",
+        thread_id="thread-1",
+        workspace_id=str(tmp_path),
+        instruction=ExecutorTextInstruction(
+            instruction_id="txt-default-mode",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            text="Default mode assert",
+        ),
+    )
+
+    events = [event async for event in executor.start_turn_request(command)]
+
+    assert [event.event_type.value for event in events] == ["progress", "progress", "completed"]
+    assert events[-1].message == "Default mode was used."
+    await executor._close_app_session()
+
+
+@pytest.mark.anyio
 async def test_codex_executor_resolves_plan_collaboration_mode_when_thread_model_missing(tmp_path):
     command = _write_fake_codex(tmp_path)
     executor = CodexExecutor(command=str(command))
@@ -799,6 +1069,7 @@ async def test_codex_executor_resolves_plan_collaboration_mode_when_thread_model
     assert [event.event_type.value for event in events] == ["progress", "completed"]
     assert events[-1].message == "Plan mode was used."
     await session.close()
+    await executor._close_app_session()
 
 
 def test_codex_executor_uses_raw_direct_bro_detail_prompt(tmp_path):
@@ -853,6 +1124,22 @@ async def test_codex_client_sends_native_plan_collaboration_mode():
 
 
 @pytest.mark.anyio
+async def test_codex_client_sends_default_collaboration_mode_without_model():
+    peer = _CapturingPeer()
+    client = CodexAppServerClient(peer)  # type: ignore[arg-type]
+
+    await client.turn_start(
+        thread_id="thread-1",
+        prompt="Use default mode",
+        collaboration_mode="default",
+        model=None,
+    )
+
+    _, params = peer.requests[0]
+    assert params["collaborationMode"] == {"mode": "default"}
+
+
+@pytest.mark.anyio
 async def test_codex_client_does_not_silently_drop_requested_collaboration_mode():
     peer = _CapturingPeer()
     client = CodexAppServerClient(peer)  # type: ignore[arg-type]
@@ -892,6 +1179,17 @@ def test_codex_user_input_request_becomes_plan_proposal():
     metadata = blocked["metadata"]
     assert metadata["interaction_kind"] == "plan_proposal"
     assert metadata["proposal"] == {
+        "questions": [
+            {
+                "question_id": "decision",
+                "header": "Pick a plan",
+                "summary": "Pick a plan",
+                "options": [
+                    {"id": "Small", "label": "Small", "description": "Minimal change", "letter": "A"},
+                    {"id": "Full", "label": "Full", "description": "Complete feature", "letter": "B"},
+                ],
+            }
+        ],
         "question_id": "decision",
         "summary": "Pick a plan",
         "options": [
@@ -1265,6 +1563,7 @@ async def test_codex_executor_blocks_for_approval_after_plan_mode_final_plan(tmp
         "codex_plan": {"text": "Final plan text.", "steps": []},
     }
     await session.close()
+    await executor._close_app_session()
 
 
 @pytest.mark.anyio

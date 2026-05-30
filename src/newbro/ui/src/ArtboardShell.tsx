@@ -73,6 +73,11 @@ type ChatMessage = {
 
 const THREAD_LIST_PAGE_SIZE = 25;
 
+type WorkspaceOption = {
+  id: string;
+  name: string;
+};
+
 function directExecutorMetric(stage: string, details: Record<string, unknown>): void {
   const payload = {
     stage,
@@ -92,6 +97,136 @@ function turnMatchesThread<T extends { threadId?: string | null }>(turn: T, thre
 
 function timelineTurnMatchesThread(turn: BroTimelineTurn, broId: string, threadId: string | null): boolean {
   return turn.persona_id === broId && threadId !== null && turn.thread_id === threadId;
+}
+
+function workspaceNameFromId(workspaceId: string): string {
+  const normalized = workspaceId.trim().replace(/[\\/]+$/, "");
+  const tail = normalized.replace(/\\/g, "/").split("/").filter(Boolean).pop();
+  return tail || normalized || workspaceId;
+}
+
+function buildWorkspaceOptions(threads: BroThreadRecord[]): WorkspaceOption[] {
+  const options = new Map<string, WorkspaceOption>();
+  for (const thread of threads) {
+    if (!thread.workspaceId) continue;
+    if (options.has(thread.workspaceId)) continue;
+    options.set(thread.workspaceId, {
+      id: thread.workspaceId,
+      name: thread.workspaceName?.trim() || workspaceNameFromId(thread.workspaceId),
+    });
+  }
+  return [...options.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function WorkspacePickerDialog({
+  open,
+  broName,
+  workspaceOptions,
+  onSelectWorkspace,
+  onClose,
+}: {
+  open: boolean;
+  broName: string;
+  workspaceOptions: WorkspaceOption[];
+  onSelectWorkspace: (workspaceId: string) => void;
+  onClose: () => void;
+}) {
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setSelectedWorkspaceId(null);
+      return undefined;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  function confirmSelection() {
+    if (!selectedWorkspaceId) return;
+    onSelectWorkspace(selectedWorkspaceId);
+  }
+
+  return (
+    <div
+      className="nb-first-run-sheet-layer nb-workspace-dialog-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="nb-workspace-dialog-title"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div className="nb-first-run-sheet-frame ob-firsthome-sheet nb-workspace-dialog-frame" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="ob-sheet-dim" onClick={onClose} aria-hidden="true" />
+        <section className="ob-sheet nb-workspace-dialog">
+          <div className="ob-sheet-handle" aria-hidden="true" />
+          <header className="ob-sheet-head">
+            <div className="ob-sheet-titles">
+              <span className="ob-eyebrow ob-eyebrow-coral">WORKSPACE</span>
+              <h2 id="nb-workspace-dialog-title" className="ob-sheet-h">Choose a workspace for {broName}.</h2>
+            </div>
+            <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}>
+              <X size={16} strokeWidth={2.2} />
+            </button>
+          </header>
+          <div className="ob-sheet-body">
+            <div className="ob-fieldset">
+              <div className="ob-fieldset-eyebrow-row">
+                <span className="ob-field-eyebrow">AVAILABLE WORKSPACES</span>
+                <span className="ob-fieldset-eyebrow-meta">{workspaceOptions.length} known</span>
+              </div>
+              <div className="nb-workspace-scroll">
+                <div className="ob-exec-grid nb-workspace-list">
+                  {workspaceOptions.map((workspace) => (
+                    <button
+                      key={workspace.id}
+                      type="button"
+                      className={`ob-exec-card nb-workspace-card${selectedWorkspaceId === workspace.id ? " ob-exec-card-on" : ""}`}
+                      aria-label={`${workspace.name} workspace ${workspace.id}`}
+                      aria-pressed={selectedWorkspaceId === workspace.id}
+                      onClick={() => setSelectedWorkspaceId(workspace.id)}
+                    >
+                      <span className="ob-exec-name nb-workspace-name">{workspace.name}</span>
+                      <span className="ob-exec-desc nb-workspace-path">{workspace.id}</span>
+                      {selectedWorkspaceId === workspace.id ? (
+                        <span className="ob-exec-check" aria-hidden="true"><Check size={11} strokeWidth={2.8} /></span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+          <footer className="ob-sheet-foot">
+            <span className="dt-modal-foot-status nb-create-connect-foot-status nb-workspace-foot-status">
+              <span className="dt-modal-foot-dot" />
+              New Codex threads start inside the selected workspace
+            </span>
+            <button
+              type="button"
+              className={`ob-cta nb-workspace-confirm${!selectedWorkspaceId ? " ob-cta-pending" : ""}`}
+              disabled={!selectedWorkspaceId}
+              onClick={confirmSelection}
+            >
+              OK
+            </button>
+          </footer>
+        </section>
+      </div>
+    </div>
+  );
 }
 
 type ActiveCodexAudioState = {
@@ -449,17 +584,18 @@ type PlanProposalOption = {
   letter?: string;
 };
 
+type PlanProposalQuestion = {
+  questionId: string;
+  header: string;
+  summary: string;
+  options: PlanProposalOption[];
+};
+
 const PLAN_APPROVAL_VISIBLE_TEXT = "Implement it";
 
-function planProposalDetails(request: InteractionRequest): { summary: string; options: PlanProposalOption[] } {
-  const proposal = request.details?.proposal;
-  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) {
-    return { summary: request.prompt, options: [] };
-  }
-  const raw = proposal as Record<string, unknown>;
-  const summary = typeof raw.summary === "string" && raw.summary.trim() ? raw.summary.trim() : request.prompt;
-  const options = Array.isArray(raw.options)
-    ? raw.options.flatMap((option, index) => {
+function normalizePlanProposalOptions(value: unknown): PlanProposalOption[] {
+  return Array.isArray(value)
+    ? value.flatMap((option, index) => {
         if (!option || typeof option !== "object" || Array.isArray(option)) return [];
         const item = option as Record<string, unknown>;
         const label = typeof item.label === "string" ? item.label.trim() : "";
@@ -473,12 +609,47 @@ function planProposalDetails(request: InteractionRequest): { summary: string; op
         }];
       })
     : [];
-  return { summary, options };
+}
+
+function planProposalDetails(request: InteractionRequest): {
+  summary: string;
+  options: PlanProposalOption[];
+  questions: PlanProposalQuestion[];
+} {
+  const proposal = request.details?.proposal;
+  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) {
+    return { summary: request.prompt, options: [], questions: [] };
+  }
+  const raw = proposal as Record<string, unknown>;
+  const summary = typeof raw.summary === "string" && raw.summary.trim() ? raw.summary.trim() : request.prompt;
+  const options = normalizePlanProposalOptions(raw.options);
+  const questions = Array.isArray(raw.questions)
+    ? raw.questions.flatMap((question, index) => {
+        if (!question || typeof question !== "object" || Array.isArray(question)) return [];
+        const item = question as Record<string, unknown>;
+        const questionId = typeof item.question_id === "string" && item.question_id.trim()
+          ? item.question_id.trim()
+          : `question_${index + 1}`;
+        const questionSummary = typeof item.summary === "string" && item.summary.trim()
+          ? item.summary.trim()
+          : summary;
+        const header = typeof item.header === "string" && item.header.trim()
+          ? item.header.trim()
+          : questionSummary;
+        return [{
+          questionId,
+          header,
+          summary: questionSummary,
+          options: normalizePlanProposalOptions(item.options),
+        }];
+      })
+    : [];
+  return { summary, options, questions };
 }
 
 function optionAnswerText(option: PlanProposalOption | null): string | undefined {
   if (!option) return undefined;
-  return [option.label, option.description].filter(Boolean).join(" - ");
+  return option.label;
 }
 
 function PlanProposalCard({
@@ -496,17 +667,55 @@ function PlanProposalCard({
 }) {
   const shell = useNewbroShell();
   const prefix = mobile ? "thr" : "dt";
-  const { summary, options } = planProposalDetails(request);
+  const { summary, options, questions } = planProposalDetails(request);
+  const multiQuestions = questions.length > 1 ? questions : [];
   const selectedFromRequest = typeof request.details?.selected_option_id === "string" ? request.details.selected_option_id : null;
-  const [selectedId, setSelectedId] = useState<string | null>(selectedFromRequest ?? options[0]?.id ?? null);
+  const hasImplementOption = options.some((option) => option.label === PLAN_APPROVAL_VISIBLE_TEXT);
+  const proposal = request.details?.proposal;
+  const isFinalCodexPlan = Boolean(proposal && typeof proposal === "object" && !Array.isArray(proposal) && "codex_plan" in proposal);
+  const approvalOptions = request.available_actions.includes("approve") && isFinalCodexPlan && multiQuestions.length === 0 && !hasImplementOption
+    ? [
+        ...options,
+        {
+          id: "__implement_it__",
+          label: PLAN_APPROVAL_VISIBLE_TEXT,
+          description: "",
+          letter: String.fromCharCode(65 + options.length),
+        },
+      ]
+    : options;
+  const [selectedId, setSelectedId] = useState<string | null>(selectedFromRequest);
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(multiQuestions[0]?.questionId ?? null);
   const [resolving, setResolving] = useState(false);
-  const selected = options.find((option) => option.id === selectedId) ?? options[0] ?? null;
+  const selected = approvalOptions.find((option) => option.id === selectedId) ?? null;
+  const activeQuestion = multiQuestions.find((question) => question.questionId === activeQuestionId) ?? multiQuestions[0] ?? null;
+  const allQuestionsAnswered = multiQuestions.length > 0
+    && multiQuestions.every((question) => Boolean(selectedAnswers[question.questionId]));
   const pending = request.status === "pending";
+  function selectQuestionOption(question: PlanProposalQuestion, option: PlanProposalOption) {
+    if (resolving) return;
+    const nextAnswers = { ...selectedAnswers, [question.questionId]: option.label };
+    setSelectedAnswers(nextAnswers);
+    const nextQuestion = multiQuestions.find((candidate) => !nextAnswers[candidate.questionId]);
+    if (nextQuestion) {
+      setActiveQuestionId(nextQuestion.questionId);
+    }
+  }
+  function compactAnswersSummary(): string {
+    return multiQuestions
+      .map((question) => `${question.header}: ${selectedAnswers[question.questionId] ?? ""}`)
+      .filter((part) => !part.endsWith(": "))
+      .join("; ");
+  }
   async function resolve(action: "approve" | "deny") {
     if (!pending || resolving) return;
+    if (action === "approve" && multiQuestions.length > 0 && !allQuestionsAnswered) return;
+    if (action === "approve" && multiQuestions.length === 0 && !selected) return;
     const answerText = action === "approve"
-      ? optionAnswerText(selected) ?? "Approve and run the proposed plan."
+      ? (multiQuestions.length > 0 ? compactAnswersSummary() : optionAnswerText(selected) ?? PLAN_APPROVAL_VISIBLE_TEXT)
       : "Keep planning. Refine the proposal instead of acting yet.";
+    const visibleText = action === "approve" ? answerText : null;
     const optimisticBroId = broId ?? interactionRequestDetailText(request, "persona_id");
     const optimisticThreadId = threadId ?? interactionRequestDetailText(request, "target_thread_id");
     const clientRequestId = action === "approve"
@@ -518,7 +727,7 @@ function PlanProposalCard({
         id: clientRequestId,
         broId: optimisticBroId,
         threadId: optimisticThreadId,
-        text: PLAN_APPROVAL_VISIBLE_TEXT,
+        text: visibleText ?? PLAN_APPROVAL_VISIBLE_TEXT,
         status: "sending",
         createdAt,
       });
@@ -528,10 +737,15 @@ function PlanProposalCard({
       await shell.resolveInteractionRequest(request.request_id, {
         action,
         answer_text: answerText,
-        option_id: selected?.id,
+        ...(multiQuestions.length > 0 && action === "approve" ? {
+          answers: Object.fromEntries(
+            multiQuestions.map((question) => [question.questionId, [selectedAnswers[question.questionId]]]),
+          ),
+        } : {}),
+        ...(multiQuestions.length === 0 && selected?.id && selected.id !== "__implement_it__" ? { option_id: selected.id } : {}),
         ...(clientRequestId ? {
           client_request_id: clientRequestId,
-          user_visible_text: PLAN_APPROVAL_VISIBLE_TEXT,
+          user_visible_text: visibleText ?? PLAN_APPROVAL_VISIBLE_TEXT,
         } : {}),
       });
       if (action === "approve" && clientRequestId && optimisticBroId) {
@@ -539,7 +753,7 @@ function PlanProposalCard({
           id: clientRequestId,
           broId: optimisticBroId,
           threadId: optimisticThreadId,
-          text: PLAN_APPROVAL_VISIBLE_TEXT,
+          text: visibleText ?? PLAN_APPROVAL_VISIBLE_TEXT,
           status: "sent",
           createdAt,
         });
@@ -551,7 +765,7 @@ function PlanProposalCard({
           id: clientRequestId,
           broId: optimisticBroId,
           threadId: optimisticThreadId,
-          text: PLAN_APPROVAL_VISIBLE_TEXT,
+          text: visibleText ?? PLAN_APPROVAL_VISIBLE_TEXT,
           status: "failed",
           createdAt,
           error: message,
@@ -572,13 +786,61 @@ function PlanProposalCard({
           </span>
           <span className={mobile ? "plan-prop-title" : "dt-planprop-title"}>Proposed plans</span>
           <span className={mobile ? "plan-prop-tag" : "dt-planprop-tag"}>
-            {options.length > 0 ? `${options.length} OPTIONS` : "REVIEW"}
+            {approvalOptions.length > 0 ? `${approvalOptions.length} OPTIONS` : "REVIEW"}
           </span>
         </div>
         <p className={mobile ? "plan-prop-summary" : "dt-planprop-summary"}>{summary}</p>
-        {options.length > 0 ? (
+        {multiQuestions.length > 0 && activeQuestion ? (
+          <>
+            <div className={mobile ? "plan-tabs" : "dt-plantabs"} role="tablist" aria-label="Plan questions">
+              {multiQuestions.map((question, index) => {
+                const on = question.questionId === activeQuestion.questionId;
+                const answered = Boolean(selectedAnswers[question.questionId]);
+                return (
+                  <button
+                    key={question.questionId}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    className={`${mobile ? "plan-tab" : "dt-plantab"}${on ? ` ${mobile ? "plan-tab-on" : "dt-plantab-on"}` : ""}${answered ? ` ${mobile ? "plan-tab-done" : "dt-plantab-done"}` : ""}`}
+                    onClick={() => setActiveQuestionId(question.questionId)}
+                    disabled={resolving}
+                  >
+                    {question.header || `Question ${index + 1}`}
+                  </button>
+                );
+              })}
+            </div>
+            <p className={mobile ? "plan-question" : "dt-planquestion"}>{activeQuestion.summary}</p>
+            <div className={mobile ? "plan-opts" : "dt-planopts"} role="radiogroup" aria-label={activeQuestion.header}>
+              {activeQuestion.options.map((option) => {
+                const on = selectedAnswers[activeQuestion.questionId] === option.label;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    className={`${mobile ? "plan-opt" : "dt-planopt"}${on ? ` ${mobile ? "plan-opt-on" : "dt-planopt-on"}` : ""}`}
+                    onClick={() => selectQuestionOption(activeQuestion, option)}
+                    disabled={resolving}
+                  >
+                    <span className={mobile ? "plan-opt-radio" : "dt-planopt-radio"} aria-hidden="true" />
+                    <span className={mobile ? "plan-opt-body" : "dt-planopt-body"}>
+                      <span className={mobile ? "plan-opt-top" : "dt-planopt-top"}>
+                        <span className={mobile ? "plan-opt-letter" : "dt-planopt-letter"}>{option.letter}</span>
+                        <span className={mobile ? "plan-opt-label" : "dt-planopt-label"}>{option.label}</span>
+                      </span>
+                      {option.description ? <span className={mobile ? "plan-opt-text" : "dt-planopt-text"}>{option.description}</span> : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        ) : approvalOptions.length > 0 ? (
           <div className={mobile ? "plan-opts" : "dt-planopts"} role="radiogroup" aria-label="Plan options">
-            {options.map((option) => {
+            {approvalOptions.map((option) => {
               const on = option.id === selectedId;
               return (
                 <button
@@ -608,10 +870,10 @@ function PlanProposalCard({
             type="button"
             className={mobile ? "plan-prop-approve" : "dt-planprop-approve"}
             onClick={() => { void resolve("approve"); }}
-            disabled={resolving}
+            disabled={resolving || (multiQuestions.length > 0 ? !allQuestionsAnswered : !selected)}
           >
             <Check size={14} strokeWidth={2.4} aria-hidden="true" />
-            {PLAN_APPROVAL_VISIBLE_TEXT}
+            Confirm
           </button>
           <button
             type="button"
@@ -888,7 +1150,7 @@ function applyAudioTranscripts(turns: AudioTurn[], runs: ExecutionRun[]): AudioT
 }
 
 function activeCodexAudioState(
-  shell: Pick<ReturnType<typeof useNewbroShell>, "runtimePersonas" | "tasks" | "executionSessions" | "executionRuns" | "executorNodes">,
+  shell: Pick<ReturnType<typeof useNewbroShell>, "runtimePersonas" | "executorNodes">,
   bro: BroCardModel,
 ): ActiveCodexAudioState {
   const persona = shell.runtimePersonas.find((candidate) => candidate.persona_id === bro.id);
@@ -903,27 +1165,11 @@ function activeCodexAudioState(
   if (codexCapability && !codexCapability.supports_audio_instruction) {
     return { enabled: false, reason: "Enable local Whisper on the executor node before recording." };
   }
-  if (!persona.current_task_id) return { enabled: true, reason: "Hold to record audio" };
-  const currentTask = shell.tasks.find((task) => task.task_id === persona.current_task_id);
-  if (currentTask && ["created", "queued"].includes(currentTask.status)) {
-    return { enabled: true, reason: "Hold to record audio" };
-  }
-  const activeRun = shell.executionRuns.find((run) => (
-    run.task_id === persona.current_task_id
-    && run.executor_type === "codex"
-    && ["assigned", "running", "blocked"].includes(run.status)
-  ));
-  if (!activeRun) return { enabled: false, reason: "No active Codex session for this Bro." };
-  const activeSession = shell.executionSessions.find((session) => (
-    session.base_executor_id === "codex"
-    && session.active_run_id === activeRun.run_id
-  ));
-  if (!activeSession) return { enabled: false, reason: "No active Codex session for this Bro." };
   return { enabled: true, reason: "Hold to record audio" };
 }
 
 function activeCodexTextState(
-  shell: Pick<ReturnType<typeof useNewbroShell>, "runtimePersonas" | "tasks" | "executionSessions" | "executionRuns" | "executorNodes">,
+  shell: Pick<ReturnType<typeof useNewbroShell>, "runtimePersonas" | "executorNodes">,
   bro: BroCardModel,
 ): ActiveCodexAudioState {
   const persona = shell.runtimePersonas.find((candidate) => candidate.persona_id === bro.id);
@@ -938,22 +1184,6 @@ function activeCodexTextState(
   if (codexCapability && !codexCapability.supports_follow_up) {
     return { enabled: false, reason: "Selected Bro's executor node does not support text follow-up." };
   }
-  if (!persona.current_task_id) return { enabled: true, reason: "Start a direct executor task" };
-  const currentTask = shell.tasks.find((task) => task.task_id === persona.current_task_id);
-  if (currentTask && ["created", "queued"].includes(currentTask.status)) {
-    return { enabled: true, reason: "Start queued executor task" };
-  }
-  const activeRun = shell.executionRuns.find((run) => (
-    run.task_id === persona.current_task_id
-    && run.executor_type === "codex"
-    && ["assigned", "running", "blocked"].includes(run.status)
-  ));
-  if (!activeRun) return { enabled: false, reason: "No active Codex session for this Bro." };
-  const activeSession = shell.executionSessions.find((session) => (
-    session.base_executor_id === "codex"
-    && session.active_run_id === activeRun.run_id
-  ));
-  if (!activeSession) return { enabled: false, reason: "No active Codex session for this Bro." };
   return { enabled: true, reason: "Send directly to executor" };
 }
 
@@ -962,6 +1192,7 @@ function usePushToTalkAudio({
   broId,
   targetThreadId,
   createNewThread,
+  workspaceId,
   disabled,
   onTurn,
   onRemoveTurn,
@@ -973,6 +1204,7 @@ function usePushToTalkAudio({
   broId: string;
   targetThreadId: string | null;
   createNewThread: boolean;
+  workspaceId?: string | null;
   disabled: boolean;
   onTurn: (turn: AudioTurn) => void;
   onRemoveTurn: (turnId: string) => void;
@@ -1033,6 +1265,7 @@ function usePushToTalkAudio({
         targetPersonaId: broId,
         targetThreadId,
         createNewThread,
+        ...(workspaceId ? { workspaceId } : {}),
         pcm16: pcm.blob,
         durationMs: pcm.durationMs || durationMs,
         sampleRate: pcm.sampleRate,
@@ -2028,6 +2261,7 @@ function MobileThreadSurface({
   selectedThreadId,
   selectedThread,
   createNewThread,
+  workspaceId,
   textTurns,
   audioTurns,
   timelineTurns,
@@ -2042,6 +2276,7 @@ function MobileThreadSurface({
   selectedThreadId: string | null;
   selectedThread: BroThreadRecord | null;
   createNewThread: boolean;
+  workspaceId?: string | null;
   textTurns: TextTurn[];
   audioTurns: AudioTurn[];
   timelineTurns: BroTimelineTurn[];
@@ -2062,13 +2297,15 @@ function MobileThreadSurface({
   const [inputMode, setInputMode] = useState<"ptt" | "free">("ptt");
   const audioState = activeCodexAudioState(shell, bro);
   const textState = activeCodexTextState(shell, bro);
-  const textDisabled = Boolean(disabled) || !textState.enabled;
-  const micDisabled = Boolean(disabled) || !audioState.enabled;
+  const needsWorkspace = createNewThread && !workspaceId;
+  const textDisabled = Boolean(disabled) || !textState.enabled || needsWorkspace;
+  const micDisabled = Boolean(disabled) || !audioState.enabled || needsWorkspace;
   const recorder = usePushToTalkAudio({
     sessionId: shell.activeShellSessionId,
     broId: bro.id,
     targetThreadId: selectedThreadId,
     createNewThread,
+    workspaceId,
     disabled: micDisabled,
     onTurn: onAudioTurn,
     onRemoveTurn: onRemoveAudioTurn,
@@ -2084,6 +2321,10 @@ function MobileThreadSurface({
 
   async function submitDraftText() {
     const text = draft.trim();
+    if (needsWorkspace) {
+      shell.setShellError("Choose a workspace before starting a new Codex thread.");
+      return;
+    }
     if (!text || textDisabled || !shell.activeShellSessionId) return;
     const turnId = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const createdAt = new Date().toISOString();
@@ -2108,6 +2349,7 @@ function MobileThreadSurface({
         targetPersonaId: bro.id,
         targetThreadId: selectedThreadId,
         createNewThread,
+        ...(workspaceId ? { workspaceId } : {}),
         clientRequestId: turnId,
         ...(planMode ? { planMode: true } : {}),
         text,
@@ -2397,6 +2639,7 @@ function DesktopComposerBar({
   bro,
   selectedThreadId,
   createNewThread,
+  workspaceId,
   disabled,
   onTextTurn,
   onAudioTurn,
@@ -2406,6 +2649,7 @@ function DesktopComposerBar({
   bro: BroCardModel;
   selectedThreadId: string | null;
   createNewThread: boolean;
+  workspaceId?: string | null;
   disabled: boolean;
   onTextTurn: (turn: TextTurn) => void;
   onAudioTurn: (turn: AudioTurn) => void;
@@ -2419,13 +2663,15 @@ function DesktopComposerBar({
   const loading = shell.voiceSession.phase === "loading";
   const audioState = activeCodexAudioState(shell, bro);
   const textState = activeCodexTextState(shell, bro);
-  const textDisabled = disabled || !textState.enabled;
-  const micDisabled = disabled || !audioState.enabled;
+  const needsWorkspace = createNewThread && !workspaceId;
+  const textDisabled = disabled || !textState.enabled || needsWorkspace;
+  const micDisabled = disabled || !audioState.enabled || needsWorkspace;
   const recorder = usePushToTalkAudio({
     sessionId: shell.activeShellSessionId,
     broId: bro.id,
     targetThreadId: selectedThreadId,
     createNewThread,
+    workspaceId,
     disabled: micDisabled,
     onTurn: onAudioTurn,
     onRemoveTurn: onRemoveAudioTurn,
@@ -2437,6 +2683,10 @@ function DesktopComposerBar({
   async function submitText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = draft.trim();
+    if (needsWorkspace) {
+      shell.setShellError("Choose a workspace before starting a new Codex thread.");
+      return;
+    }
     if (!text || textDisabled || !shell.activeShellSessionId) return;
     const turnId = `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const createdAt = new Date().toISOString();
@@ -2461,6 +2711,7 @@ function DesktopComposerBar({
         targetPersonaId: bro.id,
         targetThreadId: selectedThreadId,
         createNewThread,
+        ...(workspaceId ? { workspaceId } : {}),
         clientRequestId: turnId,
         ...(planMode ? { planMode: true } : {}),
         text,
@@ -2598,6 +2849,7 @@ function DesktopActivityRail({
   totalThreadCount,
   selectedThreadId,
   pendingNewThread,
+  pendingWorkspaceId,
   onSelectThread,
   onNewThread,
   onShowMore,
@@ -2608,6 +2860,7 @@ function DesktopActivityRail({
   totalThreadCount: number;
   selectedThreadId: string | null;
   pendingNewThread: boolean;
+  pendingWorkspaceId: string | null;
   onSelectThread: (threadId: string) => void;
   onNewThread: () => void;
   onShowMore: () => void;
@@ -2630,7 +2883,7 @@ function DesktopActivityRail({
                   <span className="dt-threadlist-meta">
                     <span>pending</span>
                     <span className="dt-bro-meta-sep">·</span>
-                    <span>created on first send</span>
+                    <span>{pendingWorkspaceId ? workspaceNameFromId(pendingWorkspaceId) : "created on first send"}</span>
                   </span>
                 </span>
                 <span className="dt-threadlist-pip" />
@@ -2648,6 +2901,12 @@ function DesktopActivityRail({
                   <span className="dt-threadlist-title">{thread.title}</span>
                   <span className="dt-threadlist-meta">
                     <span>{thread.timeLabel || thread.statusLabel}</span>
+                    {thread.workspaceName ? (
+                      <>
+                        <span className="dt-bro-meta-sep">·</span>
+                        <span>{thread.workspaceName}</span>
+                      </>
+                    ) : null}
                   </span>
                 </span>
                 <span className={`dt-threadlist-pip${offline ? " dt-threadlist-pip-paused" : ""}`} />
@@ -2704,6 +2963,8 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readThreadIdFromUrl());
   const [pendingNewThread, setPendingNewThread] = useState(false);
+  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null);
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [threadVisibleCount, setThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const openedThreadRef = useRef<string | null>(null);
   const activeThreadRef = useRef<string | null>(null);
@@ -2719,6 +2980,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     : null;
   const persona = bro?.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
   const threads = bro?.source === "runtime" ? buildBroThreadRecords(bro.id, shell.broThreads) : [];
+  const workspaceOptions = useMemo(() => buildWorkspaceOptions(threads), [threads]);
   const matchedThread = threads.find((thread) => thread.threadId === selectedThreadId);
   const isResolveLag =
     !pendingNewThread
@@ -2780,16 +3042,28 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
 
   function selectThread(threadId: string) {
     setPendingNewThread(false);
+    setPendingWorkspaceId(null);
+    setWorkspacePickerOpen(false);
     setSelectedThreadId(threadId);
     replaceThreadIdInUrl(threadId);
     openedThreadRef.current = null;
   }
 
   function newThread() {
+    if (workspaceOptions.length === 0) {
+      shell.setShellError("No Codex workspace is available for this Bro yet.");
+      return;
+    }
+    setWorkspacePickerOpen(true);
+  }
+
+  function selectWorkspace(workspaceId: string) {
     if (bro?.source === "runtime") {
       void shell.closeRuntimeBroThread(bro.id, activeThreadId);
     }
     setPendingNewThread(true);
+    setPendingWorkspaceId(workspaceId);
+    setWorkspacePickerOpen(false);
     setSelectedThreadId(null);
     replaceThreadIdInUrl(null);
   }
@@ -2798,6 +3072,8 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     if (!threadId) return;
     recentResolveRef.current = threadId;
     setPendingNewThread(false);
+    setPendingWorkspaceId(null);
+    setWorkspacePickerOpen(false);
     setSelectedThreadId(threadId);
     replaceThreadIdInUrl(threadId);
     openedThreadRef.current = threadId;
@@ -2854,6 +3130,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const directThreadIntent = {
     targetThreadId: activeThreadId,
     createNewThread: activeThreadId === null,
+    workspaceId: activeThreadId === null ? pendingWorkspaceId : null,
   };
   const upsertTextTurn = (turn: TextTurn) => {
     setTextTurns((current) => {
@@ -2892,6 +3169,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
             totalThreadCount={threads.length}
             selectedThreadId={activeThreadId}
             pendingNewThread={pendingNewThread}
+            pendingWorkspaceId={pendingWorkspaceId}
             onSelectThread={selectThread}
             onNewThread={newThread}
             onShowMore={() => setThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE)}
@@ -2926,6 +3204,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
               bro={bro}
               selectedThreadId={directThreadIntent.targetThreadId}
               createNewThread={directThreadIntent.createNewThread}
+              workspaceId={directThreadIntent.workspaceId}
               disabled={Boolean(offline)}
               onTextTurn={upsertTextTurn}
               onAudioTurn={upsertAudioTurn}
@@ -2935,6 +3214,13 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
           </section>
         </div>
       ) : null}
+      <WorkspacePickerDialog
+        open={workspacePickerOpen}
+        broName={bro.name}
+        workspaceOptions={workspaceOptions}
+        onSelectWorkspace={selectWorkspace}
+        onClose={() => setWorkspacePickerOpen(false)}
+      />
     </DesktopFrame>
   );
 }
@@ -3372,6 +3658,8 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readThreadIdFromUrl());
   const [pendingNewThread, setPendingNewThread] = useState(false);
+  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null);
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [drawerThreadVisibleCount, setDrawerThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const openedThreadRef = useRef<string | null>(null);
   const activeThreadRef = useRef<string | null>(null);
@@ -3381,6 +3669,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   const needsConnect = bro.source === "runtime" && nodeStateNeedsConnect(nodeState) && nodeState.kind !== "no_bound_node";
   const persona = bro.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
   const threads = bro.source === "runtime" ? buildBroThreadRecords(bro.id, shell.broThreads) : [];
+  const workspaceOptions = useMemo(() => buildWorkspaceOptions(threads), [threads]);
   const matchedThread = threads.find((thread) => thread.threadId === selectedThreadId);
   const isResolveLag =
     !pendingNewThread
@@ -3411,6 +3700,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   const directThreadIntent = {
     targetThreadId: activeThreadId,
     createNewThread: activeThreadId === null,
+    workspaceId: activeThreadId === null ? pendingWorkspaceId : null,
   };
   useEffect(() => {
     setAudioTurns((current) => applyAudioTranscripts(current, shell.executionRuns));
@@ -3441,16 +3731,29 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   }, [activeThreadId, drawerThreadVisibleCount, threads]);
   function selectThread(threadId: string) {
     setPendingNewThread(false);
+    setPendingWorkspaceId(null);
+    setWorkspacePickerOpen(false);
     setSelectedThreadId(threadId);
     replaceThreadIdInUrl(threadId);
     openedThreadRef.current = null;
     setPickerOpen(false);
   }
   function newThread() {
+    if (workspaceOptions.length === 0) {
+      shell.setShellError("No Codex workspace is available for this Bro yet.");
+      setPickerOpen(false);
+      return;
+    }
+    setPickerOpen(false);
+    setWorkspacePickerOpen(true);
+  }
+  function selectWorkspace(workspaceId: string) {
     if (bro.source === "runtime") {
       void shell.closeRuntimeBroThread(bro.id, activeThreadId);
     }
     setPendingNewThread(true);
+    setPendingWorkspaceId(workspaceId);
+    setWorkspacePickerOpen(false);
     setSelectedThreadId(null);
     replaceThreadIdInUrl(null);
     setPickerOpen(false);
@@ -3459,6 +3762,8 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
     if (!threadId) return;
     recentResolveRef.current = threadId;
     setPendingNewThread(false);
+    setPendingWorkspaceId(null);
+    setWorkspacePickerOpen(false);
     setSelectedThreadId(threadId);
     replaceThreadIdInUrl(threadId);
     openedThreadRef.current = threadId;
@@ -3568,7 +3873,9 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
                     <span className="thr-drawer-item-meta">
                       <span className="thr-drawer-item-state">pending</span>
                       <span className="thr-drawer-item-sep">·</span>
-                      <span className="thr-drawer-item-when">first send</span>
+                      <span className="thr-drawer-item-when">
+                        {pendingWorkspaceId ? workspaceNameFromId(pendingWorkspaceId) : "first send"}
+                      </span>
                     </span>
                   </span>
                   <span className="thr-drawer-item-check" aria-hidden="true">
@@ -3593,6 +3900,12 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
                       <>
                         <span className="thr-drawer-item-sep">·</span>
                         <span className="thr-drawer-item-when">{thread.timeLabel}</span>
+                      </>
+                    ) : null}
+                    {thread.workspaceName ? (
+                      <>
+                        <span className="thr-drawer-item-sep">·</span>
+                        <span className="thr-drawer-item-when">{thread.workspaceName}</span>
                       </>
                     ) : null}
                   </span>
@@ -3627,6 +3940,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
           selectedThreadId={directThreadIntent.targetThreadId}
           selectedThread={selectedThread}
           createNewThread={directThreadIntent.createNewThread}
+          workspaceId={directThreadIntent.workspaceId}
           textTurns={visibleTextTurns}
           audioTurns={visibleAudioTurns}
           timelineTurns={visibleTimelineTurns}
@@ -3636,6 +3950,13 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
           onThreadResolved={resolveThread}
           disabled={Boolean(offline)}
           disabledReason={offline ? `${bro.executorType ?? offline.name} is not connected.` : null}
+        />
+        <WorkspacePickerDialog
+          open={workspacePickerOpen}
+          broName={bro.name}
+          workspaceOptions={workspaceOptions}
+          onSelectWorkspace={selectWorkspace}
+          onClose={() => setWorkspacePickerOpen(false)}
         />
       </div>
     </MobileStage>

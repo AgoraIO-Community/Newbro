@@ -12,7 +12,13 @@ from newbro.executors.core import (
     ExecutorEvent,
     ExecutorEventType,
 )
-from newbro.protocol import AgentResumeHandle, ExecutionRun, ExecutorTextInstruction, Task
+from newbro.protocol import (
+    AgentResumeHandle,
+    ExecutionRun,
+    ExecutorTextInstruction,
+    StartCodexTurnCommand,
+    Task,
+)
 
 from .client import CodexAppServerClient
 from .jsonrpc import JsonRpcPeer
@@ -422,6 +428,108 @@ class CodexExecutor:
             ):
                 yield event
 
+    async def start_turn_request(self, command: StartCodexTurnCommand):
+        run = ExecutionRun(
+            run_id=command.request_id,
+            task_id=command.request_id,
+            execution_session_id=command.request_id,
+            executor_type=command.executor_type,
+        )
+        session: CodexExecutorSession | None = None
+        try:
+            if command.create_new_thread and not command.workspace_id:
+                raise RuntimeError("Codex new-thread turn request requires workspace_id.")
+            session = await self.create_session(command.workspace_id)
+            async with session.turn_lock:
+                thread_id = await self._thread_for_turn_request(session, command)
+                text = command.instruction.text.strip()
+                if not text:
+                    raise RuntimeError("Codex turn request instruction text is empty.")
+                plan_mode = (
+                    command.metadata.get("plan_mode") is True
+                    or command.instruction.metadata.get("plan_mode") is True
+                )
+                turn = await _turn_start_for_request(
+                    session,
+                    thread_id=thread_id,
+                    prompt=text,
+                    plan_mode=plan_mode,
+                )
+                turn_id = _get_nested(turn, "turn", "id")
+                if not isinstance(turn_id, str):
+                    raise RuntimeError("Codex turn/start did not return a turn id.")
+                event_metadata = {
+                    **dict(command.metadata),
+                    **dict(command.instruction.metadata),
+                    "instruction_id": command.instruction.instruction_id,
+                    "source_audio_instruction_id": command.instruction.source_audio_instruction_id or "",
+                    "target_persona_id": command.target_persona_id,
+                    "target_thread_id": command.target_thread_id,
+                    "thread_id": thread_id,
+                    "executor_thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "executor_turn_id": turn_id,
+                    "source": "codex",
+                    **({"plan_mode": True} if plan_mode else {}),
+                }
+                yield ExecutorEvent(
+                    run_id=run.run_id,
+                    session_id=run.execution_session_id,
+                    event_type=ExecutorEventType.PROGRESS,
+                    message="Direct instruction sent to Codex.",
+                    metadata=event_metadata,
+                )
+                async for event in self._stream_turn_events(
+                    run,
+                    session,
+                    turn_id,
+                    completed_message="Codex completed the direct instruction.",
+                    extra_metadata=event_metadata,
+                ):
+                    yield event
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            yield ExecutorEvent(
+                run_id=run.run_id,
+                session_id=run.execution_session_id,
+                event_type=ExecutorEventType.FAILED,
+                message=str(exc),
+                metadata={"stderr": session.stderr_text() if session is not None else ""},
+            )
+        finally:
+            if session is not None:
+                await session.close()
+
+    async def _thread_for_turn_request(
+        self,
+        session: CodexExecutorSession,
+        command: StartCodexTurnCommand,
+    ) -> str:
+        if command.create_new_thread:
+            result = await session.client.thread_start(cwd=str(session.cwd))
+            thread_id = _get_nested(result, "thread", "id")
+            if not isinstance(thread_id, str):
+                raise RuntimeError("Codex did not return a thread id.")
+            session.thread_id = thread_id
+            _capture_thread_settings(session, result)
+            session.metadata["codex_thread_resumed"] = True
+            return thread_id
+
+        if command.latest_resume_handle is not None:
+            thread_id = _thread_id_from_resume_handle(command.latest_resume_handle)
+            if thread_id is None:
+                raise RuntimeError("Codex turn request requires a valid Codex resume handle.")
+        else:
+            thread_id = command.thread_id
+        if not isinstance(thread_id, str) or not thread_id:
+            raise RuntimeError("Codex turn request requires thread_id unless create_new_thread is true.")
+        result = await session.client.thread_resume(thread_id=thread_id)
+        session.thread_id = thread_id
+        _capture_thread_settings(session, result)
+        session.metadata["codex_thread_resumed"] = True
+        return thread_id
+
     async def _stream_turn_events(
         self,
         run: ExecutionRun,
@@ -774,6 +882,40 @@ def _direct_bro_detail_input(task: Task) -> str | None:
     return text.strip() if text.strip() else task.title.strip()
 
 
+def _thread_id_from_resume_handle(handle: AgentResumeHandle | None) -> str | None:
+    if handle is None or handle.executor_id != "codex":
+        return None
+    return handle.session_handle if isinstance(handle.session_handle, str) and handle.session_handle else None
+
+
+async def _turn_start_for_request(
+    session: CodexExecutorSession,
+    *,
+    thread_id: str,
+    prompt: str,
+    plan_mode: bool,
+) -> dict[str, object]:
+    if plan_mode:
+        collaboration_kwargs = await _collaboration_kwargs_for_turn(session, plan_mode=True)
+        return await session.client.turn_start(
+            thread_id=thread_id,
+            prompt=prompt,
+            **collaboration_kwargs,
+        )
+
+    model = _session_collaboration_model(session, "default") or _session_codex_model(session)
+    return await session.client.turn_start(
+        thread_id=thread_id,
+        prompt=prompt,
+        collaboration_mode="default",
+        model=model,
+        reasoning_effort=(
+            _session_collaboration_reasoning_effort(session, "default")
+            or _session_codex_reasoning_effort(session)
+        ),
+    )
+
+
 def _event_turn_id(params: dict[str, object]) -> str | None:
     value = params.get("turnId")
     if isinstance(value, str) and value:
@@ -1109,11 +1251,13 @@ def _extract_plan_proposal(params: dict[str, object]) -> dict[str, object] | Non
     questions = params.get("questions")
     if not isinstance(questions, list):
         return None
+    normalized_questions: list[dict[str, object]] = []
     for question in questions:
         if not isinstance(question, dict):
             continue
         question_id = question.get("id")
-        question_text = question.get("question") or question.get("prompt") or question.get("header")
+        header = question.get("header")
+        question_text = question.get("question") or question.get("prompt") or header
         options = question.get("options")
         normalized_options: list[dict[str, object]] = []
         if isinstance(options, list):
@@ -1133,12 +1277,33 @@ def _extract_plan_proposal(params: dict[str, object]) -> dict[str, object] | Non
                         "letter": chr(65 + index),
                     }
                 )
-        return {
-            **({"question_id": question_id} if isinstance(question_id, str) and question_id else {}),
-            "summary": question_text.strip() if isinstance(question_text, str) and question_text.strip() else "Review the proposed plan.",
-            "options": normalized_options,
-        }
-    return None
+        normalized_questions.append(
+            {
+                "question_id": str(question_id).strip()
+                if isinstance(question_id, str) and question_id.strip()
+                else f"question_{len(normalized_questions) + 1}",
+                "header": header.strip()
+                if isinstance(header, str) and header.strip()
+                else (
+                    question_text.strip()
+                    if isinstance(question_text, str) and question_text.strip()
+                    else f"Question {len(normalized_questions) + 1}"
+                ),
+                "summary": question_text.strip()
+                if isinstance(question_text, str) and question_text.strip()
+                else "Review the proposed plan.",
+                "options": normalized_options,
+            }
+        )
+    if not normalized_questions:
+        return None
+    first = normalized_questions[0]
+    return {
+        "questions": normalized_questions,
+        "question_id": first["question_id"],
+        "summary": first["summary"],
+        "options": first["options"],
+    }
 
 
 def _extract_blocked_request(

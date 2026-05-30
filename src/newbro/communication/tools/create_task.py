@@ -96,7 +96,7 @@ class CreateTaskTool:
             if persona.executor_node_id:
                 metadata["executor_node_id"] = persona.executor_node_id
             await self._store.put_persona(
-                persona.model_copy(update={"status": "busy", "current_task_id": task_id})
+                persona.model_copy(update={"status": "busy"})
             )
 
         task = Task(

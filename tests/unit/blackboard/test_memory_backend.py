@@ -19,6 +19,7 @@ from newbro.protocol import (
     NotificationCandidateType,
     NotificationDeliveryStatus,
     NotificationPriority,
+    OutboundTurnRequest,
     RunStatus,
     SessionBinding,
     Task,
@@ -118,6 +119,23 @@ async def test_memory_blackboard_round_trip_for_core_objects():
     assert await store.get_notification_candidate("notif_1") == candidate
     assert await store.get_interaction_request("ireq_1") == interaction_request
     assert await store.get_attention_item("attention_1") == attention_item
+
+
+@pytest.mark.anyio
+async def test_memory_backend_stores_outbound_turn_requests():
+    store = InMemoryBlackboard()
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        text="hello",
+    )
+
+    await store.put_outbound_turn_request(request)
+
+    assert await store.get_outbound_turn_request("out-turn-1") == request
+    assert await store.list_outbound_turn_requests() == [request]
 
 
 @pytest.mark.anyio

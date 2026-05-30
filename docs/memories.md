@@ -2,6 +2,11 @@
 
 Short log of important design decisions and changes for Newbro.
 
+## 2026-05-30
+
+- Changed Bro Detail plan proposal confirmation so selecting a Codex-provided option replies with that option label as both executor answer and visible user text; `Implement it` is now an explicit synthetic option only for final Codex plan artifacts.
+- Changed no-active-run Bro Detail direct text and push-to-talk to store `OutboundTurnRequest` and dispatch executor-node `start_codex_turn` without creating/updating a task or scheduling Execution Brain work; idle push-to-talk still transcribes through the executor node first.
+
 ## 2026-05-29
 
 - Changed UI-issued executor-node connect commands to default to a one-line install/update-and-connect flow backed by `scripts/install-newbro-cli.sh`, while keeping run-only `newbro executor run ...` commands available for already-installed machines.
@@ -11,6 +16,7 @@ Short log of important design decisions and changes for Newbro.
 - Changed Bro Detail plan proposal handling so resolved approved/denied proposal requests are acknowledgements only; active execution/refinement appears through the task/run timeline or a new pending request.
 - Changed imported Codex native-history projection so structured final `plan` items mark the timeline turn and paired user message with `metadata.plan_mode=true`, including split user-only then plan-bearing native turns.
 - Changed Bro Detail plan proposal approval so `Implement it` creates a user-visible approval turn keyed by `client_request_id` while executor follow-up still receives the full approved plan context.
+- Changed detached executor-node connection handling so active sessions get a post-ack imported Codex thread refresh after the cheap connectivity snapshot, allowing Bro Detail to show native threads without a browser refresh.
 
 ## 2026-04-04
 
@@ -195,7 +201,7 @@ Short log of important design decisions and changes for Newbro.
 - Changed Bro Detail live ASR accumulation to a strict time-structured model: `payload.time` identifies the sentence segment, `text_ts` orders text parts inside that segment, and untimed payloads are ignored.
 - Changed Bro Detail strict ASR accumulation so each `payload.time` sentence segment keeps only its latest `text_ts` candidate before sentence segments are joined by start time.
 - Aligned Bro Detail STT parsing with Shengwang's current protobuf transcript contract, using `original_transcript` for translated payloads, treating `isFinal` as stable text rather than voice-turn completion, accepting provisional untimed candidates with `textTs`, and defaulting STT recognition to `["zh-CN"]`.
-- Changed draft Send so runtime Bro assignment is tracked through persona metadata and `Persona.current_task_id`, while executor routing continues to use the runtime executor type.
+- Changed draft Send so runtime Bro assignment is tracked through task persona metadata, while executor routing continues to use the runtime executor type.
 - Added per-Bro-detail generation ids so draft tasks from the same Bro and executor binding reuse one execution session, while rebinding the Bro rotates the generation and hides old-generation tasks from Bro Detail recent tasks.
 - Changed Draft Brain rewriting to use the LLM-backed Draft Cleaner prompt and fail when no LLM draft rewriter is configured, removing deterministic draft generation from the active runtime path.
 - Changed Draft Cleaner output to plain sendable task text, with websocket `submit_asr_turn` streaming transient `draft_output_*` events while durable snapshots keep the existing `DraftSession` shape.
@@ -274,6 +280,9 @@ Short log of important design decisions and changes for Newbro.
 - Changed Bro Detail selected Codex thread history reads to use `thread/read` metadata plus bounded `thread/turns/list` pages instead of full `thread/read includeTurns` payloads.
 - Changed the detached Codex executor node to reuse one long-lived Codex app-server process for thread list/read/start/resume and selected-thread event routing; subscriptions are local event interests instead of separate app-server processes.
 - Changed Bro Detail selected-thread plan projection so live structured Codex plan items pair with the originating user turn, mark the user turn as plan mode, and render plan approval before result cards.
+- Added Codex workspace selection for new Bro Detail threads: `BroThread` now projects workspace id/name, desktop/mobile ask for a known workspace before creating a Codex thread, and direct text/PTT creation rejects missing or unknown workspaces.
+- Changed Codex `requestUserInput` handling to preserve all questions in `details.proposal.questions`; Bro Detail answers multi-question prompts atomically with structured `answers`, and native Codex callbacks receive every submitted question answer.
+- Removed `Persona.current_task_id` from the active protocol; persona status is display state, and Bro task/thread ownership is derived from task metadata plus execution-session/thread state.
 
 ## 2026-05-28
 

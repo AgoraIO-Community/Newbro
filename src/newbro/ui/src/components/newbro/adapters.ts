@@ -41,14 +41,13 @@ function buildLiveState(
 }
 
 function buildBusyDetails(
-  persona: RuntimePersonaInput,
+  _persona: RuntimePersonaInput,
   liveState: BroCardModel["liveState"],
   nodeName: string | null,
 ) {
-  const taskHandle = persona.current_task_id ? persona.current_task_id.slice(0, 8) : "current queue";
   const nodeLabel = nodeName ?? "an unbound route";
   return [
-    `Tracking live runtime work for ${taskHandle}.`,
+    "Tracking live runtime work.",
     "Preparing the next handoff and status update.",
     liveState === "live"
       ? `Bound to ${nodeLabel} and ready for local execution.`
@@ -128,6 +127,11 @@ function taskBelongsToBro(task: Task, broId: string, activeTaskId?: string | nul
     || task.metadata.persona_id === broId
     || task.metadata.assigned_bro_id === broId
   );
+}
+
+function latestTaskForBro(tasks: Task[] | undefined | null, broId: string): Task | null {
+  const matches = (tasks ?? []).filter((task) => taskBelongsToBro(task, broId));
+  return matches.length > 0 ? matches[matches.length - 1] : null;
 }
 
 function taskRecordSummary(
@@ -260,6 +264,8 @@ export function buildBroThreadRecords(
       activeTaskId: thread.active_task_id,
       latestTaskId: thread.latest_task_id,
       hasResumeHandle: thread.has_resume_handle,
+      workspaceId: thread.workspace_id ?? null,
+      workspaceName: thread.workspace_name ?? null,
       timelineStatus: thread.timeline_status ?? "not_loaded",
       timelineError: thread.timeline_error ?? null,
       timeLabel: threadTimeLabel(thread),
@@ -412,22 +418,21 @@ export function buildBroCardModels(
   if (personas.length === 0) {
     return [];
   }
-  const taskByTaskId = new Map((tasks ?? []).map((task) => [task.task_id, task]));
   const nodesById = new Map((executorNodes ?? []).map((node) => [node.node_id, node]));
   const runsByTaskId = latestRunsByTaskId(executionRuns);
   const summaryByTaskId = new Map((summaries ?? []).map((s) => [s.task_id, s]));
 
   return personas.map((persona) => {
-    const busy = persona.status === "busy" || persona.current_task_id !== null;
+    const busy = persona.status === "busy";
     const node = persona.executor_node_id ? nodesById.get(persona.executor_node_id) : undefined;
     const nodeName = node?.name ?? null;
     const executorType = node ? labelExecutorType(node.enabled_executors) : null;
     const liveState = buildLiveState(persona, nodesById);
 
     // Pull real execution data when available
-    const activeTask = persona.current_task_id ? (taskByTaskId.get(persona.current_task_id) ?? null) : null;
-    const activeRun = persona.current_task_id ? runsByTaskId.get(persona.current_task_id) : null;
-    const activeSummary = persona.current_task_id ? summaryByTaskId.get(persona.current_task_id) : null;
+    const activeTask = latestTaskForBro(tasks, persona.persona_id);
+    const activeRun = activeTask ? runsByTaskId.get(activeTask.task_id) : null;
+    const activeSummary = activeTask ? summaryByTaskId.get(activeTask.task_id) : null;
 
     const progressDetailsFromData = progressDetailsFromRuntime(activeTask, activeRun ?? null, activeSummary ?? null);
     const runStatus = activeRun?.status ?? null;
