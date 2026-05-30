@@ -1081,3 +1081,90 @@ async def test_executor_text_instruction_rejects_queued_direct_task_without_exec
     assert task.latest_instruction == "first text"
     assert "suppress_communication_notifications" not in task.metadata
     assert await runtime_session.blackboard.list_outbound_turn_requests() == []
+
+
+@pytest.mark.anyio
+async def test_sync_imported_codex_threads_skips_ephemeral_entries(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-ephemeral-skip")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        manager = app.state.runtime_container.executor_node_manager
+        manager._connections_by_node["node-forge"] = NodeConnectionState(
+            websocket=websocket,
+            node_id="node-forge",
+            connected_at="2026-05-30T00:00:00+00:00",
+            executors={
+                "codex": ExecutorNodeExecutor(
+                    executor_type="codex",
+                    supports_resume=True,
+                    supports_follow_up=True,
+                    supports_audio_instruction=True,
+                    supports_thread_list=True,
+                )
+            },
+        )
+        await runtime_session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id="node-forge",
+                bro_detail_session_id="detail-forge",
+                status="idle",
+            )
+        )
+
+        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+            assert node_id == "node-forge"
+            return [
+                CodexThreadListItem(
+                    thread_id="codex-real",
+                    session_id="codex-real",
+                    preview="Real project work",
+                    status="notLoaded",
+                    cwd="/Users/zhangqianze/Documents/Synopse",
+                    created_at=1779850000,
+                    updated_at=1779850100,
+                    cli_version="0.133.0",
+                    source="vscode",
+                    diagnostics={"ephemeral": False},
+                ),
+                CodexThreadListItem(
+                    thread_id="codex-scratch",
+                    session_id="codex-scratch",
+                    preview="Scratch turn",
+                    status="notLoaded",
+                    cwd="/Users/zhangqianze/.codex/scratch/abc",
+                    created_at=1779850200,
+                    updated_at=1779850300,
+                    cli_version="0.133.0",
+                    source="cli",
+                    diagnostics={"ephemeral": True},
+                ),
+            ]
+
+        monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
+
+        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
+        imported = [
+            thread
+            for thread in snapshot["bro_threads"]
+            if thread.get("diagnostics", {}).get("imported_from_codex_thread_list") is True
+        ]
+        assert len(imported) == 1, imported
+        assert imported[0]["workspace_id"] == "/Users/zhangqianze/Documents/Synopse"
+        assert imported[0]["diagnostics"].get("ephemeral") is False
+
+        workspaces = await runtime_session._known_codex_workspaces_for_persona(
+            await runtime_session.blackboard.get_persona("forge")
+        )
+        assert "/Users/zhangqianze/Documents/Synopse" in workspaces
+        assert "/Users/zhangqianze/.codex/scratch/abc" not in workspaces

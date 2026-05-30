@@ -15,10 +15,12 @@ from .enums import (
 
 class InteractionRequest(BaseModel):
     request_id: str
-    task_id: str
+    task_id: str | None = None
+    outbound_turn_request_id: str | None = None
     execution_session_id: str | None = None
     run_id: str | None = None
     executor_type: str | None = None
+    executor_node_id: str | None = None
     kind: InteractionRequestKind
     status: InteractionRequestStatus = InteractionRequestStatus.PENDING
     prompt: str

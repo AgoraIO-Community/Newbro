@@ -864,12 +864,10 @@ class ExecutorNodeService:
         self,
         command: SupplyInteractionResponseCommand,
     ) -> None:
-        if not isinstance(command.execution_session_id, str) or not command.execution_session_id:
-            return
-        session = self._live_sessions.get(command.execution_session_id)
-        if not isinstance(session, CodexExecutorSession):
-            return
         if not isinstance(command.native_response, dict):
+            return
+        session = self._resolve_interaction_target_session(command)
+        if session is None:
             return
         try:
             await session.client.respond_to_request(
@@ -883,13 +881,31 @@ class ExecutorNodeService:
         except Exception as exc:
             LOGGER.warning(
                 "Failed to forward interaction response to executor node session "
-                "execution_session_id=%s interaction_request_id=%s: %s",
+                "execution_session_id=%s outbound_turn_request_id=%s interaction_request_id=%s: %s",
                 command.execution_session_id,
+                command.outbound_turn_request_id,
                 command.interaction_request_id,
                 exc,
             )
             return
         session.mark_blocked_resolved()
+
+    def _resolve_interaction_target_session(
+        self,
+        command: SupplyInteractionResponseCommand,
+    ) -> CodexExecutorSession | None:
+        if isinstance(command.execution_session_id, str) and command.execution_session_id:
+            candidate = self._live_sessions.get(command.execution_session_id)
+            if isinstance(candidate, CodexExecutorSession):
+                return candidate
+        if isinstance(command.outbound_turn_request_id, str) and command.outbound_turn_request_id:
+            executor = self._executors.get("codex")
+            active_runs = getattr(executor, "_active_runs", None)
+            if isinstance(active_runs, dict):
+                candidate = active_runs.get(command.outbound_turn_request_id)
+                if isinstance(candidate, CodexExecutorSession):
+                    return candidate
+        return None
 
     async def _send_audio_instruction_event(
         self,

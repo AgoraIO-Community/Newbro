@@ -781,6 +781,11 @@ def _write_plan_fake_codex(tmp_path):
                     send({{"id": request_id, "result": {{"account": {{"type": "apiKey"}}, "requiresOpenaiAuth": True}}}})
                 elif method == "thread/start":
                     send({{"id": request_id, "result": {{"thread": {{"id": "thread-1"}}}}}})
+                elif method == "collaborationMode/list":
+                    send({{"id": request_id, "result": {{"data": [
+                        {{"name": "Plan", "mode": "plan", "model": "gpt-5.1-codex", "reasoning_effort": "medium"}},
+                        {{"name": "Default", "mode": "default", "model": "gpt-5.1-codex", "reasoning_effort": "medium"}},
+                    ]}}}})
                 elif method == "turn/start":
                     send({{"id": request_id, "result": {{"turn": {{"id": "turn-1", "status": "inProgress"}}}}}})
                     send({{"method": "turn/plan/updated", "params": {{"turnId": "turn-1", "threadId": "thread-1", "explanation": "Implementation plan", "plan": [{{"step": "Read files", "status": "completed"}}, {{"step": "Patch projection", "status": "inProgress"}}]}}}})
@@ -956,6 +961,9 @@ async def test_codex_executor_starts_turn_request_without_task_run_or_execution_
     assert events[-1].metadata["executor_thread_id"] == "thread-1"
     assert events[-1].metadata["executor_turn_id"] == "turn-1"
     assert events[-1].metadata["source_audio_instruction_id"] == "aud-1"
+    # Once the turn completes, the outbound session must not stay registered in
+    # _active_runs so a follow-up turn with the same request_id starts cleanly.
+    assert "out-turn-1" not in executor._active_runs
     await executor._close_app_session()
 
 
@@ -1153,6 +1161,92 @@ async def test_codex_client_does_not_silently_drop_requested_collaboration_mode(
         )
 
     assert peer.requests == []
+
+
+class _CollaborationModeListPeer:
+    def __init__(self, *, plan_model: str | None = "gpt-plan-special", plan_effort: str | None = "high") -> None:
+        self.requests: list[tuple[str, dict[str, object]]] = []
+        self._plan_model = plan_model
+        self._plan_effort = plan_effort
+
+    async def request(self, method: str, params: dict[str, object]) -> dict[str, object]:
+        self.requests.append((method, params))
+        if method == "collaborationMode/list":
+            return {
+                "data": [
+                    {
+                        "name": "Plan",
+                        "mode": "plan",
+                        "model": self._plan_model,
+                        "reasoning_effort": self._plan_effort,
+                    },
+                    {
+                        "name": "Default",
+                        "mode": "default",
+                        "model": None,
+                        "reasoning_effort": None,
+                    },
+                ]
+            }
+        return {}
+
+
+@pytest.mark.anyio
+async def test_collaboration_kwargs_for_turn_resolves_plan_model_when_thread_model_already_captured(tmp_path):
+    from pathlib import Path
+
+    from newbro.executors.adapters.codex.executor import _collaboration_kwargs_for_turn
+    from newbro.executors.adapters.codex.session import CodexExecutorSession
+
+    peer = _CollaborationModeListPeer()
+    client = CodexAppServerClient(peer)  # type: ignore[arg-type]
+    session = CodexExecutorSession(
+        session_id="codex-session-test",
+        executor_type="codex",
+        metadata={
+            "codex_model": "gpt-default-thread",
+            "codex_reasoning_effort": "low",
+        },
+    )
+    session.attach_shared(client=client, cwd=Path(tmp_path))
+
+    kwargs = await _collaboration_kwargs_for_turn(session, plan_mode=True)
+
+    assert kwargs == {
+        "collaboration_mode": "plan",
+        "model": "gpt-plan-special",
+        "reasoning_effort": "high",
+    }
+    assert any(method == "collaborationMode/list" for method, _ in peer.requests)
+
+
+@pytest.mark.anyio
+async def test_collaboration_kwargs_for_turn_falls_back_to_session_model_when_plan_preset_model_null(tmp_path):
+    from pathlib import Path
+
+    from newbro.executors.adapters.codex.executor import _collaboration_kwargs_for_turn
+    from newbro.executors.adapters.codex.session import CodexExecutorSession
+
+    peer = _CollaborationModeListPeer(plan_model=None, plan_effort="medium")
+    client = CodexAppServerClient(peer)  # type: ignore[arg-type]
+    session = CodexExecutorSession(
+        session_id="codex-session-chatgpt",
+        executor_type="codex",
+        metadata={
+            "codex_model": "gpt-5.5",
+            "codex_reasoning_effort": "high",
+        },
+    )
+    session.attach_shared(client=client, cwd=Path(tmp_path))
+
+    kwargs = await _collaboration_kwargs_for_turn(session, plan_mode=True)
+
+    assert kwargs == {
+        "collaboration_mode": "plan",
+        "model": "gpt-5.5",
+        "reasoning_effort": "medium",
+    }
+    assert any(method == "collaborationMode/list" for method, _ in peer.requests)
 
 
 def test_codex_user_input_request_becomes_plan_proposal():
@@ -1556,7 +1650,6 @@ async def test_codex_executor_blocks_for_approval_after_plan_mode_final_plan(tmp
             {
                 "id": "approved_codex_plan",
                 "label": "Run proposed plan",
-                "description": "Final plan text.",
                 "letter": "A",
             }
         ],

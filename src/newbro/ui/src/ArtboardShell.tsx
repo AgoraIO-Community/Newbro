@@ -509,7 +509,7 @@ function TaskRecordCard({ bro, record, mobile = false }: { bro: BroCardModel; re
   const barClass = mobile ? "thr-status-bar" : "dt-status-bar";
   const footClass = mobile ? "thr-status-foot" : "dt-status-foot";
   const metaClass = mobile ? "thr-meta" : "dt-bubble-meta";
-  const bodyText = record.summary || record.description || bro.progressLabel;
+  const bodyText = record.summary || record.description;
   const fullTitle = record.title.trim();
   const title = shortenTaskRecordTitle(fullTitle);
   return (
@@ -670,25 +670,18 @@ function PlanProposalCard({
   const { summary, options, questions } = planProposalDetails(request);
   const multiQuestions = questions.length > 1 ? questions : [];
   const selectedFromRequest = typeof request.details?.selected_option_id === "string" ? request.details.selected_option_id : null;
-  const hasImplementOption = options.some((option) => option.label === PLAN_APPROVAL_VISIBLE_TEXT);
   const proposal = request.details?.proposal;
   const isFinalCodexPlan = Boolean(proposal && typeof proposal === "object" && !Array.isArray(proposal) && "codex_plan" in proposal);
-  const approvalOptions = request.available_actions.includes("approve") && isFinalCodexPlan && multiQuestions.length === 0 && !hasImplementOption
-    ? [
-        ...options,
-        {
-          id: "__implement_it__",
-          label: PLAN_APPROVAL_VISIBLE_TEXT,
-          description: "",
-          letter: String.fromCharCode(65 + options.length),
-        },
-      ]
-    : options;
+  const isSingleOptionFinalApprove = isFinalCodexPlan
+    && multiQuestions.length === 0
+    && options.length === 1
+    && request.available_actions.includes("approve");
   const [selectedId, setSelectedId] = useState<string | null>(selectedFromRequest);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(multiQuestions[0]?.questionId ?? null);
   const [resolving, setResolving] = useState(false);
-  const selected = approvalOptions.find((option) => option.id === selectedId) ?? null;
+  const selected = options.find((option) => option.id === selectedId) ?? null;
+  const effectiveSelected = isSingleOptionFinalApprove ? options[0] : selected;
   const activeQuestion = multiQuestions.find((question) => question.questionId === activeQuestionId) ?? multiQuestions[0] ?? null;
   const allQuestionsAnswered = multiQuestions.length > 0
     && multiQuestions.every((question) => Boolean(selectedAnswers[question.questionId]));
@@ -711,11 +704,13 @@ function PlanProposalCard({
   async function resolve(action: "approve" | "deny") {
     if (!pending || resolving) return;
     if (action === "approve" && multiQuestions.length > 0 && !allQuestionsAnswered) return;
-    if (action === "approve" && multiQuestions.length === 0 && !selected) return;
+    if (action === "approve" && !isSingleOptionFinalApprove && multiQuestions.length === 0 && !selected) return;
     const answerText = action === "approve"
-      ? (multiQuestions.length > 0 ? compactAnswersSummary() : optionAnswerText(selected) ?? PLAN_APPROVAL_VISIBLE_TEXT)
+      ? (multiQuestions.length > 0 ? compactAnswersSummary() : optionAnswerText(effectiveSelected) ?? PLAN_APPROVAL_VISIBLE_TEXT)
       : "Keep planning. Refine the proposal instead of acting yet.";
-    const visibleText = action === "approve" ? answerText : null;
+    const visibleText = action === "approve"
+      ? (isSingleOptionFinalApprove ? PLAN_APPROVAL_VISIBLE_TEXT : answerText)
+      : null;
     const optimisticBroId = broId ?? interactionRequestDetailText(request, "persona_id");
     const optimisticThreadId = threadId ?? interactionRequestDetailText(request, "target_thread_id");
     const clientRequestId = action === "approve"
@@ -742,7 +737,7 @@ function PlanProposalCard({
             multiQuestions.map((question) => [question.questionId, [selectedAnswers[question.questionId]]]),
           ),
         } : {}),
-        ...(multiQuestions.length === 0 && selected?.id && selected.id !== "__implement_it__" ? { option_id: selected.id } : {}),
+        ...(multiQuestions.length === 0 && effectiveSelected?.id ? { option_id: effectiveSelected.id } : {}),
         ...(clientRequestId ? {
           client_request_id: clientRequestId,
           user_visible_text: visibleText ?? PLAN_APPROVAL_VISIBLE_TEXT,
@@ -786,7 +781,9 @@ function PlanProposalCard({
           </span>
           <span className={mobile ? "plan-prop-title" : "dt-planprop-title"}>Proposed plans</span>
           <span className={mobile ? "plan-prop-tag" : "dt-planprop-tag"}>
-            {approvalOptions.length > 0 ? `${approvalOptions.length} OPTIONS` : "REVIEW"}
+            {isSingleOptionFinalApprove
+              ? "REVIEW"
+              : options.length > 0 ? `${options.length} OPTIONS` : "REVIEW"}
           </span>
         </div>
         <p className={mobile ? "plan-prop-summary" : "dt-planprop-summary"}>{summary}</p>
@@ -838,9 +835,9 @@ function PlanProposalCard({
               })}
             </div>
           </>
-        ) : approvalOptions.length > 0 ? (
+        ) : isSingleOptionFinalApprove ? null : options.length > 0 ? (
           <div className={mobile ? "plan-opts" : "dt-planopts"} role="radiogroup" aria-label="Plan options">
-            {approvalOptions.map((option) => {
+            {options.map((option) => {
               const on = option.id === selectedId;
               return (
                 <button
@@ -870,10 +867,16 @@ function PlanProposalCard({
             type="button"
             className={mobile ? "plan-prop-approve" : "dt-planprop-approve"}
             onClick={() => { void resolve("approve"); }}
-            disabled={resolving || (multiQuestions.length > 0 ? !allQuestionsAnswered : !selected)}
+            disabled={
+              resolving
+              || (
+                !isSingleOptionFinalApprove
+                && (multiQuestions.length > 0 ? !allQuestionsAnswered : !selected)
+              )
+            }
           >
             <Check size={14} strokeWidth={2.4} aria-hidden="true" />
-            Confirm
+            {isSingleOptionFinalApprove ? PLAN_APPROVAL_VISIBLE_TEXT : "Confirm"}
           </button>
           <button
             type="button"
@@ -886,7 +889,7 @@ function PlanProposalCard({
         </div>
       </div>
       <div className={mobile ? "thr-meta" : "dt-bubble-meta"}>
-        Pick a plan · awaiting your approval
+        {isSingleOptionFinalApprove ? "Awaiting your approval" : "Pick a plan · awaiting your approval"}
       </div>
     </div>
   );
@@ -1102,6 +1105,7 @@ function TimelineTurnView({
   return (
     <>
       <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
+      {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
       {proposalRequests.map((request) => (
         <PlanProposalCard
           key={request.request_id}
@@ -1112,7 +1116,6 @@ function TimelineTurnView({
           onTextTurn={onTextTurn}
         />
       ))}
-      {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
     </>
   );
 }

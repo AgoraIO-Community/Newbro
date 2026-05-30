@@ -323,6 +323,7 @@ class SupplyInteractionResponseCommand(BaseModel):
     interaction_request_id: str
     execution_session_id: str | None = None
     run_id: str | None = None
+    outbound_turn_request_id: str | None = None
     action: Literal["approve", "deny", "answer", "confirm", "cancel"]
     answer_text: str | None = None
     answers: dict[str, list[str]] | None = None

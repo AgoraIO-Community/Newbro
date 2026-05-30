@@ -258,6 +258,300 @@ async def test_codex_turn_event_projects_without_task():
 
 
 @pytest.mark.anyio
+async def test_codex_blocked_event_for_outbound_turn_creates_interaction_request():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-plan-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        client_request_id="client-plan-1",
+        text="Plan a refactor",
+        plan_mode=True,
+        status="accepted",
+        created_at="2026-05-30T08:00:00+00:00",
+    )
+    await session.blackboard.put_outbound_turn_request(request)
+
+    proposal = {
+        "question_id": "approach",
+        "summary": "Pick an approach",
+        "options": [
+            {"id": "minimal", "label": "Minimal", "description": "Smallest change", "letter": "A"},
+            {"id": "full", "label": "Full", "description": "Complete refactor", "letter": "B"},
+        ],
+        "questions": [
+            {
+                "question_id": "approach",
+                "header": "Approach",
+                "summary": "Pick an approach",
+                "options": [
+                    {"id": "minimal", "label": "Minimal", "description": "Smallest change", "letter": "A"},
+                    {"id": "full", "label": "Full", "description": "Complete refactor", "letter": "B"},
+                ],
+            }
+        ],
+    }
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-plan-1",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-1",
+            event_type="blocked",
+            message="Pick an approach",
+            executor_thread_id="native-thread-1",
+            executor_turn_id="turn-1",
+            metadata={
+                "thread_id": "native-thread-1",
+                "prompt": "Pick an approach",
+                "interaction_kind": "plan_proposal",
+                "blocked_method": "item/tool/requestUserInput",
+                "proposal": proposal,
+                "native_response": {
+                    "request_id": 42,
+                    "method": "item/tool/requestUserInput",
+                    "params": {
+                        "threadId": "native-thread-1",
+                        "turnId": "turn-1",
+                        "questions": [{"id": "approach", "options": [
+                            {"id": "minimal", "label": "Minimal"},
+                            {"id": "full", "label": "Full"},
+                        ]}],
+                    },
+                },
+            },
+        )
+    )
+
+    interaction_requests = await session.blackboard.list_interaction_requests()
+    assert len(interaction_requests) == 1
+    req = interaction_requests[0]
+    assert req.outbound_turn_request_id == "out-turn-plan-1"
+    assert req.task_id is None
+    assert req.run_id is None
+    assert req.executor_node_id == "node-forge"
+    assert req.kind == InteractionRequestKind.PLAN_PROPOSAL
+    assert req.prompt == "Pick an approach"
+    assert req.status == InteractionRequestStatus.PENDING
+    assert req.resume_strategy == "native_response"
+    assert req.details["proposal"]["options"][0]["id"] == "minimal"
+    assert req.opaque["native_response"]["method"] == "item/tool/requestUserInput"
+    assert req.opaque["native_response"]["request_id"] == 42
+
+    # Duplicate BLOCKED events for the same outbound request should not produce
+    # a second pending interaction request.
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-plan-1",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-1",
+            event_type="blocked",
+            message="Pick an approach",
+            executor_thread_id="native-thread-1",
+            executor_turn_id="turn-1",
+            metadata={
+                "thread_id": "native-thread-1",
+                "prompt": "Pick an approach",
+                "interaction_kind": "plan_proposal",
+                "blocked_method": "item/tool/requestUserInput",
+                "proposal": proposal,
+                "native_response": {
+                    "request_id": 42,
+                    "method": "item/tool/requestUserInput",
+                    "params": {"threadId": "native-thread-1"},
+                },
+            },
+        )
+    )
+    interaction_requests = await session.blackboard.list_interaction_requests()
+    pending = [r for r in interaction_requests if r.status == InteractionRequestStatus.PENDING]
+    assert len(pending) == 1
+
+
+@pytest.mark.anyio
+async def test_codex_blocked_final_plan_creates_interaction_request_without_native_response():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_outbound_turn_request(
+        OutboundTurnRequest(
+            request_id="out-turn-final-plan",
+            persona_id="forge",
+            executor_node_id="node-forge",
+            target_thread_id="thread-1",
+            text="Plan a refactor",
+            plan_mode=True,
+            status="accepted",
+        )
+    )
+
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-final-plan",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-1",
+            event_type="blocked",
+            message="Review the proposed plan before execution.",
+            metadata={
+                "thread_id": "native-thread-1",
+                "prompt": "Review the proposed plan before execution.",
+                "interaction_kind": "plan_proposal",
+                "blocked_method": "item/completed:plan",
+                "proposal": {
+                    "summary": "Review the proposed plan before execution.",
+                    "options": [
+                        {"id": "approved_codex_plan", "label": "Run proposed plan", "letter": "A"},
+                    ],
+                    "codex_plan": {"text": "Final plan.", "steps": []},
+                },
+            },
+        )
+    )
+
+    requests = await session.blackboard.list_interaction_requests()
+    assert len(requests) == 1
+    req = requests[0]
+    assert req.outbound_turn_request_id == "out-turn-final-plan"
+    assert req.kind == InteractionRequestKind.PLAN_PROPOSAL
+    assert req.resume_strategy == "follow_up_run"
+    assert req.opaque == {}
+
+
+@pytest.mark.anyio
+async def test_resolving_outbound_plan_proposal_approve_spawns_follow_up_turn(monkeypatch: pytest.MonkeyPatch):
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_persona(
+        Persona(
+            persona_id="forge",
+            name="Forge",
+            avatar="bro",
+            base_prompt="",
+            executor_node_id="node-forge",
+            bro_detail_session_id="detail-forge",
+        )
+    )
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-placeholder",
+            root_task_id="task-placeholder",
+            title="Done",
+            goal="Done",
+            status=TaskStatus.COMPLETED,
+            preferred_executor="codex",
+            metadata={"persona_id": "forge"},
+        )
+    )
+    await session.blackboard.put_session(
+        RuntimeExecutionSession(
+            execution_session_id="exec-1",
+            task_id="task-placeholder",
+            base_executor_id="codex",
+            executor_node_id="node-forge",
+            continuity_key="thread-1",
+            latest_resume_handle=AgentResumeHandle(
+                executor_id="codex",
+                session_handle="codex-thread-1",
+            ),
+        )
+    )
+    await session.blackboard.put_outbound_turn_request(
+        OutboundTurnRequest(
+            request_id="out-turn-final-plan",
+            persona_id="forge",
+            executor_node_id="node-forge",
+            target_thread_id="exec-1",
+            text="Plan a refactor",
+            plan_mode=True,
+            status="accepted",
+        )
+    )
+
+    # Surface the plan proposal as an InteractionRequest.
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-final-plan",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="exec-1",
+            event_type="blocked",
+            message="Review the proposed plan before execution.",
+            metadata={
+                "thread_id": "native-thread-1",
+                "prompt": "Review the proposed plan before execution.",
+                "interaction_kind": "plan_proposal",
+                "blocked_method": "item/completed:plan",
+                "proposal": {
+                    "summary": "Review the proposed plan before execution.",
+                    "options": [
+                        {"id": "approved_codex_plan", "label": "Run proposed plan", "letter": "A"},
+                    ],
+                    "codex_plan": {"text": "Final plan.", "steps": []},
+                },
+            },
+        )
+    )
+    pending = await session.blackboard.list_interaction_requests()
+    assert len(pending) == 1
+    interaction_request_id = pending[0].request_id
+
+    sent: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        session.executor_node_manager,
+        "is_executor_connected",
+        lambda executor_type, *, node_id=None: executor_type == "codex" and node_id == "node-forge",
+    )
+    monkeypatch.setattr(
+        session.executor_node_manager,
+        "executor_supports_follow_up",
+        lambda executor_type, *, node_id: executor_type == "codex" and node_id == "node-forge",
+    )
+
+    async def fake_start_codex_turn(**kwargs):
+        sent.append(kwargs)
+        return True
+
+    monkeypatch.setattr(session.executor_node_manager, "start_codex_turn", fake_start_codex_turn)
+
+    affected = await session.resolve_interaction_request(
+        interaction_request_id,
+        action="approve",
+        option_id="approved_codex_plan",
+        client_request_id="client-approve-1",
+        user_visible_text="Run it",
+    )
+
+    assert affected == []
+    outbound_requests = await session.blackboard.list_outbound_turn_requests()
+    follow_up = [r for r in outbound_requests if r.request_id != "out-turn-final-plan"]
+    assert len(follow_up) == 1
+    assert follow_up[0].plan_mode is False
+    assert follow_up[0].client_request_id == "client-approve-1"
+    assert follow_up[0].target_thread_id == "exec-1"
+    assert follow_up[0].text == "Run it"
+    assert sent and sent[0]["target_thread_id"] == "exec-1"
+
+
+@pytest.mark.anyio
 async def test_codex_turn_event_keeps_stable_turn_when_executor_turn_id_arrives_late():
     session = create_session_runtime(
         "session-1",
@@ -2251,7 +2545,6 @@ async def test_session_runtime_plan_proposal_approval_requeues_execution_mode_an
                         {
                             "id": "approved_codex_plan",
                             "label": "Run proposed plan",
-                            "description": "Final plan text.",
                         }
                     ],
                 }

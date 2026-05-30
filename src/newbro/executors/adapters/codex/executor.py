@@ -440,6 +440,7 @@ class CodexExecutor:
             if command.create_new_thread and not command.workspace_id:
                 raise RuntimeError("Codex new-thread turn request requires workspace_id.")
             session = await self.create_session(command.workspace_id)
+            self._active_runs[command.request_id] = session
             async with session.turn_lock:
                 thread_id = await self._thread_for_turn_request(session, command)
                 text = command.instruction.text.strip()
@@ -498,6 +499,7 @@ class CodexExecutor:
                 metadata={"stderr": session.stderr_text() if session is not None else ""},
             )
         finally:
+            self._active_runs.pop(command.request_id, None)
             if session is not None:
                 await session.close()
 
@@ -1105,14 +1107,12 @@ def _codex_plan_message(plan: dict[str, object]) -> str | None:
 
 
 def _proposal_from_codex_plan(plan: dict[str, object]) -> dict[str, object]:
-    message = _codex_plan_message(plan) or "Review the proposed plan."
     return {
         "summary": "Review the proposed plan before execution.",
         "options": [
             {
                 "id": "approved_codex_plan",
                 "label": "Run proposed plan",
-                "description": message,
                 "letter": "A",
             }
         ],
@@ -1161,21 +1161,34 @@ async def _collaboration_kwargs_for_turn(
     plan_mode: bool,
 ) -> dict[str, object]:
     mode = _collaboration_mode_for_plan_flag(plan_mode)
+    if plan_mode:
+        # Prefer a plan-specific override from collaborationMode/list when present,
+        # capturing it on demand. ChatGPT-account presets return model=null, which
+        # means "use the session's effective model" (sourced from thread/start).
+        model = _session_collaboration_model(session, mode)
+        reasoning_effort = _session_collaboration_reasoning_effort(session, mode)
+        if model is None:
+            await _capture_collaboration_mode_settings(session)
+            model = _session_collaboration_model(session, mode)
+            reasoning_effort = _session_collaboration_reasoning_effort(session, mode)
+        if model is None:
+            model = _session_codex_model(session)
+        if reasoning_effort is None:
+            reasoning_effort = _session_codex_reasoning_effort(session)
+        if model is None:
+            raise RuntimeError("Codex plan mode is unavailable: collaboration mode settings have no model.")
+        return {
+            "collaboration_mode": mode,
+            "model": model,
+            "reasoning_effort": reasoning_effort,
+        }
+
     model = _session_collaboration_model(session, mode) or _session_codex_model(session)
     reasoning_effort = (
         _session_collaboration_reasoning_effort(session, mode)
         or _session_codex_reasoning_effort(session)
     )
-    if model is None and plan_mode:
-        await _capture_collaboration_mode_settings(session)
-        model = _session_collaboration_model(session, mode) or _session_codex_model(session)
-        reasoning_effort = (
-            _session_collaboration_reasoning_effort(session, mode)
-            or _session_codex_reasoning_effort(session)
-        )
     if model is None:
-        if plan_mode:
-            raise RuntimeError("Codex plan mode is unavailable: collaboration mode settings have no model.")
         return {}
     return {
         "collaboration_mode": mode,

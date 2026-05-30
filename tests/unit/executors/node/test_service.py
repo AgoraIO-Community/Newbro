@@ -357,6 +357,40 @@ async def test_supply_interaction_response_logs_failures(monkeypatch: pytest.Mon
 
 
 @pytest.mark.anyio
+async def test_supply_interaction_response_routes_outbound_turn_to_codex_executor(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    session = CodexExecutorSession(session_id="codex-outbound-session", executor_type="codex")
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        async def respond_to_request(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    session._client = FakeClient()
+    codex_executor = service._executors["codex"]
+    codex_executor._active_runs = {"out-turn-1": session}
+
+    command = SupplyInteractionResponseCommand(
+        interaction_request_id="ireq-outbound",
+        outbound_turn_request_id="out-turn-1",
+        action="approve",
+        native_response={
+            "request_id": "req-out",
+            "method": "item/tool/requestUserInput",
+            "params": {"threadId": "thread-1"},
+        },
+    )
+
+    await service._supply_interaction_response(command)
+
+    assert captured["request_id"] == "req-out"
+    assert captured["method"] == "item/tool/requestUserInput"
+    assert captured["action"] == "approve"
+
+
+@pytest.mark.anyio
 async def test_dispatch_audio_instruction_forwards_to_active_executor(monkeypatch: pytest.MonkeyPatch):
     stream = io.StringIO()
     reporter = ExecutorNodeLifecycleReporter(stream=stream)

@@ -1941,7 +1941,7 @@ describe("Newbro artboard shell", () => {
     });
   });
 
-  it("replies with Implement it when the synthetic implement option is selected", async () => {
+  it("replies with Implement it when the single-option final approve button is clicked", async () => {
     const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
       proposalSummary: "Review the unique explicit implement plan before execution.",
       proposalExtras: { codex_plan: { text: "Final plan.", steps: [] } },
@@ -1952,13 +1952,18 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    fireEvent.click(await screen.findByRole("radio", { name: /Implement it/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Confirm/i }));
+    await screen.findByText("Review the unique explicit implement plan before execution.");
+    expect(screen.queryByRole("radiogroup", { name: /Plan options/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Run proposed plan/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Confirm$/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Implement it/i }));
 
     await waitFor(() => {
       expect(clientMock.resolveInteractionRequest).toHaveBeenCalledWith("session-existing", "ireq-plan", {
         action: "approve",
-        answer_text: "Implement it",
+        answer_text: "Run proposed plan",
+        option_id: "approved_codex_plan",
         client_request_id: expect.stringMatching(/^plan-approval-/),
         user_visible_text: "Implement it",
       });
@@ -2137,7 +2142,7 @@ describe("Newbro artboard shell", () => {
     expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("renders inline plan proposals before the result card for the same turn", async () => {
+  it("renders inline plan proposals after the result card for the same turn", async () => {
     const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
       proposalSummary: "Review the unique ordered inline plan before execution.",
       taskTitle: "Unique ordered plan task",
@@ -2160,8 +2165,8 @@ describe("Newbro artboard shell", () => {
     const proposalTurn = screen.getByText("Review the unique ordered inline plan before execution.").closest(".dt-turn-plan") as HTMLElement;
     const resultCard = screen.getByText("Unique ordered plan task").closest(".dt-status") as HTMLElement;
 
-    expect(userTurn.compareDocumentPosition(proposalTurn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(proposalTurn.compareDocumentPosition(resultCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(userTurn.compareDocumentPosition(resultCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(resultCard.compareDocumentPosition(proposalTurn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("enables desktop PTT audio for a connected idle Codex Bro", async () => {

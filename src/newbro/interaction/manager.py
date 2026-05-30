@@ -11,10 +11,12 @@ from newbro.protocol import (
     AttentionItemKind,
     AttentionItemStatus,
     AttentionPriority,
+    CodexTurnEventMessage,
     ExecutionRun,
     InteractionRequest,
     InteractionRequestKind,
     InteractionRequestStatus,
+    OutboundTurnRequest,
     RunStatus,
     Task,
     TaskSummary,
@@ -159,6 +161,40 @@ class InteractionManager:
         await self._store.put_attention_item(item)
         return item
 
+    async def handle_outbound_codex_blocked(
+        self,
+        *,
+        outbound_request: OutboundTurnRequest,
+        message: CodexTurnEventMessage,
+    ) -> InteractionRequest | None:
+        if message.event_type.lower() != "blocked":
+            return None
+        metadata = message.metadata or {}
+        if not metadata.get("interaction_kind"):
+            return None
+        prompt = metadata.get("prompt") or message.message
+        if not isinstance(prompt, str) or not prompt.strip():
+            return None
+        existing = await self._store.list_interaction_requests()
+        if any(
+            request.outbound_turn_request_id == outbound_request.request_id
+            and request.status == InteractionRequestStatus.PENDING
+            for request in existing
+        ):
+            return None
+        request = _build_request_from_outbound_blocked(
+            outbound_request=outbound_request,
+            message=message,
+        )
+        await self._store.put_interaction_request(request)
+        await self._store.put_attention_item(
+            _build_attention_from_outbound_request(
+                outbound_request=outbound_request,
+                request=request,
+            )
+        )
+        return request
+
     async def cancel_requests_for_task(self, task_id: str) -> None:
         requests = await self._store.list_interaction_requests()
         for request in requests:
@@ -214,6 +250,85 @@ def _build_request_from_run(
         available_actions=_actions_for_kind(kind),
         answer_schema={"type": "string"} if kind == InteractionRequestKind.QUESTION else None,
         opaque=build_interaction_request_opaque(blocked_event=run.metadata.get("blocked_event")),
+        created_at=_now_iso(),
+    )
+
+
+def _build_request_from_outbound_blocked(
+    *,
+    outbound_request: OutboundTurnRequest,
+    message: CodexTurnEventMessage,
+) -> InteractionRequest:
+    metadata = message.metadata or {}
+    prompt = str(metadata.get("prompt") or message.message or "").strip()
+    blocked_event: dict[str, object] = {
+        "thread_id": metadata.get("thread_id") or message.executor_thread_id or "",
+        "prompt": prompt,
+        "interaction_kind": metadata.get("interaction_kind"),
+        "blocked_method": metadata.get("blocked_method"),
+        "native_response": metadata.get("native_response"),
+        "proposal": metadata.get("proposal"),
+    }
+    kind = _classify_prompt(prompt, blocked_event)
+    details: dict[str, object] = {
+        "persona_id": outbound_request.persona_id,
+        "target_thread_id": outbound_request.target_thread_id,
+        "outbound_turn_request_id": outbound_request.request_id,
+    }
+    if outbound_request.client_request_id:
+        details["client_request_id"] = outbound_request.client_request_id
+    sanitized_blocked_event = sanitize_blocked_event_for_client(blocked_event)
+    if sanitized_blocked_event is not None:
+        details["blocked_event"] = sanitized_blocked_event
+    proposal = _proposal_details_from_blocked_event(blocked_event)
+    if proposal is not None:
+        details["proposal"] = proposal
+    has_native_response = isinstance(metadata.get("native_response"), dict)
+    return InteractionRequest(
+        request_id=f"ireq-{uuid4().hex[:8]}",
+        task_id=None,
+        outbound_turn_request_id=outbound_request.request_id,
+        executor_type=outbound_request.executor_id,
+        executor_node_id=outbound_request.executor_node_id,
+        kind=kind,
+        prompt=prompt,
+        details=details,
+        available_actions=_actions_for_kind(kind),
+        answer_schema={"type": "string"} if kind == InteractionRequestKind.QUESTION else None,
+        resume_strategy="native_response" if has_native_response else "follow_up_run",
+        opaque=build_interaction_request_opaque(blocked_event=blocked_event),
+        created_at=_now_iso(),
+    )
+
+
+def _build_attention_from_outbound_request(
+    *,
+    outbound_request: OutboundTurnRequest,
+    request: InteractionRequest,
+) -> AttentionItem:
+    item_kind = {
+        InteractionRequestKind.PERMISSION: AttentionItemKind.PERMISSION_REQUEST,
+        InteractionRequestKind.QUESTION: AttentionItemKind.QUESTION_REQUEST,
+        InteractionRequestKind.CONFIRMATION: AttentionItemKind.CONFIRMATION_REQUEST,
+        InteractionRequestKind.PLAN_PROPOSAL: AttentionItemKind.PLAN_PROPOSAL_REQUEST,
+    }[request.kind]
+    persona_label = outbound_request.persona_id or "Codex"
+    titles = {
+        InteractionRequestKind.PERMISSION: f"{persona_label} needs permission",
+        InteractionRequestKind.CONFIRMATION: f"{persona_label} needs confirmation",
+        InteractionRequestKind.PLAN_PROPOSAL: f"{persona_label} proposed a plan",
+        InteractionRequestKind.QUESTION: f"{persona_label} needs your input",
+    }
+    return AttentionItem(
+        attention_id=f"attention-{uuid4().hex[:8]}",
+        source="interaction_request",
+        kind=item_kind,
+        priority=AttentionPriority.P0,
+        title=titles[request.kind],
+        body=request.prompt,
+        request_id=request.request_id,
+        actions=_attention_actions_for_request(request),
+        dedupe_key=f"{item_kind.value}:outbound:{outbound_request.request_id}",
         created_at=_now_iso(),
     )
 
