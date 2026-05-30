@@ -17,6 +17,7 @@ class ExecutorTextInstructionRequest(BaseModel):
     text: str = Field(min_length=1, max_length=20_000)
     target_thread_id: str | None = Field(default=None, min_length=1)
     create_new_thread: bool = False
+    workspace_id: str | None = Field(default=None, min_length=1)
     client_request_id: str | None = Field(default=None, min_length=1, max_length=120)
     plan_mode: bool = False
 
@@ -60,6 +61,7 @@ async def submit_executor_text_instruction(
             "target_persona_id": body.target_persona_id,
             "target_thread_id": body.target_thread_id,
             "create_new_thread": body.create_new_thread,
+            "workspace_id": body.workspace_id,
             "text_length": len(text),
             "plan_mode": body.plan_mode,
         },
@@ -79,6 +81,7 @@ async def submit_executor_text_instruction(
             text=text,
             target_thread_id=body.target_thread_id,
             create_new_thread=body.create_new_thread,
+            workspace_id=body.workspace_id,
             client_request_id=body.client_request_id,
             plan_mode=body.plan_mode,
         )

@@ -32,9 +32,9 @@ They store their draft source and frozen contract fields in `metadata`, includin
 
 When a draft is sent to a configured runtime Bro, the task also records
 `persona_id`, `persona_name`, `bro_detail_session_id`, and, when present,
-`executor_node_id`. The assigned Bro is marked busy through
-`Persona.current_task_id`; execution still routes through the task's executor
-type.
+`executor_node_id`. The assigned Bro may be marked `busy` as a display cache;
+task ownership and execution routing are derived from task metadata,
+execution-session state, and the task's executor type.
 
 `bro_detail_session_id` identifies the Bro detail generation that created the
 task. Tasks from the same generation use the same `session_affinity` and may

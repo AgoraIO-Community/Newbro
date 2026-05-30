@@ -93,6 +93,9 @@ Workspace rule:
 - `session_affinity` is an opaque workspace id, not a control-plane filesystem
   path
 - the detached executor node maps that id to a node-local working directory
+- Codex `BroThread` projections expose optional `workspace_id` and
+  user-facing `workspace_name`; names are display labels derived from known
+  Codex cwd/workspace ids and are not authoritative routing keys
 
 Bro detail continuity:
 
@@ -101,10 +104,23 @@ Bro detail continuity:
 - direct Bro Detail text and push-to-talk inputs must provide explicit thread
   intent: either a selected `target_thread_id` or `create_new_thread=true`, but
   never both. The backend does not infer active/latest thread ownership for
-  direct sends. Follow-up tasks created for a selected `BroThread` reuse the
-  thread's execution-session continuity and Codex resume handle
+  direct sends. Direct text follow-ups to an active Codex run use the active
+  execution session's dispatch path. Direct text and push-to-talk sends with no
+  active run store an `OutboundTurnRequest` and send executor-node
+  `start_codex_turn` with the selected Codex resume handle or explicit
+  new-thread workspace; they do not create/update a `Task` or schedule
+  Execution Brain work before node acceptance. Idle push-to-talk transcribes
+  through the executor node before creating the outbound turn request.
+  `Persona` status is not a routing source for selected-thread sends.
+- when creating a new Codex Bro Detail thread, direct text and push-to-talk
+  inputs must also provide a `workspace_id` selected from workspaces already
+  known for that Bro/node through imported Codex threads or existing
+  session/task state. Missing, contradictory, or unknown workspace selections
+  are rejected instead of falling back to a generated workspace.
 - direct Bro Detail text may set `plan_mode=true`. Newbro stores that flag on
-  the direct instruction, task metadata, and Bro timeline user message metadata.
+  the direct instruction, no-active-run outbound turn request, and Bro timeline
+  user message metadata; active-run follow-ups also mark the active task
+  metadata.
   The Codex adapter sends native app-server `collaborationMode.mode = "plan"`
   for that turn, resolving the required model settings from the resumed thread
   or `collaborationMode/list`. If plan collaboration settings cannot be
@@ -113,23 +129,30 @@ Bro detail continuity:
   plan mode does not stick to later work in the same native thread. Plan-mode
   tasks use `TaskMode.PROPOSAL_ONLY` until the user approves a proposal
   interaction.
-- New direct Bro Detail inputs create a `BroThread` projection as soon as the
-  queued task is durable, even before the scheduler creates the backing
-  `ExecutionSession`, so the current thread is visible immediately after send
+- New no-active-run direct text and push-to-talk inputs create a
+  pending/accepted outbound turn request and `BroThread`/`BroTimelineTurn`
+  projection without a task. If the turn creates a new Codex native thread,
+  Newbro stores the returned native thread id as the selected thread's resume
+  handle so later direct sends can continue the same thread.
 - Newbro imports global Codex threads through the detached executor node's
   Codex app-server `thread/list` capability. Imported threads become typed
   `BroThread` projections with Newbro-owned public ids and diagnostic raw
-  Codex ids; once the user sends into an imported thread, the created task
-  stores the imported Codex thread id and Codex-reported cwd as a resume handle
-  seed so the first Newbro `ExecutionSession` starts the node-local app-server
-  in the original cwd, calls Codex `thread/resume`, and continues that native
-  Codex thread. Thread import should page through Codex `thread/list` using
+  Codex ids; when the user sends direct text into an imported thread with no
+  active run, the outbound turn request carries the imported Codex resume
+  handle and the executor node continues that native thread through
+  `start_codex_turn`. Idle push-to-talk follows the same resume-handle path
+  after executor-node transcription. Thread
+  import should page through Codex `thread/list` using
   `nextCursor` where the app-server supports pagination, should ask for
   updated-time descending order where supported, and must sort the imported
   result locally by Codex `updatedAt`/`createdAt` so recent resumed dialogs are
   not hidden behind the first default page. If a newer request shape is not
   accepted by the installed Codex app-server, Newbro retries with older
   compatible request shapes instead of projecting an empty thread list.
+  When a detached executor node connects, Newbro first publishes a cheap
+  connectivity snapshot, then schedules a post-ack imported-thread refresh for
+  active subscribed sessions so Bro Detail can show native Codex threads
+  without requiring a browser refresh.
 - Opening a `BroThread` resolves the public thread id to a Codex resume handle,
   starts selected-thread event interest, and, for imported native Codex threads,
   loads native thread history into executor-owned `BroTimelineTurn` records for
@@ -192,8 +215,9 @@ Bro detail continuity:
   the main backend and detached node. When a matching active Codex run exists,
   the transcript is emitted as a run progress event and Newbro turns it into a
   queued direct Codex task in the selected `BroThread`; when the Bro is idle,
-  Newbro requests executor-node transcription directly and creates the queued
-  direct Codex task from that transcript without requiring an active run first
+  Newbro requests executor-node transcription directly, stores an
+  `OutboundTurnRequest`, and starts a task-free Codex turn from that transcript
+  without requiring an active run first
 - `BroThread.thread_id` is Newbro-owned UI/API identity; raw executor-native
   thread ids stay diagnostic data, not primary UI labels
 - rebinding a Bro to a different executor node rotates the Bro detail generation,

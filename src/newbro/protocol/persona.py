@@ -19,4 +19,3 @@ class Persona(BaseModel):
     executor_node_id: str | None = None
     bro_detail_session_id: str = Field(default_factory=lambda: f"bro-detail-{uuid4().hex[:8]}")
     status: str = "idle"  # "idle" | "busy"
-    current_task_id: str | None = None

@@ -16,6 +16,7 @@ from newbro.protocol import (
     ExecutorNodeRecord,
     InteractionRequest,
     NotificationCandidate,
+    OutboundTurnRequest,
     Persona,
     SessionBinding,
     Task,
@@ -40,6 +41,7 @@ class SessionSnapshot(BaseModel):
     bindings: list[SessionBinding] = Field(default_factory=list)
     summaries: list[TaskSummary] = Field(default_factory=list)
     notification_candidates: list[NotificationCandidate] = Field(default_factory=list)
+    outbound_turn_requests: list[OutboundTurnRequest] = Field(default_factory=list)
     bro_threads: list[BroThread] = Field(default_factory=list)
     bro_timeline_turns: list[BroTimelineTurn] = Field(default_factory=list)
     personas: list[Persona] = Field(default_factory=list)

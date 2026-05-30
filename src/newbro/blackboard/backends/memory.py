@@ -11,6 +11,7 @@ from newbro.protocol import (
     ExecutionSession,
     InteractionRequest,
     NotificationCandidate,
+    OutboundTurnRequest,
     Persona,
     SessionBinding,
     Task,
@@ -45,6 +46,8 @@ class InMemoryBlackboard(BlackboardStore):
         self._execution_modes_by_task: dict[str, TaskExecutionMode] = {}
         self._notification_candidates: dict[str, NotificationCandidate] = {}
         self._notification_candidate_order: list[str] = []
+        self._outbound_turn_requests: dict[str, OutboundTurnRequest] = {}
+        self._outbound_turn_request_order: list[str] = []
         self._personas: dict[str, Persona] = {}
         self._interaction_requests: dict[str, InteractionRequest] = {}
         self._interaction_request_order: list[str] = []
@@ -299,6 +302,22 @@ class InMemoryBlackboard(BlackboardStore):
             self._notification_candidates[candidate_id]
             for candidate_id in self._notification_candidate_order
             if candidate_id in self._notification_candidates
+        ]
+
+    async def put_outbound_turn_request(self, request: OutboundTurnRequest) -> None:
+        async with self._lock:
+            if request.request_id not in self._outbound_turn_requests:
+                self._outbound_turn_request_order.append(request.request_id)
+            self._outbound_turn_requests[request.request_id] = request
+
+    async def get_outbound_turn_request(self, request_id: str) -> OutboundTurnRequest | None:
+        return self._outbound_turn_requests.get(request_id)
+
+    async def list_outbound_turn_requests(self) -> list[OutboundTurnRequest]:
+        return [
+            self._outbound_turn_requests[request_id]
+            for request_id in self._outbound_turn_request_order
+            if request_id in self._outbound_turn_requests
         ]
 
     async def put_persona(self, persona: Persona) -> None:

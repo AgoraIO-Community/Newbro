@@ -179,6 +179,36 @@ describe("session-client transport base URL handling", () => {
     }));
   });
 
+  it("includes structured interaction answers on websocket resolution messages", async () => {
+    const client = await import("./session-client");
+    const socket = { send: vi.fn() } as unknown as WebSocket;
+
+    client.sendSocketInteractionResolution(socket, "req-1", "ireq-1", "approve", {
+      answerText: "Audience: Boss / leadership; Period: Latest update",
+      answers: {
+        audience: ["Boss / leadership"],
+        period: ["Latest update"],
+      },
+      userVisibleText: "Audience: Boss / leadership; Period: Latest update",
+    });
+
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "resolve_interaction_request",
+      request_id: "req-1",
+      interaction_request_id: "ireq-1",
+      action: "approve",
+      answer_text: "Audience: Boss / leadership; Period: Latest update",
+      option_id: undefined,
+      answers: {
+        audience: ["Boss / leadership"],
+        period: ["Latest update"],
+      },
+      reason: undefined,
+      client_request_id: undefined,
+      user_visible_text: "Audience: Boss / leadership; Period: Latest update",
+    }));
+  });
+
   it("submits executor text instructions through the HTTP executor endpoint", async () => {
     const fetchMock = vi.fn(async () =>
       okJsonResponse({
@@ -202,6 +232,7 @@ describe("session-client transport base URL handling", () => {
         target_persona_id: "forge",
         target_thread_id: null,
         create_new_thread: false,
+        workspace_id: null,
         plan_mode: false,
         text: "continue directly",
       }),
@@ -234,6 +265,7 @@ describe("session-client transport base URL handling", () => {
         target_persona_id: "forge",
         target_thread_id: "bro-thread-1",
         create_new_thread: false,
+        workspace_id: null,
         plan_mode: true,
         text: "plan first",
       }),

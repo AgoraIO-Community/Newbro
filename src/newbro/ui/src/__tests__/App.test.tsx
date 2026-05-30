@@ -209,6 +209,7 @@ function emptySessionSnapshot(sessionId: string) {
     bindings: [],
     summaries: [],
     notification_candidates: [],
+    outbound_turn_requests: [],
     bro_threads: [],
     bro_timeline_turns: [],
     personas: [],
@@ -285,11 +286,46 @@ function forgeSnapshot(sessionId: string, node = usableExecutorNode()) {
         executor_node_id: node.node_id,
         bro_detail_session_id: "detail-forge",
         status: "idle",
-        current_task_id: null,
       },
     ],
     executor_nodes: [node],
   };
+}
+
+function withKnownWorkspaceThread<T extends ReturnType<typeof forgeSnapshot>>(snapshot: T): T {
+  snapshot.bro_threads = [
+    ...(snapshot.bro_threads as any[]),
+    {
+      thread_id: "workspace-thread",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      workspace_id: "/tmp/work",
+      workspace_name: "work",
+      execution_session_id: null,
+      status: "completed",
+      title: "Known workspace",
+      preview: "Workspace context",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-20T12:00:00Z",
+      timeline_status: "not_loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-workspace" },
+    },
+  ] as any;
+  return snapshot;
+}
+
+function selectWorkWorkspaceAndConfirm() {
+  const dialog = screen.getByRole("dialog", { name: /Choose a workspace for Forge/i });
+  const workspaceButton = within(dialog).getByRole("button", { name: /work workspace \/tmp\/work/i });
+  fireEvent.click(workspaceButton);
+  fireEvent.click(within(dialog).getByRole("button", { name: "OK" }));
 }
 
 function activeForgeSnapshot(sessionId: string, node = usableExecutorNode()) {
@@ -304,7 +340,6 @@ function activeForgeSnapshot(sessionId: string, node = usableExecutorNode()) {
         executor_node_id: node.node_id,
         bro_detail_session_id: "detail-forge",
         status: "busy",
-        current_task_id: "task-1",
       },
     ],
     tasks: [
@@ -346,6 +381,8 @@ function activeForgeSnapshot(sessionId: string, node = usableExecutorNode()) {
         persona_name: "Forge",
         executor_id: "codex",
         executor_node_id: node.node_id,
+        workspace_id: "/tmp/work",
+        workspace_name: "work",
         execution_session_id: "exec-1",
         status: "running",
         title: "Active Codex task",
@@ -387,6 +424,10 @@ function planProposalThreadSnapshot(
   const taskStatus = overrides.taskStatus ?? (requestStatus === "approved" ? "completed" : "waiting_user_input");
   const proposalSummary = overrides.proposalSummary ?? "Review the unique lifecycle plan before execution.";
   const taskDescription = overrides.taskDescription ?? null;
+  const proposalOptions = overrides.proposalOptions ?? [
+    { id: "approved_codex_plan", label: "Run proposed plan", description: "Final plan." },
+  ];
+  const proposalExtras = overrides.proposalExtras ?? {};
   snapshot.bro_threads = [
     {
       thread_id: "thread-plan",
@@ -446,7 +487,8 @@ function planProposalThreadSnapshot(
         target_thread_id: "thread-plan",
         proposal: {
           summary: proposalSummary,
-          options: [{ id: "approved_codex_plan", label: "Run proposed plan", description: "Final plan." }],
+          options: proposalOptions,
+          ...proposalExtras,
         },
       },
       available_actions: ["approve", "deny"],
@@ -869,6 +911,132 @@ describe("Newbro artboard shell", () => {
     expect(screen.getAllByText("You").length).toBeGreaterThanOrEqual(1);
   });
 
+  it("renders direct executor turn without task and keeps composer enabled", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = [
+      {
+        thread_id: "codex-direct-thread",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "running",
+        title: "Direct Codex turn",
+        preview: "Direct user message",
+        progress: 60,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-30T08:20:00+00:00",
+        timeline_status: "loaded",
+        timeline_error: null,
+        diagnostics: { codex_thread_id: "native-direct-thread" },
+      },
+    ] as any;
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "codex-direct-thread",
+        userText: "Direct user message",
+        assistantText: "Working on it.",
+        task: null,
+        status: "running",
+        metadata: { source: "codex_turn_event" },
+      }),
+    ] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValueOnce(snapshot);
+    clientMock.submitExecutorTextInstruction.mockResolvedValueOnce({
+      instruction_id: "txt-follow-up",
+      target_persona_id: "forge",
+      target_thread_id: "codex-direct-thread",
+      status: "accepted",
+    });
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-direct-thread");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Direct Codex turn")).toBeInTheDocument();
+    expect(screen.getAllByText("Direct user message").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Working on it.")).toBeInTheDocument();
+    const input = screen.getByLabelText("Message");
+    expect(input).not.toBeDisabled();
+    fireEvent.change(input, { target: { value: "follow up without task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        targetThreadId: "codex-direct-thread",
+        createNewThread: false,
+        clientRequestId: expect.stringMatching(/^text-/),
+        text: "follow up without task",
+      });
+    });
+  });
+
+  it("renders direct executor audio turn without task", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = [
+      {
+        thread_id: "codex-direct-audio",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: null,
+        status: "running",
+        title: "Direct audio turn",
+        preview: "recorded follow-up",
+        progress: 60,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-30T08:24:00+00:00",
+        timeline_status: "loaded",
+        timeline_error: null,
+        diagnostics: { codex_thread_id: "native-direct-audio" },
+      },
+    ] as any;
+    snapshot.bro_timeline_turns = [
+      {
+        ...timelineTurn({
+          thread_id: "codex-direct-audio",
+          assistantText: "Audio handled.",
+          task: null,
+          status: "running",
+          metadata: { source: "codex_turn_event" },
+        }),
+        input_modality: "audio",
+        user: {
+          message_id: "codex-direct-audio:audio:user",
+          role: "user",
+          kind: "audio",
+          text: null,
+          transcript: "recorded follow-up",
+          audio_id: "aud-direct",
+          duration_ms: 1200,
+          created_at: "2026-05-30T08:23:00+00:00",
+          updated_at: "2026-05-30T08:23:02+00:00",
+          status: "completed",
+          metadata: { source: "outbound_turn_request" },
+        },
+      },
+    ] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValueOnce(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-direct-audio");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Direct audio turn")).toBeInTheDocument();
+    expect(screen.getAllByText("recorded follow-up").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Audio handled.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Message")).not.toBeDisabled();
+  });
+
   it("renders urls in imported user messages as links inside user bubbles", async () => {
     const snapshot = forgeSnapshot("session-existing");
     snapshot.bro_threads = [
@@ -1075,6 +1243,7 @@ describe("Newbro artboard shell", () => {
     render(<RouterProvider router={getRouter()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
     fireEvent.change(screen.getByLabelText("Message"), {
       target: { value: "start a separate thread" },
     });
@@ -1085,10 +1254,40 @@ describe("Newbro artboard shell", () => {
         targetPersonaId: "forge",
         targetThreadId: null,
         createNewThread: true,
+        workspaceId: "/tmp/work",
         clientRequestId: expect.stringMatching(/^text-/),
         text: "start a separate thread",
       });
     });
+  });
+
+  it("shows workspace choices in a dialog instead of extending the desktop thread list", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing"));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Active Codex task")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /Choose a workspace for Forge/i });
+    const okButton = within(dialog).getByRole("button", { name: "OK" });
+    const workspaceButton = within(dialog).getByRole("button", { name: /work workspace \/tmp\/work/i });
+    expect(workspaceButton).toBeInTheDocument();
+    expect(okButton).toBeDisabled();
+    expect(within(screen.getByLabelText("Forge threads")).queryByRole("button", { name: /work workspace/i })).not.toBeInTheDocument();
+
+    fireEvent.click(workspaceButton);
+
+    expect(workspaceButton).toHaveAttribute("aria-pressed", "true");
+    expect(okButton).toBeEnabled();
+    expect(within(screen.getByLabelText("Forge threads")).queryByText("New thread")).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Choose a workspace for Forge/i })).not.toBeInTheDocument());
+    expect(screen.getByText("Active Codex task")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Forge threads")).queryByText("New thread")).not.toBeInTheDocument();
   });
 
   it("sends New thread desktop PTT audio with new-thread intent and resolves the returned thread", async () => {
@@ -1181,6 +1380,7 @@ describe("Newbro artboard shell", () => {
 
     expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
     expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
 
     const button = screen.getByTestId("voice-session-start");
@@ -1195,6 +1395,7 @@ describe("Newbro artboard shell", () => {
         targetPersonaId: "forge",
         targetThreadId: null,
         createNewThread: true,
+        workspaceId: "/tmp/work",
         pcm16: expect.any(Blob),
         durationMs: 1,
         sampleRate: 16000,
@@ -1209,10 +1410,13 @@ describe("Newbro artboard shell", () => {
   });
 
   it("enables desktop typed send for a connected idle Bro", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(withKnownWorkspaceThread(forgeSnapshot("session-existing")));
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
     const input = await screen.findByPlaceholderText("Type to Forge...");
     fireEvent.change(input, { target: { value: "start from idle bro" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -1222,6 +1426,7 @@ describe("Newbro artboard shell", () => {
         targetPersonaId: "forge",
         targetThreadId: null,
         createNewThread: true,
+        workspaceId: "/tmp/work",
         clientRequestId: expect.stringMatching(/^text-/),
         text: "start from idle bro",
       });
@@ -1338,6 +1543,8 @@ describe("Newbro artboard shell", () => {
           persona_name: "Forge",
           executor_id: "codex",
           executor_node_id: "node-forge",
+          workspace_id: "/tmp/work",
+          workspace_name: "work",
           execution_session_id: "exec-existing",
           status: "completed",
           title: "Previous request",
@@ -1429,6 +1636,7 @@ describe("Newbro artboard shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Switch thread" }));
     fireEvent.click(screen.getByRole("button", { name: /New thread with Forge/i }));
+    selectWorkWorkspaceAndConfirm();
 
     await waitFor(() => expect(screen.queryByText("Previous response body.")).not.toBeInTheDocument());
     expect(screen.getByText("No messages with Forge yet")).toBeInTheDocument();
@@ -1469,6 +1677,8 @@ describe("Newbro artboard shell", () => {
           persona_name: "Forge",
           executor_id: "codex",
           executor_node_id: "node-forge",
+          workspace_id: "/tmp/work",
+          workspace_name: "work",
           execution_session_id: "exec-existing",
           status: "completed",
           title: "Previous request",
@@ -1515,6 +1725,7 @@ describe("Newbro artboard shell", () => {
 
     expect(await screen.findByText("Previous response body.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /New thread with Forge/i }));
+    selectWorkWorkspaceAndConfirm();
     expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
 
     clientMock.openBroThread.mockClear();
@@ -1524,6 +1735,7 @@ describe("Newbro artboard shell", () => {
     await waitFor(() =>
       expect(clientMock.submitExecutorTextInstruction).toHaveBeenCalledWith("session-existing", expect.objectContaining({
         createNewThread: true,
+        workspaceId: "/tmp/work",
         text: "kickoff",
       })),
     );
@@ -1635,12 +1847,16 @@ describe("Newbro artboard shell", () => {
     render(<RouterProvider router={getRouter()} />);
 
     expect(await screen.findByText("Review the unique fallback plan before execution.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Implement it/i })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Implement it/i })).not.toBeInTheDocument();
   });
 
-  it("disables plan proposal controls while approval resolves", async () => {
+  it("replies with the selected Codex plan option while approval resolves", async () => {
     const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
       proposalSummary: "Review the unique clickable plan before execution.",
+      proposalOptions: [
+        { id: "brief", label: "Dev-friendly Markdown", description: "Short with bullets." },
+        { id: "full", label: "Detailed PDF", description: "Long form." },
+      ],
     });
     clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
     clientMock.openBroThread.mockResolvedValue(snapshot);
@@ -1649,22 +1865,104 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    const approve = await screen.findByRole("button", { name: /Implement it/i });
+    const selectedOption = await screen.findByRole("radio", { name: /Detailed PDF/i });
+    const approve = screen.getByRole("button", { name: /Confirm/i });
     const keepPlanning = screen.getByRole("button", { name: /Keep planning/i });
+    expect(approve).toBeDisabled();
+    fireEvent.click(selectedOption);
     fireEvent.click(approve);
 
     await waitFor(() => {
       expect(clientMock.resolveInteractionRequest).toHaveBeenCalledWith("session-existing", "ireq-plan", {
         action: "approve",
-        answer_text: "Run proposed plan - Final plan.",
-        option_id: "approved_codex_plan",
+        answer_text: "Detailed PDF",
+        option_id: "full",
+        client_request_id: expect.stringMatching(/^plan-approval-/),
+        user_visible_text: "Detailed PDF",
+      });
+    });
+    expect(screen.getAllByText("Detailed PDF").some((node) => node.closest(".dt-turn-you"))).toBe(true);
+    expect(screen.queryAllByText("Implement it").some((node) => node.closest(".dt-turn-you"))).toBe(false);
+    expect(approve).toBeDisabled();
+    expect(keepPlanning).toBeDisabled();
+  });
+
+  it("submits all Codex multi-question plan answers together", async () => {
+    const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
+      proposalSummary: "Answer planning questions before execution.",
+      proposalOptions: [{ id: "boss", label: "Boss / leadership", description: "Executive summary." }],
+      proposalExtras: {
+        questions: [
+          {
+            question_id: "audience",
+            header: "Audience",
+            summary: "Who is this for?",
+            options: [{ id: "boss", label: "Boss / leadership", description: "Executive summary." }],
+          },
+          {
+            question_id: "period",
+            header: "Period",
+            summary: "Which period?",
+            options: [{ id: "latest", label: "Latest update", description: "Most recent state." }],
+          },
+        ],
+      },
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByRole("tab", { name: "Audience" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Period" })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Implement it/i })).not.toBeInTheDocument();
+    const approve = screen.getByRole("button", { name: /Confirm/i });
+    expect(approve).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("radio", { name: /Boss \/ leadership/i }));
+    expect(approve).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Period" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("radio", { name: /Latest update/i }));
+    expect(approve).toBeEnabled();
+    fireEvent.click(approve);
+
+    await waitFor(() => {
+      expect(clientMock.resolveInteractionRequest).toHaveBeenCalledWith("session-existing", "ireq-plan", {
+        action: "approve",
+        answer_text: "Audience: Boss / leadership; Period: Latest update",
+        answers: {
+          audience: ["Boss / leadership"],
+          period: ["Latest update"],
+        },
+        client_request_id: expect.stringMatching(/^plan-approval-/),
+        user_visible_text: "Audience: Boss / leadership; Period: Latest update",
+      });
+    });
+  });
+
+  it("replies with Implement it when the synthetic implement option is selected", async () => {
+    const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
+      proposalSummary: "Review the unique explicit implement plan before execution.",
+      proposalExtras: { codex_plan: { text: "Final plan.", steps: [] } },
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("radio", { name: /Implement it/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirm/i }));
+
+    await waitFor(() => {
+      expect(clientMock.resolveInteractionRequest).toHaveBeenCalledWith("session-existing", "ireq-plan", {
+        action: "approve",
+        answer_text: "Implement it",
         client_request_id: expect.stringMatching(/^plan-approval-/),
         user_visible_text: "Implement it",
       });
     });
-    expect(screen.getAllByText("Implement it").some((node) => node.closest(".dt-turn-you"))).toBe(true);
-    expect(approve).toBeDisabled();
-    expect(keepPlanning).toBeDisabled();
   });
 
   it("does not render approved plan proposals as executing cards", async () => {
@@ -1867,11 +2165,14 @@ describe("Newbro artboard shell", () => {
   });
 
   it("enables desktop PTT audio for a connected idle Codex Bro", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(withKnownWorkspaceThread(forgeSnapshot("session-existing")));
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
 
     expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
     expect(screen.getByTestId("voice-session-start")).toBeEnabled();
     expect(screen.getByTestId("voice-session-start")).toHaveAccessibleName("Hold to record audio");
     expect(connectorMock.prepareConnectorSession).not.toHaveBeenCalled();
@@ -2170,7 +2471,6 @@ describe("buildBroCardModels", () => {
           executor_node_id: "node-forge",
           bro_detail_session_id: "bro-detail-forge",
           status: "idle",
-          current_task_id: null,
         },
       ],
       [usableExecutorNode() as any],

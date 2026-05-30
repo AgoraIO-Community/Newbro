@@ -8,7 +8,9 @@ from newbro.executors.node.registry import ExecutorNodeRegistry
 from newbro.protocol import (
     CodexThreadSubscribedMessage,
     CodexThreadUnsubscribedMessage,
+    CodexTurnEventMessage,
     ExecutorNodeExecutor,
+    ExecutorTextInstruction,
     RegisterNodeMessage,
 )
 from newbro.runtime.executor_node_manager import ExecutorNodeManager, RunDispatchState
@@ -190,6 +192,88 @@ async def test_selected_codex_thread_subscription_request_round_trip(tmp_path):
     )
     response = await task
     assert response.status == "unsubscribed"
+
+
+@pytest.mark.anyio
+async def test_start_codex_turn_serializes_without_task_run_or_execution_session_ids(tmp_path):
+    manager = ExecutorNodeManager(
+        detached_executor_types=("codex",),
+        registry=ExecutorNodeRegistry(path=tmp_path / "executor_nodes.yaml"),
+    )
+    issue = await manager.create_node(name="Node One", enabled_executors=["codex"])
+
+    class CapturingSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict[str, object]] = []
+
+        async def send_json(self, payload: dict[str, object]) -> None:
+            self.sent.append(payload)
+
+    socket = CapturingSocket()
+    await manager.register_connection(
+        socket,
+        RegisterNodeMessage(
+            node_id=issue.node.node_id,
+            token=issue.token,
+            executors=[ExecutorNodeExecutor(executor_type="codex")],
+        ),
+    )
+
+    sent = await manager.start_codex_turn(
+        request_id="out-turn-1",
+        node_id=issue.node.node_id,
+        target_persona_id="forge",
+        target_thread_id="public-thread-1",
+        thread_id="codex-thread-1",
+        instruction=ExecutorTextInstruction(
+            instruction_id="txt-1",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            text="Continue.",
+        ),
+        metadata={"client_request_id": "client-1"},
+    )
+
+    assert sent is True
+    command = socket.sent[-1]
+    assert command["type"] == "start_codex_turn"
+    assert command["request_id"] == "out-turn-1"
+    assert command["thread_id"] == "codex-thread-1"
+    assert "task_id" not in command
+    assert "run_id" not in command
+    assert "execution_session_id" not in command
+
+
+@pytest.mark.anyio
+async def test_codex_turn_event_requires_matching_node(tmp_path):
+    manager = ExecutorNodeManager(
+        detached_executor_types=("codex",),
+        registry=ExecutorNodeRegistry(path=tmp_path / "executor_nodes.yaml"),
+    )
+    issue = await manager.create_node(name="Node One", enabled_executors=["codex"])
+    socket = object()
+    await manager.register_connection(
+        socket,
+        RegisterNodeMessage(
+            node_id=issue.node.node_id,
+            token=issue.token,
+            executors=[ExecutorNodeExecutor(executor_type="codex")],
+        ),
+    )
+
+    ack = await manager.publish_codex_turn_event(
+        socket,
+        CodexTurnEventMessage(
+            request_id="out-turn-1",
+            node_id="other-node",
+            target_persona_id="forge",
+            target_thread_id="thread-1",
+            event_type="progress",
+        ),
+    )
+
+    assert ack.ok is False
+    assert ack.detail == "unauthorized_node"
 
 
 @pytest.mark.anyio

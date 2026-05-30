@@ -3048,6 +3048,41 @@
   line-height: 1.5;
   color: var(--nb-ink-soft);
 }
+.plan-tabs {
+  display: flex; gap: 6px;
+  padding: 6px 14px 8px;
+  overflow-x: auto;
+}
+.plan-tab {
+  flex: 0 0 auto;
+  min-height: 29px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid var(--nb-line);
+  background: #fff;
+  color: var(--nb-ink-soft);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.plan-tab-on {
+  color: var(--nb-coral-hover);
+  border-color: var(--nb-coral-border);
+  background: var(--nb-coral-tint);
+}
+.plan-tab-done {
+  color: var(--nb-live-ink);
+  border-color: var(--nb-live-edge);
+}
+.plan-question {
+  margin: 0;
+  padding: 0 14px 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--nb-ink);
+  font-weight: 650;
+}
 .plan-opts {
   display: flex; flex-direction: column; gap: 8px;
   padding: 6px 14px 12px;

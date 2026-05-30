@@ -12,6 +12,7 @@ from newbro.protocol import (
     AttentionPriority,
     BindingStatus,
     CodexThreadEventMessage,
+    CodexTurnEventMessage,
     ExecutionMode,
     ExecutionRun,
     ExecutionSession as RuntimeExecutionSession,
@@ -22,6 +23,8 @@ from newbro.protocol import (
     NotificationCandidateType,
     NotificationDeliveryStatus,
     NotificationPriority,
+    OutboundTurnRequest,
+    Persona,
     RunStatus,
     SessionBinding,
     TaskCommand,
@@ -90,6 +93,343 @@ async def test_session_runtime_publish_snapshot_uses_cached_codex_threads_by_def
     assert initial.type == "snapshot"
 
     session.unsubscribe(queue)
+
+
+@pytest.mark.anyio
+async def test_session_runtime_snapshot_includes_outbound_turn_requests():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        text="continue",
+    )
+
+    await session.blackboard.put_outbound_turn_request(request)
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+
+    assert snapshot.outbound_turn_requests == [request]
+
+
+@pytest.mark.anyio
+async def test_submit_executor_text_without_active_run_starts_outbound_turn_request(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_persona(
+        Persona(
+            persona_id="forge",
+            name="Forge",
+            avatar="bro",
+            base_prompt="",
+            executor_node_id="node-forge",
+            bro_detail_session_id="detail-forge",
+        )
+    )
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-done",
+            root_task_id="task-done",
+            title="Done",
+            goal="Done",
+            status=TaskStatus.COMPLETED,
+            preferred_executor="codex",
+            metadata={"persona_id": "forge"},
+        )
+    )
+    await session.blackboard.put_session(
+        RuntimeExecutionSession(
+            execution_session_id="exec-1",
+            task_id="task-done",
+            base_executor_id="codex",
+            executor_node_id="node-forge",
+            continuity_key="thread-1",
+            latest_resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+        )
+    )
+    sent: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        session.executor_node_manager,
+        "is_executor_connected",
+        lambda executor_type, *, node_id=None: executor_type == "codex" and node_id == "node-forge",
+    )
+    monkeypatch.setattr(
+        session.executor_node_manager,
+        "executor_supports_follow_up",
+        lambda executor_type, *, node_id: executor_type == "codex" and node_id == "node-forge",
+    )
+
+    async def fake_start_codex_turn(**kwargs):
+        sent.append(kwargs)
+        return True
+
+    monkeypatch.setattr(session.executor_node_manager, "start_codex_turn", fake_start_codex_turn)
+
+    instruction = await session.submit_executor_text_instruction(
+        target_persona_id="forge",
+        target_thread_id="exec-1",
+        text="continue directly",
+        client_request_id="client-text-1",
+    )
+
+    assert instruction.target_thread_id == "exec-1"
+    assert [task.task_id for task in await session.blackboard.list_tasks()] == ["task-done"]
+    requests = await session.blackboard.list_outbound_turn_requests()
+    assert len(requests) == 1
+    assert requests[0].client_request_id == "client-text-1"
+    assert requests[0].target_thread_id == "exec-1"
+    assert requests[0].status == "accepted"
+    assert sent[0]["request_id"] == requests[0].request_id
+    assert sent[0]["target_thread_id"] == "exec-1"
+    assert sent[0]["latest_resume_handle"] == AgentResumeHandle(
+        executor_id="codex",
+        session_handle="codex-thread-1",
+    )
+    assert "task_id" not in sent[0]
+
+
+@pytest.mark.anyio
+async def test_codex_turn_event_projects_without_task():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        client_request_id="client-text-1",
+        text="continue directly",
+        status="accepted",
+        created_at="2026-05-30T08:00:00+00:00",
+    )
+    await session.blackboard.put_outbound_turn_request(request)
+
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-1",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-1",
+            event_type="progress",
+            message="Working",
+            executor_thread_id="native-thread-1",
+            executor_turn_id="turn-1",
+        )
+    )
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+
+    updated = await session.blackboard.get_outbound_turn_request("out-turn-1")
+    assert updated is not None
+    assert updated.status == "running"
+    assert updated.executor_thread_id == "native-thread-1"
+    assert updated.executor_turn_id == "turn-1"
+    assert len(snapshot.bro_timeline_turns) == 1
+    turn = snapshot.bro_timeline_turns[0]
+    assert turn.owner == "executor"
+    assert turn.client_request_id == "client-text-1"
+    assert turn.task is None
+    assert turn.executor_thread_id == "native-thread-1"
+    assert turn.executor_turn_id == "turn-1"
+    assert turn.user is not None
+    assert turn.user.text == "continue directly"
+    assert turn.status == "running"
+    assert await session.blackboard.list_tasks() == []
+
+
+@pytest.mark.anyio
+async def test_codex_turn_event_keeps_stable_turn_when_executor_turn_id_arrives_late():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_outbound_turn_request(
+        OutboundTurnRequest(
+            request_id="out-turn-late-id",
+            persona_id="forge",
+            executor_node_id="node-forge",
+            target_thread_id="thread-1",
+            text="continue directly",
+            status="accepted",
+        )
+    )
+
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-late-id",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-1",
+            event_type="progress",
+            message="Accepted",
+            executor_thread_id="native-thread-1",
+        )
+    )
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-late-id",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-1",
+            event_type="completed",
+            message="Done",
+            executor_thread_id="native-thread-1",
+            executor_turn_id="turn-1",
+        )
+    )
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+
+    assert len(snapshot.bro_timeline_turns) == 1
+    assert snapshot.bro_timeline_turns[0].executor_turn_id == "turn-1"
+    assert snapshot.bro_timeline_turns[0].status == "completed"
+
+
+@pytest.mark.anyio
+async def test_codex_turn_cancelled_event_keeps_request_and_timeline_status_consistent():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_outbound_turn_request(
+        OutboundTurnRequest(
+            request_id="out-turn-cancelled",
+            persona_id="forge",
+            executor_node_id="node-forge",
+            target_thread_id="thread-1",
+            status="accepted",
+        )
+    )
+
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-cancelled",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-1",
+            event_type="cancelled",
+            message="Cancelled",
+            ok=False,
+            error="Cancelled",
+        )
+    )
+
+    updated = await session.blackboard.get_outbound_turn_request("out-turn-cancelled")
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+
+    assert updated is not None
+    assert updated.status == "failed"
+    assert snapshot.bro_timeline_turns[0].status == "failed"
+
+
+@pytest.mark.anyio
+async def test_codex_turn_event_attaches_new_thread_resume_handle_for_follow_up(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_persona(
+        Persona(
+            persona_id="forge",
+            name="Forge",
+            avatar="bro",
+            base_prompt="",
+            executor_node_id="node-forge",
+            bro_detail_session_id="detail-forge",
+        )
+    )
+    await session.blackboard.put_outbound_turn_request(
+        OutboundTurnRequest(
+            request_id="out-turn-new-thread",
+            persona_id="forge",
+            executor_node_id="node-forge",
+            target_thread_id="bro-thread-new",
+            create_new_thread=True,
+            workspace_id="/tmp/work",
+            text="start directly",
+            status="accepted",
+        )
+    )
+
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-new-thread",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="bro-thread-new",
+            event_type="progress",
+            executor_thread_id="native-thread-new",
+            executor_turn_id="turn-1",
+        )
+    )
+    sent: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        session.executor_node_manager,
+        "is_executor_connected",
+        lambda executor_type, *, node_id=None: executor_type == "codex" and node_id == "node-forge",
+    )
+    monkeypatch.setattr(
+        session.executor_node_manager,
+        "executor_supports_follow_up",
+        lambda executor_type, *, node_id: executor_type == "codex" and node_id == "node-forge",
+    )
+
+    async def fake_start_codex_turn(**kwargs):
+        sent.append(kwargs)
+        return True
+
+    monkeypatch.setattr(session.executor_node_manager, "start_codex_turn", fake_start_codex_turn)
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    instruction = await session.submit_executor_text_instruction(
+        target_persona_id="forge",
+        target_thread_id="bro-thread-new",
+        text="follow up",
+    )
+
+    assert any(thread.thread_id == "bro-thread-new" and thread.has_resume_handle for thread in snapshot.bro_threads)
+    assert instruction.target_thread_id == "bro-thread-new"
+    assert sent[0]["latest_resume_handle"] == AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-new",
+        opaque={
+            "cwd": "/tmp/work",
+            "title": "start directly",
+            "createdFromOutboundTurnRequest": "out-turn-new-thread",
+        },
+    )
+    assert await session.blackboard.list_tasks() == []
 
 
 def test_codex_native_history_marks_user_turn_with_final_plan_item_as_plan_mode():
@@ -1672,7 +2012,7 @@ async def test_session_runtime_native_plan_proposal_approval_uses_native_respons
     assert affected == ["task-native-plan"]
     assert request is not None and request.resume_strategy == "native_response"
     assert native.client.calls
-    assert native.client.calls[0]["answer_text"] == "Run proposed plan - Native plan payload."
+    assert native.client.calls[0]["answer_text"] == "Run proposed plan"
     assert task is not None
     assert task.status == TaskStatus.WAITING_USER_INPUT
     assert task.metadata["plan_mode"] is True
@@ -2005,7 +2345,7 @@ async def test_session_runtime_plan_proposal_approval_runs_follow_up_to_completi
     assert executor.calls[0]["metadata"] == {"plan_mode": True, "mode": "proposal_only"}
     assert executor.calls[1]["metadata"] == {
         "mode": "modify_allowed",
-        "user_visible_text": "Implement it",
+        "user_visible_text": "Run proposed plan",
         "source_kind": "bro_detail_plan_approval",
     }
     assert isinstance(executor.calls[1]["latest_instruction"], str)
@@ -2084,9 +2424,10 @@ async def test_session_runtime_plan_proposal_approval_defaults_visible_text_to_a
     task = await session.blackboard.get_task("task-plan-visible-default")
     assert affected == ["task-plan-visible-default"]
     assert task is not None
-    assert task.metadata["user_visible_text"] == "Implement it"
+    assert task.metadata["user_visible_text"] == "Run proposed plan"
     assert task.latest_instruction is not None
-    assert "Full approved plan payload." in task.latest_instruction
+    assert "Run proposed plan" in task.latest_instruction
+    assert "Full approved plan payload." not in task.latest_instruction
     assert "Proceed with that plan." in task.latest_instruction
 
     snapshot = await session.snapshot(sync_imported_codex_threads=False)
@@ -2094,7 +2435,7 @@ async def test_session_runtime_plan_proposal_approval_defaults_visible_text_to_a
         turn for turn in snapshot.bro_timeline_turns if turn.client_request_id == "approval-client-default"
     )
     assert approval_turn.user is not None
-    assert approval_turn.user.text == "Implement it"
+    assert approval_turn.user.text == "Run proposed plan"
 
 
 @pytest.mark.anyio

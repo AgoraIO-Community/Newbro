@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from newbro.api.app import create_app
 from newbro.api.public_auth import PublicAuthStore
 from newbro.blackboard.store import BlackboardWriteEvent, BlackboardWriteKind
-from newbro.protocol import AgentResumeHandle, CodexThreadListItem, ExecutionRun, ExecutionSession, ExecutorNodeExecutor, Persona, RunStatus, Task, TaskStatus
+from newbro.protocol import AgentResumeHandle, BroThread, CodexThreadListItem, ExecutionRun, ExecutionSession, ExecutorNodeExecutor, Persona, RunStatus, Task, TaskStatus
 from newbro.runtime.executor_node_manager import NodeConnectionState
 
 
@@ -49,9 +49,54 @@ async def _put_connected_forge(runtime_session, manager, websocket: FakeWebSocke
             executor_node_id="node-forge",
             bro_detail_session_id="detail-forge",
             status="idle",
-            current_task_id=None,
         )
     )
+
+
+@pytest.mark.anyio
+async def test_direct_text_selected_imported_thread_does_not_create_task_before_executor_acceptance(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-text-outbound")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        await _put_connected_forge(runtime_session, app.state.runtime_container.executor_node_manager, websocket)
+
+        runtime_session._imported_codex_threads["codex-import-1"] = BroThread(
+            thread_id="codex-import-1",
+            persona_id="forge",
+            title="Imported",
+            status="completed",
+            has_resume_handle=True,
+        )
+        runtime_session._imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+            executor_id="codex",
+            session_handle="native-thread-1",
+            opaque={"cwd": "/tmp/work"},
+        )
+
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-text-instructions",
+            json={
+                "target_persona_id": "forge",
+                "target_thread_id": "codex-import-1",
+                "text": "continue directly",
+                "client_request_id": "client-text-1",
+            },
+        )
+
+    assert response.status_code == 200
+    assert await runtime_session.blackboard.list_tasks() == []
+    requests = await runtime_session.blackboard.list_outbound_turn_requests()
+    assert len(requests) == 1
+    assert requests[0].client_request_id == "client-text-1"
+    assert requests[0].status == "accepted"
+    assert websocket.sent[-1]["type"] == "start_codex_turn"
+    assert "task_id" not in websocket.sent[-1]
+    assert "run_id" not in websocket.sent[-1]
+    assert "execution_session_id" not in websocket.sent[-1]
 
 
 @pytest.mark.anyio
@@ -98,6 +143,59 @@ async def test_executor_text_instruction_rejects_thread_target_contradiction(tmp
 
 
 @pytest.mark.anyio
+async def test_executor_text_instruction_requires_workspace_for_new_codex_thread(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-new-thread-workspace-required")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        await _put_connected_forge(runtime_session, app.state.runtime_container.executor_node_manager)
+
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-text-instructions",
+            json={"target_persona_id": "forge", "text": "start directly", "create_new_thread": True},
+        )
+
+    assert response.status_code == 409
+    assert "requires a workspace selection" in response.text
+
+
+@pytest.mark.anyio
+async def test_executor_text_instruction_rejects_unknown_new_thread_workspace(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-new-thread-workspace-unknown")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        await _put_connected_forge(runtime_session, app.state.runtime_container.executor_node_manager)
+        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+            thread_id="workspace-thread",
+            persona_id="forge",
+            persona_name="Forge",
+            executor_id="codex",
+            executor_node_id="node-forge",
+            workspace_id="/tmp/work",
+            workspace_name="work",
+            title="Known workspace",
+        )
+
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-text-instructions",
+            json={
+                "target_persona_id": "forge",
+                "text": "start directly",
+                "create_new_thread": True,
+                "workspace_id": "/tmp/other",
+            },
+        )
+
+    assert response.status_code == 409
+    assert "workspace is not available" in response.text
+
+
+@pytest.mark.anyio
 async def test_executor_text_instruction_dispatches_to_active_executor_without_message_route(tmp_path):
     app = create_app()
     app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
@@ -129,7 +227,6 @@ async def test_executor_text_instruction_dispatches_to_active_executor_without_m
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="busy",
-                current_task_id="task-current",
             )
         )
         await runtime_session.blackboard.put_task(
@@ -227,8 +324,27 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="idle",
-                current_task_id=None,
             )
+        )
+        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+            thread_id="workspace-thread",
+            persona_id="forge",
+            persona_name="Forge",
+            executor_id="codex",
+            executor_node_id="node-forge",
+            workspace_id="/tmp/work",
+            workspace_name="work",
+            title="Known workspace",
+        )
+        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+            thread_id="workspace-thread",
+            persona_id="forge",
+            persona_name="Forge",
+            executor_id="codex",
+            executor_node_id="node-forge",
+            workspace_id="/tmp/work",
+            workspace_name="work",
+            title="Known workspace",
         )
         scheduled = False
 
@@ -240,7 +356,7 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
 
         response = await client.post(
             f"/api/sessions/{session_id}/executor-text-instructions",
-            json={"target_persona_id": "forge", "text": "start directly", "create_new_thread": True},
+            json={"target_persona_id": "forge", "text": "start directly", "create_new_thread": True, "workspace_id": " /tmp/work "},
         )
         conversation = (await client.get(f"/api/sessions/{session_id}/conversation")).json()
         snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
@@ -248,30 +364,25 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
     assert response.status_code == 200
     assert response.json()["status"] == "accepted"
     assert conversation["conversation_history"] == []
-    assert scheduled
-    assert websocket.sent == []
+    assert not scheduled
+    assert len(websocket.sent) == 1
+    assert websocket.sent[0]["type"] == "start_codex_turn"
+    assert websocket.sent[0]["create_new_thread"] is True
+    assert websocket.sent[0]["workspace_id"] == "/tmp/work"
+    assert "task_id" not in websocket.sent[0]
     tasks = await runtime_session.blackboard.list_tasks()
-    assert len(tasks) == 1
-    task = tasks[0]
-    assert task.status == TaskStatus.QUEUED
-    assert task.preferred_executor == "codex"
-    assert task.latest_instruction == "start directly"
-    assert task.metadata["source_kind"] == "bro_detail_text"
-    assert task.metadata["persona_id"] == "forge"
-    assert task.metadata["suppress_communication_notifications"] is True
-    projected_thread = next(
-        thread for thread in snapshot["bro_threads"] if thread["thread_id"] == response.json()["target_thread_id"]
-    )
-    assert projected_thread["execution_session_id"] is None
-    assert projected_thread["status"] == "queued"
-    assert projected_thread["task_ids"] == [task.task_id]
-    assert projected_thread["latest_task_id"] == task.task_id
-    assert projected_thread["active_task_id"] == task.task_id
-    assert projected_thread["diagnostics"]["pending_execution_session"] is True
+    assert tasks == []
+    requests = await runtime_session.blackboard.list_outbound_turn_requests()
+    assert len(requests) == 1
+    assert requests[0].target_thread_id == response.json()["target_thread_id"]
+    assert requests[0].create_new_thread is True
+    assert requests[0].workspace_id == "/tmp/work"
+    assert requests[0].text == "start directly"
+    assert requests[0].status == "accepted"
+    assert not any(thread["thread_id"] == response.json()["target_thread_id"] for thread in snapshot["bro_threads"])
     persona = await runtime_session.blackboard.get_persona("forge")
     assert persona is not None
-    assert persona.current_task_id == task.task_id
-    assert persona.status == "busy"
+    assert persona.status == "idle"
 
 
 @pytest.mark.anyio
@@ -309,8 +420,17 @@ async def test_open_new_direct_thread_does_not_duplicate_sent_text_as_history(
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="idle",
-                current_task_id=None,
             )
+        )
+        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+            thread_id="workspace-thread",
+            persona_id="forge",
+            persona_name="Forge",
+            executor_id="codex",
+            executor_node_id="node-forge",
+            workspace_id="/tmp/work",
+            workspace_name="work",
+            title="Known workspace",
         )
 
         def mark_scheduled(self) -> None:
@@ -328,51 +448,19 @@ async def test_open_new_direct_thread_does_not_duplicate_sent_text_as_history(
 
         response = await client.post(
             f"/api/sessions/{session_id}/executor-text-instructions",
-            json={"target_persona_id": "forge", "text": "start directly", "create_new_thread": True},
+            json={"target_persona_id": "forge", "text": "start directly", "create_new_thread": True, "workspace_id": "/tmp/work"},
         )
         assert response.status_code == 200
         target_thread_id = response.json()["target_thread_id"]
-        tasks = await runtime_session.blackboard.list_tasks()
-        assert len(tasks) == 1
-        direct_task = tasks[0]
-        resume_handle = AgentResumeHandle(
-            executor_id="codex",
-            session_handle="codex-thread-new",
-            opaque={"cwd": "/tmp/work", "title": "start directly"},
-        )
-        await runtime_session.blackboard.put_session(
-            ExecutionSession(
-                execution_session_id="exec-new",
-                task_id=direct_task.task_id,
-                base_executor_id="codex",
-                executor_node_id="node-forge",
-                continuity_key=target_thread_id,
-                run_ids=["run-new"],
-                latest_run_id="run-new",
-                latest_resume_handle=resume_handle,
-            )
-        )
-        await runtime_session.blackboard.put_run(
-            ExecutionRun(
-                run_id="run-new",
-                task_id=direct_task.task_id,
-                execution_session_id="exec-new",
-                executor_type="codex",
-                status=RunStatus.COMPLETED,
-                output_summary="Started.",
-            )
-        )
+        assert await runtime_session.blackboard.list_tasks() == []
 
         opened = await client.post(
             f"/api/sessions/{session_id}/bro-threads/{target_thread_id}/open",
             json={"target_persona_id": "forge"},
         )
 
-    assert opened.status_code == 200
-    tasks = await runtime_session.blackboard.list_tasks()
-    assert len(tasks) == 1
-    assert tasks[0].task_id == direct_task.task_id
-    assert not any(task.metadata.get("source_kind") == "codex_thread_history" for task in tasks)
+    assert opened.status_code == 409
+    assert await runtime_session.blackboard.list_tasks() == []
 
 
 @pytest.mark.anyio
@@ -410,7 +498,6 @@ async def test_executor_text_instruction_targets_selected_completed_codex_thread
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="idle",
-                current_task_id=None,
             )
         )
         await runtime_session.blackboard.put_task(
@@ -474,16 +561,19 @@ async def test_executor_text_instruction_targets_selected_completed_codex_thread
     assert snapshot["bro_threads"][0]["active_task_id"] is None
     assert response.status_code == 200
     assert response.json()["target_thread_id"] == "exec-1"
-    assert scheduled
-    assert websocket.sent == []
+    assert not scheduled
+    assert len(websocket.sent) == 1
+    assert websocket.sent[0]["type"] == "start_codex_turn"
+    assert websocket.sent[0]["target_thread_id"] == "exec-1"
+    assert websocket.sent[0]["latest_resume_handle"]["session_handle"] == "codex-thread-1"
+    assert "task_id" not in websocket.sent[0]
     tasks = await runtime_session.blackboard.list_tasks()
     created = [task for task in tasks if task.task_id != "task-done"]
-    assert len(created) == 1
-    task = created[0]
-    assert task.metadata["target_thread_id"] == "exec-1"
-    assert task.metadata["bro_thread_id"] == "detail-forge"
-    assert task.metadata["codex_thread_mode"] == "resume"
-    assert task.metadata["suppress_communication_notifications"] is True
+    assert created == []
+    requests = await runtime_session.blackboard.list_outbound_turn_requests()
+    assert len(requests) == 1
+    assert requests[0].target_thread_id == "exec-1"
+    assert requests[0].status == "accepted"
 
 
 @pytest.mark.anyio
@@ -513,6 +603,22 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
                 )
             },
         )
+        await runtime_session.blackboard.put_task(
+            Task(
+                task_id="task-other-thread",
+                root_task_id="task-other-thread",
+                title="Other imported thread task",
+                goal="Other imported thread task",
+                status=TaskStatus.QUEUED,
+                preferred_executor="codex",
+                metadata={
+                    "persona_id": "forge",
+                    "bro_thread_id": "codex-import-other",
+                    "target_thread_id": "codex-import-other",
+                    "executor_node_id": "node-forge",
+                },
+            )
+        )
         await runtime_session.blackboard.put_persona(
             Persona(
                 persona_id="forge",
@@ -522,7 +628,6 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="idle",
-                current_task_id=None,
             )
         )
 
@@ -560,7 +665,7 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
         imported_thread = next(
             thread
             for thread in snapshot["bro_threads"]
-            if thread["diagnostics"]["codex_thread_id"] == "codex-imported-native-1"
+            if thread["diagnostics"].get("codex_thread_id") == "codex-imported-native-1"
         )
         response = await client.post(
             f"/api/sessions/{session_id}/executor-text-instructions",
@@ -581,17 +686,19 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
     assert response.status_code == 200
     assert response.json()["target_thread_id"] == imported_thread["thread_id"]
     assert conversation["conversation_history"] == []
-    assert scheduled
+    assert not scheduled
+    assert len(websocket.sent) == 1
+    assert websocket.sent[0]["type"] == "start_codex_turn"
+    assert websocket.sent[0]["target_thread_id"] == imported_thread["thread_id"]
+    assert websocket.sent[0]["latest_resume_handle"]["session_handle"] == "codex-imported-native-1"
+    assert "task_id" not in websocket.sent[0]
     tasks = await runtime_session.blackboard.list_tasks()
-    assert len(tasks) == 1
-    task = tasks[0]
-    assert task.metadata["target_thread_id"] == imported_thread["thread_id"]
-    assert task.metadata["bro_thread_id"] == imported_thread["thread_id"]
-    assert task.metadata["codex_thread_mode"] == "resume"
-    assert task.metadata["codex_import_thread_id"] == "codex-imported-native-1"
-    assert task.metadata["codex_import_cwd"] == "/Users/zhangqianze/Documents/Synopse"
-    assert task.session_affinity == "/Users/zhangqianze/Documents/Synopse"
-    assert task.metadata["suppress_communication_notifications"] is True
+    assert [task.task_id for task in tasks] == ["task-other-thread"]
+    requests = await runtime_session.blackboard.list_outbound_turn_requests()
+    assert len(requests) == 1
+    assert requests[0].target_thread_id == imported_thread["thread_id"]
+    assert requests[0].text == "continue imported context"
+    assert requests[0].status == "accepted"
 
 
 @pytest.mark.anyio
@@ -630,7 +737,6 @@ async def test_open_imported_codex_thread_loads_native_messages_without_task_hyd
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="idle",
-                current_task_id=None,
             )
         )
 
@@ -825,7 +931,6 @@ async def test_open_imported_codex_thread_history_timeout_marks_messages_failed(
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="idle",
-                current_task_id=None,
             )
         )
 
@@ -900,7 +1005,7 @@ async def test_open_imported_codex_thread_history_timeout_marks_messages_failed(
 
 
 @pytest.mark.anyio
-async def test_executor_text_instruction_recovers_queued_direct_task_without_active_run(
+async def test_executor_text_instruction_rejects_queued_direct_task_without_executor_thread(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -934,7 +1039,6 @@ async def test_executor_text_instruction_recovers_queued_direct_task_without_act
                 executor_node_id="node-forge",
                 bro_detail_session_id="detail-forge",
                 status="busy",
-                current_task_id="task-stuck",
             )
         )
         await runtime_session.blackboard.put_task(
@@ -968,13 +1072,12 @@ async def test_executor_text_instruction_recovers_queued_direct_task_without_act
             json={"target_persona_id": "forge", "target_thread_id": "thread-stuck", "text": "retry text"},
         )
 
-    assert response.status_code == 200
-    assert scheduled
+    assert response.status_code == 409
+    assert not scheduled
     assert websocket.sent == []
     task = await runtime_session.blackboard.get_task("task-stuck")
     assert task is not None
     assert task.status == TaskStatus.QUEUED
-    assert "first text" in (task.latest_instruction or "")
-    assert "retry text" in (task.latest_instruction or "")
-    assert task.metadata["suppress_communication_notifications"] is True
-    assert task.metadata["direct_executor_input_sources"] == ["bro_detail_text"]
+    assert task.latest_instruction == "first text"
+    assert "suppress_communication_notifications" not in task.metadata
+    assert await runtime_session.blackboard.list_outbound_turn_requests() == []

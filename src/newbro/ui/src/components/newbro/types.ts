@@ -55,6 +55,8 @@ export type BroThreadRecord = {
   activeTaskId: string | null;
   latestTaskId: string | null;
   hasResumeHandle: boolean;
+  workspaceId: string | null;
+  workspaceName: string | null;
   timelineStatus: BroThread["timeline_status"];
   timelineError: string | null;
   timeLabel?: string;
@@ -62,7 +64,7 @@ export type BroThreadRecord = {
 
 export type RuntimePersonaInput = Pick<
   Persona,
-  "persona_id" | "name" | "avatar" | "status" | "current_task_id" | "executor_node_id" | "bro_detail_session_id"
+  "persona_id" | "name" | "avatar" | "status" | "executor_node_id" | "bro_detail_session_id"
 >;
 
 export type RuntimeExecutorNodeInput = Pick<

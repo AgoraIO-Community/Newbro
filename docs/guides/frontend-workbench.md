@@ -89,11 +89,11 @@ Current behavior:
 - pressing `Stop` tears down only the live voice session and retains the last
   transcript until the next live session replaces it
 - Bro Detail push-to-talk typed input bypasses Communication Brain and the
-  Draft card: submitting the composer starts a direct Codex task when the Bro is
-  idle, or sends a typed executor-node text instruction to the selected Bro's
-  active executor session when Codex is already running, instead of calling
-  session messages, draft ASR, or draft Send endpoints. The composer must send
-  explicit thread intent for both text and PTT audio: selected threads use
+  Draft card: submitting the composer starts a task-free outbound Codex turn
+  when the Bro is idle, or sends a typed executor-node text instruction to the
+  selected Bro's active executor session when Codex is already running, instead
+  of calling session messages, draft ASR, or draft Send endpoints. The composer
+  must send explicit thread intent for both text and PTT audio: selected threads use
   `targetThreadId`, and an empty/pending new thread uses `createNewThread=true`
 - Bro Detail typed input supports plan mode on desktop and mobile. When enabled,
   direct text sends `planMode=true`, renders the user bubble with a plan-mode
@@ -109,7 +109,11 @@ Current behavior:
   `bro_threads` from the runtime snapshot, not task records. Selecting a thread
   calls the open-thread endpoint, writes `thread` into the URL, and direct
   text/PTT sends include that target so completed selected Codex threads resume
-  through their stored execution-session resume handle. The frontend does not
+  through their stored execution-session resume handle. For a new Codex thread,
+  the frontend prompts for a known workspace from `bro_threads[*].workspace_id`
+  and sends that `workspace_id`; if no workspace is known, creation is blocked
+  in the UI instead of relying on an implicit runtime fallback. Thread rows show
+  `workspace_name` in the existing metadata line when present. The frontend does not
   call Codex app-server subscription APIs directly: Newbro's open-thread
   endpoint asks the bound executor node to subscribe to selected-thread events in
   the background, and the close-thread endpoint releases that subscription when
@@ -141,10 +145,18 @@ Current behavior:
   backend projection provides them. Plans come from documented Codex plan
   events/items or Newbro run metadata, not from Codex reasoning or inferred
   commentary.
-  Pending `plan_proposal` requests render proposal cards with option selection,
-  `Implement it`, and `Keep planning`; `Implement it` renders an optimistic
-  user text turn with visible text `Implement it` and resolves the interaction
-  request with `approve`, `client_request_id`, and `user_visible_text`.
+  Pending `plan_proposal` requests render proposal cards with explicit option
+  selection, a disabled-until-selected confirm button, and `Keep planning`.
+  Final Codex plan artifacts (`details.proposal.codex_plan`) also get a
+  synthetic `Implement it` option; question-style plan prompts render only the
+  Codex-provided options. Confirming a Codex-provided option renders an
+  optimistic user text turn with that option label and resolves the interaction
+  request with that label as both `answer_text` and `user_visible_text`;
+  confirming the synthetic `Implement it` option uses `Implement it` for both
+  fields. Codex question prompts with multiple
+  `details.proposal.questions` render as one tabbed card, require one answer per
+  question, and submit all selected labels together in `answers` while using a
+  compact summary for `answer_text` and `user_visible_text`.
   `Keep planning` resolves the request with `deny` but means refine the
   proposal, not cancel the task. Resolved
   `plan_proposal` requests are acknowledgements only; Bro Detail removes the

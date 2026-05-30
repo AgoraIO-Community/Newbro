@@ -8,7 +8,7 @@ from newbro.api.app import create_app
 from newbro.communication.models import ScriptedCommunicationModel
 from newbro.communication.models.scripted import ScriptedPlan
 from newbro.executors.core import ExecutorCapabilities, ExecutorEvent, ExecutorEventType, ExecutorSession
-from newbro.protocol import Task, TaskStatus
+from newbro.protocol import InteractionRequest, InteractionRequestKind, InteractionRequestStatus, Task, TaskStatus
 from newbro.runtime import Settings
 from newbro.runtime.container import RuntimeContainer
 
@@ -249,6 +249,71 @@ async def test_resolve_plan_proposal_approval_drives_follow_up_to_completion():
             for request in completed["interaction_requests"]
             if request["kind"] == "plan_proposal"
         ] == ["approved"]
+
+
+@pytest.mark.anyio
+async def test_resolve_multi_question_plan_proposal_requires_all_answers():
+    app = _build_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        session = app.state.runtime_container.get_session(session_id)
+        await session.blackboard.put_task(
+            Task(
+                task_id="task-multi-plan-api",
+                root_task_id="task-multi-plan-api",
+                title="API multi-question plan",
+                goal="API multi-question plan",
+                status=TaskStatus.WAITING_USER_INPUT,
+            )
+        )
+        await session.blackboard.put_interaction_request(
+            InteractionRequest(
+                request_id="ireq-multi-plan-api",
+                task_id="task-multi-plan-api",
+                kind=InteractionRequestKind.PLAN_PROPOSAL,
+                status=InteractionRequestStatus.PENDING,
+                prompt="Answer planning questions.",
+                details={
+                    "proposal": {
+                        "summary": "Answer planning questions.",
+                        "questions": [
+                            {"question_id": "audience", "header": "Audience", "summary": "Who is this for?"},
+                            {"question_id": "period", "header": "Period", "summary": "Which period?"},
+                        ],
+                    }
+                },
+                available_actions=["approve", "deny"],
+                created_at="2026-05-30T00:00:00+00:00",
+            )
+        )
+
+        missing = await client.post(
+            f"/api/sessions/{session_id}/interaction-requests/ireq-multi-plan-api/resolve",
+            json={
+                "action": "approve",
+                "answers": {"audience": ["Boss / leadership"]},
+            },
+        )
+        assert missing.status_code == 409
+        assert "period" in missing.text
+
+        response = await client.post(
+            f"/api/sessions/{session_id}/interaction-requests/ireq-multi-plan-api/resolve",
+            json={
+                "action": "approve",
+                "answers": {
+                    "audience": ["Boss / leadership"],
+                    "period": ["Latest update"],
+                },
+            },
+        )
+        assert response.status_code == 200
+        updated = await session.blackboard.get_interaction_request("ireq-multi-plan-api")
+        assert updated is not None
+        assert updated.details["selected_answers"] == {
+            "audience": ["Boss / leadership"],
+            "period": ["Latest update"],
+        }
 
 
 @pytest.mark.anyio

@@ -136,6 +136,8 @@ export interface BroThread {
   persona_name: string | null;
   executor_id: string;
   executor_node_id: string | null;
+  workspace_id?: string | null;
+  workspace_name?: string | null;
   execution_session_id: string | null;
   status: "pending" | "queued" | "running" | "blocked" | "completed" | "failed" | "cancelled";
   title: string;
@@ -206,6 +208,28 @@ export interface BroTimelineTurn {
   assistant: BroTimelineMessage | null;
   task: BroTimelineTask | null;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  created_at: string | null;
+  updated_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface OutboundTurnRequest {
+  request_id: string;
+  persona_id: string;
+  executor_id: string;
+  executor_node_id: string;
+  target_thread_id: string | null;
+  create_new_thread: boolean;
+  workspace_id: string | null;
+  client_request_id: string | null;
+  input_modality: "text" | "audio";
+  text: string | null;
+  audio_instruction_id: string | null;
+  plan_mode: boolean;
+  status: "pending" | "accepted" | "running" | "completed" | "failed";
+  error: string | null;
+  executor_thread_id: string | null;
+  executor_turn_id: string | null;
   created_at: string | null;
   updated_at: string | null;
   metadata: Record<string, unknown>;
@@ -413,6 +437,7 @@ export interface SessionSnapshot {
   bindings: SessionBinding[];
   summaries: TaskSummary[];
   notification_candidates: NotificationCandidate[];
+  outbound_turn_requests: OutboundTurnRequest[];
   bro_threads: BroThread[];
   bro_timeline_turns: BroTimelineTurn[];
   personas: Persona[];
@@ -432,7 +457,6 @@ export interface Persona {
   executor_node_id: string | null;
   bro_detail_session_id: string;
   status: "idle" | "busy";
-  current_task_id: string | null;
 }
 
 export interface ConversationSnapshot {

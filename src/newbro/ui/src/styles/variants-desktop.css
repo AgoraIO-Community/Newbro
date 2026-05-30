@@ -3646,6 +3646,41 @@
   line-height: 1.5;
   color: var(--nb-ink-soft);
 }
+.dt-plantabs {
+  display: flex; gap: 6px;
+  padding: 6px 16px 8px;
+  overflow-x: auto;
+}
+.dt-plantab {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--nb-line);
+  background: #fff;
+  color: var(--nb-ink-soft);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dt-plantab-on {
+  color: var(--nb-coral-hover);
+  border-color: var(--nb-coral-border);
+  background: var(--nb-coral-tint);
+}
+.dt-plantab-done {
+  color: var(--nb-live-ink);
+  border-color: var(--nb-live-edge);
+}
+.dt-planquestion {
+  margin: 0;
+  padding: 0 16px 4px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--nb-ink);
+  font-weight: 650;
+}
 .dt-planopts {
   display: flex; flex-direction: column; gap: 9px;
   padding: 6px 16px 14px;

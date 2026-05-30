@@ -635,6 +635,7 @@ function useNewbroShellState() {
       action: "approve" | "deny" | "answer" | "confirm" | "cancel";
       answer_text?: string;
       option_id?: string;
+      answers?: Record<string, string[]>;
       reason?: string;
       client_request_id?: string;
       user_visible_text?: string;

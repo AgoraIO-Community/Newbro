@@ -303,6 +303,7 @@ export async function submitExecutorAudioInstruction(
     numChannels: number;
     samplesPerChannel: number;
     createNewThread?: boolean;
+    workspaceId?: string | null;
     clientRequestId?: string | null;
   },
 ): Promise<ExecutorAudioInstructionResponse> {
@@ -318,6 +319,9 @@ export async function submitExecutorAudioInstruction(
   }
   if (payload.createNewThread) {
     query.set("create_new_thread", "true");
+  }
+  if (payload.workspaceId) {
+    query.set("workspace_id", payload.workspaceId);
   }
   if (payload.clientRequestId) {
     query.set("client_request_id", payload.clientRequestId);
@@ -339,6 +343,7 @@ export async function submitExecutorTextInstruction(
     targetPersonaId: string;
     targetThreadId?: string | null;
     createNewThread?: boolean;
+    workspaceId?: string | null;
     clientRequestId?: string | null;
     planMode?: boolean;
     text: string;
@@ -348,6 +353,7 @@ export async function submitExecutorTextInstruction(
     target_persona_id: payload.targetPersonaId,
     target_thread_id: payload.targetThreadId ?? null,
     create_new_thread: payload.createNewThread ?? false,
+    workspace_id: payload.workspaceId ?? null,
     plan_mode: payload.planMode ?? false,
     text: payload.text,
   };
@@ -481,6 +487,7 @@ export function sendSocketInteractionResolution(
   options: {
     answerText?: string;
     optionId?: string;
+    answers?: Record<string, string[]>;
     reason?: string;
     clientRequestId?: string;
     userVisibleText?: string;
@@ -494,6 +501,7 @@ export function sendSocketInteractionResolution(
       action,
       answer_text: options.answerText,
       option_id: options.optionId,
+      answers: options.answers,
       reason: options.reason,
       client_request_id: options.clientRequestId,
       user_visible_text: options.userVisibleText,
@@ -530,6 +538,7 @@ export async function resolveInteractionRequest(
     action: "approve" | "deny" | "answer" | "confirm" | "cancel";
     answer_text?: string;
     option_id?: string;
+    answers?: Record<string, string[]>;
     reason?: string;
     client_request_id?: string;
     user_visible_text?: string;

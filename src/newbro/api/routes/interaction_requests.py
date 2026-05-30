@@ -39,6 +39,7 @@ async def resolve_interaction_request(
                 action=request.action,
                 answer_text=request.answer_text,
                 option_id=request.option_id,
+                answers=request.answers,
                 reason=request.reason,
                 client_request_id=request.client_request_id,
                 user_visible_text=request.user_visible_text,

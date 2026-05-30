@@ -33,6 +33,7 @@ class ResolveInteractionRequestTool:
         action: str,
         answer_text: str | None = None,
         option_id: str | None = None,
+        answers: dict[str, list[str]] | None = None,
         reason: str | None = None,
     ) -> dict[str, object]:
         request = await self._store.get_interaction_request(request_id)
@@ -47,13 +48,24 @@ class ResolveInteractionRequestTool:
                 code="interaction_resolution_unavailable",
             )
         try:
-            maybe_awaitable = self._apply_callback(
-                request_id,
-                action=action,
-                answer_text=answer_text,
-                option_id=option_id,
-                reason=reason,
-            )
+            callback_kwargs = {
+                "action": action,
+                "answer_text": answer_text,
+                "option_id": option_id,
+                "answers": answers,
+                "reason": reason,
+            }
+            signature = inspect.signature(self._apply_callback)
+            if not any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in signature.parameters.values()
+            ):
+                callback_kwargs = {
+                    key: value
+                    for key, value in callback_kwargs.items()
+                    if key in signature.parameters
+                }
+            maybe_awaitable = self._apply_callback(request_id, **callback_kwargs)
             affected_task_ids = (
                 await maybe_awaitable if inspect.isawaitable(maybe_awaitable) else maybe_awaitable
             )

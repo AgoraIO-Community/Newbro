@@ -202,6 +202,9 @@ POST /api/sessions/{session_id}/interaction-requests/{request_id}/resolve
   "interaction_request_id": "...",
   "action": "approve|deny|answer|confirm|cancel",
   "answer_text": "...",
+  "answers": {
+    "question_id": ["selected answer"]
+  },
   "client_request_id": "...",
   "user_visible_text": "..."
 }
@@ -209,9 +212,22 @@ POST /api/sessions/{session_id}/interaction-requests/{request_id}/resolve
 
 `client_request_id` and `user_visible_text` are optional. For Bro Detail
 `plan_proposal` approvals, clients use them to project the approval as a
-user-visible timeline turn while preserving the richer follow-up instruction
-sent to the executor. If a Bro Detail `plan_proposal` approval omits
-`user_visible_text`, Newbro projects the acknowledgement as `Implement it`; it
+user-visible timeline turn. When the user selects a Codex-provided option, the
+client sends that option label as both `answer_text` and `user_visible_text`;
+option descriptions are display-only. For multi-question Codex
+`requestUserInput` prompts, clients send `answers` with one non-empty selected
+answer list for every `details.proposal.questions[].question_id`, and keep
+`answer_text` / `user_visible_text` as a compact summary such as
+`Audience: Boss / leadership; Period: Latest update`. Newbro rejects
+multi-question plan-proposal approvals that omit any question answer and records
+accepted answers in `details.selected_answers`.
+
+Clients add a synthetic `Implement it` option only for final Codex plan
+artifacts identified by `details.proposal.codex_plan`; question-style plan
+prompts render only the Codex-provided options. If a Bro Detail
+`plan_proposal` approval omits
+`user_visible_text`, Newbro projects the selected option label when `option_id`
+identifies one, otherwise it projects the acknowledgement as `Implement it`; it
 must not render the full approved plan or follow-up instruction as the user
 message.
 
@@ -262,6 +278,12 @@ instead of waiting for a native callback. Codex `requestUserInput` callbacks
 with structured options also become plan proposals; in that native callback
 path the executor payload stays in `opaque.native_response`, is sanitized
 before it reaches clients, and can continue the same Codex turn.
+Codex question callbacks preserve all submitted questions under
+`details.proposal.questions` while retaining top-level `question_id`, `summary`,
+and `options` as first-question compatibility fields. Native callback responses
+prefer structured `answers` and return every question id to Codex as
+`{"answers": {"question_id": {"answers": [...]}}}`; the legacy single
+`answer_text` response remains only for older single-question callers.
 
 ### Generic Fallback
 

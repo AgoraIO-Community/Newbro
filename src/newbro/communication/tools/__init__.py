@@ -171,6 +171,13 @@ def build_default_tool_registry(
                         },
                         "answer_text": {"type": ["string", "null"]},
                         "option_id": {"type": ["string", "null"]},
+                        "answers": {
+                            "type": ["object", "null"],
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
                         "reason": {"type": ["string", "null"]},
                     },
                     "required": ["request_id", "action"],

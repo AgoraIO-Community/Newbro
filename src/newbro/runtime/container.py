@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ class RuntimeContainer:
     interaction_classifier: InteractionClassifier | None = None
     executor_node_manager: ExecutorNodeManager = field(init=False)
     _sessions: dict[str, SessionRuntime] = field(default_factory=dict, init=False)
+    _background_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
 
     def __post_init__(self) -> None:
         self.executor_node_manager = ExecutorNodeManager(
@@ -66,7 +68,13 @@ class RuntimeContainer:
                 return session
         return None
 
-    async def handle_executor_node_connected(self) -> list[str]:
+    async def find_session_by_outbound_turn_request(self, request_id: str) -> SessionRuntime | None:
+        for session in self._sessions.values():
+            if await session.blackboard.get_outbound_turn_request(request_id) is not None:
+                return session
+        return None
+
+    async def handle_executor_node_connected(self, node_id: str | None = None) -> list[str]:
         updated_task_ids: list[str] = []
         for session in self._sessions.values():
             changed = await session.requeue_waiting_executor_tasks()
@@ -74,6 +82,8 @@ class RuntimeContainer:
                 session.schedule_execution()
                 updated_task_ids.extend(changed)
         await self.publish_session_snapshots()
+        if node_id is not None:
+            self._schedule_imported_thread_refresh(node_id)
         return updated_task_ids
 
     async def handle_executor_node_disconnected(self) -> None:
@@ -84,10 +94,20 @@ class RuntimeContainer:
             if session.subscribers:
                 await session.publish_snapshot()
 
+    async def publish_imported_thread_snapshots(self, *, node_id: str | None = None) -> None:
+        for session in self._sessions.values():
+            if session.subscribers:
+                await session.publish_snapshot(sync_imported_codex_threads=True)
+
+    def _schedule_imported_thread_refresh(self, node_id: str) -> None:
+        task = asyncio.create_task(self.publish_imported_thread_snapshots(node_id=node_id))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
     async def persona_is_busy(self, persona_id: str) -> bool:
         for session in self._sessions.values():
             persona = await session.blackboard.get_persona(persona_id)
-            if persona is not None and (persona.status == "busy" or persona.current_task_id is not None):
+            if persona is not None and persona.status == "busy":
                 return True
         return False
 
@@ -115,14 +135,13 @@ class RuntimeContainer:
                     persisted.model_copy(
                         update={
                             "status": current.status,
-                            "current_task_id": current.current_task_id,
                         }
                     )
                 )
             for persona_id, current in current_personas.items():
                 if persona_id in persisted_by_id:
                     continue
-                if current.status == "busy" or current.current_task_id is not None:
+                if current.status == "busy":
                     continue
                 await session.blackboard.delete_persona(persona_id)
         await self.publish_session_snapshots()
@@ -143,14 +162,13 @@ class RuntimeContainer:
                 persisted.model_copy(
                     update={
                         "status": current.status,
-                        "current_task_id": current.current_task_id,
                     }
                 )
             )
         for persona_id, current in current_personas.items():
             if persona_id in persisted_by_id:
                 continue
-            if current.status == "busy" or current.current_task_id is not None:
+            if current.status == "busy":
                 continue
             await session.blackboard.delete_persona(persona_id)
         await session.publish_snapshot()

@@ -180,7 +180,7 @@ async def test_send_draft_assigns_runtime_bro_and_exposes_progress_state():
         persona = next(item for item in snapshot["personas"] if item["persona_id"] == "persona-rook")
         task = next(item for item in snapshot["tasks"] if item["task_id"] == task_id)
         assert persona["status"] == "busy"
-        assert persona["current_task_id"] == task_id
+        assert "current_task_id" not in persona
         assert task["preferred_executor"] == "codex"
         assert task["session_affinity"]
         assert task["metadata"]["persona_id"] == "persona-rook"
@@ -296,7 +296,6 @@ async def test_send_draft_rejects_busy_runtime_bro_without_clearing_draft():
                 persona_id="persona-rook",
                 name="Rook",
                 status="busy",
-                current_task_id="task-existing",
             )
         )
         draft = (await client.post(

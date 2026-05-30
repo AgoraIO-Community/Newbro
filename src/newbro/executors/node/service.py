@@ -27,6 +27,7 @@ from newbro.protocol import (
     CodexThreadSubscribedMessage,
     CodexThreadsListedMessage,
     CodexThreadUnsubscribedMessage,
+    CodexTurnEventMessage,
     DispatchAudioInstructionCommand,
     DispatchRunCommand,
     DispatchTextInstructionCommand,
@@ -37,6 +38,7 @@ from newbro.protocol import (
     RegisterNodeMessage,
     ReleaseRunCommand,
     RunEventMessage,
+    StartCodexTurnCommand,
     SubscribeCodexThreadCommand,
     SupplyInteractionResponseCommand,
     TranscribeAudioInstructionCommand,
@@ -207,6 +209,10 @@ class ExecutorNodeService:
         if message_type == "dispatch_text_instruction":
             command = DispatchTextInstructionCommand.model_validate(payload)
             await self._dispatch_text_instruction(websocket, command)
+            return
+        if message_type == "start_codex_turn":
+            command = StartCodexTurnCommand.model_validate(payload)
+            self._schedule_background_command(self._start_codex_turn(websocket, command))
             return
         if message_type == "list_codex_threads":
             command = ListCodexThreadsCommand.model_validate(payload)
@@ -390,6 +396,50 @@ class ExecutorNodeService:
                     ok=False,
                     error=str(exc),
                 ).model_dump(mode="json"),
+            )
+
+    async def _start_codex_turn(self, websocket: Any, command: StartCodexTurnCommand) -> None:
+        executor = self._executors.get(command.executor_type)
+        starter = getattr(executor, "start_turn_request", None)
+        failure_message = f"Executor '{command.executor_type}' does not support start_codex_turn."
+        if starter is None:
+            await self._send_codex_turn_event(
+                websocket,
+                command,
+                event_type=ExecutorEventType.FAILED.value,
+                message=failure_message,
+                ok=False,
+                error=failure_message,
+                metadata=_codex_turn_command_metadata(command),
+            )
+            return
+        try:
+            async for event in starter(command):
+                metadata = _codex_turn_command_metadata(command, event.metadata)
+                event_type = event.event_type.value
+                failed = event.event_type == ExecutorEventType.FAILED
+                await self._send_codex_turn_event(
+                    websocket,
+                    command,
+                    event_type=event_type,
+                    message=event.message,
+                    executor_thread_id=_metadata_str(metadata, "executor_thread_id")
+                    or _metadata_str(metadata, "thread_id"),
+                    executor_turn_id=_metadata_str(metadata, "executor_turn_id")
+                    or _metadata_str(metadata, "turn_id"),
+                    ok=not failed,
+                    error=event.message if failed else None,
+                    metadata=metadata,
+                )
+        except Exception as exc:
+            await self._send_codex_turn_event(
+                websocket,
+                command,
+                event_type=ExecutorEventType.FAILED.value,
+                message=str(exc),
+                ok=False,
+                error=str(exc),
+                metadata=_codex_turn_command_metadata(command),
             )
 
     async def _subscribe_codex_thread(self, websocket: Any, command: SubscribeCodexThreadCommand) -> None:
@@ -828,6 +878,7 @@ class ExecutorNodeService:
                 params=dict(command.native_response.get("params") or {}),
                 action=command.action,
                 answer_text=command.answer_text,
+                answers=command.answers,
             )
         except Exception as exc:
             LOGGER.warning(
@@ -885,6 +936,36 @@ class ExecutorNodeService:
                     "source": "executor_text_instruction",
                 },
                 latest_resume_handle=None,
+            ).model_dump(mode="json"),
+        )
+
+    async def _send_codex_turn_event(
+        self,
+        websocket: Any,
+        command: StartCodexTurnCommand,
+        *,
+        event_type: str,
+        message: str | None,
+        executor_thread_id: str | None = None,
+        executor_turn_id: str | None = None,
+        ok: bool = True,
+        error: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
+        await self._send_json(
+            websocket,
+            CodexTurnEventMessage(
+                request_id=command.request_id,
+                node_id=self._settings.node_id,
+                target_persona_id=command.target_persona_id,
+                target_thread_id=command.target_thread_id,
+                event_type=event_type,
+                message=message,
+                executor_thread_id=executor_thread_id,
+                executor_turn_id=executor_turn_id,
+                ok=ok,
+                error=error,
+                metadata=dict(metadata or {}),
             ).model_dump(mode="json"),
         )
 
@@ -1070,6 +1151,30 @@ def _event_thread_id(params: dict[str, object]) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _metadata_str(metadata: dict[str, object], key: str) -> str | None:
+    value = metadata.get(key)
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _codex_turn_command_metadata(
+    command: StartCodexTurnCommand,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    metadata = dict(command.metadata)
+    metadata.update(extra or {})
+    metadata["instruction_id"] = command.instruction.instruction_id
+    metadata["target_persona_id"] = command.target_persona_id
+    metadata["target_thread_id"] = command.target_thread_id
+    client_request_id = command.instruction.metadata.get("client_request_id")
+    if isinstance(client_request_id, str) and client_request_id:
+        metadata["client_request_id"] = client_request_id
+    if command.instruction.source_audio_instruction_id is not None:
+        metadata["source_audio_instruction_id"] = command.instruction.source_audio_instruction_id
+    return metadata
 
 
 def _format_executor_types(executor_types: list[str]) -> str:

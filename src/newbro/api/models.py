@@ -54,6 +54,7 @@ class ResolveInteractionRequest(BaseModel):
     action: Literal["approve", "deny", "answer", "confirm", "cancel"]
     answer_text: str | None = None
     option_id: str | None = None
+    answers: dict[str, list[str]] | None = None
     reason: str | None = None
     client_request_id: str | None = None
     user_visible_text: str | None = None
@@ -90,6 +91,7 @@ class ResolveInteractionRequestSocketAction(BaseModel):
     action: Literal["approve", "deny", "answer", "confirm", "cancel"]
     answer_text: str | None = None
     option_id: str | None = None
+    answers: dict[str, list[str]] | None = None
     reason: str | None = None
     client_request_id: str | None = None
     user_visible_text: str | None = None

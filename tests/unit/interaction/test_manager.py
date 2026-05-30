@@ -352,9 +352,133 @@ async def test_interaction_manager_builds_and_resolves_plan_proposal():
         option_id="full",
     )
 
-    assert resolution.answer_text == "Full - Complete feature"
+    assert resolution.answer_text == "Full"
     assert resolution.request.status == InteractionRequestStatus.APPROVED
     assert resolution.request.details["selected_option_id"] == "full"
+
+
+@pytest.mark.anyio
+async def test_interaction_manager_records_multi_question_plan_answers():
+    store = InMemoryBlackboard()
+    manager = InteractionManager(store)
+    task = Task(
+        task_id="task-multi-question",
+        root_task_id="task-multi-question",
+        title="Plan questions",
+        goal="Plan questions",
+    )
+    run = ExecutionRun(
+        run_id="run-multi-question",
+        task_id="task-multi-question",
+        execution_session_id="exec-multi-question",
+        executor_type="codex",
+        status=RunStatus.BLOCKED,
+        block_reason="Answer planning questions",
+        metadata={
+            "blocked_event": {
+                "interaction_kind": "plan_proposal",
+                "proposal": {
+                    "summary": "Answer planning questions",
+                    "questions": [
+                        {
+                            "question_id": "audience",
+                            "header": "Audience",
+                            "summary": "Who is this for?",
+                            "options": [{"id": "boss", "label": "Boss / leadership"}],
+                        },
+                        {
+                            "question_id": "period",
+                            "header": "Period",
+                            "summary": "Which period?",
+                            "options": [{"id": "latest", "label": "Latest update"}],
+                        },
+                    ],
+                    "question_id": "audience",
+                    "options": [{"id": "boss", "label": "Boss / leadership"}],
+                },
+            },
+        },
+    )
+    await store.put_task(task)
+    await store.put_run(run)
+    await manager.handle_blackboard_write(
+        BlackboardWriteEvent(
+            kind=BlackboardWriteKind.RUN,
+            entity_id="run-multi-question",
+            task_id="task-multi-question",
+        )
+    )
+    request = (await store.list_interaction_requests())[0]
+
+    resolution = await manager.resolve_request(
+        request.request_id,
+        action="approve",
+        answers={
+            "audience": ["Boss / leadership"],
+            "period": ["Latest update"],
+        },
+    )
+
+    assert resolution.answer_text == "Audience: Boss / leadership; Period: Latest update"
+    assert resolution.answers == {
+        "audience": ["Boss / leadership"],
+        "period": ["Latest update"],
+    }
+    assert resolution.request.details["selected_answers"] == {
+        "audience": ["Boss / leadership"],
+        "period": ["Latest update"],
+    }
+
+
+@pytest.mark.anyio
+async def test_interaction_manager_requires_all_multi_question_plan_answers():
+    store = InMemoryBlackboard()
+    manager = InteractionManager(store)
+    await store.put_task(
+        Task(
+            task_id="task-missing-question",
+            root_task_id="task-missing-question",
+            title="Plan questions",
+            goal="Plan questions",
+        )
+    )
+    await store.put_run(
+        ExecutionRun(
+            run_id="run-missing-question",
+            task_id="task-missing-question",
+            execution_session_id="exec-missing-question",
+            executor_type="codex",
+            status=RunStatus.BLOCKED,
+            block_reason="Answer planning questions",
+            metadata={
+                "blocked_event": {
+                    "interaction_kind": "plan_proposal",
+                    "proposal": {
+                        "summary": "Answer planning questions",
+                        "questions": [
+                            {"question_id": "audience", "header": "Audience", "summary": "Who is this for?"},
+                            {"question_id": "period", "header": "Period", "summary": "Which period?"},
+                        ],
+                    },
+                },
+            },
+        )
+    )
+    await manager.handle_blackboard_write(
+        BlackboardWriteEvent(
+            kind=BlackboardWriteKind.RUN,
+            entity_id="run-missing-question",
+            task_id="task-missing-question",
+        )
+    )
+    request = (await store.list_interaction_requests())[0]
+
+    with pytest.raises(ValueError, match="period"):
+        await manager.resolve_request(
+            request.request_id,
+            action="approve",
+            answers={"audience": ["Boss / leadership"]},
+        )
 
 
 @pytest.mark.anyio

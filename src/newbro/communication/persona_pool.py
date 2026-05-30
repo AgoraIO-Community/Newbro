@@ -1,8 +1,7 @@
 """User-defined persona persistence and session loading.
 
 Personas are stored in ~/.newbro/personas.yaml and loaded into the
-blackboard at session start. Runtime state (status, current_task_id)
-lives on the blackboard only.
+blackboard at session start. Runtime status lives on the blackboard only.
 """
 
 from __future__ import annotations

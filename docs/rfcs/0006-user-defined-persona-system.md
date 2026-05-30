@@ -33,7 +33,6 @@ class Persona:
     avatar: str              # URL to pixel-art sprite or emoji
     base_prompt: str         # injected into executor prompt
     status: "idle" | "busy"
-    current_task_id: str | None
 ```
 
 ### Lifecycle
@@ -47,9 +46,9 @@ User says "write a red-black tree demo"
     ↓
 Communication Brain picks an idle persona (or user specifies one)
     ↓
-create_task with persona_id → Task.persona_id = "persona-mochi"
+create_task with persona_id → Task.metadata.persona_id = "persona-mochi"
     ↓
-Persona status → busy, current_task_id → task_id
+Persona status → busy
     ↓
 Execution Brain builds executor prompt:
     system_prompt = persona.base_prompt + task.goal + task.constraints
@@ -58,7 +57,7 @@ Executor runs with persona-flavored prompt
     ↓
 Task completes/fails/cancelled
     ↓
-Persona status → idle, current_task_id → null
+Persona status → idle
     ↓
 Persona is available for next task
 ```
@@ -112,8 +111,8 @@ The Communication Brain sees personas in the runtime context:
 ```json
 {
   "personas": [
-    {"persona_id": "persona-mochi", "name": "Mochi", "status": "busy", "current_task_id": "task-abc"},
-    {"persona_id": "persona-pixel", "name": "Pixel", "status": "idle", "current_task_id": null}
+    {"persona_id": "persona-mochi", "name": "Mochi", "status": "busy"},
+    {"persona_id": "persona-pixel", "name": "Pixel", "status": "idle"}
   ]
 }
 ```
@@ -170,7 +169,7 @@ Personas can also be created via the Communication Brain — user says "create a
 Included:
 - Persona model with name, avatar, base_prompt
 - Persistence in `~/.synapse/personas.yaml`, auto-loaded on session start
-- Blackboard storage for runtime persona state (status, current_task_id)
+- Blackboard storage for runtime persona status
 - Task assignment: user-specified or auto-pick idle persona
 - Busy check: reject task creation when all personas are busy
 - Executor prompt injection: persona.base_prompt prepended to task prompt

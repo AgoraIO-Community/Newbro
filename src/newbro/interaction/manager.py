@@ -31,6 +31,7 @@ class InteractionResolution:
     request: InteractionRequest
     follow_up_instruction: str
     answer_text: str | None = None
+    answers: dict[str, list[str]] | None = None
 
 
 class InteractionManager:
@@ -84,6 +85,7 @@ class InteractionManager:
         action: str,
         answer_text: str | None = None,
         option_id: str | None = None,
+        answers: dict[str, list[str]] | None = None,
         reason: str | None = None,
     ) -> InteractionResolution:
         request = await self._store.get_interaction_request(request_id)
@@ -95,11 +97,13 @@ class InteractionManager:
             allowed = ", ".join(request.available_actions) or "none"
             raise ValueError(f"Action '{action}' is not allowed. Allowed: {allowed}.")
         if request.kind == InteractionRequestKind.PLAN_PROPOSAL:
+            answers = _normalize_proposal_answers(request=request, answers=answers)
             answer_text = _plan_proposal_answer_text(
                 request=request,
                 action=action,
                 answer_text=answer_text,
                 option_id=option_id,
+                answers=answers,
             )
         if action == "answer" and not (answer_text and answer_text.strip()):
             raise ValueError("answer_text is required for answer actions.")
@@ -113,6 +117,7 @@ class InteractionManager:
                 "details": {
                     **request.details,
                     **({"selected_option_id": option_id} if option_id else {}),
+                    **({"selected_answers": answers} if answers else {}),
                     **({"resolution_reason": reason} if reason else {}),
                 },
             }
@@ -130,6 +135,7 @@ class InteractionManager:
                 answer_text=answer_text,
             ),
             answer_text=answer_text,
+            answers=answers,
         )
 
     async def add_task_signal_attention(
@@ -412,11 +418,13 @@ def _proposal_details_from_native_params(params: dict[str, object]) -> dict[str,
     questions = params.get("questions")
     if not isinstance(questions, list):
         return None
+    normalized_questions: list[dict[str, object]] = []
     for question in questions:
         if not isinstance(question, dict):
             continue
         question_id = question.get("id")
-        question_text = question.get("question") or question.get("prompt") or question.get("header")
+        header = question.get("header")
+        question_text = question.get("question") or question.get("prompt") or header
         options = question.get("options")
         normalized_options: list[dict[str, object]] = []
         if isinstance(options, list):
@@ -436,12 +444,33 @@ def _proposal_details_from_native_params(params: dict[str, object]) -> dict[str,
                         "letter": chr(65 + index),
                     }
                 )
-        return {
-            **({"question_id": question_id} if isinstance(question_id, str) and question_id else {}),
-            "summary": question_text.strip() if isinstance(question_text, str) and question_text.strip() else "Review the proposed plan.",
-            "options": normalized_options,
-        }
-    return None
+        normalized_questions.append(
+            {
+                "question_id": str(question_id).strip()
+                if isinstance(question_id, str) and question_id.strip()
+                else f"question_{len(normalized_questions) + 1}",
+                "header": header.strip()
+                if isinstance(header, str) and header.strip()
+                else (
+                    question_text.strip()
+                    if isinstance(question_text, str) and question_text.strip()
+                    else f"Question {len(normalized_questions) + 1}"
+                ),
+                "summary": question_text.strip()
+                if isinstance(question_text, str) and question_text.strip()
+                else "Review the proposed plan.",
+                "options": normalized_options,
+            }
+        )
+    if not normalized_questions:
+        return None
+    first = normalized_questions[0]
+    return {
+        "questions": normalized_questions,
+        "question_id": first["question_id"],
+        "summary": first["summary"],
+        "options": first["options"],
+    }
 
 
 def _plan_proposal_answer_text(
@@ -450,9 +479,14 @@ def _plan_proposal_answer_text(
     action: str,
     answer_text: str | None,
     option_id: str | None,
+    answers: dict[str, list[str]] | None = None,
 ) -> str:
     if answer_text and answer_text.strip():
         return answer_text.strip()
+    if answers:
+        summary = _proposal_answers_summary(request=request, answers=answers)
+        if summary:
+            return summary
     if action == "deny":
         return "Keep planning. Refine the proposal instead of acting yet."
     proposal = request.details.get("proposal")
@@ -466,15 +500,67 @@ def _plan_proposal_answer_text(
                 if option_id and candidate_id != option_id:
                     continue
                 label = option.get("label")
-                description = option.get("description")
-                parts = [
-                    value.strip()
-                    for value in (label, description)
-                    if isinstance(value, str) and value.strip()
-                ]
-                if parts:
-                    return " - ".join(parts)
+                if isinstance(label, str) and label.strip():
+                    return label.strip()
     return "Approve and run the proposed plan."
+
+
+def _normalize_proposal_answers(
+    *,
+    request: InteractionRequest,
+    answers: dict[str, list[str]] | None,
+) -> dict[str, list[str]] | None:
+    proposal = request.details.get("proposal")
+    if not isinstance(proposal, dict):
+        return answers
+    questions = proposal.get("questions")
+    if not isinstance(questions, list) or len(questions) <= 1:
+        return answers
+    if answers is None:
+        raise ValueError("answers are required for multi-question plan proposals.")
+    normalized_answers: dict[str, list[str]] = {}
+    missing: list[str] = []
+    for question in questions:
+        if not isinstance(question, dict):
+            continue
+        question_id = question.get("question_id")
+        if not isinstance(question_id, str) or not question_id.strip():
+            continue
+        selected = answers.get(question_id)
+        values = [value.strip() for value in selected or [] if isinstance(value, str) and value.strip()]
+        if not values:
+            missing.append(question_id)
+            continue
+        normalized_answers[question_id] = values
+    if missing:
+        raise ValueError(f"answers are required for proposal questions: {', '.join(missing)}.")
+    return normalized_answers
+
+
+def _proposal_answers_summary(
+    *,
+    request: InteractionRequest,
+    answers: dict[str, list[str]],
+) -> str:
+    proposal = request.details.get("proposal")
+    if not isinstance(proposal, dict):
+        return ""
+    questions = proposal.get("questions")
+    if not isinstance(questions, list):
+        return ""
+    parts: list[str] = []
+    for question in questions:
+        if not isinstance(question, dict):
+            continue
+        question_id = question.get("question_id")
+        if not isinstance(question_id, str) or not question_id:
+            continue
+        label = question.get("header") or question.get("summary") or question_id
+        values = answers.get(question_id) or []
+        clean_values = [value.strip() for value in values if isinstance(value, str) and value.strip()]
+        if clean_values:
+            parts.append(f"{str(label).strip()}: {', '.join(clean_values)}")
+    return "; ".join(parts)
 
 
 def _now_iso() -> str:

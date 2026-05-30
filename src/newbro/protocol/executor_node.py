@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .session import AgentResumeHandle
 
@@ -229,6 +229,50 @@ class ExecutorTextInstruction(BaseModel):
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
+class StartCodexTurnCommand(BaseModel):
+    type: Literal["start_codex_turn"] = "start_codex_turn"
+    request_id: str
+    executor_type: Literal["codex"] = "codex"
+    target_persona_id: str
+    target_thread_id: str
+    thread_id: str | None = None
+    create_new_thread: bool = False
+    workspace_id: str | None = None
+    instruction: ExecutorTextInstruction
+    latest_resume_handle: AgentResumeHandle | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_thread_intent(self) -> StartCodexTurnCommand:
+        has_thread_id = self.thread_id is not None
+        has_resume_handle = self.latest_resume_handle is not None
+        if self.thread_id is not None and not self.thread_id.strip():
+            raise ValueError("start_codex_turn thread_id cannot be empty.")
+        if self.create_new_thread:
+            if has_thread_id or has_resume_handle:
+                raise ValueError("start_codex_turn create_new_thread cannot include existing thread intent.")
+            return self
+        if has_thread_id == has_resume_handle:
+            raise ValueError("start_codex_turn requires exactly one existing thread intent.")
+        return self
+
+
+class CodexTurnEventMessage(BaseModel):
+    type: Literal["codex_turn_event"] = "codex_turn_event"
+    request_id: str
+    node_id: str
+    executor_type: Literal["codex"] = "codex"
+    target_persona_id: str
+    target_thread_id: str
+    event_type: str
+    message: str | None = None
+    executor_thread_id: str | None = None
+    executor_turn_id: str | None = None
+    ok: bool = True
+    error: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
 class DispatchAudioInstructionCommand(BaseModel):
     type: Literal["dispatch_audio_instruction"] = "dispatch_audio_instruction"
     run_id: str
@@ -281,6 +325,7 @@ class SupplyInteractionResponseCommand(BaseModel):
     run_id: str | None = None
     action: Literal["approve", "deny", "answer", "confirm", "cancel"]
     answer_text: str | None = None
+    answers: dict[str, list[str]] | None = None
     native_response: dict[str, object] | None = None
 
 

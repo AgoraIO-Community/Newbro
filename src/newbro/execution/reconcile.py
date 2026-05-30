@@ -258,8 +258,23 @@ class ReconcileLoop:
         persona = await self._store.get_persona(persona_id)
         if persona is None:
             return
-        if persona.current_task_id != task.task_id:
+        active_statuses = {
+            TaskStatus.CREATED,
+            TaskStatus.QUEUED,
+            TaskStatus.RUNNING,
+            TaskStatus.WAITING_EXECUTOR,
+            TaskStatus.WAITING_USER_INPUT,
+            TaskStatus.PAUSED,
+        }
+        for candidate in await self._store.list_tasks():
+            if candidate.task_id == task.task_id:
+                continue
+            if candidate.status not in active_statuses:
+                continue
+            if candidate.metadata.get("persona_id") == persona_id:
+                return
+        if persona.status != "busy":
             return
         await self._store.put_persona(
-            persona.model_copy(update={"status": "idle", "current_task_id": None})
+            persona.model_copy(update={"status": "idle"})
         )

@@ -11,6 +11,7 @@ from newbro.protocol import (
     CodexThreadSubscribedMessage,
     CodexThreadsListedMessage,
     CodexThreadUnsubscribedMessage,
+    CodexTurnEventMessage,
     NodeStatusMessage,
     InteractionStateMessage,
     RegisterNodeMessage,
@@ -32,7 +33,7 @@ async def executor_control(websocket: WebSocket):
         ack = await container.executor_node_manager.register_connection(websocket, register)
         registered = True
         await websocket.send_json(ack.model_dump(mode="json"))
-        await container.handle_executor_node_connected()
+        await container.handle_executor_node_connected(register.node_id)
 
         while True:
             payload = await websocket.receive_json()
@@ -113,6 +114,18 @@ async def _handle_control_message(container, websocket: WebSocket, payload: obje
             except KeyError:
                 return AckMessage(message_type=message.type, ok=False, detail="unknown_session")
             await session.handle_codex_thread_event(message)
+        return ack
+    if message_type == "codex_turn_event":
+        try:
+            message = CodexTurnEventMessage.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="codex_turn_event", ok=False, detail="invalid_payload")
+        ack = await container.executor_node_manager.publish_codex_turn_event(websocket, message)
+        if ack.ok:
+            session = await container.find_session_by_outbound_turn_request(message.request_id)
+            if session is None:
+                return AckMessage(message_type=message.type, ok=False, detail="unknown_request")
+            await session.handle_codex_turn_event(message)
         return ack
     if message_type == "audio_instruction_transcribed":
         try:

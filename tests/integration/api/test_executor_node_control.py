@@ -16,6 +16,7 @@ from newbro.protocol import (
     InteractionRequest,
     InteractionRequestKind,
     InteractionRequestStatus,
+    Persona,
     RunStatus,
     SessionBinding,
     Task,
@@ -173,6 +174,92 @@ async def test_executor_node_registration_requeues_waiting_task_and_completes(mo
     )
     assert codex_capability["connected"] is True
     assert codex_capability["node_id"] == issue.node.node_id
+
+
+@pytest.mark.anyio
+async def test_executor_node_registration_refreshes_imported_codex_threads_for_subscribers(monkeypatch, tmp_path):
+    monkeypatch.setattr(node_registry, "EXECUTOR_NODES_FILE", tmp_path / "executor_nodes.yaml")
+    app = _build_app()
+    issue = await _issue_node(app, name="Node 1")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        session = app.state.runtime_container.get_session(session_id)
+        await session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id=issue.node.node_id,
+                bro_detail_session_id="detail-forge",
+            )
+        )
+        subscriber = session.subscribe()
+
+        async with ASGIWebSocketSession(app, "/api/executors/control") as websocket:
+            await websocket.send_json(
+                {
+                    "type": "register_node",
+                    "node_id": issue.node.node_id,
+                    "token": issue.token,
+                    "executors": [
+                        {
+                            "executor_type": "codex",
+                            "supports_resume": True,
+                            "supports_follow_up": True,
+                            "supports_pause": True,
+                            "supports_cancel": True,
+                            "supports_thread_list": True,
+                        }
+                    ],
+                }
+            )
+            ack = await websocket.receive_json()
+            assert ack["type"] == "ack"
+
+            list_command = await websocket.receive_json()
+            assert list_command["type"] == "list_codex_threads"
+            await websocket.send_json(
+                {
+                    "type": "codex_threads_listed",
+                    "request_id": list_command["request_id"],
+                    "node_id": issue.node.node_id,
+                    "executor_type": "codex",
+                    "ok": True,
+                    "threads": [
+                        {
+                            "thread_id": "codex-native-thread-1",
+                            "session_id": "codex-native-thread-1",
+                            "preview": "Imported thread preview",
+                            "title": "Imported thread",
+                            "cwd": "/tmp/workspace",
+                            "path": "/tmp/codex-thread.jsonl",
+                            "status": "idle",
+                            "created_at": 1779850000,
+                            "updated_at": 1779850100,
+                            "cli_version": "0.133.0",
+                            "source": "vscode",
+                        }
+                    ],
+                }
+            )
+            assert (await websocket.receive_json())["type"] == "ack"
+
+            deadline = asyncio.get_running_loop().time() + 4.0
+            imported_snapshot = None
+            while asyncio.get_running_loop().time() < deadline:
+                event = await asyncio.wait_for(subscriber.get(), timeout=4.0)
+                if event.type == "snapshot" and event.snapshot.bro_threads:
+                    imported_snapshot = event.snapshot
+                    break
+
+        session.unsubscribe(subscriber)
+
+    assert imported_snapshot is not None
+    imported_thread = imported_snapshot.bro_threads[0]
+    assert imported_thread.thread_id.startswith("codex-import-")
+    assert imported_thread.diagnostics["codex_thread_id"] == "codex-native-thread-1"
+    assert imported_thread.diagnostics["codex_cwd"] == "/tmp/workspace"
 
 
 @pytest.mark.anyio

@@ -19,6 +19,7 @@ from newbro.protocol import (
     DispatchTextInstructionCommand,
     ExecutorAudioInstruction,
     ExecutorTextInstruction,
+    StartCodexTurnCommand,
     SubscribeCodexThreadCommand,
     SupplyInteractionResponseCommand,
     TranscribeAudioInstructionCommand,
@@ -68,6 +69,61 @@ class FakeExecutor:
                 "source": "vscode",
             }
         ]
+
+
+class FakeStartTurnExecutor(FakeExecutor):
+    async def start_turn_request(self, command):
+        from newbro.executors.core import ExecutorEvent, ExecutorEventType
+
+        assert command.request_id == "turn-req-1"
+        assert command.target_persona_id == "forge"
+        assert command.target_thread_id == "public-thread-1"
+        assert command.thread_id == "codex-thread-1"
+        assert command.instruction.text == "Continue directly."
+        yield ExecutorEvent(
+            run_id=command.request_id,
+            session_id=command.request_id,
+            event_type=ExecutorEventType.PROGRESS,
+            message="Direct turn started.",
+            metadata={
+                "client_request_id": "client-1",
+                "instruction_id": command.instruction.instruction_id,
+                "executor_thread_id": "codex-thread-1",
+                "executor_turn_id": "codex-turn-1",
+            },
+        )
+        yield ExecutorEvent(
+            run_id=command.request_id,
+            session_id=command.request_id,
+            event_type=ExecutorEventType.COMPLETED,
+            message="Done.",
+            metadata={
+                "client_request_id": "client-1",
+                "instruction_id": command.instruction.instruction_id,
+                "executor_thread_id": "codex-thread-1",
+                "executor_turn_id": "codex-turn-1",
+            },
+        )
+
+
+class FakeFailingStartTurnExecutor(FakeExecutor):
+    async def start_turn_request(self, command):
+        if False:
+            yield None
+        raise RuntimeError("adapter exploded")
+
+
+class FakeFailedEventStartTurnExecutor(FakeExecutor):
+    async def start_turn_request(self, command):
+        from newbro.executors.core import ExecutorEvent, ExecutorEventType
+
+        yield ExecutorEvent(
+            run_id=command.request_id,
+            session_id=command.request_id,
+            event_type=ExecutorEventType.FAILED,
+            message="adapter returned failure",
+            metadata={},
+        )
 
 
 class FakeAudioTranscriber:
@@ -410,6 +466,158 @@ async def test_dispatch_text_instruction_forwards_to_active_executor(monkeypatch
     assert websocket.sent[-1]["event_type"] == "progress"
     assert websocket.sent[-1]["metadata"]["instruction_id"] == "txt-1"
     assert websocket.sent[-1]["metadata"]["text"] == "Continue directly."
+
+
+@pytest.mark.anyio
+async def test_node_service_starts_codex_turn_request(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    service._executors["codex"] = FakeStartTurnExecutor()
+    websocket = FakeWebSocket([])
+    command = StartCodexTurnCommand(
+        request_id="turn-req-1",
+        target_persona_id="forge",
+        target_thread_id="public-thread-1",
+        thread_id="codex-thread-1",
+        instruction=ExecutorTextInstruction(
+            instruction_id="txt-1",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            text="Continue directly.",
+            metadata={"client_request_id": "client-1"},
+        ),
+    )
+
+    await service._handle_message(websocket, command.model_dump(mode="json"))
+    for _ in range(20):
+        if len(websocket.sent) >= 2:
+            break
+        await asyncio.sleep(0)
+
+    assert [event["type"] for event in websocket.sent] == ["codex_turn_event", "codex_turn_event"]
+    assert websocket.sent[0]["request_id"] == "turn-req-1"
+    assert websocket.sent[0]["event_type"] == "progress"
+    assert websocket.sent[0]["executor_thread_id"] == "codex-thread-1"
+    assert websocket.sent[0]["executor_turn_id"] == "codex-turn-1"
+    assert websocket.sent[0]["metadata"]["client_request_id"] == "client-1"
+    assert websocket.sent[0]["metadata"]["instruction_id"] == "txt-1"
+    assert websocket.sent[-1]["event_type"] == "completed"
+
+
+@pytest.mark.anyio
+async def test_node_service_unsupported_codex_turn_failure_preserves_correlation_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    websocket = FakeWebSocket([])
+    command = StartCodexTurnCommand(
+        request_id="turn-req-unsupported",
+        target_persona_id="forge",
+        target_thread_id="public-thread-1",
+        thread_id="codex-thread-1",
+        metadata={"command_meta": "kept"},
+        instruction=ExecutorTextInstruction(
+            instruction_id="txt-unsupported",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            text="Continue directly.",
+            source_audio_instruction_id="aud-unsupported",
+            metadata={"client_request_id": "client-unsupported"},
+        ),
+    )
+
+    await service._start_codex_turn(websocket, command)
+
+    assert websocket.sent[0]["type"] == "codex_turn_event"
+    assert websocket.sent[0]["ok"] is False
+    metadata = websocket.sent[0]["metadata"]
+    assert metadata["instruction_id"] == "txt-unsupported"
+    assert metadata["client_request_id"] == "client-unsupported"
+    assert metadata["source_audio_instruction_id"] == "aud-unsupported"
+    assert metadata["target_persona_id"] == "forge"
+    assert metadata["target_thread_id"] == "public-thread-1"
+    assert metadata["command_meta"] == "kept"
+
+
+@pytest.mark.anyio
+async def test_node_service_codex_turn_exception_preserves_correlation_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    service._executors["codex"] = FakeFailingStartTurnExecutor()
+    websocket = FakeWebSocket([])
+    command = StartCodexTurnCommand(
+        request_id="turn-req-failed",
+        target_persona_id="forge",
+        target_thread_id="public-thread-1",
+        thread_id="codex-thread-1",
+        metadata={"command_meta": "kept"},
+        instruction=ExecutorTextInstruction(
+            instruction_id="txt-failed",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            text="Continue directly.",
+            source_audio_instruction_id="aud-failed",
+            metadata={"client_request_id": "client-failed"},
+        ),
+    )
+
+    await service._start_codex_turn(websocket, command)
+
+    assert websocket.sent[0]["type"] == "codex_turn_event"
+    assert websocket.sent[0]["ok"] is False
+    assert websocket.sent[0]["error"] == "adapter exploded"
+    metadata = websocket.sent[0]["metadata"]
+    assert metadata["instruction_id"] == "txt-failed"
+    assert metadata["client_request_id"] == "client-failed"
+    assert metadata["source_audio_instruction_id"] == "aud-failed"
+    assert metadata["target_persona_id"] == "forge"
+    assert metadata["target_thread_id"] == "public-thread-1"
+    assert metadata["command_meta"] == "kept"
+
+
+@pytest.mark.anyio
+async def test_node_service_codex_turn_adapter_failure_event_preserves_correlation_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    service._executors["codex"] = FakeFailedEventStartTurnExecutor()
+    websocket = FakeWebSocket([])
+    command = StartCodexTurnCommand(
+        request_id="turn-req-event-failed",
+        target_persona_id="forge",
+        target_thread_id="public-thread-1",
+        thread_id="codex-thread-1",
+        metadata={"command_meta": "kept"},
+        instruction=ExecutorTextInstruction(
+            instruction_id="txt-event-failed",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            text="Continue directly.",
+            source_audio_instruction_id="aud-event-failed",
+            metadata={"client_request_id": "client-event-failed"},
+        ),
+    )
+
+    await service._start_codex_turn(websocket, command)
+
+    assert websocket.sent[0]["type"] == "codex_turn_event"
+    assert websocket.sent[0]["ok"] is False
+    assert websocket.sent[0]["error"] == "adapter returned failure"
+    metadata = websocket.sent[0]["metadata"]
+    assert metadata["instruction_id"] == "txt-event-failed"
+    assert metadata["client_request_id"] == "client-event-failed"
+    assert metadata["source_audio_instruction_id"] == "aud-event-failed"
+    assert metadata["target_persona_id"] == "forge"
+    assert metadata["target_thread_id"] == "public-thread-1"
+    assert metadata["command_meta"] == "kept"
 
 
 @pytest.mark.anyio
