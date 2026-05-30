@@ -1161,21 +1161,27 @@ async def _collaboration_kwargs_for_turn(
     plan_mode: bool,
 ) -> dict[str, object]:
     mode = _collaboration_mode_for_plan_flag(plan_mode)
+    if plan_mode:
+        model = _session_collaboration_model(session, mode)
+        reasoning_effort = _session_collaboration_reasoning_effort(session, mode)
+        if model is None:
+            await _capture_collaboration_mode_settings(session)
+            model = _session_collaboration_model(session, mode)
+            reasoning_effort = _session_collaboration_reasoning_effort(session, mode)
+        if model is None:
+            raise RuntimeError("Codex plan mode is unavailable: collaboration mode settings have no model.")
+        return {
+            "collaboration_mode": mode,
+            "model": model,
+            "reasoning_effort": reasoning_effort,
+        }
+
     model = _session_collaboration_model(session, mode) or _session_codex_model(session)
     reasoning_effort = (
         _session_collaboration_reasoning_effort(session, mode)
         or _session_codex_reasoning_effort(session)
     )
-    if model is None and plan_mode:
-        await _capture_collaboration_mode_settings(session)
-        model = _session_collaboration_model(session, mode) or _session_codex_model(session)
-        reasoning_effort = (
-            _session_collaboration_reasoning_effort(session, mode)
-            or _session_codex_reasoning_effort(session)
-        )
     if model is None:
-        if plan_mode:
-            raise RuntimeError("Codex plan mode is unavailable: collaboration mode settings have no model.")
         return {}
     return {
         "collaboration_mode": mode,
