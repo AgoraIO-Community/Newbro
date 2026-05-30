@@ -32,7 +32,7 @@ from newbro.executors.adapters.codex.session import CodexExecutorSession
 from newbro.execution import ExecutionBrain
 from newbro.executors.adapters.mock import MockExecutor
 from newbro.executors.core import ExecutorRegistry, UnknownExecutorError
-from newbro.interaction import InteractionManager
+from newbro.interaction import InteractionManager, InteractionResolution
 from newbro.interaction.sanitization import (
     sanitize_interaction_request_details,
     sanitize_interaction_request_opaque,
@@ -2197,6 +2197,10 @@ class SessionRuntime:
                 message=message,
                 timestamp=timestamp,
             )
+        )
+        await self.interaction_manager.handle_outbound_codex_blocked(
+            outbound_request=updated_request,
+            message=message,
         )
         await self.publish_snapshot(sync_imported_codex_threads=False)
 
@@ -4663,7 +4667,23 @@ class SessionRuntime:
             await self.blackboard.put_interaction_request(
                 resolution.request.model_copy(update={"resume_strategy": "native_response"})
             )
+            if resolution.request.task_id is None:
+                await self.publish_snapshot(sync_imported_codex_threads=False)
+                return []
             return [resolution.request.task_id]
+        if resolution.request.outbound_turn_request_id is not None:
+            await self._spawn_outbound_follow_up_from_interaction(
+                resolution=resolution,
+                action=action,
+                client_request_id=client_request_id,
+                user_visible_text=user_visible_text,
+            )
+            await self.publish_snapshot(sync_imported_codex_threads=False)
+            return []
+        if resolution.request.task_id is None:
+            raise ValueError(
+                "Interaction request without a task cannot resume via a follow-up run.",
+            )
         task = await self.blackboard.get_task(resolution.request.task_id)
         if task is None:
             raise KeyError(f"Task '{resolution.request.task_id}' not found.")
@@ -4897,6 +4917,42 @@ class SessionRuntime:
             return False
         live_session.mark_blocked_resolved()
         return True
+
+    async def _spawn_outbound_follow_up_from_interaction(
+        self,
+        *,
+        resolution: InteractionResolution,
+        action: str,
+        client_request_id: str | None,
+        user_visible_text: str | None,
+    ) -> None:
+        if resolution.request.outbound_turn_request_id is None:
+            raise ValueError("Resolution is not tied to an outbound turn request.")
+        outbound = await self.blackboard.get_outbound_turn_request(
+            resolution.request.outbound_turn_request_id,
+        )
+        if outbound is None:
+            raise KeyError(
+                f"OutboundTurnRequest '{resolution.request.outbound_turn_request_id}' not found.",
+            )
+        is_plan_proposal = resolution.request.kind == InteractionRequestKind.PLAN_PROPOSAL
+        follow_up_plan_mode = is_plan_proposal and action != "approve"
+        if is_plan_proposal and action == "approve":
+            follow_up_text = (
+                (user_visible_text or "").strip()
+                or _selected_plan_option_label(resolution.request)
+                or PLAN_APPROVAL_VISIBLE_TEXT
+            )
+        else:
+            follow_up_text = resolution.follow_up_instruction
+        await self.submit_executor_text_instruction(
+            target_persona_id=outbound.persona_id,
+            text=follow_up_text,
+            target_thread_id=outbound.target_thread_id,
+            create_new_thread=False,
+            client_request_id=client_request_id,
+            plan_mode=follow_up_plan_mode,
+        )
 
     async def _detach_follow_up_live_session(self, request: InteractionRequest) -> None:
         execution_session_id = request.execution_session_id

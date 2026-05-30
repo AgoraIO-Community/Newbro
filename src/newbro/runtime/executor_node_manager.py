@@ -681,7 +681,9 @@ class ExecutorNodeManager:
                 ),
                 None,
             )
-        target_node_id = state.node_id if state is not None else node_id
+        target_node_id = (
+            state.node_id if state is not None else (request.executor_node_id or node_id)
+        )
         if target_node_id is None:
             return False
         connection = await self._connection_for_node(target_node_id)
@@ -691,6 +693,7 @@ class ExecutorNodeManager:
             interaction_request_id=request.request_id,
             execution_session_id=request.execution_session_id,
             run_id=request.run_id,
+            outbound_turn_request_id=request.outbound_turn_request_id,
             action=action,
             answer_text=answer_text,
             answers=answers,
