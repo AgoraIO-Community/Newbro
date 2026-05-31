@@ -16,7 +16,7 @@ import {
   type ExecutorConnectCommands,
 } from "./lib/session-client";
 import { readThreadIdFromUrl, replaceThreadIdInUrl } from "./lib/session-url";
-import { buildBroCardModels, buildBroThreadRecords } from "./components/newbro/adapters";
+import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForTurn } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
@@ -1102,10 +1102,52 @@ function TimelineTurnView({
   const shell = useNewbroShell();
   const record = timelineTaskRecord(turn);
   const proposalRequests = shell.interactionRequests.filter((request) => planProposalRequestMatchesTurn(request, turn));
+
+  // Desktop live reasoning bubble — only rendered for in-flight desktop turns.
+  const taskId = turn.task?.task_id ?? null;
+  const activeRun = taskId
+    ? (shell.executionRuns.find((r) => r.task_id === taskId && (r.status === "running" || r.status === "created" || r.status === "waiting_executor")) ?? null)
+    : null;
+  const details = taskId ? (shell.recentExecutionDetails[taskId] ?? null) : null;
+  const reasoningSteps = buildReasoningStepsForTurn(activeRun, details);
+
   return (
     <>
       <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
       {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
+      {!mobile && reasoningSteps.length > 0 ? (
+        <div className="dt-turn dt-turn-bro">
+          <div className="dt-bubble dt-bubble-bro dt-bubble-reason">
+            <span className="dt-reason-kicker">
+              <span className="dt-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+              {bro.name} is reasoning
+            </span>
+            <ol className="dt-reason-steps">
+              {(() => {
+                const upto = reasoningSteps.length;
+                const WINDOW = 3;
+                const startAt = Math.max(0, upto - WINDOW);
+                const vis = reasoningSteps.slice(startAt, upto);
+                const FADE = [1, 0.55, 0.26];
+                return vis.map((s, j) => {
+                  const dist = vis.length - 1 - j;
+                  const isLast = dist === 0;
+                  return (
+                    <li
+                      key={s.id}
+                      className={`dt-reason-step${isLast ? " dt-reason-step-active" : " dt-reason-step-done"}`}
+                      style={{ opacity: FADE[dist] ?? 0.26 }}
+                    >
+                      <span className="dt-reason-step-mark" aria-hidden="true" />
+                      <span className="dt-reason-step-text">{s.label}</span>
+                    </li>
+                  );
+                });
+              })()}
+            </ol>
+          </div>
+        </div>
+      ) : null}
       {proposalRequests.map((request) => (
         <PlanProposalCard
           key={request.request_id}
