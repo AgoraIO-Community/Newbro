@@ -1147,6 +1147,56 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByRole("button", { name: /Hide steps/i })).toBeInTheDocument();
   });
 
+  it("does not repeat the answer message as a step", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    const turn = timelineTurn({
+      thread_id: "codex-import-history",
+      executor_turn_id: "turn-d1",
+      executor_thread_id: "native-d1",
+      userText: "Make the report",
+      assistantText: "Writing the section",
+    }) as any;
+    turn.assistant.metadata = { ...turn.assistant.metadata, codex_item_id: "i2" };
+    snapshot.bro_timeline_turns = [turn] as any;
+    (snapshot as any).recent_native_turn_reasoning = {
+      "codex::native-d1::turn-d1": [
+        { item_id: "i1", text: "Reading the spec", kind: "progress", created_at: "t1" },
+        { item_id: "i2", text: "Writing the section", kind: "progress", created_at: "t2" },
+      ],
+    };
+    const importedThread = {
+      thread_id: "codex-import-history",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: null,
+      status: "completed",
+      title: "Imported Codex thread",
+      preview: "Remote history",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-native-history" },
+    };
+    snapshot.bro_threads = [importedThread] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-history");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    // The non-matching step still renders.
+    expect(await screen.findByText("Reading the spec")).toBeInTheDocument();
+    // "Writing the section" is the answer; the matching step is dropped, so it appears once.
+    expect(screen.getAllByText("Writing the section")).toHaveLength(1);
+  });
+
   it("streams reasoning for a running native codex turn", async () => {
     const snapshot = forgeSnapshot("session-existing");
     snapshot.bro_timeline_turns = [

@@ -1205,6 +1205,11 @@ function TimelineTurnView({
       : buildReasoningStepsForTurn(anyRun, details);
   const isTurnSettled = activeRun === null && !nativeInFlight;
   const answerText = timelineMessageText(turn.assistant) || record?.summary?.trim() || record?.description?.trim() || "";
+  const rawAnswerItemId = turn.assistant?.metadata?.codex_item_id;
+  const answerItemId = typeof rawAnswerItemId === "string" ? rawAnswerItemId : null;
+  const dedupedSettledSteps = answerItemId
+    ? settledReasoningSteps.filter((s) => s.id !== answerItemId)
+    : settledReasoningSteps;
 
   return (
     <>
@@ -1277,10 +1282,10 @@ function TimelineTurnView({
         </div>
       ) : null}
       {mobile && isTurnSettled && settledReasoningSteps.length > 0 ? (
-        <ThrReasoned steps={settledReasoningSteps} />
+        <ThrReasoned steps={dedupedSettledSteps} />
       ) : null}
       {!mobile && isTurnSettled && (answerText || settledReasoningSteps.length > 0) ? (
-        <DTAnswerBubble bro={bro} steps={settledReasoningSteps} answer={answerText} />
+        <DTAnswerBubble bro={bro} steps={dedupedSettledSteps} answer={answerText} />
       ) : null}
       {!isTurnSettled && !mobile && reasoningSteps.length === 0 ? (
         <div className="dt-turn dt-turn-bro">
