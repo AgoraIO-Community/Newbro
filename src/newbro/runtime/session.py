@@ -2648,6 +2648,50 @@ class SessionRuntime:
             oldest = next(iter(self._native_turn_reasoning))
             self._native_turn_reasoning.pop(oldest, None)
 
+    def _record_interaction_answer_turn(
+        self,
+        request: InteractionRequest,
+        *,
+        user_visible_text: str | None,
+        client_request_id: str | None,
+    ) -> None:
+        text = (user_visible_text or "").strip()
+        if not text:
+            return
+        details = request.details or {}
+        thread_id = details.get("target_thread_id")
+        persona_id = details.get("persona_id")
+        if not isinstance(thread_id, str) or not thread_id:
+            return
+        if not isinstance(persona_id, str) or not persona_id:
+            return
+        timestamp = datetime.now(tz=UTC).isoformat()
+        stable_key = client_request_id or request.request_id
+        turn = BroTimelineTurn(
+            turn_id=f"{thread_id}:answer:{stable_key}",
+            thread_id=thread_id,
+            persona_id=persona_id,
+            executor_id=request.executor_type or "codex",
+            owner="executor",
+            client_request_id=client_request_id,
+            input_modality="text",
+            user=BroTimelineMessage(
+                message_id=f"{thread_id}:{stable_key}:user",
+                role="user",
+                kind="text",
+                text=text,
+                created_at=timestamp,
+                updated_at=timestamp,
+                status="completed",
+                metadata={"source": "native_interaction_answer"},
+            ),
+            status="completed",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"source": "native_interaction_answer", "request_id": request.request_id},
+        )
+        self._upsert_bro_thread_executor_turn(turn)
+
     def _recent_native_turn_reasoning(self) -> dict[str, list[NativeReasoningStep]]:
         if not self._native_turn_reasoning:
             return {}
@@ -4740,6 +4784,11 @@ class SessionRuntime:
         if native_resolved:
             await self.blackboard.put_interaction_request(
                 resolution.request.model_copy(update={"resume_strategy": "native_response"})
+            )
+            self._record_interaction_answer_turn(
+                resolution.request,
+                user_visible_text=user_visible_text,
+                client_request_id=client_request_id,
             )
             if resolution.request.task_id is None:
                 await self.publish_snapshot(sync_imported_codex_threads=False)

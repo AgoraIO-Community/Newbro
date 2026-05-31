@@ -2979,3 +2979,108 @@ async def test_native_reasoning_projection_bounds_steps_and_truncates_text():
     assert len(steps) == 8
     # each step text truncated to 280 chars
     assert all(len(s.text) == 280 for s in steps)
+
+
+@pytest.mark.anyio
+async def test_native_plan_answer_records_user_turn(monkeypatch: pytest.MonkeyPatch):
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_persona(
+        Persona(
+            persona_id="forge",
+            name="Forge",
+            avatar="bro",
+            base_prompt="",
+            executor_node_id="node-forge",
+            bro_detail_session_id="detail-forge",
+        )
+    )
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-placeholder",
+            root_task_id="task-placeholder",
+            title="Done",
+            goal="Done",
+            status=TaskStatus.COMPLETED,
+            preferred_executor="codex",
+            metadata={"persona_id": "forge"},
+        )
+    )
+    await session.blackboard.put_session(
+        RuntimeExecutionSession(
+            execution_session_id="exec-1",
+            task_id="task-placeholder",
+            base_executor_id="codex",
+            executor_node_id="node-forge",
+            continuity_key="thread-1",
+            latest_resume_handle=AgentResumeHandle(
+                executor_id="codex",
+                session_handle="codex-thread-1",
+            ),
+        )
+    )
+    await session.blackboard.put_outbound_turn_request(
+        OutboundTurnRequest(
+            request_id="out-turn-q",
+            persona_id="forge",
+            executor_node_id="node-forge",
+            target_thread_id="exec-1",
+            text="Plan it",
+            plan_mode=True,
+            status="accepted",
+        )
+    )
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-q",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="exec-1",
+            event_type="blocked",
+            message="Pick the report style.",
+            metadata={
+                "thread_id": "native-thread-1",
+                "prompt": "Pick the report style.",
+                "interaction_kind": "plan_proposal",
+                "blocked_method": "item/completed:plan",
+                "proposal": {
+                    "summary": "Pick the report style.",
+                    "options": [
+                        {"id": "approved_codex_plan", "label": "Run proposed plan", "letter": "A"},
+                    ],
+                },
+            },
+        )
+    )
+    pending = await session.blackboard.list_interaction_requests()
+    assert len(pending) == 1
+    interaction_request_id = pending[0].request_id
+
+    async def fake_supply(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(session.executor_node_manager, "supply_interaction_response", fake_supply)
+
+    await session.resolve_interaction_request(
+        interaction_request_id,
+        action="approve",
+        option_id="approved_codex_plan",
+        client_request_id="plan-answer-1",
+        user_visible_text="Style: Product brief; Language: English",
+    )
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    answer_turns = [
+        t
+        for t in snapshot.bro_timeline_turns
+        if t.user is not None and t.user.text == "Style: Product brief; Language: English"
+    ]
+    assert len(answer_turns) == 1
+    assert answer_turns[0].client_request_id == "plan-answer-1"
+    assert answer_turns[0].created_at is not None
+    assert answer_turns[0].thread_id == "exec-1"
