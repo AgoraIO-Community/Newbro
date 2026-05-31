@@ -38,7 +38,7 @@ export function buildReasoningStepsForNativeTurn(
   if (turn.task) return [];
   if (!turn.executor_thread_id || !turn.executor_turn_id) return [];
   const key = `${turn.executor_id}::${turn.executor_thread_id}::${turn.executor_turn_id}`;
-  const steps = recentNativeTurnReasoning[key];
+  const steps = recentNativeTurnReasoning[key]?.filter((s) => s.kind !== "plan");
   if (!steps || steps.length === 0) return [];
   const inFlight = turn.status === "running" || turn.status === "pending";
   const lastIndex = steps.length - 1;

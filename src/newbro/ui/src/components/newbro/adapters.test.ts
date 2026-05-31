@@ -111,4 +111,13 @@ describe("buildReasoningStepsForNativeTurn", () => {
     expect(buildReasoningStepsForNativeTurn(noIds, map)).toEqual([]);
     expect(buildReasoningStepsForNativeTurn(baseTurn, {})).toEqual([]);
   });
+
+  it("excludes plan-kind steps", () => {
+    const mixed: NativeReasoningStep[] = [
+      { item_id: "i1", text: "Working on it", kind: "progress", created_at: "t1" },
+      { item_id: "i2", text: "# Big plan markdown", kind: "plan", created_at: "t2" },
+    ];
+    const result = buildReasoningStepsForNativeTurn(baseTurn, { "codex::native-1::turn-1": mixed });
+    expect(result.map((s) => s.label)).toEqual(["Working on it"]);
+  });
 });
