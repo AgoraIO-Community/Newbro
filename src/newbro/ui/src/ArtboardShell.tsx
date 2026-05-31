@@ -2758,7 +2758,7 @@ function MobileThreadSurface({
                       void submitDraftText();
                     }
                   }}
-                  placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? (planMode ? `Describe the task - ${bro.name} will plan it first` : `Message ${bro.name} - or hold the mic to talk`) : textState.reason}
+                  placeholder={disabled ? "Reconnect your computer before sending" : textState.enabled ? (planMode ? `Describe the task - ${bro.name} will plan it first` : `Message ${bro.name} - or hold the mic to talk`) : textState.reason}
                   disabled={disabled}
                 />
               </div>
@@ -3077,7 +3077,7 @@ function DesktopComposerBar({
                   if (!disabled) setPlanMode((current) => !current);
                 }
               }}
-              placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? (planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
+              placeholder={disabled ? "Reconnect your computer before sending" : textState.enabled ? (planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
               disabled={disabled}
             />
           </>
