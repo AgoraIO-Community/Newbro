@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { ArrowUp, Check, ChevronLeft, Copy, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorConnectCommands,
@@ -2665,6 +2665,12 @@ function DesktopComposerBar({
   const [draft, setDraft] = useState("");
   const [planMode, setPlanMode] = useState(false);
   const [voiceMode, setVoiceMode] = useState<"ptt" | "free">("ptt");
+  const [recording, setRecording] = useState(false);
+  const [recSecs, setRecSecs] = useState(0);
+  const recTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (recTimer.current) clearInterval(recTimer.current); }, []);
+  const recFmt = `0:${String(recSecs).padStart(2, "0")}`;
+  const hasText = draft.trim().length > 0;
   const opts = [
     {
       v: "ptt" as const,
@@ -2708,6 +2714,38 @@ function DesktopComposerBar({
     onThreadResolved,
     onSent: shell.refreshShellSession,
   });
+
+  // Sync local recording state with recorder phase (covers cancel/blur reset)
+  useEffect(() => {
+    if (recorder.phase !== "recording" && recording) {
+      if (recTimer.current) clearInterval(recTimer.current);
+      setRecording(false);
+      setRecSecs(0);
+    }
+  }, [recorder.phase, recording]);
+
+  const startRec = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (micDisabled) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setRecording(true);
+    setRecSecs(0);
+    if (recTimer.current) clearInterval(recTimer.current);
+    recTimer.current = setInterval(() => setRecSecs((s) => s + 1), 1000);
+    void recorder.start();
+  };
+  const stopRec = () => {
+    if (recTimer.current) clearInterval(recTimer.current);
+    setRecording(false);
+    setRecSecs(0);
+    void recorder.stopAndSend();
+  };
+  const cancelRec = () => {
+    if (recTimer.current) clearInterval(recTimer.current);
+    setRecording(false);
+    setRecSecs(0);
+    recorder.cancel();
+  };
 
   async function submitText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2818,74 +2856,105 @@ function DesktopComposerBar({
           </div>
         </div>
         <span className="dt-cmp-hint">
-          {planMode && !disabled ? (
-            <span><strong>Plan mode</strong> · {bro.name} proposes a plan before acting</span>
+          {disabled ? (
+            <span>Sending paused — reconnect your computer to resume</span>
+          ) : voiceMode === "ptt" ? (
+            recording ? (
+              <span>Recording… release the mic to send</span>
+            ) : hasText ? (
+              <span>Press <kbd className="dt-kbd">Enter</kbd> to send</span>
+            ) : (
+              <span>Hold <kbd className="dt-kbd">Space</kbd> to talk, or type your message</span>
+            )
           ) : (
-            <>
-              <kbd className="dt-kbd">space</kbd>
-              {disabled ? "node required before sending" : "type sends directly"}
-            </>
+            <span>Mic's open — {bro.name} listens as you speak</span>
           )}
         </span>
       </div>
-      <div className="dt-cmp-bar">
+      <div className={`dt-cmp-bar${recording ? " dt-cmp-bar-rec" : ""}`}>
         {planChip}
-        <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
-        <input
-          id={`message-${bro.id}`}
-          className="dt-cmp-input"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Tab" && event.shiftKey) {
-              event.preventDefault();
-              if (!disabled) setPlanMode((current) => !current);
-            }
-          }}
-          placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? (planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
-          disabled={disabled}
-        />
-        <button
-          type="button"
-          data-testid="voice-session-start"
-          className={`dt-cmp-mic dt-cmp-mic-${micDisabled ? "off" : recorder.phase === "recording" ? "free" : "ptt"}`}
-          aria-label={micDisabled ? audioState.reason : "Hold to record audio"}
-          title={micDisabled ? audioState.reason : "Hold to record audio"}
-          disabled={micDisabled || loading || recorder.phase === "sending"}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            void recorder.start();
-          }}
-          onPointerUp={(event) => {
-            event.preventDefault();
-            void recorder.stopAndSend();
-          }}
-          onPointerCancel={recorder.cancel}
-          onBlur={recorder.cancel}
-          onKeyDown={(event) => {
-            if ((event.key === " " || event.key === "Enter") && recorder.phase === "idle") {
-              event.preventDefault();
-              void recorder.start();
-            }
-          }}
-          onKeyUp={(event) => {
-            if (event.key === " " || event.key === "Enter") {
-              event.preventDefault();
-              void recorder.stopAndSend();
-            }
-          }}
-        >
-          <Mic size={18} aria-hidden="true" />
-        </button>
-        <button
-          type="submit"
-          className="dt-cmp-send"
-          aria-label={textDisabled ? textState.reason : "Send message"}
-          disabled={textDisabled || !draft.trim()}
-        >
-          <SendHorizontal size={16} strokeWidth={2.2} />
-        </button>
+        {recording ? (
+          <div className="dt-cmp-rec">
+            <span className="dt-cmp-rec-dot" aria-hidden="true" />
+            <span className="dt-cmp-rec-label">Listening…</span>
+            <span className="dt-cmp-rec-wave" aria-hidden="true">
+              {Array.from({ length: 30 }).map((_, i) => {
+                const h = 5 + Math.abs(Math.sin((i + 1) * 0.6)) * 15;
+                return <i key={i} style={{ height: h, animationDelay: `${(i % 7) * 0.07}s` }} />;
+              })}
+            </span>
+            <span className="dt-cmp-rec-time">{recFmt}</span>
+            <span className="dt-cmp-rec-hint">release to send</span>
+          </div>
+        ) : (
+          <>
+            <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
+            <input
+              id={`message-${bro.id}`}
+              className="dt-cmp-input"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Tab" && event.shiftKey) {
+                  event.preventDefault();
+                  if (!disabled) setPlanMode((current) => !current);
+                }
+              }}
+              placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? (planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
+              disabled={disabled}
+            />
+          </>
+        )}
+        {hasText && !recording ? (
+          <button
+            type="submit"
+            className="dt-cmp-action dt-cmp-action-send dt-cmp-send"
+            aria-label={textDisabled ? textState.reason : "Send message"}
+            disabled={textDisabled || !draft.trim()}
+          >
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 19V5M5 12l7-7 7 7"/>
+            </svg>
+          </button>
+        ) : (
+          <button
+            type="button"
+            data-testid="voice-session-start"
+            className={`dt-cmp-action dt-cmp-action-mic dt-cmp-mic dt-cmp-mic-${micDisabled ? "off" : recorder.phase === "recording" ? "free" : "ptt"}${recording ? " dt-cmp-action-rec" : micDisabled ? " dt-cmp-action-mic-off" : " dt-cmp-action-mic-on"}`}
+            aria-label={micDisabled ? audioState.reason : "Hold to record audio"}
+            title={micDisabled ? audioState.reason : "Hold to record audio"}
+            disabled={micDisabled || loading || recorder.phase === "sending"}
+            onPointerDown={startRec}
+            onPointerUp={() => stopRec()}
+            onPointerLeave={() => { if (recording) stopRec(); }}
+            onPointerCancel={cancelRec}
+            onBlur={cancelRec}
+            onKeyDown={(event) => {
+              if ((event.key === " " || event.key === "Enter") && recorder.phase === "idle") {
+                event.preventDefault();
+                void recorder.start();
+              }
+            }}
+            onKeyUp={(event) => {
+              if (event.key === " " || event.key === "Enter") {
+                event.preventDefault();
+                stopRec();
+              }
+            }}
+          >
+            {recording ? (
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" rx="3"/>
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="12" rx="3"/>
+                <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+                {micDisabled && <path d="M3 3l18 18"/>}
+              </svg>
+            )}
+          </button>
+        )}
       </div>
     </form>
   );

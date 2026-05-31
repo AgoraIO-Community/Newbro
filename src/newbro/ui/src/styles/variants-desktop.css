@@ -3851,3 +3851,106 @@
 .dt-cmp-mode-on .dt-cmp-mode-ic { opacity: 1; }
 .dt-cmp-mode-on-ptt  .dt-cmp-mode-ic { color: var(--nb-coral); }
 .dt-cmp-mode-on-free .dt-cmp-mode-ic { color: var(--nb-live-ink, #10b981); }
+
+/* ══════════════════════════════════════════════════════════════════
+   Press-and-hold PTT mic — morphing action + inline waveform strip
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── morphing trailing action: hold-to-talk mic ⇄ send arrow ───── */
+.dt-cmp-action {
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  border: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  display: grid; place-items: center;
+  background: var(--nb-coral-grad-btn);
+  color: #fff;
+  box-shadow: 0 6px 14px -7px rgba(255,106,61,0.6), inset 0 1px 0 rgba(255,255,255,0.25);
+  transition: background 0.15s, transform 0.1s, box-shadow 0.18s;
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
+}
+.dt-cmp-action:not(:disabled):hover { background: var(--nb-coral-grad-btn-hover); }
+.dt-cmp-action:active { transform: scale(0.94); }
+.dt-cmp-action svg { transition: opacity 0.12s; }
+/* send variant gets a gentle entrance so the morph reads */
+.dt-cmp-action-send { animation: dt-cmp-action-pop 0.18s var(--nb-ease-out, ease-out); }
+@keyframes dt-cmp-action-pop {
+  from { transform: scale(0.7); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+/* recording: button turns green (listening) with a pulsing halo — synced with mobile */
+.dt-cmp-action-rec,
+.dt-cmp-action-rec:hover {
+  background: var(--nb-live-grad-btn);
+  animation: dt-cmp-rec-pulse 1.1s ease-in-out infinite;
+}
+.dt-cmp-action-rec:active { transform: none; }
+@keyframes dt-cmp-rec-pulse {
+  0%, 100% { box-shadow: 0 0 0 5px rgba(16,185,129,0.16), 0 6px 16px -5px rgba(16,185,129,0.6); }
+  50%      { box-shadow: 0 0 0 10px rgba(16,185,129,0.26), 0 6px 16px -5px rgba(16,185,129,0.75); }
+}
+.dt-cmp-action-mic-off {
+  background: var(--nb-warn-soft);
+  color: var(--nb-warn-ink);
+  border: 1px solid var(--nb-warn-edge);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* in-bar recording readout (replaces the text input while held) */
+.dt-cmp-bar-rec {
+  border-color: var(--nb-live-edge);
+  box-shadow: 0 0 0 3px rgba(16,185,129,0.08), 0 4px 14px rgba(0,0,0,0.04);
+}
+.dt-cmp-rec {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 11px;
+  padding: 8px 12px;
+}
+.dt-cmp-rec-dot {
+  flex-shrink: 0;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 10px rgba(239,68,68,0.55);
+  animation: dt-cmp-rec-blink 1s ease-in-out infinite;
+}
+@keyframes dt-cmp-rec-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.dt-cmp-rec-label {
+  flex-shrink: 0;
+  font-size: 13.5px; font-weight: 600;
+  color: var(--nb-ink);
+  letter-spacing: -0.01em;
+}
+.dt-cmp-rec-wave {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 2.5px;
+  height: 26px; overflow: hidden;
+}
+.dt-cmp-rec-wave i {
+  display: block;
+  width: 2.5px;
+  border-radius: 999px;
+  background: var(--nb-live);
+  opacity: 0.7;
+  transform-origin: center;
+  animation: dt-cmp-rec-wave 0.85s ease-in-out infinite;
+}
+@keyframes dt-cmp-rec-wave {
+  0%, 100% { transform: scaleY(0.4); }
+  50%      { transform: scaleY(1); }
+}
+.dt-cmp-rec-time {
+  flex-shrink: 0;
+  font-family: var(--nb-font-mono);
+  font-size: 12px;
+  color: var(--nb-live-ink);
+}
+.dt-cmp-rec-hint {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--nb-ink-muted);
+  letter-spacing: -0.005em;
+}
