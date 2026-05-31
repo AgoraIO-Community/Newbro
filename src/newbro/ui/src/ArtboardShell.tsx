@@ -2724,10 +2724,10 @@ function DesktopComposerBar({
     }
   }, [recorder.phase, recording]);
 
-  const startRec = (e: React.PointerEvent<HTMLButtonElement>) => {
+  const startRec = (e?: React.PointerEvent<HTMLButtonElement>) => {
     if (micDisabled) return;
-    e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
+    e?.preventDefault();
+    if (e) e.currentTarget.setPointerCapture(e.pointerId);
     setRecording(true);
     setRecSecs(0);
     if (recTimer.current) clearInterval(recTimer.current);
@@ -2926,13 +2926,12 @@ function DesktopComposerBar({
             disabled={micDisabled || loading || recorder.phase === "sending"}
             onPointerDown={startRec}
             onPointerUp={() => stopRec()}
-            onPointerLeave={() => { if (recording) stopRec(); }}
+            onPointerLeave={recording ? cancelRec : undefined}
             onPointerCancel={cancelRec}
             onBlur={cancelRec}
             onKeyDown={(event) => {
               if ((event.key === " " || event.key === "Enter") && recorder.phase === "idle") {
-                event.preventDefault();
-                void recorder.start();
+                startRec();
               }
             }}
             onKeyUp={(event) => {
