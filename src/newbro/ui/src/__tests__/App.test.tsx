@@ -896,9 +896,8 @@ describe("Newbro artboard shell", () => {
       });
     });
     await waitFor(() => {
-      expect(screen.getAllByText("Imported request").length).toBeGreaterThanOrEqual(2);
+      expect(screen.getAllByText("Imported request").length).toBeGreaterThanOrEqual(1);
     });
-    expect(screen.getAllByText("Imported request").some((node) => node.closest(".dt-status-title"))).toBe(true);
     const importedRequestBubble = screen
       .getAllByText("Imported request")
       .find((node) => node.closest(".dt-turn-you"));
@@ -906,9 +905,10 @@ describe("Newbro artboard shell", () => {
     expect(
       within(importedRequestBubble!.closest(".dt-turn-you") as HTMLElement).getByText("Plan mode"),
     ).toBeInTheDocument();
+    // The assistant reply now renders as a conversational answer bubble, not a task card.
     const response = screen.getByText("Fetched history response.");
     expect(response).toBeInTheDocument();
-    expect(response.closest(".dt-status")).not.toBeNull();
+    expect(response.closest(".dt-bubble-answer")).not.toBeNull();
     expect(screen.getAllByText("You").length).toBeGreaterThanOrEqual(1);
   });
 
@@ -1036,6 +1036,57 @@ describe("Newbro artboard shell", () => {
     expect(screen.getAllByText("recorded follow-up").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Audio handled.")).toBeInTheDocument();
     expect(screen.getByLabelText("Message")).not.toBeDisabled();
+  });
+
+  it("shows the Reasoned pill for a settled native codex turn", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "codex-import-history",
+        executor_turn_id: "turn-r1",
+        executor_thread_id: "native-r1",
+        userText: "Make the report",
+        assistantText: "Done — report written.",
+      }),
+    ] as any;
+    (snapshot as any).recent_native_turn_reasoning = {
+      "codex::native-r1::turn-r1": [
+        { item_id: "i1", text: "Reading the spec", kind: "progress", created_at: "t1" },
+        { item_id: "i2", text: "Writing the section", kind: "progress", created_at: "t2" },
+      ],
+    };
+    const importedThread = {
+      thread_id: "codex-import-history",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: null,
+      status: "completed",
+      title: "Imported Codex thread",
+      preview: "Remote history",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-native-history" },
+    };
+    snapshot.bro_threads = [importedThread] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-history");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    const reasoned = await screen.findByRole("button", { name: /Reasoned/i });
+    expect(reasoned).toBeInTheDocument();
+    fireEvent.click(reasoned);
+    expect(screen.getByText("Reading the spec")).toBeInTheDocument();
+    expect(screen.getByText("Writing the section")).toBeInTheDocument();
   });
 
   it("renders urls in imported user messages as links inside user bubbles", async () => {
@@ -2008,7 +2059,9 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    expect((await screen.findAllByText("Refining proposal")).length).toBeGreaterThan(0);
+    // Turn carries no assistant text, so it renders as just the user message — and crucially
+    // not as a "refining / keep planning" proposal card.
+    expect((await screen.findAllByText("Draft a plan.")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Kept planning · refining")).not.toBeInTheDocument();
     expect(screen.queryByText("Review the unique denied stale plan before execution.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Keep planning/i })).not.toBeInTheDocument();
@@ -2168,7 +2221,7 @@ describe("Newbro artboard shell", () => {
     const userTurn = userText!.closest(".dt-turn-you") as HTMLElement;
     expect(within(userTurn).getByText("Plan mode")).toBeInTheDocument();
     const proposalTurn = screen.getByText("Review the unique ordered inline plan before execution.").closest(".dt-turn-plan") as HTMLElement;
-    const resultCard = screen.getByText("Unique ordered plan task").closest(".dt-status") as HTMLElement;
+    const resultCard = screen.getByText("Unique ordered task result.").closest(".dt-turn-bro") as HTMLElement;
 
     expect(userTurn.compareDocumentPosition(resultCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(resultCard.compareDocumentPosition(proposalTurn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

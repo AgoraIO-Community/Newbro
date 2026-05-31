@@ -16,7 +16,7 @@ import {
   type ExecutorConnectCommands,
 } from "./lib/session-client";
 import { readThreadIdFromUrl, replaceThreadIdInUrl } from "./lib/session-url";
-import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForTurn, type ReasoningStep } from "./components/newbro/adapters";
+import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForNativeTurn, buildReasoningStepsForTurn, type ReasoningStep } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
@@ -1064,37 +1064,51 @@ function ThrReasoned({ steps }: { steps: ReasoningStep[] }) {
   );
 }
 
-// Collapsed "Reasoned" affordance shown on a finished desktop bro turn — the live
-// reasoning stream is gone; tucked behind an expandable pill.
-function DTReasonCollapsed({ steps }: { steps: ReasoningStep[] }) {
+// Settled desktop bro turn — a single answer bubble: the final answer with a
+// tucked-away "Reasoned" toggle that expands the reasoning steps on demand.
+// Replaces the old task/progress card for completed turns.
+function DTAnswerBubble({ bro, steps, answer }: { bro: BroCardModel; steps: ReasoningStep[]; answer: string }) {
   const [open, setOpen] = React.useState(false);
-  if (steps.length === 0) return null;
   return (
-    <div className="dt-bubble-answer">
-      <button
-        type="button"
-        className={`dt-reason-collapsed${open ? " dt-reason-collapsed-open" : ""}`}
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-      >
-        <svg className="dt-reason-collapsed-check" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M4 12.5L10 18L20 6"/>
-        </svg>
-        <span>{open ? "Hide reasoning" : "Reasoned"}</span>
-        <svg className="dt-reason-collapsed-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M6 9l6 6 6-6"/>
-        </svg>
-      </button>
-      {open && (
-        <ol className="dt-reason-steps dt-reason-steps-static">
-          {steps.map((s) => (
-            <li key={s.id} className="dt-reason-step dt-reason-step-done">
-              <span className="dt-reason-step-mark" aria-hidden="true" />
-              <span className="dt-reason-step-text">{s.label}</span>
-            </li>
-          ))}
-        </ol>
-      )}
+    <div className="dt-turn dt-turn-bro">
+      <div className="dt-bubble dt-bubble-bro dt-bubble-answer">
+        {steps.length > 0 ? (
+          <>
+            <button
+              type="button"
+              className={`dt-reason-collapsed${open ? " dt-reason-collapsed-open" : ""}`}
+              onClick={() => setOpen((o) => !o)}
+              aria-expanded={open}
+            >
+              <svg className="dt-reason-collapsed-check" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 12.5L10 18L20 6"/>
+              </svg>
+              <span>{open ? "Hide reasoning" : "Reasoned"}</span>
+              <svg className="dt-reason-collapsed-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+            </button>
+            {open && (
+              <ol className="dt-reason-steps dt-reason-steps-static">
+                {steps.map((s) => (
+                  <li key={s.id} className="dt-reason-step dt-reason-step-done">
+                    <span className="dt-reason-step-mark" aria-hidden="true" />
+                    <span className="dt-reason-step-text">{s.label}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </>
+        ) : null}
+        {answer ? (
+          <div className="dt-answer-text">
+            <MarkdownText>{answer}</MarkdownText>
+          </div>
+        ) : null}
+      </div>
+      <div className="dt-bubble-meta">
+        <MessageMeta label={bro.name} />
+      </div>
     </div>
   );
 }
@@ -1181,9 +1195,17 @@ function TimelineTurnView({
   // For the settled mobile pill, find any run for this task (including completed).
   const anyRun = activeRun ?? (taskId ? (shell.executionRuns.find((r) => r.task_id === taskId) ?? null) : null);
   const details = taskId ? (shell.recentExecutionDetails[taskId] ?? null) : null;
-  const reasoningSteps = buildReasoningStepsForTurn(activeRun, details);
-  const settledReasoningSteps = activeRun ? [] : buildReasoningStepsForTurn(anyRun, details);
-  const isTurnSettled = activeRun === null;
+  const nativeReasoningSteps = buildReasoningStepsForNativeTurn(turn, shell.recentNativeTurnReasoning);
+  const nativeInFlight = nativeReasoningSteps.length > 0 && (turn.status === "running" || turn.status === "pending");
+  const nativeSettled = nativeReasoningSteps.length > 0 && !nativeInFlight;
+  const reasoningSteps = nativeInFlight ? nativeReasoningSteps : buildReasoningStepsForTurn(activeRun, details);
+  const settledReasoningSteps = nativeSettled
+    ? nativeReasoningSteps
+    : activeRun
+      ? []
+      : buildReasoningStepsForTurn(anyRun, details);
+  const isTurnSettled = activeRun === null && !nativeInFlight;
+  const answerText = timelineMessageText(turn.assistant) || record?.summary?.trim() || record?.description?.trim() || "";
 
   return (
     <>
@@ -1258,8 +1280,8 @@ function TimelineTurnView({
       {mobile && isTurnSettled && settledReasoningSteps.length > 0 ? (
         <ThrReasoned steps={settledReasoningSteps} />
       ) : null}
-      {!mobile && isTurnSettled && settledReasoningSteps.length > 0 ? (
-        <DTReasonCollapsed steps={settledReasoningSteps} />
+      {!mobile && isTurnSettled && (answerText || settledReasoningSteps.length > 0) ? (
+        <DTAnswerBubble bro={bro} steps={settledReasoningSteps} answer={answerText} />
       ) : null}
       {!isTurnSettled && !mobile && reasoningSteps.length === 0 ? (
         <div className="dt-turn dt-turn-bro">
@@ -1281,7 +1303,7 @@ function TimelineTurnView({
           </div>
         </div>
       ) : null}
-      {isTurnSettled && record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
+      {isTurnSettled && mobile && record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
       {proposalRequests.map((request) => (
         <PlanProposalCard
           key={request.request_id}
