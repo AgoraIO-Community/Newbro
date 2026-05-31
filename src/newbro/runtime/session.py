@@ -2636,9 +2636,9 @@ class SessionRuntime:
         )
         steps = list(self._native_turn_reasoning.get(key, []))
         if steps and item_id and steps[-1].item_id == item_id:
-            steps[-1] = step
-        elif steps and steps[-1].text == step.text:
-            return
+            steps[-1] = step  # same codex item streaming -> grow in place
+        elif steps and not item_id and steps[-1].text == step.text:
+            return  # blank-item-id duplicate text -> skip
         else:
             steps.append(step)
         steps = steps[-_NATIVE_REASONING_STORE_STEPS:]

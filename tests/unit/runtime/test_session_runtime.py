@@ -2888,3 +2888,48 @@ async def test_codex_turn_event_accumulates_native_reasoning():
     ]
     assert steps[0].item_id == "item-1"
     assert steps[-1].kind == "plan"
+
+
+@pytest.mark.anyio
+async def test_codex_turn_event_skips_blank_item_duplicate_text():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        client_request_id="client-text-1",
+        text="do the thing",
+        status="accepted",
+        created_at="2026-05-30T08:00:00+00:00",
+    )
+    await session.blackboard.put_outbound_turn_request(request)
+
+    async def emit(text, *, item_id):
+        await session.handle_codex_turn_event(
+            CodexTurnEventMessage(
+                request_id="out-turn-1",
+                node_id="node-forge",
+                target_persona_id="forge",
+                target_thread_id="thread-1",
+                event_type="progress",
+                message=text,
+                executor_thread_id="native-thread-1",
+                executor_turn_id="turn-1",
+                metadata={"codex_item_id": item_id},
+            )
+        )
+
+    await emit("Reading the spec", item_id="")
+    await emit("Reading the spec", item_id="")   # duplicate blank-id text -> skipped
+    await emit("Writing the code", item_id="")   # distinct text -> appended
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    steps = snapshot.recent_native_turn_reasoning["codex::native-thread-1::turn-1"]
+    assert [s.text for s in steps] == ["Reading the spec", "Writing the code"]
