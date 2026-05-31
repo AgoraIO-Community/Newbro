@@ -1064,6 +1064,41 @@ function ThrReasoned({ steps }: { steps: ReasoningStep[] }) {
   );
 }
 
+// Collapsed "Reasoned" affordance shown on a finished desktop bro turn — the live
+// reasoning stream is gone; tucked behind an expandable pill.
+function DTReasonCollapsed({ steps }: { steps: ReasoningStep[] }) {
+  const [open, setOpen] = React.useState(false);
+  if (steps.length === 0) return null;
+  return (
+    <div className="dt-bubble-answer">
+      <button
+        type="button"
+        className={`dt-reason-collapsed${open ? " dt-reason-collapsed-open" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <svg className="dt-reason-collapsed-check" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 12.5L10 18L20 6"/>
+        </svg>
+        <span>{open ? "Hide reasoning" : "Reasoned"}</span>
+        <svg className="dt-reason-collapsed-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      {open && (
+        <ol className="dt-reason-steps dt-reason-steps-static">
+          {steps.map((s) => (
+            <li key={s.id} className="dt-reason-step dt-reason-step-done">
+              <span className="dt-reason-step-mark" aria-hidden="true" />
+              <span className="dt-reason-step-text">{s.label}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function TimelineUserMessage({ bro, turn, mobile = false }: { bro: BroCardModel; turn: BroTimelineTurn; mobile?: boolean }) {
   const message = turn.user;
   if (!message) return null;
@@ -1222,6 +1257,9 @@ function TimelineTurnView({
       ) : null}
       {mobile && isTurnSettled && settledReasoningSteps.length > 0 ? (
         <ThrReasoned steps={settledReasoningSteps} />
+      ) : null}
+      {!mobile && isTurnSettled && settledReasoningSteps.length > 0 ? (
+        <DTReasonCollapsed steps={settledReasoningSteps} />
       ) : null}
       {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
       {proposalRequests.map((request) => (
