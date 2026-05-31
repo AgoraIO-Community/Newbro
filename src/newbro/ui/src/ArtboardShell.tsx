@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import { ArrowUp, Check, ChevronLeft, Copy, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
+import { ArrowUp, Check, ChevronLeft, Copy, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorConnectCommands,
   clearDraft,
@@ -2275,6 +2275,52 @@ function HomeBroCopyAction({ bro, variant }: { bro: BroCardModel; variant: "card
   );
 }
 
+// Wrap the `--token <value>` segment of a revealed command in a highlight span
+// so the terminal line reads like the prototype's coloured token.
+function highlightCommandToken(command: string): React.ReactNode {
+  const match = command.match(/--token\s+('[^']*'|"[^"]*"|\S+)/);
+  if (!match || match.index === undefined) return command;
+  const start = match.index;
+  const end = start + match[0].length;
+  return (
+    <>
+      {command.slice(0, start)}
+      <span className="dt-offline-cmd-tok">{command.slice(start, end)}</span>
+      {command.slice(end)}
+    </>
+  );
+}
+
+function OfflineCommandLine({
+  revealed,
+  masked,
+  copied,
+  onCopy,
+  testid,
+}: {
+  revealed: string | null;
+  masked: React.ReactNode;
+  copied: boolean;
+  onCopy: () => void;
+  testid: string;
+}) {
+  return (
+    <div className="dt-offline-cmd">
+      <span className="dt-offline-cmd-prompt">$</span>
+      <code className="dt-offline-cmd-line">{revealed ? highlightCommandToken(revealed) : masked}</code>
+      <button
+        type="button"
+        data-testid={testid}
+        className={`dt-offline-cmd-copy${copied ? " dt-offline-cmd-copy-done" : ""}`}
+        onClick={onCopy}
+      >
+        {copied ? <Check size={13} strokeWidth={2.4} /> : <Copy size={13} strokeWidth={1.9} />}
+        <span>{copied ? "Copied" : "Copy"}</span>
+      </button>
+    </div>
+  );
+}
+
 function OfflineBanner({
   bro,
   node,
@@ -2293,34 +2339,70 @@ function OfflineBanner({
   });
   const installCopied = copiedKind === "install";
   const runCopied = copiedKind === "run";
+  const [showReinstall, setShowReinstall] = useState(false);
+
+  if (mobile) {
+    return (
+      <section data-testid="bro-node-disconnected-warning" className="ob-offline-banner dt-offline-banner nb-artboard-offline">
+        <span className="ob-offline-banner-icon" aria-hidden="true">
+          <WifiOff size={16} strokeWidth={2} />
+        </span>
+        <div className="ob-offline-banner-body">
+          <strong>{node.name} is offline</strong>
+          <span>{bro.name} can't take new messages until this computer reconnects. Your draft is saved — the last turn retries on its own.</span>
+          <span>Copy or share Install + connect from desktop, then run it in Terminal on the computer that should work for this bro.</span>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <section data-testid="bro-node-disconnected-warning" className="ob-offline-banner dt-offline-banner nb-artboard-offline">
-      <span className="ob-offline-banner-icon" aria-hidden="true">
-        <WifiOff size={16} strokeWidth={2} />
-      </span>
-      <div className="ob-offline-banner-body">
-        <strong>{node.name} is not connected.</strong>
-        <span>{bro.name} can't take new messages until that computer reconnects. The current draft stays saved.</span>
-        <span>{mobile ? "Copy or share Install + connect from desktop, then run it in Terminal on the computer that should work for this bro." : "Copy Install + connect to reinstall/update the CLI and restart this computer's connection."}</span>
-        {!mobile && commands ? (
-          <>
-            <pre className="nb-artboard-command">{commands.installConnect}</pre>
-            <details className="nb-artboard-command-alt">
-              <summary>Already installed</summary>
-              <pre>{commands.runOnly}</pre>
-            </details>
-          </>
-        ) : null}
+    <section data-testid="bro-node-disconnected-warning" className="dt-offline-notice nb-artboard-offline">
+      <div className="dt-offline-notice-head">
+        <span className="dt-offline-notice-icon" aria-hidden="true">
+          <WifiOff size={17} strokeWidth={2} />
+        </span>
+        <div className="dt-offline-notice-copy">
+          <strong>{node.name} is offline</strong>
+          <span>{bro.name} can't take new messages until this computer reconnects. Your draft is saved — the last turn retries on its own.</span>
+        </div>
+        <span className="dt-offline-notice-status" aria-hidden="true">
+          <span className="dt-offline-notice-pip" />
+          Auto-retrying
+        </span>
       </div>
-      {!mobile && (
-        <div className="ob-offline-banner-actions">
-          <button type="button" data-testid="bro-node-copy-command" className="ob-offline-banner-action" onClick={() => { void copyInstall(); }}>
-            <span>{installCopied ? "Copied" : "Copy install + connect"}</span>
-            <SendHorizontal size={11} strokeWidth={2.2} />
-          </button>
-          <button type="button" data-testid="bro-node-copy-run-only-command" className="ob-offline-banner-action ob-offline-banner-action-secondary" onClick={() => { void copyRunOnly(); }}>
-            <span>{runCopied ? "Copied" : "Run-only"}</span>
-          </button>
+
+      <OfflineCommandLine
+        revealed={commands?.runOnly ?? null}
+        masked={<>newbro executor run <span className="dt-offline-cmd-tok">--token ••••••</span></>}
+        copied={runCopied}
+        onCopy={() => { void copyRunOnly(); }}
+        testid="bro-node-copy-run-only-command"
+      />
+
+      <div className="dt-offline-foot">
+        <span>Run on <strong>{node.name}</strong> to bring it back — it already has the CLI installed.</span>
+        <button
+          type="button"
+          className="dt-offline-disclose"
+          aria-expanded={showReinstall}
+          onClick={() => setShowReinstall((v) => !v)}
+        >
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+          {showReinstall ? "Hide reinstall" : "Reinstall or update the CLI"}
+        </button>
+      </div>
+
+      {showReinstall && (
+        <div className="dt-offline-reinstall">
+          <p>CLI missing or out of date? This installs the latest and reconnects in one step:</p>
+          <OfflineCommandLine
+            revealed={commands?.installConnect ?? null}
+            masked={<>curl -fsSL <span className="dt-offline-cmd-tok">newbro.dev/install.sh</span> | sh</>}
+            copied={installCopied}
+            onCopy={() => { void copyInstall(); }}
+            testid="bro-node-copy-command"
+          />
         </div>
       )}
     </section>

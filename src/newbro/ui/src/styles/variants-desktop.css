@@ -1175,6 +1175,122 @@
 .dt-offline-actions { display: flex; align-items: center; gap: 8px; }
 .dt-offline-secondary { height: 34px; padding: 0 12px; font-size: 12px; }
 
+/* ── Optimized node-offline top notice ───────────────────────── */
+.dt-offline-notice {
+  margin: 0 0 4px;
+  padding: 15px 17px;
+  background: var(--nb-warn-soft);
+  border: 1px solid var(--nb-warn-edge);
+  border-radius: var(--nb-radius-xl);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.dt-offline-notice-head { display: flex; align-items: flex-start; gap: 12px; }
+.dt-offline-notice-icon {
+  width: 30px; height: 30px; flex-shrink: 0; margin-top: 1px;
+  border-radius: 50%;
+  background: rgba(245,158,11,0.18);
+  color: var(--nb-warn-ink);
+  display: grid; place-items: center;
+}
+.dt-offline-notice-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.dt-offline-notice-copy strong {
+  font-size: 14.5px; font-weight: 650; letter-spacing: -0.01em;
+  color: var(--nb-warn-ink);
+}
+.dt-offline-notice-copy span {
+  font-size: 12.5px; line-height: 1.45;
+  color: var(--nb-warn-ink); opacity: 0.82;
+  max-width: 62ch; text-wrap: pretty;
+}
+.dt-offline-notice-status {
+  flex-shrink: 0; align-self: center;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 12px 5px 10px;
+  border-radius: 999px;
+  background: var(--nb-paper);
+  border: 1px solid var(--nb-warn-edge);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.01em;
+  color: var(--nb-warn-ink);
+  white-space: nowrap;
+}
+.dt-offline-notice-pip {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--nb-warn);
+  animation: dt-offline-pulse 1.6s ease-in-out infinite;
+}
+@keyframes dt-offline-pulse {
+  0%, 100% { opacity: 0.45; box-shadow: 0 0 0 0 rgba(245,158,11,0.45); }
+  50%      { opacity: 1;    box-shadow: 0 0 0 4px rgba(245,158,11,0); }
+}
+.dt-offline-cmd {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 9px 9px 13px;
+  background: #16181d;
+  border-radius: 10px;
+  font-family: var(--nb-font-mono);
+  font-size: 12px;
+}
+.dt-offline-cmd-prompt { color: #ff9a78; font-weight: 700; flex-shrink: 0; }
+.dt-offline-cmd-line {
+  flex: 1; min-width: 0; color: #d6d8de; letter-spacing: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dt-offline-cmd-tok { color: #ffae8b; }
+.dt-offline-cmd-copy {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  background: rgba(255,255,255,0.09);
+  border: 1px solid rgba(255,255,255,0.13);
+  color: #e8eaee;
+  font-family: var(--nb-font-sans); font-size: 11.5px; font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.dt-offline-cmd-copy:hover { background: rgba(255,255,255,0.16); }
+.dt-offline-cmd-copy-done {
+  color: #88dca0; border-color: rgba(136,220,160,0.34);
+  background: rgba(136,220,160,0.13);
+}
+.dt-offline-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+}
+.dt-offline-foot > span {
+  font-size: 11.5px; line-height: 1.4;
+  color: var(--nb-warn-ink); opacity: 0.78;
+}
+.dt-offline-foot > span strong { font-weight: 650; opacity: 1; }
+.dt-offline-disclose {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 7px; margin: -4px -7px;
+  background: none; border: none; cursor: pointer;
+  font-family: inherit; font-size: 11.5px; font-weight: 600;
+  color: var(--nb-warn-ink);
+  border-radius: 7px;
+  transition: background 0.15s;
+}
+.dt-offline-disclose:hover { background: rgba(245,158,11,0.13); }
+.dt-offline-disclose svg { transition: transform 0.2s ease; opacity: 0.7; }
+.dt-offline-disclose[aria-expanded="true"] svg { transform: rotate(90deg); }
+.dt-offline-reinstall {
+  display: flex; flex-direction: column; gap: 9px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--nb-warn-edge);
+  animation: dt-offline-reveal 0.18s ease;
+}
+@keyframes dt-offline-reveal {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: none; }
+}
+.dt-offline-reinstall p {
+  margin: 0; font-size: 11.5px; line-height: 1.45;
+  color: var(--nb-warn-ink); opacity: 0.82;
+  max-width: 66ch; text-wrap: pretty;
+}
+
 /* detail grid */
 .dt-detail {
   display: grid;
