@@ -3406,9 +3406,8 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .dt-cmp-planchip:hover {
-  background: rgba(0,0,0,0.04);
+  border-color: var(--nb-line-hover);
   color: var(--nb-ink);
-  border-color: rgba(0,0,0,0.08);
 }
 .dt-cmp-planchip-kbd {
   font-size: 10px;
