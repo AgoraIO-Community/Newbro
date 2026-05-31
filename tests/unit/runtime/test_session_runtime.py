@@ -2776,4 +2776,48 @@ async def test_session_runtime_plan_proposal_denial_requeues_planning_mode():
     assert task.metadata["plan_mode"] is True
     assert task.metadata["mode"] == "proposal_only"
     assert task.latest_instruction is not None
+
+
+@pytest.mark.anyio
+async def test_session_runtime_snapshot_carries_recent_execution_details():
+    from newbro.protocol import TaskExecutionDetailEntry
+
+    session = create_session_runtime(
+        "session-snap-detail",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+
+    # Seed two execution-detail entries for a task. The blackboard append API
+    # works at the projection layer; the snapshot builder reads via
+    # list_recent_task_execution_details.
+    entry_a = TaskExecutionDetailEntry(
+        detail_id="d-1",
+        task_id="task-1",
+        run_id="run-1",
+        execution_session_id="es-1",
+        event_type="PROGRESS",
+        text="Looking up flights",
+        created_at="2026-05-30T10:00:00Z",
+    )
+    entry_b = TaskExecutionDetailEntry(
+        detail_id="d-2",
+        task_id="task-1",
+        run_id="run-1",
+        execution_session_id="es-1",
+        event_type="PROGRESS",
+        text="Comparing fares",
+        created_at="2026-05-30T10:00:05Z",
+    )
+    await session.blackboard.append_task_execution_detail(entry_a)
+    await session.blackboard.append_task_execution_detail(entry_b)
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+
+    assert "task-1" in snapshot.recent_execution_details
+    entries = snapshot.recent_execution_details["task-1"]
+    assert [e.detail_id for e in entries] == ["d-1", "d-2"]
+    assert all(isinstance(e, TaskExecutionDetailEntry) for e in entries)
     assert "keep planning" in task.latest_instruction
