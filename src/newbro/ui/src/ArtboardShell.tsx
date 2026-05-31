@@ -2664,6 +2664,30 @@ function DesktopComposerBar({
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
   const [planMode, setPlanMode] = useState(false);
+  const [voiceMode, setVoiceMode] = useState<"ptt" | "free">("ptt");
+  const opts = [
+    {
+      v: "ptt" as const,
+      label: "Push to talk",
+      icon: (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="3" width="6" height="11" rx="3"/>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+        </svg>
+      ),
+    },
+    {
+      v: "free" as const,
+      label: "Hands-free",
+      icon: (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="10" y="4" width="4" height="9" rx="2"/>
+          <path d="M6.5 8.5a6 6 0 0 0 0 7M17.5 8.5a6 6 0 0 1 0 7"/>
+          <path d="M12 17v3"/>
+        </svg>
+      ),
+    },
+  ];
   const connected = shell.voiceSession.phase === "connected";
   const loading = shell.voiceSession.phase === "loading";
   const audioState = activeCodexAudioState(shell, bro);
@@ -2751,15 +2775,27 @@ function DesktopComposerBar({
     <form className={`dt-cmp${disabled ? " dt-cmp-disabled" : ""}${planMode ? " dt-cmp-plan" : ""}`} onSubmit={submitText}>
       <div className="dt-cmp-head">
         <div className="dt-cmp-headl">
-          <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} aria-label="Voice mode">
-            <button type="button" className="dt-cmp-mode dt-cmp-mode-on">
-              <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-ptt${!connected && !disabled ? " dt-cmp-mode-dot-on" : ""}`} />
-              Push to talk
-            </button>
-            <button type="button" className="dt-cmp-mode" disabled={disabled}>
-              <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-free${connected ? " dt-cmp-mode-dot-on" : ""}`} />
-              Open channel
-            </button>
+          <div className="dt-cmp-modewrap">
+            <span className="dt-cmp-modewrap-label">Talk mode</span>
+            <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} role="tablist" aria-label="How you talk to the bro">
+              {opts.map((o) => {
+                const on = voiceMode === o.v;
+                return (
+                  <button
+                    key={o.v}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    disabled={disabled}
+                    className={`dt-cmp-mode${on ? ` dt-cmp-mode-on dt-cmp-mode-on-${o.v}` : ""}`}
+                    onClick={() => !disabled && setVoiceMode(o.v)}
+                  >
+                    <span className="dt-cmp-mode-ic" aria-hidden="true">{o.icon}</span>
+                    <span>{o.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
           {!disabled ? (
             <button

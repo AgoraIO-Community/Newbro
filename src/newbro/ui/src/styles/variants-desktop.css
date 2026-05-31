@@ -3817,3 +3817,29 @@
     animation: none;
   }
 }
+
+/* ═══════════════════════════════════════════════
+   Composer mode toggle — icons + eyebrow
+   ═══════════════════════════════════════════════ */
+.dt-cmp-modewrap {
+  display: inline-flex; align-items: center;
+  gap: 9px;
+}
+.dt-cmp-modewrap-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--nb-ink-muted);
+  font-family: var(--nb-font-mono, monospace);
+  white-space: nowrap;
+}
+.dt-cmp-mode-ic {
+  display: inline-flex;
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s;
+}
+.dt-cmp-mode:hover .dt-cmp-mode-ic { opacity: 0.8; }
+.dt-cmp-mode-on .dt-cmp-mode-ic { opacity: 1; }
+.dt-cmp-mode-on-ptt  .dt-cmp-mode-ic { color: var(--nb-coral); }
+.dt-cmp-mode-on-free .dt-cmp-mode-ic { color: var(--nb-live-ink, #10b981); }
