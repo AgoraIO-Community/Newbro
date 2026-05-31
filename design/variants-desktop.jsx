@@ -978,6 +978,95 @@ function DTPlanProposal({ proposal, approved, onApprove, onKeep }) {
 
 // ─────────────────────────────────────────────────────────────
 // 4. BRO DETAIL — node offline
+//    Optimized top notice: status said once, leads with the single
+//    command most people need (restart on an already-set-up machine)
+//    in the real dark-terminal style; full reinstall is tucked behind
+//    a quiet disclosure.
+// ─────────────────────────────────────────────────────────────
+function DTOfflineNotice({ node = "Studio Mac", bro = "Atlas" }) {
+  const RUN_CMD = "newbro executor run --token MRElL_T251_gUOuC";
+  const INSTALL_CMD = "curl -fsSL newbro.dev/install.sh | sh";
+  const [showReinstall, setShowReinstall] = React.useState(false);
+  const [copied, setCopied] = React.useState(null); // 'run' | 'install' | null
+  const timer = React.useRef(0);
+  const copy = (key, text) => {
+    try { navigator.clipboard && navigator.clipboard.writeText(text); } catch (e) {}
+    setCopied(key);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(null), 1600);
+  };
+  const CopyBtn = ({ which, text }) => (
+    <button
+      type="button"
+      className={`dt-offline-cmd-copy${copied === which ? " dt-offline-cmd-copy-done" : ""}`}
+      onClick={() => copy(which, text)}
+    >
+      {copied === which ? (
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12.5L10 18L20 6"/></svg>
+      ) : (
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+      )}
+      <span>{copied === which ? "Copied" : "Copy"}</span>
+    </button>
+  );
+  return (
+    <div className="dt-offline-notice">
+      <div className="dt-offline-notice-head">
+        <span className="dt-offline-notice-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 8.5a18 18 0 0 1 20 0"/>
+            <path d="M5 12.5a13 13 0 0 1 14 0"/>
+            <path d="M8.5 16a8 8 0 0 1 7 0"/>
+            <circle cx="12" cy="20" r="0.9" fill="currentColor"/>
+            <path d="M3 3l18 18"/>
+          </svg>
+        </span>
+        <div className="dt-offline-notice-copy">
+          <strong>{node} is offline</strong>
+          <span>{bro} can&rsquo;t take new messages until this computer reconnects. Your draft is saved &mdash; the last turn retries on its own.</span>
+        </div>
+        <span className="dt-offline-notice-status" aria-hidden="true">
+          <span className="dt-offline-notice-pip" />
+          Auto-retrying
+        </span>
+      </div>
+
+      <div className="dt-offline-cmd">
+        <span className="dt-offline-cmd-prompt">$</span>
+        <code className="dt-offline-cmd-line">newbro executor run <span className="dt-offline-cmd-tok">--token MRElL_T251_gUOuC</span></code>
+        <CopyBtn which="run" text={RUN_CMD} />
+      </div>
+
+      <div className="dt-offline-foot">
+        <span>Run on <strong>{node}</strong> to bring it back &mdash; it already has the CLI installed.</span>
+        <button
+          type="button"
+          className="dt-offline-disclose"
+          aria-expanded={showReinstall}
+          onClick={() => setShowReinstall((v) => !v)}
+        >
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+          {showReinstall ? "Hide reinstall" : "Reinstall or update the CLI"}
+        </button>
+      </div>
+
+      {showReinstall && (
+        <div className="dt-offline-reinstall">
+          <p>CLI missing or out of date? This installs the latest and reconnects in one step:</p>
+          <div className="dt-offline-cmd">
+            <span className="dt-offline-cmd-prompt">$</span>
+            <code className="dt-offline-cmd-line">curl -fsSL <span className="dt-offline-cmd-tok">newbro.dev/install.sh</span> | sh</code>
+            <CopyBtn which="install" text={INSTALL_CMD} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+window.DTOfflineNotice = DTOfflineNotice;
+
+// ─────────────────────────────────────────────────────────────
+// 4b. BRO DETAIL — node offline (page)
 // ─────────────────────────────────────────────────────────────
 function BroDetailOfflineDesktop() {
   const [mode, setMode] = React.useState("ptt");
@@ -1001,27 +1090,7 @@ function BroDetailOfflineDesktop() {
         <section className="dt-pane">
           <div className="dt-pane-scroll">
             <div className="dt-pane-content">
-              <div className="ob-offline-banner dt-offline-banner">
-                <span className="ob-offline-banner-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M2 8.5a18 18 0 0 1 20 0"/>
-                    <path d="M5 12.5a13 13 0 0 1 14 0"/>
-                    <path d="M8.5 16a8 8 0 0 1 7 0"/>
-                    <circle cx="12" cy="20" r="0.9" fill="currentColor"/>
-                    <path d="M3 3l18 18"/>
-                  </svg>
-                </span>
-                <div className="ob-offline-banner-body">
-                  <strong>Studio Mac dropped its connection.</strong>
-                  <span>Atlas can't take new messages until that computer reconnects. Your last turn is saved and will retry automatically.</span>
-                </div>
-                <button type="button" className="ob-offline-banner-action">
-                  <span>Reconnect</span>
-                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 12h14M13 6l6 6-6 6"/>
-                  </svg>
-                </button>
-              </div>
+              <DTOfflineNotice node="Studio Mac" bro="Atlas" />
 
               <div className="dt-thread-day"><span>Today · 14:22</span></div>
 
