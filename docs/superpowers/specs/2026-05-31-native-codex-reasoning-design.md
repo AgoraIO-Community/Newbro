@@ -71,14 +71,19 @@ append a reasoning step to an ordered list for that turn:
   outbound turn with the later synced `codex-import` history turn, so the steps survive the
   outbound→history transition. (Note: `executor_thread_id` is the codex-native thread id, not
   the public `thread_id`.)
-- **Step shape:** `{ text: str, kind: "progress" | "plan", created_at: str }`.
+- **Step shape:** `{ item_id: str, text: str, kind: "progress" | "plan", created_at: str }`.
 - **Text:** `message.message`, truncated to 280 chars.
+- **Accumulation keyed by `codex_item_id`** (present in the event metadata, spread into the
+  codex-turn event): a single codex commentary item arrives as the *latest full text for that
+  item* and grows across events (verified live: the same line streamed `len 206 → 234`, then a
+  new line replaced it). So **update the step in place when `codex_item_id` matches the last
+  step; append a new step when a new `item_id` appears.** This avoids both duplicate steps (one
+  item growing) and lost steps (distinct items). Events without a `codex_item_id` fall back to
+  append-on-text-change.
 - **Storage:** a session-held in-memory map
   `dict[turn_key, list[NativeReasoningStep]]`, with the same lifetime/behavior as today's
   derived `recent_execution_details` (session lifetime; not durable across a full backend
   restart, which is acceptable since codex history does not store reasoning).
-- De-duplicate consecutive identical step texts (codex emits incremental commentary deltas;
-  only append when the text advances, mirroring `_should_emit_codex_delta_progress`).
 
 ### 2. Project (snapshot — `runtime/models.py`, `SessionSnapshot`)
 
@@ -139,15 +144,23 @@ codex node (native turn)
   `DTAnswerBubble` already handles (pill only shows when `steps.length > 0`).
 - Backend restart → in-memory reasoning is lost; settled turns then show no pill. Acceptable
   and documented.
+- **In-flight status comes from the WS path, not REST.** `handle_codex_turn_event` publishes
+  with `sync_imported_codex_threads=False`, so the in-flight outbound turn keeps `status:
+  running` for the UI. The REST `GET /sessions/{id}` re-syncs imported threads and merges in a
+  completed history turn, which makes the turn read as `completed` mid-run — a REST-only
+  artifact (it misled an earlier diagnostic poll). The frontend consumes WS snapshots, so the
+  `running` → streaming, `completed` → pill transition is correct. The design must not rely on
+  REST polling for in-flight state.
 
 ## Testing
 
 Backend (`pytest`):
-- Feed a sequence of `CodexTurnEventMessage`s (`PROGRESS` ×N, then `PLAN`, then `COMPLETED`)
-  into `handle_codex_turn_event`; assert `snapshot.recent_native_turn_reasoning` accumulates
-  ordered, de-duplicated, truncated steps under the
-  `(executor_id, executor_thread_id, executor_turn_id)` key while the turn is `running` and
-  remains after `completed`.
+- Feed a sequence of `CodexTurnEventMessage`s into `handle_codex_turn_event`: same
+  `codex_item_id` with growing text (asserts in-place update, one step), then a new
+  `codex_item_id` (asserts a second step appended), a `PLAN` event, then `COMPLETED`. Assert
+  `snapshot.recent_native_turn_reasoning` holds the ordered, truncated steps under the
+  `(executor_id, executor_thread_id, executor_turn_id)` key, present while the turn is
+  `running` and retained after `completed`.
 - Assert the window/step bounds (10 turns × 8 steps, 280-char truncation).
 
 Frontend (`vitest`):
