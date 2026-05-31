@@ -6,7 +6,7 @@
 
 ## 1. Goal
 
-Port the design update from the `design/` mockup folder to the production app, keeping brain boundaries intact. Most of the work is UI-only (copy, CSS tokens, gradient swaps, color shift, onboarding restructure, composer redesign). One slice is a deliberate protocol extension: a per-turn reasoning stream that replaces the current task-progress bar inside the working bubble.
+Port the design update from the `design/` mockup folder to the production app, keeping brain boundaries intact. Most of the work is UI-only (copy, CSS tokens, gradient swaps, color shift, onboarding restructure, composer redesign). One slice — the per-turn reasoning stream that replaces the current task-progress bar — is a thin **projection** change: the data already exists in the backend as `TaskExecutionDetailEntry` rows; the change is to surface a recent window of them on the session snapshot. No new event types, no Comm Brain change, no executor change.
 
 ## 2. Scope
 
@@ -17,7 +17,7 @@ Port the design update from the `design/` mockup folder to the production app, k
 - UI copy rename ("node" / "machine" / "executor" → "computer"; "Tap to send" → "Push to talk"; "Always on" → "Hands-free"; surrounding hint and placeholder copy).
 - Onboarding sheet/modal restructure: STEP 1/2/3 framing, two stacked install command boxes, Hermes shown as disabled "Coming soon".
 - Desktop composer bar redesign: in-bar Plan chip, mode-toggle icons + "Talk mode" eyebrow, press-and-hold PTT mic with inline live waveform and timer.
-- Per-turn reasoning stream — protocol extension on `BroTimelineMessage`, new session-stream event lineage, new streaming reasoning bubble (desktop + mobile), collapsed "Reasoned ✓" pill for settled turns.
+- Per-turn reasoning stream — surface the existing `TaskExecutionDetailEntry` window on the session snapshot's `ExecutionRun`, render a new streaming reasoning bubble (desktop + mobile), collapsed "Reasoned ✓" pill for settled turns (expanded via lazy `query_task_detail` read).
 - Replace home bro-card progress (`%` + bar) with the latest reasoning step label + animated indicator.
 
 ### Out of scope
@@ -36,10 +36,10 @@ Port the design update from the `design/` mockup folder to the production app, k
 - `src/newbro/ui/src/components/newbro/visual.tsx` — sign-in copy.
 - `src/newbro/ui/src/components/newbro/adapters.ts` — surface `reasoning_steps` on the bro/turn view model; derive bro-card "latest reasoning step" from active turn.
 - `src/newbro/ui/src/lib/session-client.ts` — add `installOnly` builder; extend `ExecutorConnectCommands`.
-- `src/newbro/ui/src/types.ts` — extend `BroTimelineMessage` with `reasoning_steps`.
+- `src/newbro/ui/src/types.ts` — add `ExecutionDetailEntry`, add `recent_execution_details` to `ExecutionRun`.
 - `src/newbro/ui/src/__tests__/App.test.tsx` — update any asserted strings affected by the copy rename.
-- **Backend** (paths to discover during planning, owned by Communication Brain): assistant message model gains `reasoning_steps`; session-stream emits `assistant_reasoning_step_appended` / `assistant_reasoning_step_completed`; `docs/protocol/session-stream.md` updated to document the new events.
-- `docs/memories.md` appended once the protocol extension lands.
+- **Backend** (Execution Brain side): extend the session snapshot projection that already carries `ExecutionRun` so it includes `recent_execution_details` (last N `TaskExecutionDetailEntry` rows for the run). No executor change, no Comm Brain change, no new stream event types. Touch points are the runtime session-projection code path and its tests; exact module paths to confirm during planning (`src/newbro/runtime/session.py` is the likely site).
+- `docs/memories.md` appended once the projection change lands.
 
 ## 4. Design tokens & color
 
@@ -190,50 +190,56 @@ Only label changes: "Tap to send" → "Push to talk"; "Always on" → "Hands-fre
 
 ## 8. Per-turn reasoning stream
 
-This is the only piece that crosses into runtime/protocol.
+The reasoning data **already exists** in the backend; the newbro layer needs no new emission or narration path. The change is purely a projection + UI surface.
 
-### 8.1 Protocol — `BroTimelineMessage` extension
+### 8.1 Current state — what's already there
 
-Extend the assistant-side message on a turn:
+- The codex executor already emits `ExecutorEvent(event_type=PROGRESS, message=...)` at every meaningful step (4 emit sites in `executors/adapters/codex/executor.py`).
+- `execution/run_manager.py` consumes each event and **already appends** a `TaskExecutionDetailEntry` (text + payload, anchored to `task_id` + `run_id`) for every progress / plan / waiting / blocked / completed / failed event — see `should_append_detail` (`run_manager.py:69-167`).
+- `docs/protocol/task-execution-detail.md` already specifies: "per-task reads may be bounded to the most recent N entries while preserving append order." That is exactly the rolling window the reasoning UI needs.
+- The PTT and text submission paths (`api/ws/stream.py` → `_handle_send_message` / `_handle_submit_asr_turn` → runtime → executor) are unchanged. The reasoning stream rides their existing output.
+
+What's missing today is only that the UI's session snapshot projection surfaces `run.latest_progress_message` (a single string) and not the recent `TaskExecutionDetailEntry` window.
+
+### 8.2 Backend change — snapshot projection only
+
+Extend the runtime session snapshot projection (the one that already carries `ExecutionRun` to the UI) to include, per active run, a bounded recent window of its `TaskExecutionDetailEntry` rows.
+
+Proposed shape on `ExecutionRun` (as projected to the UI; the durable model is already `TaskExecutionDetailEntry` and stays unchanged):
 
 ```ts
-export interface ReasoningStep {
-  id: string;
-  label: string;
-  status: "active" | "done";
-  started_at: string;        // ISO 8601
-  completed_at: string | null;
+// in ui/src/types.ts, alongside ExecutionRun
+export interface ExecutionDetailEntry {
+  detail_id: string;
+  event_type: string;          // PROGRESS | PLAN | WAITING_EXECUTOR | BLOCKED | COMPLETED | FAILED | CANCELLED
+  text: string;                // already the normalized "detail line"
+  created_at: string;
 }
 
-export interface BroTimelineMessage {
+export interface ExecutionRun {
   // existing fields…
-  reasoning_steps: ReasoningStep[] | null;   // null for user role; null or [] for assistant turns that emitted none
+  recent_execution_details: ExecutionDetailEntry[];   // capped, append-ordered, newest last
 }
 ```
 
-Reasoning lives on the **turn's assistant message**, not on the task. Rationale: reasoning is the inner monologue of one round-trip; tasks span multiple turns and can be re-bound. The home-card progress already has a distinct concern (long-lived task state).
+Server-side: the projection reads from the existing store (`append_task_execution_detail` → backed by blackboard) and copies the **last N** entries (N = 8 is enough headroom for the 3-line rolling window with a small replay buffer). No new event types, no Comm Brain involvement, no new persistence model.
 
-The backend persists the final `reasoning_steps` alongside the assistant message in conversation history, so a settled turn rendered from history can show the collapsed "Reasoned ✓" pill.
+For history (settled turns), entries are already persistent via `TaskExecutionDetailEntry`. The collapsed "Reasoned ✓" pill expansion fetches the full per-task list lazily via the existing `query_task_detail` read API rather than packing all of it into the snapshot.
 
-### 8.2 Stream events (session websocket)
+### 8.3 What does not change
 
-Add two new server events to the lineage described in `docs/protocol/session-stream.md`, both correlated by `request_id` (and carry `turn_id` for fan-out):
+- No new session-stream event type. The existing snapshot diff already pushes `ExecutionRun` updates; the new `recent_execution_details` field rides along.
+- No change to Communication Brain. The Comm Brain prompt/policy/tools are untouched. This is consistent with AGENTS.md: "Keep transport thin" and "the newbro layer is very thin, this should not change."
+- No change to `BroTimelineMessage`. Reasoning is sourced from the run linked to the turn's task (`turn.task.task_id` → run → `recent_execution_details`). No new field on the message model.
+- No change to executor code. Codex already emits the events; new executors that emit PROGRESS will get reasoning UI for free.
 
-- `assistant_reasoning_step_appended` — payload `{ request_id, turn_id, step: ReasoningStep }`. Emitted when a new reasoning line begins (status `active`) and again on subsequent text/label refinements within the same step id.
-- `assistant_reasoning_step_completed` — payload `{ request_id, turn_id, step_id, completed_at }`. Emitted when a step settles (status → `done`).
-
-Stream rules mirror existing assistant deltas:
-
-- Deltas are transient. UI maintains the in-flight `reasoning_steps` list keyed by turn.
-- The durable copy lands with the assistant message in conversation history once the turn closes (carried inside the next `snapshot` projection or the conversation projection per existing rules).
-- Communication-model internal tool calls remain internal. Reasoning steps are user-visible narration only.
-
-### 8.3 Adapter & view model
+### 8.4 Adapter & view model
 
 In `components/newbro/adapters.ts`:
 
-- Map `assistant.reasoning_steps` to a per-turn `reasoningSteps` array on the turn view model.
-- Derive a per-bro `latestReasoningStep: string | null` from the currently-active turn (the assistant message on the bro's latest in-flight turn). Used by the home bro card.
+- Join `turn.task.task_id` → the matching `ExecutionRun` → `recent_execution_details` → expose a `reasoningSteps: ReasoningStep[]` array on the turn view model. The adapter maps each entry to `{ id: detail_id, label: text, status: "done" | "active" }` (the newest entry in an in-flight run is "active"; older are "done"; in a settled run all are "done").
+- Derive a per-bro `latestReasoningStep: string | null` from the bro's active turn's run (`recent_execution_details[-1]?.text`). Used by the home bro card.
+- If `recent_execution_details` is missing/empty, `reasoningSteps` is `[]` — the live bubble simply doesn't render reasoning, and no "Reasoned ✓" pill appears on the settled turn.
 
 ### 8.4 UI — live reasoning bubble
 
@@ -252,15 +258,15 @@ Render when the assistant turn has a final `text`:
 
 ### 8.6 UI — remove the progress bar
 
-- The status-card progress UI at `ArtboardShell.tsx:504-550` (`thr-status*` / `dt-status*` family) is removed from the working-turn render path. It is replaced by the live reasoning bubble.
+- The status-card progress UI at `ArtboardShell.tsx:504-550` (`thr-status*` / `dt-status*` family) is removed from the working-turn render path. It is replaced by the live reasoning bubble that renders `reasoningSteps` from the active run.
 - The bro home-card progress at `ArtboardShell.tsx:1617-1642` swaps from `%` + bar to the latest reasoning step label (`bro.latestReasoningStep`), with a small animated 3-dot indicator while the turn is in flight. If `latestReasoningStep` is null, fall back to the existing `progressLabel`.
 
 ### 8.7 Tests
 
-- Type-level test asserting `BroTimelineMessage.reasoning_steps` is optional/nullable and shaped correctly.
-- Adapter test: a turn with `reasoning_steps` produces the expected `reasoningSteps` view model; an empty/null field yields `[]`/`null` and no pill renders.
-- Visual test: rolling window keeps the last 3 active steps; older steps fade out; on completion, the collapsed pill renders.
-- Stream-handling test: appending steps via `assistant_reasoning_step_appended` updates the in-flight turn; `assistant_reasoning_step_completed` flips status to `done`.
+- Backend projection test: an `ExecutionRun` produced by the session snapshot carries the last N `TaskExecutionDetailEntry` rows in `recent_execution_details`, append-ordered, capped at N.
+- Adapter test: a turn whose task has `recent_execution_details` populated produces the expected `reasoningSteps` view model (latest entry is `active` while the run is RUNNING; all `done` once the run terminates). An empty list yields `reasoningSteps = []` and no pill renders.
+- Visual test: rolling window keeps the last 3 entries; older entries fade out; on terminal run state, the collapsed pill renders above the answer.
+- No new stream-event handler test is needed — existing snapshot-diff plumbing is reused.
 
 ## 9. Implementation order (suggested phases)
 
@@ -268,13 +274,14 @@ Render when the assistant turn has a final `text`:
 2. **Copy rename** — UI strings across `ArtboardShell`, `NewbroShell`, `visual.tsx`, plus test asserts.
 3. **Onboarding restructure** — `installOnly` builder; Step 1/2/3 labels; two command boxes; Hermes disabled card; updated status + footer copy.
 4. **Composer redesign** — mode-toggle icons, in-bar Plan chip, press-and-hold mic, recording strip, hint copy.
-5. **Reasoning stream — backend half** — `BroTimelineMessage.reasoning_steps`, two new session-stream events, `docs/protocol/session-stream.md` updated, focused tests.
-6. **Reasoning stream — UI half** — adapter changes, live reasoning bubble, collapsed "Reasoned ✓" pill, bro-card rewire to `latestReasoningStep`.
+5. **Reasoning stream — backend projection** — extend the session snapshot projection so each `ExecutionRun` carries `recent_execution_details` (last N `TaskExecutionDetailEntry` rows). Add the matching field to `ui/src/types.ts`. No new event types, no Comm Brain change.
+6. **Reasoning stream — UI half** — adapter changes (`reasoningSteps`, `latestReasoningStep`), live reasoning bubble, collapsed "Reasoned ✓" pill driven by lazy `query_task_detail` read, bro-card rewire to `latestReasoningStep`.
 7. **Memory note** — append a short factual line to `docs/memories.md` once §5 + §6 land.
 
 ## 10. Risks & open questions
 
 - The press-and-hold PTT presentation needs to match the existing `useVoiceSession` start/stop semantics exactly. If those callbacks have setup latency, the inline waveform timer may need a small armed/recording distinction. Treat as an implementation detail to verify during the plan phase.
-- Persisting `reasoning_steps` on conversation history requires storage decisions on the backend (likely already covered by the existing assistant message persistence path — to confirm during planning).
+- Cap size for `recent_execution_details` — `N = 8` is the proposed starting point. Re-check during planning that this is small enough to keep snapshot diffs cheap but large enough to cover the 3-line rolling window with replay headroom on reconnect.
+- Existing `TaskExecutionDetailEntry.event_type` is broad (PROGRESS / PLAN / WAITING_EXECUTOR / BLOCKED / COMPLETED / FAILED / CANCELLED). The reasoning UI primarily wants PROGRESS lines. Decide during planning whether the adapter filters by `event_type === "PROGRESS"` or shows everything (terminal states get their own UI elsewhere, so filtering is likely the right call).
 - The home bro card has multiple states beyond "working" (idle, offline, blocked). Only the working state changes; other states keep their existing labels. Confirm any edge cases when the bro has no active turn but has a recent task.
 - "Hermes coming soon" should not be wired to any executor type. Make sure no codepath in `createExecutorNode` calls receives "hermes" as an `enabled_executors` value.
