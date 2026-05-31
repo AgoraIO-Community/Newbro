@@ -1681,7 +1681,7 @@ function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
           A <strong>bro</strong> is a worker persona that lives on a computer you trust. Create one, connect a computer, and they'll start working alongside you.
         </p>
         <p className="dt-empty-sub-lg dt-empty-connect-note">
-          Creating a Bro generates an install/connect command you can run in Terminal on the desktop or always-on machine that should do the work.
+          Creating a bro gives you a one-line install command — run it in Terminal on the computer that should do the work.
         </p>
         <div className="dt-empty-actions-lg">
           <button type="button" className="ob-cta dt-empty-cta-lg" onClick={onCreate}>
@@ -1949,7 +1949,7 @@ function CreateConnectSheet({
                   </div>
                   <p className="ob-connect-note">
                     <span className="ob-connect-note-desktop">New to Newbro CLI? Copy Install + connect. It installs/updates the CLI, then starts this node.</span>
-                    <span className="ob-connect-note-mobile">Copy or share Install + connect, then run it in Terminal on the desktop/always-on machine that should work for this Bro.</span>
+                    <span className="ob-connect-note-mobile">Copy or share Install + connect, then run it in Terminal on the computer that should work for this bro.</span>
                   </p>
                   <div className="ob-connect">
                     <div className="ob-connect-cmd">
@@ -2122,7 +2122,7 @@ function OfflineBanner({
       <div className="ob-offline-banner-body">
         <strong>{node.name} is not connected.</strong>
         <span>{bro.name} can't take new messages until that computer reconnects. The current draft stays saved.</span>
-        <span>{mobile ? "Copy or share Install + connect from desktop, then run it in Terminal on the machine that should work for this Bro." : "Copy Install + connect to reinstall/update the CLI and restart this node."}</span>
+        <span>{mobile ? "Copy or share Install + connect from desktop, then run it in Terminal on the computer that should work for this bro." : "Copy Install + connect to reinstall/update the CLI and restart this computer's connection."}</span>
         {!mobile && commands ? (
           <>
             <pre className="nb-artboard-command">{commands.installConnect}</pre>
