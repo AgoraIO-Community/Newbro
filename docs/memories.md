@@ -7,6 +7,7 @@ Short log of important design decisions and changes for Newbro.
 - Changed Bro Detail plan proposal confirmation so selecting a Codex-provided option replies with that option label as both executor answer and visible user text; `Implement it` is now an explicit synthetic option only for final Codex plan artifacts.
 - Changed no-active-run Bro Detail direct text and push-to-talk to store `OutboundTurnRequest` and dispatch executor-node `start_codex_turn` without creating/updating a task or scheduling Execution Brain work; idle push-to-talk still transcribes through the executor node first.
 - Changed Codex thread import to skip threads flagged `ephemeral=True` so Codex scratch/internal threads no longer surface in the Bro Detail new-thread workspace picker, workspace validator, or imported thread list; a `runtime.codex_thread_sync` observability event records `raw_thread_count`, `imported_thread_count`, and `skipped_ephemeral_count` per node per sync.
+- Added session snapshot projection of `recent_execution_details: dict[task_id, list[TaskExecutionDetailEntry]]` (capped per task) so the UI can render a rolling reasoning stream during a turn; source data is the existing executor `PROGRESS`/`PLAN` events, no Communication Brain change, no new websocket event types.
 
 ## 2026-05-29
 
