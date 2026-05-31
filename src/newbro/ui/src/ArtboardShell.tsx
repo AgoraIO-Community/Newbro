@@ -2771,6 +2771,25 @@ function DesktopComposerBar({
     }
   }
 
+  const planChip = !disabled && (
+    <button
+      type="button"
+      className={`dt-cmp-planchip${planMode ? " dt-cmp-planchip-on" : ""}`}
+      onClick={() => setPlanMode((current) => !current)}
+      aria-pressed={planMode}
+      title={`Plan mode · Shift+Tab — ${bro.name} proposes a plan before acting`}
+    >
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="9" width="6" height="6" rx="1.5"/>
+        <rect x="15" y="4" width="6" height="6" rx="1.5"/>
+        <rect x="15" y="14" width="6" height="6" rx="1.5"/>
+        <path d="M9 12h3M12 7v10M12 7h3M12 17h3"/>
+      </svg>
+      <span className="dt-cmp-planchip-label">Plan{planMode ? " on" : ""}</span>
+      <kbd className="dt-kbd dt-cmp-planchip-kbd">⇧⇥</kbd>
+    </button>
+  );
+
   return (
     <form className={`dt-cmp${disabled ? " dt-cmp-disabled" : ""}${planMode ? " dt-cmp-plan" : ""}`} onSubmit={submitText}>
       <div className="dt-cmp-head">
@@ -2797,19 +2816,6 @@ function DesktopComposerBar({
               })}
             </div>
           </div>
-          {!disabled ? (
-            <button
-              type="button"
-              className={`dt-cmp-planchip${planMode ? " dt-cmp-planchip-on" : ""}`}
-              aria-pressed={planMode}
-              title={`Plan mode · Shift+Tab — ${bro.name} proposes before acting`}
-              onClick={() => setPlanMode((current) => !current)}
-            >
-              <GitBranch size={13} strokeWidth={2.2} aria-hidden="true" />
-              <span className="dt-cmp-planchip-label">Plan mode</span>
-              <kbd className="dt-kbd dt-cmp-planchip-kbd">⇧⇥</kbd>
-            </button>
-          ) : null}
         </div>
         <span className="dt-cmp-hint">
           {planMode && !disabled ? (
@@ -2823,6 +2829,7 @@ function DesktopComposerBar({
         </span>
       </div>
       <div className="dt-cmp-bar">
+        {planChip}
         <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
         <input
           id={`message-${bro.id}`}

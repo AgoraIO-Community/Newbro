@@ -3250,37 +3250,45 @@
 .dt-cmp-headl { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
 .dt-cmp-planchip {
   display: inline-flex; align-items: center; gap: 7px;
-  padding: 5px 9px 5px 11px;
-  border-radius: 999px;
+  flex-shrink: 0;
+  padding: 7px 10px 7px 11px;
+  margin-left: 2px;
+  border-radius: 12px;
   background: var(--nb-paper-sub);
   border: 1px solid var(--nb-line);
   color: var(--nb-ink-soft);
-  font-family: inherit;
-  font-size: 11.5px;
-  font-weight: 500;
   cursor: pointer;
-  transition: background 0.16s, border-color 0.16s, color 0.16s, box-shadow 0.16s;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-.dt-cmp-planchip:hover { border-color: var(--nb-line-hover); color: var(--nb-ink); }
+.dt-cmp-planchip:hover {
+  background: rgba(0,0,0,0.04);
+  color: var(--nb-ink);
+  border-color: rgba(0,0,0,0.08);
+}
 .dt-cmp-planchip-kbd {
   font-size: 10px;
   background: rgba(0,0,0,0.05);
   border-color: rgba(0,0,0,0.08);
 }
 .dt-cmp-planchip-on {
-  background: var(--nb-coral-tint);
-  border-color: var(--nb-coral-border);
-  color: var(--nb-coral-hover);
+  background: var(--nb-coral-grad-btn);
+  border-color: var(--nb-coral);
+  color: #fff;
   font-weight: 600;
+  box-shadow: 0 4px 12px -5px rgba(255,106,61,0.6);
 }
+.dt-cmp-planchip-on:hover { border-color: var(--nb-coral); color: #fff; }
 .dt-cmp-planchip-on .dt-cmp-planchip-kbd {
-  background: rgba(255,106,61,0.14);
-  border-color: var(--nb-coral-border);
-  color: var(--nb-coral-hover);
+  background: rgba(255,255,255,0.22);
+  border-color: rgba(255,255,255,0.4);
+  color: #fff;
 }
 .dt-cmp-plan .dt-cmp-bar {
   border-color: var(--nb-coral-border);
-  background: var(--nb-coral-tint);
 }
 .dt-cmp-plan .dt-cmp-bar:focus-within {
   box-shadow: 0 0 0 3px rgba(255,106,61,0.1), 0 4px 14px rgba(0,0,0,0.04);
