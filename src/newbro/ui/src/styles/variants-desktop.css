@@ -3751,12 +3751,12 @@
 }
 .dt-planprop-approve {
   flex: 1;
-  background: var(--nb-coral-grad-btn);
+  background: var(--nb-info-grad-btn);
   border: 0;
   color: #fff;
-  box-shadow: 0 2px 6px rgba(255,106,61,0.3);
+  box-shadow: 0 2px 6px rgba(59,130,246,0.32);
 }
-.dt-planprop-approve:hover { background: var(--nb-coral-grad-btn-hover); }
+.dt-planprop-approve:hover { background: linear-gradient(160deg, #3b82f6 0%, #2563eb 60%, #1d4ed8 100%); }
 .dt-planprop-keep {
   padding: 0 14px;
   background: #fff;
