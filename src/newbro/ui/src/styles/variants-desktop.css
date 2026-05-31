@@ -1320,9 +1320,9 @@
   border-radius: 3px;
 }
 .dt-bubble-bro {
-  background: var(--nb-paper-sub);
+  background: var(--nb-info-soft);
   color: var(--nb-ink);
-  border: 1px solid var(--nb-line);
+  border: 1px solid var(--nb-info-edge);
   border-bottom-left-radius: 6px;
 }
 .dt-bubble-failed {
