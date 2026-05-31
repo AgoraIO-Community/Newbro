@@ -78,6 +78,7 @@ from .execution_mode import TaskExecutionMode
 from .interaction import AttentionItem, InteractionRequest
 from .interruption import Interruption
 from .mutation import TaskMutation
+from .native_reasoning import NativeReasoningStep
 from .notification import NotificationCandidate
 from .persona import Persona
 from .run import ExecutionRun
@@ -96,7 +97,6 @@ from .session import (
 )
 from .summary import TaskSummary
 from .task import Task
-from .native_reasoning import NativeReasoningStep
 from .task_execution_detail import TaskExecutionDetailEntry
 
 __all__ = [
@@ -162,6 +162,7 @@ __all__ = [
     "NotificationCandidateType",
     "NotificationDeliveryStatus",
     "NotificationPriority",
+    "NativeReasoningStep",
     "OutboundTurnRequest",
     "Persona",
     "QueuedRunRequest",
@@ -178,7 +179,6 @@ __all__ = [
     "SupplyInteractionResponseCommand",
     "Task",
     "TaskCommand",
-    "NativeReasoningStep",
     "TaskExecutionDetailEntry",
     "TaskExecutionMode",
     "TaskCommandType",
