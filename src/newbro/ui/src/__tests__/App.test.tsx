@@ -1089,6 +1089,56 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByText("Writing the section")).toBeInTheDocument();
   });
 
+  it("streams reasoning for a running native codex turn", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "codex-import-history",
+        executor_turn_id: "turn-r2",
+        executor_thread_id: "native-r2",
+        userText: "Make the report",
+        status: "running",
+      }),
+    ] as any;
+    (snapshot as any).recent_native_turn_reasoning = {
+      "codex::native-r2::turn-r2": [
+        { item_id: "s1", text: "Scanning the repo", kind: "progress", created_at: "t1" },
+        { item_id: "s2", text: "Drafting the outline", kind: "progress", created_at: "t2" },
+      ],
+    };
+    const importedThread = {
+      thread_id: "codex-import-history",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: null,
+      status: "completed",
+      title: "Imported Codex thread",
+      preview: "Remote history",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-native-history" },
+    };
+    snapshot.bro_threads = [importedThread] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-history");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Drafting the outline")).toBeInTheDocument();
+    expect(screen.getByText("Scanning the repo")).toBeInTheDocument();
+    expect(document.querySelector(".dt-bubble-reason")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: /Reasoned/i })).toBeNull();
+  });
+
   it("renders urls in imported user messages as links inside user bubbles", async () => {
     const snapshot = forgeSnapshot("session-existing");
     snapshot.bro_threads = [
