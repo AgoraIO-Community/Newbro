@@ -1507,7 +1507,7 @@ describe("Newbro artboard shell", () => {
     fireEvent.click(screen.getByTestId("bro-node-copy-run-only-command"));
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("newbro executor run --node-id node-1 --token token-1"));
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
-    expect(screen.getByPlaceholderText("Reconnect the node before sending")).toBeDisabled();
+    expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
   });
 
   it("clears the existing thread history when 'New thread' is clicked on the desktop detail page", async () => {
