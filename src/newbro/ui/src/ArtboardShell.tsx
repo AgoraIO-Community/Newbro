@@ -789,7 +789,7 @@ function PlanProposalCard({
               : options.length > 0 ? `${options.length} OPTIONS` : "REVIEW"}
           </span>
         </div>
-        {codexPlan && codexPlan.steps.length > 0 ? (
+        {codexPlan ? (
           <TaskPlanView plan={codexPlan} prefix={prefix} />
         ) : (
           <p className={mobile ? "plan-prop-summary" : "dt-planprop-summary"}>{summary}</p>

@@ -2166,7 +2166,7 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    await screen.findByText("Review the unique explicit implement plan before execution.");
+    await screen.findByText("Final plan.");
     expect(screen.queryByRole("radiogroup", { name: /Plan options/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /Run proposed plan/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Confirm$/ })).not.toBeInTheDocument();
