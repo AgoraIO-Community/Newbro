@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ExecutionDetailEntry, ExecutionRun } from "../../types";
-import { buildReasoningStepsForTurn, latestReasoningLabel } from "./adapters";
+import { buildReasoningStepsForTurn, latestReasoningLabel, buildReasoningStepsForNativeTurn } from "./adapters";
+import type { BroTimelineTurn, NativeReasoningStep } from "../../types";
 
 const entry = (id: string, ev: string, text: string): ExecutionDetailEntry => ({
   detail_id: id,
@@ -61,5 +62,53 @@ describe("latestReasoningLabel", () => {
       entry("a", "PROGRESS", "first"),
       entry("b", "PROGRESS", "second"),
     ])).toBe("second");
+  });
+});
+
+describe("buildReasoningStepsForNativeTurn", () => {
+  const baseTurn = {
+    turn_id: "thread-1:outbound:c1",
+    thread_id: "thread-1",
+    persona_id: "forge",
+    executor_id: "codex",
+    owner: "executor",
+    client_request_id: "c1",
+    executor_thread_id: "native-1",
+    executor_turn_id: "turn-1",
+    input_modality: "text",
+    user: null,
+    assistant: null,
+    task: null,
+    status: "running",
+    created_at: null,
+    updated_at: null,
+    metadata: {},
+  } as unknown as BroTimelineTurn;
+
+  const steps: NativeReasoningStep[] = [
+    { item_id: "i1", text: "step one", kind: "progress", created_at: "t1" },
+    { item_id: "i2", text: "step two", kind: "progress", created_at: "t2" },
+  ];
+  const map = { "codex::native-1::turn-1": steps };
+
+  it("marks the last step active while the turn is running", () => {
+    const result = buildReasoningStepsForNativeTurn(baseTurn, map);
+    expect(result.map((s) => s.label)).toEqual(["step one", "step two"]);
+    expect(result[0].status).toBe("done");
+    expect(result[1].status).toBe("active");
+  });
+
+  it("marks all steps done once the turn is completed", () => {
+    const completed = { ...baseTurn, status: "completed" } as BroTimelineTurn;
+    const result = buildReasoningStepsForNativeTurn(completed, map);
+    expect(result.every((s) => s.status === "done")).toBe(true);
+  });
+
+  it("returns nothing for tracked-run turns or missing identity", () => {
+    const tracked = { ...baseTurn, task: { task_id: "t1" } } as unknown as BroTimelineTurn;
+    expect(buildReasoningStepsForNativeTurn(tracked, map)).toEqual([]);
+    const noIds = { ...baseTurn, executor_turn_id: null } as BroTimelineTurn;
+    expect(buildReasoningStepsForNativeTurn(noIds, map)).toEqual([]);
+    expect(buildReasoningStepsForNativeTurn(baseTurn, {})).toEqual([]);
   });
 });

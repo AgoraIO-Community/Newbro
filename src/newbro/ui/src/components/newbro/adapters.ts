@@ -1,4 +1,4 @@
-import type { BroThread, BroTimelinePlan, ExecutionDetailEntry, ExecutionRun, Task, TaskStatus, TaskSummary } from "../../types";
+import type { BroThread, BroTimelinePlan, BroTimelineTurn, ExecutionDetailEntry, ExecutionRun, NativeReasoningStep, Task, TaskStatus, TaskSummary } from "../../types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord, RuntimeExecutorNodeInput, RuntimePersonaInput } from "./types";
 
 export interface ReasoningStep {
@@ -28,6 +28,25 @@ export function buildReasoningStepsForTurn(
     label: d.text,
     status: inFlight && i === lastIndex ? "active" : "done",
     created_at: d.created_at,
+  }));
+}
+
+export function buildReasoningStepsForNativeTurn(
+  turn: BroTimelineTurn,
+  recentNativeTurnReasoning: Record<string, NativeReasoningStep[]>,
+): ReasoningStep[] {
+  if (turn.task) return [];
+  if (!turn.executor_thread_id || !turn.executor_turn_id) return [];
+  const key = `${turn.executor_id}::${turn.executor_thread_id}::${turn.executor_turn_id}`;
+  const steps = recentNativeTurnReasoning[key];
+  if (!steps || steps.length === 0) return [];
+  const inFlight = turn.status === "running" || turn.status === "pending";
+  const lastIndex = steps.length - 1;
+  return steps.map((step, index) => ({
+    id: step.item_id || `${key}:${index}`,
+    label: step.text,
+    status: inFlight && index === lastIndex ? "active" : "done",
+    created_at: step.created_at,
   }));
 }
 
