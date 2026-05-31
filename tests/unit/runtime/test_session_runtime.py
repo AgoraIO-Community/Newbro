@@ -3084,3 +3084,4 @@ async def test_native_plan_answer_records_user_turn(monkeypatch: pytest.MonkeyPa
     assert answer_turns[0].client_request_id == "plan-answer-1"
     assert answer_turns[0].created_at is not None
     assert answer_turns[0].thread_id == "exec-1"
+    assert answer_turns[0].persona_id == "forge"
