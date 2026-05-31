@@ -2628,6 +2628,8 @@ class SessionRuntime:
             return
         raw_item_id = message.metadata.get("codex_item_id")
         item_id = raw_item_id if isinstance(raw_item_id, str) else ""
+        if not item_id:
+            return  # id-less events (e.g. the dispatch marker) are not real steps
         step = NativeReasoningStep(
             item_id=item_id,
             text=text[:_NATIVE_REASONING_TEXT_LIMIT],
@@ -2635,10 +2637,8 @@ class SessionRuntime:
             created_at=timestamp,
         )
         steps = list(self._native_turn_reasoning.get(key, []))
-        if steps and item_id and steps[-1].item_id == item_id:
+        if steps and steps[-1].item_id == item_id:
             steps[-1] = step  # same codex item streaming -> grow in place
-        elif steps and not item_id and steps[-1].text == step.text:
-            return  # blank-item-id duplicate text -> skip
         else:
             steps.append(step)
         steps = steps[-_NATIVE_REASONING_STORE_STEPS:]

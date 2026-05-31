@@ -2891,7 +2891,7 @@ async def test_codex_turn_event_accumulates_native_reasoning():
 
 
 @pytest.mark.anyio
-async def test_codex_turn_event_skips_blank_item_duplicate_text():
+async def test_codex_turn_event_skips_steps_without_item_id():
     session = create_session_runtime(
         "session-1",
         model=ScriptedCommunicationModel(
@@ -2926,13 +2926,14 @@ async def test_codex_turn_event_skips_blank_item_duplicate_text():
             )
         )
 
-    await emit("Reading the spec", item_id="")
-    await emit("Reading the spec", item_id="")   # duplicate blank-id text -> skipped
-    await emit("Writing the code", item_id="")   # distinct text -> appended
+    await emit("Direct instruction sent to Codex.", item_id="")   # dispatch marker -> skipped
+    await emit("Reading the spec", item_id="msg-1")               # real step -> recorded
+    await emit("Writing the code", item_id="msg-2")               # real step -> recorded
 
     snapshot = await session.snapshot(sync_imported_codex_threads=False)
     steps = snapshot.recent_native_turn_reasoning["codex::native-thread-1::turn-1"]
     assert [s.text for s in steps] == ["Reading the spec", "Writing the code"]
+    assert all(s.item_id for s in steps)
 
 
 @pytest.mark.anyio
