@@ -2512,10 +2512,10 @@ function MobileThreadSurface({
               aria-selected={inputMode === "ptt"}
               className={`mob-mode-btn${inputMode === "ptt" ? " mob-mode-btn-on" : ""}`}
               onClick={() => setInputMode("ptt")}
-              title="Tap to send"
+              title="Push to talk"
             >
               <span className="mob-mode-icon"><MessageSquare size={15} strokeWidth={2} /></span>
-              <span className="mob-mode-label">Tap to send</span>
+              <span className="mob-mode-label">Push to talk</span>
             </button>
             <button
               type="button"
@@ -2523,10 +2523,10 @@ function MobileThreadSurface({
               aria-selected={inputMode === "free"}
               className={`mob-mode-btn${inputMode === "free" ? " mob-mode-btn-on" : ""}`}
               onClick={() => setInputMode("free")}
-              title="Always on"
+              title="Hands-free"
             >
               <span className="mob-mode-icon"><Radio size={15} strokeWidth={2} /></span>
-              <span className="mob-mode-label">Always on</span>
+              <span className="mob-mode-label">Hands-free</span>
             </button>
             {inputMode !== "free" ? (
               <button
@@ -2555,7 +2555,7 @@ function MobileThreadSurface({
           {inputMode === "free" && !disabled ? (
             <button type="button" className={`thr-free${connected ? "" : " thr-free-open"}`} aria-label={connected ? "Stop voice session" : `Wake up ${bro.name}`} disabled={loading} onClick={toggleVoice}>
               <span className="thr-free-led thr-free-led-active" />
-              <span className="thr-free-label">{connected ? "Listening..." : "Always on · tap to talk"}</span>
+              <span className="thr-free-label">{connected ? "Listening..." : "Hands-free · tap to talk"}</span>
               <span className="thr-free-waves" aria-hidden="true">{Array.from({ length: 16 }).map((_, index) => <i key={index} style={{ height: `${4 + (index % 5) * 2}px` }} />)}</span>
             </button>
           ) : (

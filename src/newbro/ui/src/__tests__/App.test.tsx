@@ -2439,7 +2439,7 @@ describe("Newbro artboard shell", () => {
 
     expect(screen.queryByRole("button", { name: "Call NewBro" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByTestId("mobile-bro-row-forge"));
-    fireEvent.click(await screen.findByRole("tab", { name: /Always on/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: /Hands-free/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Wake up Forge" }));
 
     await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "forge"));
