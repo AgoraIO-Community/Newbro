@@ -1160,13 +1160,13 @@ function activeCodexAudioState(
   if (!persona?.executor_node_id) return { enabled: false, reason: "Bind and connect this Bro before recording." };
   const node = shell.executorNodes.find((candidate) => candidate.node_id === persona.executor_node_id);
   if (!node || node.connection_status !== "connected" || !node.connected_executors.includes("codex")) {
-    return { enabled: false, reason: "Connect the Codex executor before recording." };
+    return { enabled: false, reason: "Connect Codex on your computer before recording." };
   }
   const codexCapability = node.connected_executor_capabilities?.find(
     (capability) => capability.executor_type === "codex",
   );
   if (codexCapability && !codexCapability.supports_audio_instruction) {
-    return { enabled: false, reason: "Enable local Whisper on the executor node before recording." };
+    return { enabled: false, reason: "Enable local Whisper on your computer before recording." };
   }
   return { enabled: true, reason: "Hold to record audio" };
 }
@@ -1179,13 +1179,13 @@ function activeCodexTextState(
   if (!persona?.executor_node_id) return { enabled: false, reason: "Bind and connect this Bro before sending." };
   const node = shell.executorNodes.find((candidate) => candidate.node_id === persona.executor_node_id);
   if (!node || node.connection_status !== "connected" || !node.connected_executors.includes("codex")) {
-    return { enabled: false, reason: "Connect the Codex executor before sending." };
+    return { enabled: false, reason: "Connect Codex on your computer before sending." };
   }
   const codexCapability = node.connected_executor_capabilities?.find(
     (capability) => capability.executor_type === "codex",
   );
   if (codexCapability && !codexCapability.supports_follow_up) {
-    return { enabled: false, reason: "Selected Bro's executor node does not support text follow-up." };
+    return { enabled: false, reason: "Selected Bro's computer doesn't support text follow-up." };
   }
   return { enabled: true, reason: "Send directly to executor" };
 }
@@ -1427,7 +1427,7 @@ function homeBroNode(bro: BroCardModel): string {
 
 function homeBroLast(bro: BroCardModel, state: HomeBroState): string {
   if (state === "working") return bro.progressLabel || `${Math.round(bro.progress)}%`;
-  if (state === "offline") return bro.nodeName ? "node offline" : "needs node";
+  if (state === "offline") return bro.nodeName ? "computer offline" : "needs a computer";
   return bro.liveState === "live" ? "ready now" : "standing by";
 }
 
@@ -1556,7 +1556,7 @@ function Header({
         {bro ? (
           <span className={`dt-header-pill ${detailPaused ? "dt-header-pill-paused" : "dt-header-pill-live"}`}>
             <span className="dt-header-pill-dot" />
-            {detailPaused ? "paused · node offline" : "live · listening"}
+            {detailPaused ? "paused · computer offline" : "live · listening"}
           </span>
         ) : null}
         <span className="dt-header-account dt-header-static">
@@ -1678,7 +1678,7 @@ function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
         <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
         <h1 className="dt-empty-h-lg">You don't have a bro yet.</h1>
         <p className="dt-empty-sub-lg">
-          A <strong>bro</strong> is a worker persona bound to an executor on one of your machines. Create one, connect a node, and they'll start working alongside you.
+          A <strong>bro</strong> is a worker persona that lives on a computer you trust. Create one, connect a computer, and they'll start working alongside you.
         </p>
         <p className="dt-empty-sub-lg dt-empty-connect-note">
           Creating a Bro generates an install/connect command you can run in Terminal on the desktop or always-on machine that should do the work.
@@ -1908,7 +1908,7 @@ function CreateConnectSheet({
           <header className="ob-sheet-head">
             <div className="ob-sheet-titles">
               <span className="ob-eyebrow ob-eyebrow-coral">NEW BRO</span>
-              <h2 className="ob-sheet-h">Name it, then connect a node.</h2>
+              <h2 className="ob-sheet-h">Name it, then connect a computer.</h2>
             </div>
             <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}><X size={16} strokeWidth={2.2} /></button>
           </header>
@@ -1944,7 +1944,7 @@ function CreateConnectSheet({
               <div className="dt-modal-col">
                 <div className="ob-fieldset">
                   <div className="ob-fieldset-eyebrow-row">
-                    <span className="ob-field-eyebrow">CONNECT A NODE</span>
+                    <span className="ob-field-eyebrow">CONNECT A COMPUTER</span>
                     <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : commands ? "installs CLI + starts node" : "on demand"}</span>
                   </div>
                   <p className="ob-connect-note">
@@ -1977,8 +1977,8 @@ function CreateConnectSheet({
                     <div className="ob-connect-status">
                       <span className="ob-connect-spinner" aria-hidden="true"><span /><span /><span /></span>
                       <span className="ob-connect-status-text">
-                        <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : commands ? `Listening for ${pendingBroName || trimmedName}...` : `Ready to connect ${trimmedName || "a Bro"}...`}</strong>
-                        <span>{completed ? "The Bro has been created after the node connected successfully." : commands ? `Run Install + connect on the machine where ${pendingBroName || trimmedName} should work. The Bro appears after the first successful connection.` : "Newbro will issue an install/connect command first. The Bro appears after the first successful connection."}</span>
+                        <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : commands ? `Waiting to hear from your computer…` : `Ready to connect ${trimmedName || "a Bro"}...`}</strong>
+                        <span>{completed ? "The Bro has been created after the computer connected successfully." : commands ? `This updates on its own once ${pendingBroName || trimmedName} connects. Nothing else on that computer changes.` : "Newbro will issue an install/connect command first. The Bro appears after the first successful connection."}</span>
                       </span>
                       <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "installs CLI + starts node" : "new"}</span>
                     </div>
@@ -2121,7 +2121,7 @@ function OfflineBanner({
       </span>
       <div className="ob-offline-banner-body">
         <strong>{node.name} is not connected.</strong>
-        <span>{bro.name} can't take new messages until the node reconnects. The current draft stays saved.</span>
+        <span>{bro.name} can't take new messages until that computer reconnects. The current draft stays saved.</span>
         <span>{mobile ? "Copy or share Install + connect from desktop, then run it in Terminal on the machine that should work for this Bro." : "Copy Install + connect to reinstall/update the CLI and restart this node."}</span>
         {!mobile && commands ? (
           <>
@@ -2548,7 +2548,7 @@ function MobileThreadSurface({
             <span className="ob-composer-lock-icon" aria-hidden="true">
               <WifiOff size={13} strokeWidth={2} />
             </span>
-            <span className="ob-composer-lock-text">{disabledReason ? `Sending paused while ${disabledReason}` : "Sending paused while the node is offline."}</span>
+            <span className="ob-composer-lock-text">{disabledReason ? `Sending paused while ${disabledReason}` : "Sending paused — reconnect your computer to resume"}</span>
           </div>
         ) : null}
         <div className={`thr-composer-row${disabled ? " ob-composer-row-disabled" : ""}`} aria-disabled={disabled || undefined}>
@@ -3365,7 +3365,7 @@ function HomeAccountSheet({
           </span>
           <span className="acct-row-body">
             <span className="acct-row-title">Add a bro</span>
-            <span className="acct-row-meta">Name them, connect a node</span>
+            <span className="acct-row-meta">Name it, then connect a computer</span>
           </span>
           <span className="acct-row-chev">›</span>
         </button>
@@ -3557,7 +3557,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
                 <div className="ob-hero-body">
                   <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
                   <h2 className="ob-hero-h">You don't have a bro yet.</h2>
-                  <p className="ob-hero-sub">Create a worker persona, bind it to a user-owned executor node, and Newbro will generate an install/connect command for the machine that should work for this Bro.</p>
+                  <p className="ob-hero-sub">Create a bro and connect it to a computer you trust. Newbro will give you a one-line install command for that computer.</p>
                   <div className="ob-hero-actions">
                     <button type="button" className="ob-cta ob-cta-block" onClick={() => setAddOpen(true)}>
                       <Plus size={15} strokeWidth={2.4} />
@@ -3818,7 +3818,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
             <section className="nb-mobile-first-run">
               <span className="home-section-eyebrow">Connect · {bro.name}</span>
               <h2>Set up this Bro before talking.</h2>
-              <p>Create or reveal Install + connect and run it on the machine where this Bro should work.</p>
+              <p>Create or reveal Install + connect and run it on the computer where this Bro should work.</p>
               <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onBack} onCreated={shell.refreshShellSession} bro={bro} />
             </section>
           </main>

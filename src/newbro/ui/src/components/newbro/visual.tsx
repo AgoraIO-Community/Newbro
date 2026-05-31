@@ -365,7 +365,7 @@ export function RunnerBrainPanel({
             Connect Codex to run this task
           </div>
           <p className="mt-2 text-[13px] leading-6 text-[#6b7280]">
-            Start a local executor node and this waiting task can continue when the node checks in.
+            Start your computer's executor and this waiting task can continue when it checks in.
           </p>
           <button
             type="button"

@@ -593,7 +593,7 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByText(/New to Newbro CLI/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /(Copy|Copied) install \+ connect/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Copy run-only command/i })).toBeInTheDocument();
-    expect(screen.getByText(/The Bro appears after the first successful connection/)).toBeInTheDocument();
+    expect(screen.getByText(/This updates on its own once atlas connects/)).toBeInTheDocument();
   });
 
   it("shows mobile install/connect instructions before creating the first Bro", async () => {
@@ -601,7 +601,7 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    expect(await screen.findByTestId("mobile-empty-workspace")).toHaveTextContent("install/connect command");
+    expect(await screen.findByTestId("mobile-empty-workspace")).toHaveTextContent("one-line install command");
     fireEvent.click(screen.getByRole("button", { name: "Create your first bro" }));
 
     expect(await screen.findByText(/Copy or share Install \+ connect/)).toBeInTheDocument();
@@ -2403,7 +2403,7 @@ describe("Newbro artboard shell", () => {
     expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
     expect(screen.getByTestId("voice-session-start")).toHaveAccessibleName(
-      "Enable local Whisper on the executor node before recording.",
+      "Enable local Whisper on your computer before recording.",
     );
   });
 
