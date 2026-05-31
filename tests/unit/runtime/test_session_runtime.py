@@ -2933,3 +2933,48 @@ async def test_codex_turn_event_skips_blank_item_duplicate_text():
     snapshot = await session.snapshot(sync_imported_codex_threads=False)
     steps = snapshot.recent_native_turn_reasoning["codex::native-thread-1::turn-1"]
     assert [s.text for s in steps] == ["Reading the spec", "Writing the code"]
+
+
+@pytest.mark.anyio
+async def test_native_reasoning_projection_bounds_steps_and_truncates_text():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        client_request_id="client-text-1",
+        text="do the thing",
+        status="accepted",
+        created_at="2026-05-30T08:00:00+00:00",
+    )
+    await session.blackboard.put_outbound_turn_request(request)
+
+    # 12 distinct items, each with very long text
+    for i in range(12):
+        await session.handle_codex_turn_event(
+            CodexTurnEventMessage(
+                request_id="out-turn-1",
+                node_id="node-forge",
+                target_persona_id="forge",
+                target_thread_id="thread-1",
+                event_type="progress",
+                message="x" * 500,
+                executor_thread_id="native-thread-1",
+                executor_turn_id="turn-1",
+                metadata={"codex_item_id": f"item-{i}"},
+            )
+        )
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    steps = snapshot.recent_native_turn_reasoning["codex::native-thread-1::turn-1"]
+    # projection caps at 8 steps per turn
+    assert len(steps) == 8
+    # each step text truncated to 280 chars
+    assert all(len(s.text) == 280 for s in steps)
