@@ -238,8 +238,9 @@ For history (settled turns), entries are already persistent via `TaskExecutionDe
 In `components/newbro/adapters.ts`:
 
 - Join `turn.task.task_id` → the matching `ExecutionRun` → `recent_execution_details` → expose a `reasoningSteps: ReasoningStep[]` array on the turn view model. The adapter maps each entry to `{ id: detail_id, label: text, status: "done" | "active" }` (the newest entry in an in-flight run is "active"; older are "done"; in a settled run all are "done").
-- Derive a per-bro `latestReasoningStep: string | null` from the bro's active turn's run (`recent_execution_details[-1]?.text`). Used by the home bro card.
-- If `recent_execution_details` is missing/empty, `reasoningSteps` is `[]` — the live bubble simply doesn't render reasoning, and no "Reasoned ✓" pill appears on the settled turn.
+- **Filter by `event_type`**: include only `PROGRESS` and `PLAN` entries. Terminal states (`BLOCKED`, `COMPLETED`, `FAILED`, `CANCELLED`) and `WAITING_EXECUTOR` are excluded — those have dedicated UI (status pills, terminal bubbles, offline banners) and would clutter the reasoning rolling window.
+- Derive a per-bro `latestReasoningStep: string | null` from the bro's active turn's run (latest filtered entry's `text`). Used by the home bro card.
+- If `recent_execution_details` is missing or contains no `PROGRESS`/`PLAN` entries, `reasoningSteps` is `[]` — the live bubble simply doesn't render reasoning, and no "Reasoned ✓" pill appears on the settled turn.
 
 ### 8.4 UI — live reasoning bubble
 
@@ -247,6 +248,8 @@ Render when the bro's current turn is in flight (assistant message exists, statu
 
 - Desktop: `.dt-bubble-bro.dt-bubble-reason` carrying `.dt-reason-kicker` ("{broName} is reasoning"), animated `.dt-reason-orb`, and `.dt-reason-steps` rolling window — show the **latest 3** steps; older steps fade to 0.55 / 0.26 opacity; newest is `.dt-reason-step-active`.
 - Mobile: same structure with `.thr-reason*` classes; ships the new `ThrReasoned` collapsed component for settled turns.
+
+**Plan-mode interaction**: the reasoning bubble renders during plan generation just like during execution — codex emits the same `PROGRESS`/`PLAN` events in both phases. When the plan finalizes, the in-flight turn transitions to its plan-proposal state and the reasoning bubble is replaced by the **plan proposal card** in the same slot (the proposal card carries its own "Reasoned ✓" collapsed pill above it if the run produced any reasoning steps). No special suppression logic; the bubble's exit is driven by the turn moving from "no final output" to "plan proposal available".
 
 ### 8.5 UI — settled "Reasoned ✓" pill
 
