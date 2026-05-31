@@ -1038,7 +1038,7 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByLabelText("Message")).not.toBeDisabled();
   });
 
-  it("shows the Reasoned pill for a settled native codex turn", async () => {
+  it("shows visible steps for a settled native codex turn", async () => {
     const snapshot = forgeSnapshot("session-existing");
     snapshot.bro_timeline_turns = [
       timelineTurn({
@@ -1082,11 +1082,69 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    const reasoned = await screen.findByRole("button", { name: /Reasoned/i });
-    expect(reasoned).toBeInTheDocument();
-    fireEvent.click(reasoned);
-    expect(screen.getByText("Reading the spec")).toBeInTheDocument();
+    // Two steps render visibly with no toggle and no "Reasoned" pill.
+    expect(await screen.findByText("Reading the spec")).toBeInTheDocument();
     expect(screen.getByText("Writing the section")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reasoned/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Show all/i })).toBeNull();
+  });
+
+  it("collapses to the last 3 steps with a Show all toggle", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "codex-import-history",
+        executor_turn_id: "turn-r4",
+        executor_thread_id: "native-r4",
+        userText: "Make the report",
+        assistantText: "Done — report written.",
+      }),
+    ] as any;
+    (snapshot as any).recent_native_turn_reasoning = {
+      "codex::native-r4::turn-r4": [
+        { item_id: "i1", text: "Reading the spec", kind: "progress", created_at: "t1" },
+        { item_id: "i2", text: "Mapping the files", kind: "progress", created_at: "t2" },
+        { item_id: "i3", text: "Writing the section", kind: "progress", created_at: "t3" },
+        { item_id: "i4", text: "Verifying output", kind: "progress", created_at: "t4" },
+      ],
+    };
+    const importedThread = {
+      thread_id: "codex-import-history",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: null,
+      status: "completed",
+      title: "Imported Codex thread",
+      preview: "Remote history",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-native-history" },
+    };
+    snapshot.bro_threads = [importedThread] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-history");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    // Last 3 visible by default; the earliest is hidden behind the toggle.
+    expect(await screen.findByText("Mapping the files")).toBeInTheDocument();
+    expect(screen.getByText("Writing the section")).toBeInTheDocument();
+    expect(screen.getByText("Verifying output")).toBeInTheDocument();
+    expect(screen.queryByText("Reading the spec")).toBeNull();
+
+    const showAll = screen.getByRole("button", { name: /Show all 4 steps/i });
+    fireEvent.click(showAll);
+    expect(screen.getByText("Reading the spec")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Hide steps/i })).toBeInTheDocument();
   });
 
   it("streams reasoning for a running native codex turn", async () => {

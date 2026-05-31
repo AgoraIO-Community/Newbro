@@ -1064,40 +1064,39 @@ function ThrReasoned({ steps }: { steps: ReasoningStep[] }) {
   );
 }
 
-// Settled desktop bro turn — a single answer bubble: the final answer with a
-// tucked-away "Reasoned" toggle that expands the reasoning steps on demand.
-// Replaces the old task/progress card for completed turns.
+// Settled desktop bro turn — the agent's progress messages shown as compact steps
+// (last 3 by default, with a "Show all N steps" toggle) followed by the final answer.
 function DTAnswerBubble({ bro, steps, answer }: { bro: BroCardModel; steps: ReasoningStep[]; answer: string }) {
-  const [open, setOpen] = React.useState(false);
+  const [showAll, setShowAll] = React.useState(false);
+  const COLLAPSED = 3;
+  const hasMore = steps.length > COLLAPSED;
+  const visible = showAll ? steps : steps.slice(-COLLAPSED);
   return (
     <div className="dt-turn dt-turn-bro">
       <div className="dt-bubble dt-bubble-bro dt-bubble-answer">
         {steps.length > 0 ? (
           <>
-            <button
-              type="button"
-              className={`dt-reason-collapsed${open ? " dt-reason-collapsed-open" : ""}`}
-              onClick={() => setOpen((o) => !o)}
-              aria-expanded={open}
-            >
-              <svg className="dt-reason-collapsed-check" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M4 12.5L10 18L20 6"/>
-              </svg>
-              <span>{open ? "Hide reasoning" : "Reasoned"}</span>
-              <svg className="dt-reason-collapsed-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M6 9l6 6 6-6"/>
-              </svg>
-            </button>
-            {open && (
-              <ol className="dt-reason-steps dt-reason-steps-static">
-                {steps.map((s) => (
-                  <li key={s.id} className="dt-reason-step dt-reason-step-done">
-                    <span className="dt-reason-step-mark" aria-hidden="true" />
-                    <span className="dt-reason-step-text">{s.label}</span>
-                  </li>
-                ))}
-              </ol>
-            )}
+            {hasMore ? (
+              <button
+                type="button"
+                className={`dt-reason-collapsed${showAll ? " dt-reason-collapsed-open" : ""}`}
+                onClick={() => setShowAll((v) => !v)}
+                aria-expanded={showAll}
+              >
+                <span>{showAll ? "Hide steps" : `Show all ${steps.length} steps`}</span>
+                <svg className="dt-reason-collapsed-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M6 9l6 6 6-6"/>
+                </svg>
+              </button>
+            ) : null}
+            <ol className="dt-reason-steps dt-reason-steps-static">
+              {visible.map((s) => (
+                <li key={s.id} className="dt-reason-step dt-reason-step-done">
+                  <span className="dt-reason-step-mark" aria-hidden="true" />
+                  <span className="dt-reason-step-text">{s.label}</span>
+                </li>
+              ))}
+            </ol>
           </>
         ) : null}
         {answer ? (
