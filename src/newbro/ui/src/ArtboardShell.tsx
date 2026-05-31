@@ -4111,7 +4111,7 @@ export function ArtboardMobilePage({
 export function buildRuntimeBroCards(
   personas: Persona[],
   nodes: ExecutorNodeRecord[],
-  shell: Pick<ReturnType<typeof useNewbroShell>, "executionRuns" | "taskSummaries" | "tasks">,
+  shell: Pick<ReturnType<typeof useNewbroShell>, "executionRuns" | "taskSummaries" | "tasks" | "recentExecutionDetails">,
 ) {
-  return buildBroCardModels(personas, nodes, shell.executionRuns, shell.taskSummaries, shell.tasks);
+  return buildBroCardModels(personas, nodes, shell.executionRuns, shell.taskSummaries, shell.tasks, shell.recentExecutionDetails);
 }

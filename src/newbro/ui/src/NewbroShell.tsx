@@ -38,6 +38,7 @@ import type {
   DraftOutputFailedStreamEvent,
   DraftOutputStartedStreamEvent,
   DraftSession,
+  ExecutionDetailEntry,
   ExecutionSession,
   ExecutionRun,
   ExecutorNodeRecord,
@@ -293,6 +294,7 @@ function useNewbroShellState() {
   const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
+  const [recentExecutionDetails, setRecentExecutionDetails] = useState<Record<string, ExecutionDetailEntry[]>>({});
   const [activeShellSessionId, setActiveShellSessionId] = useState<string | null>(null);
   const [defaultPersonaId, setDefaultPersonaId] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<PublicUser | null>(null);
@@ -324,6 +326,7 @@ function useNewbroShellState() {
     setAttentionItems(snapshot.attention_items ?? []);
     setTaskSummaries(snapshot.summaries ?? []);
     setAgentEvents(snapshot.agent_events ?? []);
+    setRecentExecutionDetails(snapshot.recent_execution_details ?? {});
     setDraftSession(snapshot.draft_session ?? null);
     setHasLoadedShellSnapshot(true);
     setShellError(null);
@@ -597,8 +600,8 @@ function useNewbroShellState() {
   }, [activeShellSessionId]);
 
   const bros = useMemo(
-    () => buildBroCardModels(runtimePersonas, executorNodes, executionRuns, taskSummaries, tasks),
-    [executorNodes, executionRuns, runtimePersonas, taskSummaries, tasks],
+    () => buildBroCardModels(runtimePersonas, executorNodes, executionRuns, taskSummaries, tasks, recentExecutionDetails),
+    [executorNodes, executionRuns, runtimePersonas, taskSummaries, tasks, recentExecutionDetails],
   );
 
   const clearGlobalMessage = useEffectEvent(() => {
@@ -770,6 +773,7 @@ function useNewbroShellState() {
     attentionItems,
     taskSummaries,
     agentEvents,
+    recentExecutionDetails,
     shellError,
     shellWarning,
     threadOpenError,
