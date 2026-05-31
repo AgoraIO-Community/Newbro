@@ -2358,6 +2358,31 @@ describe("Newbro artboard shell", () => {
     expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("renders the codex plan body in the proposal card and drops the generic summary", async () => {
+    const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
+      proposalSummary: "Review the proposed plan before execution.",
+      taskTitle: "Plan task",
+      proposalExtras: {
+        codex_plan: {
+          text: "Product Brief plan",
+          steps: [
+            { step: "Inventory existing variants", status: "pending" },
+            { step: "Write the Product Brief report", status: "pending" },
+          ],
+        },
+      },
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Inventory existing variants")).toBeInTheDocument();
+    expect(screen.getByText("Write the Product Brief report")).toBeInTheDocument();
+    expect(screen.queryByText("Review the proposed plan before execution.")).not.toBeInTheDocument();
+  });
+
   it("renders inline plan proposals after the result card for the same turn", async () => {
     const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
       proposalSummary: "Review the unique ordered inline plan before execution.",

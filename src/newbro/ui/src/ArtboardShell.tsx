@@ -676,6 +676,9 @@ function PlanProposalCard({
     && multiQuestions.length === 0
     && options.length === 1
     && request.available_actions.includes("approve");
+  const codexPlan = isFinalCodexPlan && proposal && typeof proposal === "object" && !Array.isArray(proposal)
+    ? timelinePlan((proposal as Record<string, unknown>).codex_plan)
+    : undefined;
   const [selectedId, setSelectedId] = useState<string | null>(selectedFromRequest);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(multiQuestions[0]?.questionId ?? null);
@@ -786,7 +789,11 @@ function PlanProposalCard({
               : options.length > 0 ? `${options.length} OPTIONS` : "REVIEW"}
           </span>
         </div>
-        <p className={mobile ? "plan-prop-summary" : "dt-planprop-summary"}>{summary}</p>
+        {codexPlan && codexPlan.steps.length > 0 ? (
+          <TaskPlanView plan={codexPlan} prefix={prefix} />
+        ) : (
+          <p className={mobile ? "plan-prop-summary" : "dt-planprop-summary"}>{summary}</p>
+        )}
         {multiQuestions.length > 0 && activeQuestion ? (
           <>
             <div className={mobile ? "plan-tabs" : "dt-plantabs"} role="tablist" aria-label="Plan questions">
