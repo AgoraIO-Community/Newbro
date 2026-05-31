@@ -250,6 +250,17 @@ export interface ExecutionRun {
   metadata: Record<string, unknown>;
 }
 
+export interface ExecutionDetailEntry {
+  detail_id: string;
+  task_id: string;
+  run_id: string;
+  execution_session_id: string;
+  event_type: string;          // PROGRESS | PLAN | WAITING_EXECUTOR | BLOCKED | COMPLETED | FAILED | CANCELLED
+  text: string;
+  created_at: string;
+  payload?: Record<string, unknown>;
+}
+
 export type ExecutionMode = "undecided" | "lightweight" | "managed";
 
 export interface TaskExecutionMode {
@@ -433,6 +444,7 @@ export interface SessionSnapshot {
   tasks: Task[];
   execution_sessions: ExecutionSession[];
   execution_runs: ExecutionRun[];
+  recent_execution_details: Record<string, ExecutionDetailEntry[]>;
   execution_modes: TaskExecutionMode[];
   bindings: SessionBinding[];
   summaries: TaskSummary[];
