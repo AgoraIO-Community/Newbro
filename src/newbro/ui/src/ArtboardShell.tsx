@@ -16,7 +16,7 @@ import {
   type ExecutorConnectCommands,
 } from "./lib/session-client";
 import { readThreadIdFromUrl, replaceThreadIdInUrl } from "./lib/session-url";
-import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForTurn } from "./components/newbro/adapters";
+import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForTurn, type ReasoningStep } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
@@ -1029,6 +1029,41 @@ function timelinePlan(value: unknown): BroTaskRecord["plan"] | undefined {
   return { text, explanation, steps };
 }
 
+// Collapsed "Reasoned" affordance shown on a finished mobile bro turn — the live
+// reasoning stream is gone; tucked behind an expandable pill.
+function ThrReasoned({ steps }: { steps: ReasoningStep[] }) {
+  const [open, setOpen] = React.useState(false);
+  if (steps.length === 0) return null;
+  return (
+    <div className="thr-reasoned">
+      <button
+        type="button"
+        className={`thr-reasoned-toggle${open ? " thr-reasoned-toggle-open" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 12.5L10 18L20 6"/>
+        </svg>
+        <span>{open ? "Hide reasoning" : "Reasoned"}</span>
+        <svg className="thr-reasoned-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      {open && (
+        <ol className="thr-reason-steps thr-reason-steps-static">
+          {steps.map((s) => (
+            <li key={s.id} className="thr-reason-step thr-reason-step-done">
+              <span className="thr-reason-mark" aria-hidden="true" />
+              <span className="thr-reason-text">{s.label}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function TimelineUserMessage({ bro, turn, mobile = false }: { bro: BroCardModel; turn: BroTimelineTurn; mobile?: boolean }) {
   const message = turn.user;
   if (!message) return null;
@@ -1103,18 +1138,21 @@ function TimelineTurnView({
   const record = timelineTaskRecord(turn);
   const proposalRequests = shell.interactionRequests.filter((request) => planProposalRequestMatchesTurn(request, turn));
 
-  // Desktop live reasoning bubble — only rendered for in-flight desktop turns.
+  // Reasoning bubble — rendered for in-flight turns (desktop + mobile) and collapsed pill for settled mobile turns.
   const taskId = turn.task?.task_id ?? null;
   const activeRun = taskId
     ? (shell.executionRuns.find((r) => r.task_id === taskId && (r.status === "running" || r.status === "created" || r.status === "waiting_executor")) ?? null)
     : null;
+  // For the settled mobile pill, find any run for this task (including completed).
+  const anyRun = activeRun ?? (taskId ? (shell.executionRuns.find((r) => r.task_id === taskId) ?? null) : null);
   const details = taskId ? (shell.recentExecutionDetails[taskId] ?? null) : null;
   const reasoningSteps = buildReasoningStepsForTurn(activeRun, details);
+  const settledReasoningSteps = activeRun ? [] : buildReasoningStepsForTurn(anyRun, details);
+  const isTurnSettled = activeRun === null;
 
   return (
     <>
       <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
-      {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
       {!mobile && reasoningSteps.length > 0 ? (
         <div className="dt-turn dt-turn-bro">
           <div className="dt-bubble dt-bubble-bro dt-bubble-reason">
@@ -1148,6 +1186,44 @@ function TimelineTurnView({
           </div>
         </div>
       ) : null}
+      {mobile && reasoningSteps.length > 0 ? (
+        <div className="thr-turn thr-turn-bro">
+          <div className="thr-bubble thr-bubble-bro thr-reason">
+            <span className="thr-reason-kicker">
+              <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+              {bro.name} is reasoning
+            </span>
+            <ol className="thr-reason-steps">
+              {(() => {
+                const upto = reasoningSteps.length;
+                const WINDOW = 3;
+                const startAt = Math.max(0, upto - WINDOW);
+                const vis = reasoningSteps.slice(startAt, upto);
+                const FADE = [1, 0.55, 0.26];
+                return vis.map((s, j) => {
+                  const dist = vis.length - 1 - j;
+                  const isLast = dist === 0;
+                  return (
+                    <li
+                      key={s.id}
+                      className={`thr-reason-step${isLast ? " thr-reason-step-active" : " thr-reason-step-done"}`}
+                      style={{ opacity: FADE[dist] ?? 0.26 }}
+                    >
+                      <span className="thr-reason-mark" aria-hidden="true" />
+                      <span className="thr-reason-text">{s.label}</span>
+                    </li>
+                  );
+                });
+              })()}
+            </ol>
+          </div>
+          <div className="thr-meta">{bro.name} · updating live</div>
+        </div>
+      ) : null}
+      {mobile && isTurnSettled && settledReasoningSteps.length > 0 ? (
+        <ThrReasoned steps={settledReasoningSteps} />
+      ) : null}
+      {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
       {proposalRequests.map((request) => (
         <PlanProposalCard
           key={request.request_id}
