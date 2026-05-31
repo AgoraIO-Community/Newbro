@@ -1029,7 +1029,7 @@ function timelinePlan(value: unknown): BroTaskRecord["plan"] | undefined {
   return { text, explanation, steps };
 }
 
-// Collapsed "Reasoned" affordance shown on a finished mobile bro turn — the live
+// Collapsed steps affordance shown on a finished mobile bro turn — the live
 // reasoning stream is gone; tucked behind an expandable pill.
 function ThrReasoned({ steps }: { steps: ReasoningStep[] }) {
   const [open, setOpen] = React.useState(false);
@@ -1045,7 +1045,7 @@ function ThrReasoned({ steps }: { steps: ReasoningStep[] }) {
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M4 12.5L10 18L20 6"/>
         </svg>
-        <span>{open ? "Hide reasoning" : "Reasoned"}</span>
+        <span>{open ? "Hide steps" : "Show steps"}</span>
         <svg className="thr-reasoned-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M6 9l6 6 6-6"/>
         </svg>
@@ -1214,7 +1214,7 @@ function TimelineTurnView({
           <div className="dt-bubble dt-bubble-bro dt-bubble-reason">
             <span className="dt-reason-kicker">
               <span className="dt-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-              {bro.name} is reasoning
+              {bro.name} is working
             </span>
             <ol className="dt-reason-steps">
               {(() => {
@@ -1247,7 +1247,7 @@ function TimelineTurnView({
           <div className="thr-bubble thr-bubble-bro thr-reason">
             <span className="thr-reason-kicker">
               <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-              {bro.name} is reasoning
+              {bro.name} is working
             </span>
             <ol className="thr-reason-steps">
               {(() => {
