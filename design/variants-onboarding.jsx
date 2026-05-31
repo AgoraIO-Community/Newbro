@@ -64,8 +64,8 @@ function SignInVariant() {
           <span className="ob-eyebrow ob-eyebrow-coral">INVITATION ONLY · CLOSED ALPHA</span>
           <h1 className="ob-h1">Hi there.<br/>Let's get you in.</h1>
           <p className="ob-sub">
-            Newbro is a small crew of bros — each one bound to an executor on
-            a machine you trust. They keep working while you keep talking.
+            Newbro is a small crew of bros — each one lives on a computer you
+            trust and keeps working while you talk. No setup headaches.
           </p>
 
           <form className="ob-form" onSubmit={(e) => e.preventDefault()}>
@@ -129,7 +129,8 @@ function CreateBroSheet({ onClose }) {
       <header className="ob-sheet-head">
         <div className="ob-sheet-titles">
           <span className="ob-eyebrow ob-eyebrow-coral">NEW BRO</span>
-          <h2 className="ob-sheet-h">Name it, then connect a node.</h2>
+          <h2 className="ob-sheet-h">Set up your first bro</h2>
+          <p className="ob-sheet-intro">A bro works on a computer you keep on — your Mac, a spare laptop, anything. Three quick steps and it's ready.</p>
         </div>
         <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}>
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -141,17 +142,17 @@ function CreateBroSheet({ onClose }) {
       <div className="ob-sheet-body">
         <div className="ob-fieldset">
           <label className="ob-field">
-            <span className="ob-field-eyebrow">NAME</span>
+            <span className="ob-field-eyebrow">STEP 1 · NAME IT</span>
             <div className="ob-input ob-input-filled">
               <span className="ob-input-prefix">@</span>
               <input type="text" defaultValue="atlas" />
             </div>
-            <span className="ob-field-hint">One word, easy to say out loud. e.g. atlas, scout, forge, muse.</span>
+            <span className="ob-field-hint">Pick one word that's easy to say out loud — you'll talk to it by name. e.g. atlas, scout, forge.</span>
           </label>
         </div>
 
         <div className="ob-fieldset">
-          <span className="ob-field-eyebrow ob-fieldset-eyebrow">EXECUTOR</span>
+          <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 2 · AGENT CLIENT</span>
           <div className="ob-exec-grid">
             <div className="ob-exec-card ob-exec-card-on">
               <span className="ob-exec-check" aria-hidden="true">
@@ -160,27 +161,44 @@ function CreateBroSheet({ onClose }) {
                 </svg>
               </span>
               <span className="ob-exec-name">Codex</span>
-              <span className="ob-exec-desc">Long-running agent · shell + browser</span>
+              <span className="ob-exec-desc">OpenAI&rsquo;s coding agent</span>
             </div>
             <div className="ob-exec-card">
               <span className="ob-exec-name">Hermes</span>
-              <span className="ob-exec-desc">Headless · ops + scripts</span>
+              <span className="ob-exec-desc">Open-source agent by Nous Research</span>
             </div>
           </div>
+          <span className="ob-field-hint">Pick the one you already use — newbro runs your tasks through it. You can switch anytime.</span>
         </div>
 
         <div className="ob-fieldset">
           <div className="ob-fieldset-eyebrow-row">
-            <span className="ob-field-eyebrow">CONNECT A NODE</span>
+            <span className="ob-field-eyebrow">STEP 3 · CONNECT A COMPUTER</span>
             <span className="ob-fieldset-eyebrow-meta">expires in 9:46</span>
           </div>
+          <p className="ob-connect-guide">On the computer where atlas should work, paste this in a terminal to install newbro:</p>
           <div className="ob-connect">
             <div className="ob-connect-cmd">
               <span className="ob-connect-prompt">$</span>
               <span className="ob-connect-line">
-                npx newbro connect <span className="ob-connect-tok">--token K7P4Q9R-1f3a</span>
+                curl -fsSL <span className="ob-connect-tok">newbro.dev/install.sh</span> | sh
               </span>
-              <button type="button" className="ob-connect-copy" aria-label="Copy command">
+              <button type="button" className="ob-connect-copy" aria-label="Copy install command">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="11" height="11" rx="2"/>
+                  <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <p className="ob-connect-guide ob-connect-guide-2">Then start it with your one-time key:</p>
+          <div className="ob-connect">
+            <div className="ob-connect-cmd">
+              <span className="ob-connect-prompt">$</span>
+              <span className="ob-connect-line">
+                newbro executor run <span className="ob-connect-tok">--token MRElL_T251_gUOuC</span>
+              </span>
+              <button type="button" className="ob-connect-copy" aria-label="Copy connect command">
                 <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="9" y="9" width="11" height="11" rx="2"/>
                   <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
@@ -192,16 +210,16 @@ function CreateBroSheet({ onClose }) {
                 <span /><span /><span />
               </span>
               <span className="ob-connect-status-text">
-                <strong>Listening for atlas…</strong>
-                <span>Run that command on the machine where atlas should work.</span>
+                <strong>Waiting to hear from your computer…</strong>
+                <span>This screen updates on its own once atlas connects. Nothing else on that computer changes.</span>
               </span>
               <span className="ob-connect-time">0:14</span>
             </div>
           </div>
           <div className="ob-connect-meta">
-            <button type="button" className="ob-link ob-link-sm">Rotate token</button>
+            <button type="button" className="ob-link ob-link-sm">Get a fresh link</button>
             <span className="ob-connect-meta-sep">·</span>
-            <button type="button" className="ob-link ob-link-sm">How does this work?</button>
+            <button type="button" className="ob-link ob-link-sm">Walk me through it</button>
           </div>
         </div>
       </div>
@@ -209,7 +227,7 @@ function CreateBroSheet({ onClose }) {
       <footer className="ob-sheet-foot">
         <button type="button" className="ob-cta ob-cta-pending" disabled>
           <span className="ob-cta-spinner" aria-hidden="true" />
-          <span>Waiting for node…</span>
+          <span>Waiting for your computer…</span>
         </button>
       </footer>
     </section>
@@ -261,9 +279,9 @@ function FirstRunHomeVariant() {
               <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
               <h2 className="ob-hero-h">You don't have a bro yet.</h2>
               <p className="ob-hero-sub">
-                A <strong>bro</strong> is a worker persona bound to an
-                executor on one of your machines. Create one, connect a
-                node, and they'll start showing up here.
+                A <strong>bro</strong> is a teammate that works on a computer
+                you trust. Give it a name, connect a computer, and it'll show
+                up here ready to go.
               </p>
               <div className="ob-hero-actions">
                 <button type="button" className="ob-cta ob-cta-block" onClick={() => setSheetOpen(true)}>
@@ -358,6 +376,7 @@ window.CreateBroVariant = CreateBroVariant;
 // 4. THREADS — connector offline / closed
 // ─────────────────────────────────────────────────────────────
 function ThreadsOfflineVariant() {
+  const Mascot = window.Mascot;
   return (
     <IOSDevice width={402} height={874}>
       <div className="thr ob-thr-offline">
@@ -369,7 +388,7 @@ function ThreadsOfflineVariant() {
           </button>
           <div className="thr-bar-bro">
             <div className="thr-bar-avatar ob-avatar-offline">
-              <img src="assets/newbro-logo.webp" alt="" draggable={false} />
+              <Mascot size={40} mode="error" crop={1.0} />
               <span className="ob-avatar-offline-pip" aria-hidden="true" />
             </div>
             <div className="thr-bar-meta">
@@ -384,11 +403,11 @@ function ThreadsOfflineVariant() {
               </div>
             </div>
           </div>
-          <button type="button" className="thr-more" aria-label="More">
+          <button type="button" className="thr-more" aria-label="Switch thread">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="6" cy="12" r="1.5" fill="currentColor"/>
-              <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
-              <circle cx="18" cy="12" r="1.5" fill="currentColor"/>
+              <path d="M4 7l8-4 8 4-8 4z"/>
+              <path d="M4 12l8 4 8-4"/>
+              <path d="M4 17l8 4 8-4"/>
             </svg>
           </button>
         </header>
@@ -406,7 +425,7 @@ function ThreadsOfflineVariant() {
           </span>
           <div className="ob-offline-banner-body">
             <strong>Studio Mac is offline.</strong>
-            <span>Atlas can't take new messages until the node reconnects. Your last turn is saved.</span>
+            <span>Atlas can't take new messages until that computer reconnects. Your last turn is saved.</span>
           </div>
           <button type="button" className="ob-offline-banner-action">
             <span>Reconnect</span>

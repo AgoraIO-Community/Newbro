@@ -211,16 +211,16 @@ function App() {
       <TweaksPanel>
         <TweakSection label="Input mode" />
         <TweakRadio
-          label="Send a message via"
+          label="Talk to your bro via"
           value={t.inputMode === "text" ? "ptt" : t.inputMode}
           options={[
-            { value: "ptt",  label: "Tap to send" },
-            { value: "free", label: "Always on" },
+            { value: "ptt",  label: "Push to talk" },
+            { value: "free", label: "Hands-free" },
           ]}
           onChange={(v) => setTweak("inputMode", v)}
         />
         <div style={{ fontSize: 10.5, color: "rgba(41,38,27,0.6)", lineHeight: 1.5, padding: "2px 0" }}>
-          <span style={{ fontWeight: 600 }}>Tap to send</span> — hold to talk, or type alongside · <span style={{ fontWeight: 600 }}>Always on</span> — voice only, hands-free
+          <span style={{ fontWeight: 600 }}>Push to talk</span> — hold Space to talk, or type · <span style={{ fontWeight: 600 }}>Hands-free</span> — mic stays open, no hands
         </div>
         {t.inputMode === "free" && (
           <TweakRadio

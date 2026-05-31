@@ -96,6 +96,7 @@ function Mascot({ size = 80, mode = "idle", crop = 1.18 }) {
     </div>
   );
 }
+window.Mascot = Mascot;
 
 // Mode-switch icons — small, 16px, stroke-only
 const ModeIcons = {
@@ -131,8 +132,8 @@ function MobileModeSwitch({ value, onChange, theme = "light" }) {
   // Coerce legacy "text" inputMode back to "ptt" — typing is now merged.
   const v = value === "text" ? "ptt" : value;
   const options = [
-    { v: "ptt",  label: "Tap to send" },
-    { v: "free", label: "Always on" },
+    { v: "ptt",  label: "Push to talk" },
+    { v: "free", label: "Hands-free" },
   ];
   return (
     <div className={`mob-mode mob-mode-${theme}`} role="tablist" aria-label="Input mode">
@@ -575,7 +576,7 @@ function AddBroTile({ editing, onClick }) {
       </span>
       <span className="home-add-body">
         <span className="home-add-title">Add a bro</span>
-        <span className="home-add-sub">Name them, then connect a node</span>
+        <span className="home-add-sub">Name it, then connect a computer</span>
       </span>
       <span className="home-add-arrow">›</span>
     </button>
@@ -650,7 +651,7 @@ function HomeAccountSheet({ onClose, onEnterEdit, onAddBro, onSignOut, signOutPe
           </span>
           <span className="acct-row-body">
             <span className="acct-row-title">Add a bro</span>
-            <span className="acct-row-meta">Name them, connect a node</span>
+            <span className="acct-row-meta">Name it, connect a computer</span>
           </span>
           <span className="acct-row-chev">›</span>
         </button>
@@ -675,7 +676,7 @@ function HomeAccountSheet({ onClose, onEnterEdit, onAddBro, onSignOut, signOutPe
             </svg>
           </span>
           <span className="acct-row-body">
-            <span className="acct-row-title">Connected nodes</span>
+            <span className="acct-row-title">Connected computers</span>
             <span className="acct-row-meta">2 online · 1 paused</span>
           </span>
           <span className="acct-row-chev">›</span>
@@ -744,8 +745,8 @@ function HomeConfirmRemove({ bro, onCancel, onConfirm }) {
           <div className="acct-confirm-title">Remove {bro.name}?</div>
           <div className="acct-confirm-sub">
             {sessionWarning
-              ? `${bro.name} is mid-task on ${bro.node}. The session ends, the draft is kept, and the executor disconnects.`
-              : `${bro.name} disconnects from ${bro.node || "their node"} and stops appearing in your workspace. Their threads stay.`}
+              ? `${bro.name} is mid-task on ${bro.node}. The session ends, the draft is kept, and the computer disconnects.`
+              : `${bro.name} disconnects from ${bro.node || "their computer"} and stops appearing in your workspace. Their threads stay.`}
           </div>
         </div>
         <div className="acct-confirm-actions">
@@ -1238,6 +1239,40 @@ function PlanProposal({ proposal, approved, onApprove, onKeep }) {
   );
 }
 
+// Collapsed "Reasoned" affordance shown on a finished bro turn — the live
+// reasoning stream is gone; tucked behind an expandable pill (mirrors desktop).
+function ThrReasoned({ steps }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="thr-reasoned">
+      <button
+        type="button"
+        className={`thr-reasoned-toggle${open ? " thr-reasoned-toggle-open" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 12.5L10 18L20 6"/>
+        </svg>
+        <span>{open ? "Hide reasoning" : "Reasoned"}</span>
+        <svg className="thr-reasoned-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      {open && (
+        <ol className="thr-reason-steps thr-reason-steps-static">
+          {steps.map((s, i) => (
+            <li key={i} className="thr-reason-step thr-reason-step-done">
+              <span className="thr-reason-mark" aria-hidden="true" />
+              <span className="thr-reason-text">{s.label}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {}) {
   const v = useVoice();
   if (!v) return null;
@@ -1450,21 +1485,41 @@ function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {
           )}
           {(mode === "working") && (
             <div className="thr-turn thr-turn-bro">
-              <div className="thr-status">
-                <div className="thr-status-head">
-                  <span className="thr-status-spin" />
-                  <span className="thr-status-title">{stepIdx >= 0 ? script.steps[stepIdx].label : ""}</span>
-                  <span className="thr-status-pct">{Math.round(progress)}%</span>
-                </div>
-                <div className="thr-status-bar"><i style={{ width: `${progress}%` }} /></div>
-                <div className="thr-status-foot">
-                  step {stepIdx + 1} of {script.steps.length} · {script.steps[stepIdx]?.note}
-                </div>
+              <div className="thr-bubble thr-bubble-bro thr-reason">
+                <span className="thr-reason-kicker">
+                  <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+                  {M_BRO.name} is reasoning
+                </span>
+                <ol className="thr-reason-steps">
+                  {(() => {
+                    const upto = Math.max(1, stepIdx + 1); // reasoning lines surfaced so far
+                    const WINDOW = 3;                       // newest + 2 prior; older fade off
+                    const startAt = Math.max(0, upto - WINDOW);
+                    const vis = script.steps.slice(startAt, upto);
+                    const FADE = [1, 0.55, 0.26];
+                    return vis.map((s, j) => {
+                      const dist = vis.length - 1 - j;
+                      const isLast = dist === 0;
+                      return (
+                        <li
+                          key={startAt + j}
+                          className={`thr-reason-step${isLast ? " thr-reason-step-active" : " thr-reason-step-done"}`}
+                          style={{ opacity: FADE[dist] ?? 0.26 }}
+                        >
+                          <span className="thr-reason-mark" aria-hidden="true" />
+                          <span className="thr-reason-text">{s.label}</span>
+                        </li>
+                      );
+                    });
+                  })()}
+                </ol>
               </div>
+              <div className="thr-meta">{M_BRO.name} · updating live</div>
             </div>
           )}
           {reply && (
             <div className="thr-turn thr-turn-bro">
+              <ThrReasoned steps={script.steps} />
               <div className={`thr-bubble thr-bubble-bro${mode === "reporting" && reply.length < script.reply.length ? " thr-bubble-live" : ""}`}>
                 {reply}
                 {mode === "reporting" && reply.length < script.reply.length && <span className="thr-caret" />}
@@ -1630,7 +1685,7 @@ function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {
               <button type="button" className={`thr-free${mode === "idle" ? " thr-free-open" : ""}`} onClick={() => freeStart()}>
                 <span className={`thr-free-led thr-free-led-${freeSubMode}`} />
                 <span className="thr-free-label">
-                  {mode === "idle" ? `Always on · ${freeSubMode === "silent" ? "talk less" : "engage"} · tap to talk` : "Listening…"}
+                  {mode === "idle" ? `Hands-free · ${freeSubMode === "silent" ? "talk less" : "engage"} · tap to talk` : "Listening…"}
                 </span>
                 <span className="thr-free-waves">
                   {Array.from({ length: 16 }).map((_, i) => {

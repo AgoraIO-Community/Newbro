@@ -611,6 +611,49 @@
   font-weight: 700;
   color: var(--nb-ink);
 }
+.ob-sheet-intro {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--nb-ink-soft);
+  letter-spacing: -0.005em;
+  text-wrap: pretty;
+}
+.ob-connect-guide {
+  margin: 0 0 8px;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--nb-ink-soft);
+  letter-spacing: -0.005em;
+  text-wrap: pretty;
+}
+.ob-connect-guide-2 { margin-top: 10px; }
+.ob-connect-download {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--nb-coral-border);
+  border-radius: 11px;
+  background: var(--nb-coral-tint);
+  color: var(--nb-coral-hover);
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.ob-connect-download:hover { background: rgba(255,106,61,0.14); border-color: var(--nb-coral); }
+.ob-connect-download-icon { display: inline-flex; flex-shrink: 0; }
+.ob-connect-download-text {
+  font-size: 13px; font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--nb-coral-hover);
+}
+.ob-connect-download-meta {
+  margin-left: auto;
+  font-family: var(--nb-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--nb-ink-muted);
+  white-space: nowrap;
+}
 .ob-sheet-close {
   width: 32px; height: 32px;
   border-radius: 50%;

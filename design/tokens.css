@@ -30,10 +30,17 @@
   --nb-coral-border: #ffb89e;   /* tinted border for focus halo */
   --nb-coral-shadow: rgba(255, 106, 61, 0.25);
 
+  /* Coral gradients — synced with the mobile design language.
+     -grad      : flatter 2-stop for message bubbles / large surfaces
+     -grad-btn  : richer 3-stop for circular/pill action buttons */
+  --nb-coral-grad:     linear-gradient(180deg, #ff8c5a 0%, #ff6a3d 100%);
+  --nb-coral-grad-btn: linear-gradient(160deg, #ff8c5a 0%, #ff6a3d 60%, #e85528 100%);
+  --nb-coral-grad-btn-hover: linear-gradient(160deg, #ff7d4d 0%, #f05a2e 60%, #d4471f 100%);
+
   /* Ink — text scale on paper */
   --nb-ink:        #111827;     /* primary heading + body */
   --nb-ink-soft:   #6b7280;     /* secondary body */
-  --nb-ink-muted:  #9ca3af;     /* tertiary, metadata, hints */
+  --nb-ink-muted:  #7d8492;     /* tertiary, metadata, hints — kept legible on white (~3.6:1) */
 
   /* Paper — background scale */
   --nb-paper:      #ffffff;     /* card surface */
@@ -52,6 +59,9 @@
   --nb-live-soft:  #ecfdf5;     /* live pill bg */
   --nb-live-edge:  rgba(16, 185, 129, 0.2); /* live tinted border */
 
+  /* Green button gradient — mobile listening/recording mic */
+  --nb-live-grad-btn: linear-gradient(160deg, #34d399 0%, #10b981 60%, #047857 100%);
+
   --nb-warn:       #f59e0b;     /* "bound offline", needs attention */
   --nb-warn-ink:   #b45309;     /* amber-700 from tailwind */
   --nb-warn-soft:  #fffbeb;
@@ -66,6 +76,9 @@
   --nb-info-ink:   #2563eb;
   --nb-info-soft:  #eff6ff;
   --nb-info-edge:  rgba(59, 130, 246, 0.2);
+
+  /* Blue button gradient — mirrors --nb-coral-grad-btn for plan-mode approve */
+  --nb-info-grad-btn: linear-gradient(160deg, #60a5fa 0%, #3b82f6 60%, #2563eb 100%);
 
   /* Selection — coral on white (browser ::selection) */
   --nb-selection-bg: #ff6a3d;
