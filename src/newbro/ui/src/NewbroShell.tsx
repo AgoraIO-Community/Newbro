@@ -39,6 +39,7 @@ import type {
   DraftOutputStartedStreamEvent,
   DraftSession,
   ExecutionDetailEntry,
+  NativeReasoningStep,
   ExecutionSession,
   ExecutionRun,
   ExecutorNodeRecord,
@@ -295,6 +296,7 @@ function useNewbroShellState() {
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [recentExecutionDetails, setRecentExecutionDetails] = useState<Record<string, ExecutionDetailEntry[]>>({});
+  const [recentNativeTurnReasoning, setRecentNativeTurnReasoning] = useState<Record<string, NativeReasoningStep[]>>({});
   const [activeShellSessionId, setActiveShellSessionId] = useState<string | null>(null);
   const [defaultPersonaId, setDefaultPersonaId] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<PublicUser | null>(null);
@@ -327,6 +329,7 @@ function useNewbroShellState() {
     setTaskSummaries(snapshot.summaries ?? []);
     setAgentEvents(snapshot.agent_events ?? []);
     setRecentExecutionDetails(snapshot.recent_execution_details ?? {});
+    setRecentNativeTurnReasoning(snapshot.recent_native_turn_reasoning ?? {});
     setDraftSession(snapshot.draft_session ?? null);
     setHasLoadedShellSnapshot(true);
     setShellError(null);
@@ -774,6 +777,7 @@ function useNewbroShellState() {
     taskSummaries,
     agentEvents,
     recentExecutionDetails,
+    recentNativeTurnReasoning,
     shellError,
     shellWarning,
     threadOpenError,

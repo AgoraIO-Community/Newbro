@@ -261,6 +261,13 @@ export interface ExecutionDetailEntry {
   payload?: Record<string, unknown>;
 }
 
+export interface NativeReasoningStep {
+  item_id: string;
+  text: string;
+  kind: "progress" | "plan";
+  created_at: string;
+}
+
 export type ExecutionMode = "undecided" | "lightweight" | "managed";
 
 export interface TaskExecutionMode {
@@ -445,6 +452,7 @@ export interface SessionSnapshot {
   execution_sessions: ExecutionSession[];
   execution_runs: ExecutionRun[];
   recent_execution_details: Record<string, ExecutionDetailEntry[]>;
+  recent_native_turn_reasoning: Record<string, NativeReasoningStep[]>;
   execution_modes: TaskExecutionMode[];
   bindings: SessionBinding[];
   summaries: TaskSummary[];
