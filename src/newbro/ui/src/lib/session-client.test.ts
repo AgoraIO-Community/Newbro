@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  buildExecutorConnectCommands,
+  buildExecutorInstallOnlyCommand,
+} from "./session-client";
 
 class MockWebSocket {
   static readonly OPEN = 1;
@@ -122,6 +126,8 @@ describe("session-client transport base URL handling", () => {
         whisperModel: "small",
       }),
     ).toEqual({
+      installOnly:
+        "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh",
       installConnect:
         "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --base-url 'https://api.example.com/runtime' --node-id 'node-1' --token 'tok'\"'\"'en' --enabled-executor 'acpx' --acpx-agent 'openclaw' --audio-language 'zh' --whisper-model 'small'",
       runOnly:
@@ -444,6 +450,27 @@ describe("session-client transport base URL handling", () => {
         reason: "Stopped from Bro detail Runner Brain.",
       }),
     });
+  });
+});
+
+describe("buildExecutorInstallOnlyCommand", () => {
+  it("returns just the curl install pipeline with no run args", () => {
+    const cmd = buildExecutorInstallOnlyCommand();
+    expect(cmd).toMatch(/^curl -fsSL .+ \| sh$/);
+    expect(cmd).not.toContain("executor run");
+    expect(cmd).not.toContain("--token");
+  });
+});
+
+describe("buildExecutorConnectCommands (installOnly field)", () => {
+  it("returns installOnly, installConnect, and runOnly", () => {
+    const cmds = buildExecutorConnectCommands("node-id-1", "tok-abc");
+    expect(cmds.installOnly).toMatch(/^curl -fsSL .+ \| sh$/);
+    expect(cmds.installConnect).toContain("curl");
+    expect(cmds.installConnect).toContain("executor run");
+    expect(cmds.installConnect).toContain("'tok-abc'");
+    expect(cmds.runOnly.startsWith("newbro executor run")).toBe(true);
+    expect(cmds.runOnly).toContain("'tok-abc'");
   });
 });
 
