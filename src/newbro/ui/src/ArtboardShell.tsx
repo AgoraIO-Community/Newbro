@@ -1261,7 +1261,27 @@ function TimelineTurnView({
       {!mobile && isTurnSettled && settledReasoningSteps.length > 0 ? (
         <DTReasonCollapsed steps={settledReasoningSteps} />
       ) : null}
-      {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
+      {!isTurnSettled && !mobile && reasoningSteps.length === 0 ? (
+        <div className="dt-turn dt-turn-bro">
+          <div className="dt-bubble dt-bubble-bro dt-bubble-reason" aria-live="polite">
+            <span className="dt-reason-kicker">
+              <span className="dt-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+              {bro.name} is working
+            </span>
+          </div>
+        </div>
+      ) : null}
+      {!isTurnSettled && mobile && reasoningSteps.length === 0 ? (
+        <div className="thr-turn thr-turn-bro">
+          <div className="thr-bubble thr-bubble-bro thr-reason" aria-live="polite">
+            <span className="thr-reason-kicker">
+              <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+              {bro.name} is working
+            </span>
+          </div>
+        </div>
+      ) : null}
+      {isTurnSettled && record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
       {proposalRequests.map((request) => (
         <PlanProposalCard
           key={request.request_id}
@@ -1770,7 +1790,6 @@ function StateChip({ state }: { state: HomeBroState }) {
 function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; onOpen: (id: string) => void; featured?: boolean }) {
   const state = homeBroState(bro);
   const tone = homeBroTone(state);
-  const progress = Math.max(5, Math.min(100, Math.round(bro.progress)));
   return (
     <a data-testid={`bro-card-${bro.id}`} className={`dt-bro-card dt-bro-card-${tone}${featured ? " dt-bro-card-featured" : ""}`} href={broDetailHref(bro.id)} onClickCapture={(event) => { if (clickedInsideHomeCardAction(event)) event.preventDefault(); }} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
       <div className={`dt-bro-card-avatar dt-bro-card-avatar-${tone}`}>
@@ -1792,10 +1811,12 @@ function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; 
         <div className={`dt-bro-card-task${state === "working" ? " dt-bro-card-task-running" : ""}`}>
           {state === "working" ? <span className="dt-bro-card-spin" /> : null}
           <span className="dt-bro-card-task-text">{state === "working" ? bro.taskTitle : bro.idleNote}</span>
-          {state === "working" ? <span className="dt-bro-card-pct">{progress}%</span> : null}
         </div>
-        {state === "working" ? (
-          <div className="dt-bro-card-bar"><span className="dt-bro-card-bar-fill" style={{ width: `${progress}%` }} /></div>
+        {state === "working" && (bro.latestReasoningStep || bro.progressLabel) ? (
+          <div className="dt-bro-card-reasoning">
+            <span className="dt-bro-card-reasoning-orb" aria-hidden="true"><span /><span /><span /></span>
+            <span className="dt-bro-card-reasoning-text">{bro.latestReasoningStep || bro.progressLabel}</span>
+          </div>
         ) : null}
         <HomeBroCopyAction bro={bro} variant="card" />
       </div>
