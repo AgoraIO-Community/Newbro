@@ -2835,3 +2835,56 @@ def test_session_snapshot_has_native_reasoning_field_default_empty():
     snap2 = SessionSnapshot(session_id="s1", recent_native_turn_reasoning={"k": [step]})
     dumped = snap2.model_dump()
     assert dumped["recent_native_turn_reasoning"]["k"][0]["kind"] == "progress"
+
+
+@pytest.mark.anyio
+async def test_codex_turn_event_accumulates_native_reasoning():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        client_request_id="client-text-1",
+        text="do the thing",
+        status="accepted",
+        created_at="2026-05-30T08:00:00+00:00",
+    )
+    await session.blackboard.put_outbound_turn_request(request)
+
+    async def emit(text, *, item_id, event_type="progress"):
+        await session.handle_codex_turn_event(
+            CodexTurnEventMessage(
+                request_id="out-turn-1",
+                node_id="node-forge",
+                target_persona_id="forge",
+                target_thread_id="thread-1",
+                event_type=event_type,
+                message=text,
+                executor_thread_id="native-thread-1",
+                executor_turn_id="turn-1",
+                metadata={"codex_item_id": item_id},
+            )
+        )
+
+    await emit("Looking at the file", item_id="item-1")
+    await emit("Looking at the file tree now", item_id="item-1")  # same item grows -> in place
+    await emit("Writing the SCQA section", item_id="item-2")       # new item -> append
+    await emit("Final plan ready", item_id="item-3", event_type="plan")
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    key = "codex::native-thread-1::turn-1"
+    steps = snapshot.recent_native_turn_reasoning[key]
+    assert [s.text for s in steps] == [
+        "Looking at the file tree now",
+        "Writing the SCQA section",
+        "Final plan ready",
+    ]
+    assert steps[0].item_id == "item-1"
+    assert steps[-1].kind == "plan"
