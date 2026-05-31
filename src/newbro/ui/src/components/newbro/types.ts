@@ -25,6 +25,7 @@ export type BroCardModel = {
   progressLabel: string;
   progressDetails: string[];
   idleNote: string;
+  latestReasoningStep: string | null;
   source: "sample" | "runtime";
 };
 

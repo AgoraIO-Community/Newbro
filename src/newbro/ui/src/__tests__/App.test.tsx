@@ -92,6 +92,7 @@ const clientMock = vi.hoisted(() => ({
   createExecutorNode: vi.fn(),
   revealExecutorNodeConnectCommand: vi.fn(),
   buildExecutorConnectCommands: vi.fn(() => ({
+    installOnly: "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh",
     installConnect: "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --node-id node-1 --token token-1",
     runOnly: "newbro executor run --node-id node-1 --token token-1",
   })),
@@ -590,10 +591,10 @@ describe("Newbro artboard shell", () => {
     }));
     expect(clientMock.createPersona).not.toHaveBeenCalled();
     expect(await screen.findByText(/install-newbro-cli\.sh/)).toBeInTheDocument();
-    expect(screen.getByText(/New to Newbro CLI/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /(Copy|Copied) install \+ connect/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Copy run-only command/i })).toBeInTheDocument();
-    expect(screen.getByText(/The Bro appears after the first successful connection/)).toBeInTheDocument();
+    expect(screen.getByText(/paste this in a terminal to install newbro/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy install command/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
+    expect(screen.getByText(/This updates on its own once atlas connects/)).toBeInTheDocument();
   });
 
   it("shows mobile install/connect instructions before creating the first Bro", async () => {
@@ -601,13 +602,13 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    expect(await screen.findByTestId("mobile-empty-workspace")).toHaveTextContent("install/connect command");
+    expect(await screen.findByTestId("mobile-empty-workspace")).toHaveTextContent("Give it a name, connect a computer");
     fireEvent.click(screen.getByRole("button", { name: "Create your first bro" }));
 
-    expect(await screen.findByText(/Copy or share Install \+ connect/)).toBeInTheDocument();
-    expect(screen.getByText(/curl -fsSL \.\.\. \| sh -s -- executor run/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Copy install \+ connect/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Copy run-only command/i })).toBeInTheDocument();
+    expect(await screen.findByText(/paste this in a terminal to install newbro/)).toBeInTheDocument();
+    expect(screen.getByText(/curl -fsSL newbro\.dev\/install\.sh \| sh/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy install command/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
   });
 
 
@@ -1498,15 +1499,19 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    expect(await screen.findByTestId("bro-node-disconnected-warning")).toHaveTextContent("Workshop Mini is not connected");
-    expect(screen.getByTestId("bro-node-copy-command")).toHaveTextContent("Copy install + connect");
-    expect(screen.getByTestId("bro-node-copy-run-only-command")).toHaveTextContent("Run-only");
-    fireEvent.click(screen.getByTestId("bro-node-copy-command"));
-    await waitFor(() => expect(screen.getByText(/install-newbro-cli\.sh/)).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId("bro-node-copy-run-only-command"));
+    expect(await screen.findByTestId("bro-node-disconnected-warning")).toHaveTextContent("Workshop Mini is offline");
+    // Primary command is the restart/run command; install+reconnect is tucked behind a disclosure.
+    const runCopy = screen.getByTestId("bro-node-copy-run-only-command");
+    expect(runCopy).toHaveTextContent("Copy");
+    expect(screen.queryByTestId("bro-node-copy-command")).not.toBeInTheDocument();
+    fireEvent.click(runCopy);
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("newbro executor run --node-id node-1 --token token-1"));
+    await waitFor(() => expect(runCopy).toHaveTextContent("Copied"));
+    fireEvent.click(screen.getByRole("button", { name: /Reinstall or update the CLI/i }));
+    fireEvent.click(screen.getByTestId("bro-node-copy-command"));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("install-newbro-cli.sh")));
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
-    expect(screen.getByPlaceholderText("Reconnect the node before sending")).toBeDisabled();
+    expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
   });
 
   it("clears the existing thread history when 'New thread' is clicked on the desktop detail page", async () => {
@@ -2403,7 +2408,7 @@ describe("Newbro artboard shell", () => {
     expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
     expect(screen.getByTestId("voice-session-start")).toHaveAccessibleName(
-      "Enable local Whisper on the executor node before recording.",
+      "Enable local Whisper on your computer before recording.",
     );
   });
 
@@ -2439,7 +2444,7 @@ describe("Newbro artboard shell", () => {
 
     expect(screen.queryByRole("button", { name: "Call NewBro" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByTestId("mobile-bro-row-forge"));
-    fireEvent.click(await screen.findByRole("tab", { name: /Always on/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: /Hands-free/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Wake up Forge" }));
 
     await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "forge"));

@@ -38,6 +38,7 @@ import type {
   DraftOutputFailedStreamEvent,
   DraftOutputStartedStreamEvent,
   DraftSession,
+  ExecutionDetailEntry,
   ExecutionSession,
   ExecutionRun,
   ExecutorNodeRecord,
@@ -218,12 +219,11 @@ function SignupPanel({
             <span className="ob-eyebrow ob-eyebrow-coral">INVITATION ONLY</span>
             <h1 className="dt-h1">Hi there.<br />Let's get you in.</h1>
             <p className="dt-sub">
-              Newbro is a small crew of bros — each one bound to an executor
-              on a machine you trust. They keep working while you keep talking.
+              Newbro is a small crew of bros — each one lives on a computer you trust and keeps working while you talk. No setup headaches.
             </p>
             <ul className="dt-signin-bullets">
               <li><span className="dt-signin-bullet-dot" /><span>One workspace per email.</span></li>
-              <li><span className="dt-signin-bullet-dot" /><span>Connect your own machines as executor nodes.</span></li>
+              <li><span className="dt-signin-bullet-dot" /><span>Connect your own computers — a Mac, a spare laptop, anything that stays on.</span></li>
               <li><span className="dt-signin-bullet-dot" /><span>Voice-first — no passwords, just invitation tokens.</span></li>
             </ul>
           </section>
@@ -232,8 +232,7 @@ function SignupPanel({
             <span className="ob-eyebrow ob-eyebrow-coral">INVITATION ONLY · CLOSED ALPHA</span>
             <h1 className="ob-h1">Hi there.<br />Let's get you in.</h1>
             <p className="ob-sub">
-              Newbro is a small crew of bros — each one bound to an executor on a machine you trust.
-              They keep working while you keep talking.
+              Newbro is a small crew of bros — each one lives on a computer you trust and keeps working while you talk. No setup headaches.
             </p>
           </section>
 
@@ -295,6 +294,7 @@ function useNewbroShellState() {
   const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
+  const [recentExecutionDetails, setRecentExecutionDetails] = useState<Record<string, ExecutionDetailEntry[]>>({});
   const [activeShellSessionId, setActiveShellSessionId] = useState<string | null>(null);
   const [defaultPersonaId, setDefaultPersonaId] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<PublicUser | null>(null);
@@ -326,6 +326,7 @@ function useNewbroShellState() {
     setAttentionItems(snapshot.attention_items ?? []);
     setTaskSummaries(snapshot.summaries ?? []);
     setAgentEvents(snapshot.agent_events ?? []);
+    setRecentExecutionDetails(snapshot.recent_execution_details ?? {});
     setDraftSession(snapshot.draft_session ?? null);
     setHasLoadedShellSnapshot(true);
     setShellError(null);
@@ -599,8 +600,8 @@ function useNewbroShellState() {
   }, [activeShellSessionId]);
 
   const bros = useMemo(
-    () => buildBroCardModels(runtimePersonas, executorNodes, executionRuns, taskSummaries, tasks),
-    [executorNodes, executionRuns, runtimePersonas, taskSummaries, tasks],
+    () => buildBroCardModels(runtimePersonas, executorNodes, executionRuns, taskSummaries, tasks, recentExecutionDetails),
+    [executorNodes, executionRuns, runtimePersonas, taskSummaries, tasks, recentExecutionDetails],
   );
 
   const clearGlobalMessage = useEffectEvent(() => {
@@ -659,8 +660,8 @@ function useNewbroShellState() {
     if (targetBro && targetBro.liveState !== "live") {
       setShellWarning(
         targetBro.liveState === "offline"
-          ? `${targetBro.name}'s node is offline. Reconnect it before starting this channel.`
-          : `${targetBro.name} needs an executor node before voice can target it.`,
+          ? `${targetBro.name}'s computer is offline. Reconnect it before starting this channel.`
+          : `${targetBro.name} needs a computer before voice can target it.`,
       );
       return;
     }
@@ -772,6 +773,7 @@ function useNewbroShellState() {
     attentionItems,
     taskSummaries,
     agentEvents,
+    recentExecutionDetails,
     shellError,
     shellWarning,
     threadOpenError,

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import { ArrowUp, Check, ChevronLeft, Copy, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, SendHorizontal, Settings, WifiOff, X } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { ArrowUp, Check, ChevronLeft, Copy, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorConnectCommands,
   clearDraft,
@@ -16,7 +16,7 @@ import {
   type ExecutorConnectCommands,
 } from "./lib/session-client";
 import { readThreadIdFromUrl, replaceThreadIdInUrl } from "./lib/session-url";
-import { buildBroCardModels, buildBroThreadRecords } from "./components/newbro/adapters";
+import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForTurn, type ReasoningStep } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
@@ -1029,6 +1029,76 @@ function timelinePlan(value: unknown): BroTaskRecord["plan"] | undefined {
   return { text, explanation, steps };
 }
 
+// Collapsed "Reasoned" affordance shown on a finished mobile bro turn — the live
+// reasoning stream is gone; tucked behind an expandable pill.
+function ThrReasoned({ steps }: { steps: ReasoningStep[] }) {
+  const [open, setOpen] = React.useState(false);
+  if (steps.length === 0) return null;
+  return (
+    <div className="thr-reasoned">
+      <button
+        type="button"
+        className={`thr-reasoned-toggle${open ? " thr-reasoned-toggle-open" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 12.5L10 18L20 6"/>
+        </svg>
+        <span>{open ? "Hide reasoning" : "Reasoned"}</span>
+        <svg className="thr-reasoned-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      {open && (
+        <ol className="thr-reason-steps thr-reason-steps-static">
+          {steps.map((s) => (
+            <li key={s.id} className="thr-reason-step thr-reason-step-done">
+              <span className="thr-reason-mark" aria-hidden="true" />
+              <span className="thr-reason-text">{s.label}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+// Collapsed "Reasoned" affordance shown on a finished desktop bro turn — the live
+// reasoning stream is gone; tucked behind an expandable pill.
+function DTReasonCollapsed({ steps }: { steps: ReasoningStep[] }) {
+  const [open, setOpen] = React.useState(false);
+  if (steps.length === 0) return null;
+  return (
+    <div className="dt-bubble-answer">
+      <button
+        type="button"
+        className={`dt-reason-collapsed${open ? " dt-reason-collapsed-open" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <svg className="dt-reason-collapsed-check" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 12.5L10 18L20 6"/>
+        </svg>
+        <span>{open ? "Hide reasoning" : "Reasoned"}</span>
+        <svg className="dt-reason-collapsed-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M6 9l6 6 6-6"/>
+        </svg>
+      </button>
+      {open && (
+        <ol className="dt-reason-steps dt-reason-steps-static">
+          {steps.map((s) => (
+            <li key={s.id} className="dt-reason-step dt-reason-step-done">
+              <span className="dt-reason-step-mark" aria-hidden="true" />
+              <span className="dt-reason-step-text">{s.label}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function TimelineUserMessage({ bro, turn, mobile = false }: { bro: BroCardModel; turn: BroTimelineTurn; mobile?: boolean }) {
   const message = turn.user;
   if (!message) return null;
@@ -1102,10 +1172,116 @@ function TimelineTurnView({
   const shell = useNewbroShell();
   const record = timelineTaskRecord(turn);
   const proposalRequests = shell.interactionRequests.filter((request) => planProposalRequestMatchesTurn(request, turn));
+
+  // Reasoning bubble — rendered for in-flight turns (desktop + mobile) and collapsed pill for settled mobile turns.
+  const taskId = turn.task?.task_id ?? null;
+  const activeRun = taskId
+    ? (shell.executionRuns.find((r) => r.task_id === taskId && (r.status === "running" || r.status === "created" || r.status === "waiting_executor")) ?? null)
+    : null;
+  // For the settled mobile pill, find any run for this task (including completed).
+  const anyRun = activeRun ?? (taskId ? (shell.executionRuns.find((r) => r.task_id === taskId) ?? null) : null);
+  const details = taskId ? (shell.recentExecutionDetails[taskId] ?? null) : null;
+  const reasoningSteps = buildReasoningStepsForTurn(activeRun, details);
+  const settledReasoningSteps = activeRun ? [] : buildReasoningStepsForTurn(anyRun, details);
+  const isTurnSettled = activeRun === null;
+
   return (
     <>
       <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
-      {record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
+      {!mobile && reasoningSteps.length > 0 ? (
+        <div className="dt-turn dt-turn-bro">
+          <div className="dt-bubble dt-bubble-bro dt-bubble-reason">
+            <span className="dt-reason-kicker">
+              <span className="dt-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+              {bro.name} is reasoning
+            </span>
+            <ol className="dt-reason-steps">
+              {(() => {
+                const upto = reasoningSteps.length;
+                const WINDOW = 3;
+                const startAt = Math.max(0, upto - WINDOW);
+                const vis = reasoningSteps.slice(startAt, upto);
+                const FADE = [1, 0.55, 0.26];
+                return vis.map((s, j) => {
+                  const dist = vis.length - 1 - j;
+                  const isLast = dist === 0;
+                  return (
+                    <li
+                      key={s.id}
+                      className={`dt-reason-step${isLast ? " dt-reason-step-active" : " dt-reason-step-done"}`}
+                      style={{ opacity: FADE[dist] ?? 0.26 }}
+                    >
+                      <span className="dt-reason-step-mark" aria-hidden="true" />
+                      <span className="dt-reason-step-text">{s.label}</span>
+                    </li>
+                  );
+                });
+              })()}
+            </ol>
+          </div>
+        </div>
+      ) : null}
+      {mobile && reasoningSteps.length > 0 ? (
+        <div className="thr-turn thr-turn-bro">
+          <div className="thr-bubble thr-bubble-bro thr-reason">
+            <span className="thr-reason-kicker">
+              <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+              {bro.name} is reasoning
+            </span>
+            <ol className="thr-reason-steps">
+              {(() => {
+                const upto = reasoningSteps.length;
+                const WINDOW = 3;
+                const startAt = Math.max(0, upto - WINDOW);
+                const vis = reasoningSteps.slice(startAt, upto);
+                const FADE = [1, 0.55, 0.26];
+                return vis.map((s, j) => {
+                  const dist = vis.length - 1 - j;
+                  const isLast = dist === 0;
+                  return (
+                    <li
+                      key={s.id}
+                      className={`thr-reason-step${isLast ? " thr-reason-step-active" : " thr-reason-step-done"}`}
+                      style={{ opacity: FADE[dist] ?? 0.26 }}
+                    >
+                      <span className="thr-reason-mark" aria-hidden="true" />
+                      <span className="thr-reason-text">{s.label}</span>
+                    </li>
+                  );
+                });
+              })()}
+            </ol>
+          </div>
+          <div className="thr-meta">{bro.name} · updating live</div>
+        </div>
+      ) : null}
+      {mobile && isTurnSettled && settledReasoningSteps.length > 0 ? (
+        <ThrReasoned steps={settledReasoningSteps} />
+      ) : null}
+      {!mobile && isTurnSettled && settledReasoningSteps.length > 0 ? (
+        <DTReasonCollapsed steps={settledReasoningSteps} />
+      ) : null}
+      {!isTurnSettled && !mobile && reasoningSteps.length === 0 ? (
+        <div className="dt-turn dt-turn-bro">
+          <div className="dt-bubble dt-bubble-bro dt-bubble-reason" aria-live="polite">
+            <span className="dt-reason-kicker">
+              <span className="dt-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+              {bro.name} is working
+            </span>
+          </div>
+        </div>
+      ) : null}
+      {!isTurnSettled && mobile && reasoningSteps.length === 0 ? (
+        <div className="thr-turn thr-turn-bro">
+          <div className="thr-bubble thr-bubble-bro thr-reason" aria-live="polite">
+            <span className="thr-reason-kicker">
+              <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+              {bro.name} is working
+            </span>
+          </div>
+        </div>
+      ) : null}
+      {isTurnSettled && record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
       {proposalRequests.map((request) => (
         <PlanProposalCard
           key={request.request_id}
@@ -1160,13 +1336,13 @@ function activeCodexAudioState(
   if (!persona?.executor_node_id) return { enabled: false, reason: "Bind and connect this Bro before recording." };
   const node = shell.executorNodes.find((candidate) => candidate.node_id === persona.executor_node_id);
   if (!node || node.connection_status !== "connected" || !node.connected_executors.includes("codex")) {
-    return { enabled: false, reason: "Connect the Codex executor before recording." };
+    return { enabled: false, reason: "Connect Codex on your computer before recording." };
   }
   const codexCapability = node.connected_executor_capabilities?.find(
     (capability) => capability.executor_type === "codex",
   );
   if (codexCapability && !codexCapability.supports_audio_instruction) {
-    return { enabled: false, reason: "Enable local Whisper on the executor node before recording." };
+    return { enabled: false, reason: "Enable local Whisper on your computer before recording." };
   }
   return { enabled: true, reason: "Hold to record audio" };
 }
@@ -1179,13 +1355,13 @@ function activeCodexTextState(
   if (!persona?.executor_node_id) return { enabled: false, reason: "Bind and connect this Bro before sending." };
   const node = shell.executorNodes.find((candidate) => candidate.node_id === persona.executor_node_id);
   if (!node || node.connection_status !== "connected" || !node.connected_executors.includes("codex")) {
-    return { enabled: false, reason: "Connect the Codex executor before sending." };
+    return { enabled: false, reason: "Connect Codex on your computer before sending." };
   }
   const codexCapability = node.connected_executor_capabilities?.find(
     (capability) => capability.executor_type === "codex",
   );
   if (codexCapability && !codexCapability.supports_follow_up) {
-    return { enabled: false, reason: "Selected Bro's executor node does not support text follow-up." };
+    return { enabled: false, reason: "Selected Bro's computer doesn't support text follow-up." };
   }
   return { enabled: true, reason: "Send directly to executor" };
 }
@@ -1427,7 +1603,7 @@ function homeBroNode(bro: BroCardModel): string {
 
 function homeBroLast(bro: BroCardModel, state: HomeBroState): string {
   if (state === "working") return bro.progressLabel || `${Math.round(bro.progress)}%`;
-  if (state === "offline") return bro.nodeName ? "node offline" : "needs node";
+  if (state === "offline") return bro.nodeName ? "computer offline" : "needs a computer";
   return bro.liveState === "live" ? "ready now" : "standing by";
 }
 
@@ -1556,7 +1732,7 @@ function Header({
         {bro ? (
           <span className={`dt-header-pill ${detailPaused ? "dt-header-pill-paused" : "dt-header-pill-live"}`}>
             <span className="dt-header-pill-dot" />
-            {detailPaused ? "paused · node offline" : "live · listening"}
+            {detailPaused ? "paused · computer offline" : "live · listening"}
           </span>
         ) : null}
         <span className="dt-header-account dt-header-static">
@@ -1614,7 +1790,6 @@ function StateChip({ state }: { state: HomeBroState }) {
 function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; onOpen: (id: string) => void; featured?: boolean }) {
   const state = homeBroState(bro);
   const tone = homeBroTone(state);
-  const progress = Math.max(5, Math.min(100, Math.round(bro.progress)));
   return (
     <a data-testid={`bro-card-${bro.id}`} className={`dt-bro-card dt-bro-card-${tone}${featured ? " dt-bro-card-featured" : ""}`} href={broDetailHref(bro.id)} onClickCapture={(event) => { if (clickedInsideHomeCardAction(event)) event.preventDefault(); }} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
       <div className={`dt-bro-card-avatar dt-bro-card-avatar-${tone}`}>
@@ -1636,10 +1811,12 @@ function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; 
         <div className={`dt-bro-card-task${state === "working" ? " dt-bro-card-task-running" : ""}`}>
           {state === "working" ? <span className="dt-bro-card-spin" /> : null}
           <span className="dt-bro-card-task-text">{state === "working" ? bro.taskTitle : bro.idleNote}</span>
-          {state === "working" ? <span className="dt-bro-card-pct">{progress}%</span> : null}
         </div>
-        {state === "working" ? (
-          <div className="dt-bro-card-bar"><span className="dt-bro-card-bar-fill" style={{ width: `${progress}%` }} /></div>
+        {state === "working" && (bro.latestReasoningStep || bro.progressLabel) ? (
+          <div className="dt-bro-card-reasoning">
+            <span className="dt-bro-card-reasoning-orb" aria-hidden="true"><span /><span /><span /></span>
+            <span className="dt-bro-card-reasoning-text">{bro.latestReasoningStep || bro.progressLabel}</span>
+          </div>
         ) : null}
         <HomeBroCopyAction bro={bro} variant="card" />
       </div>
@@ -1678,10 +1855,9 @@ function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
         <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
         <h1 className="dt-empty-h-lg">You don't have a bro yet.</h1>
         <p className="dt-empty-sub-lg">
-          A <strong>bro</strong> is a worker persona bound to an executor on one of your machines. Create one, connect a node, and they'll start working alongside you.
-        </p>
-        <p className="dt-empty-sub-lg dt-empty-connect-note">
-          Creating a Bro generates an install/connect command you can run in Terminal on the desktop or always-on machine that should do the work.
+          A <strong>bro</strong> is a teammate that works on a computer
+          you trust. Give it a name, connect a computer, and it&rsquo;ll start
+          working alongside you.
         </p>
         <div className="dt-empty-actions-lg">
           <button type="button" className="ob-cta dt-empty-cta-lg" onClick={onCreate}>
@@ -1908,7 +2084,8 @@ function CreateConnectSheet({
           <header className="ob-sheet-head">
             <div className="ob-sheet-titles">
               <span className="ob-eyebrow ob-eyebrow-coral">NEW BRO</span>
-              <h2 className="ob-sheet-h">Name it, then connect a node.</h2>
+              <h2 className="ob-sheet-h">Set up your first bro</h2>
+              <p className="ob-sheet-intro">A bro works on a computer you keep on — your Mac, a spare laptop, anything. Three quick steps and it&rsquo;s ready.</p>
             </div>
             <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}><X size={16} strokeWidth={2.2} /></button>
           </header>
@@ -1917,83 +2094,85 @@ function CreateConnectSheet({
               <div className="dt-modal-col">
                 <div className="ob-fieldset">
                   <label className="ob-field">
-                    <span className="ob-field-eyebrow">NAME</span>
+                    <span className="ob-field-eyebrow">STEP 1 · NAME IT</span>
                     <div className="ob-input ob-input-filled">
                       <span className="ob-input-prefix">@</span>
                       <input type="text" value={name} disabled={Boolean(bro) || Boolean(commands) || busy} onChange={(event) => setName(event.target.value)} />
                     </div>
-                    <span className="ob-field-hint">One word, easy to say out loud. e.g. atlas, scout, forge, muse.</span>
+                    <span className="ob-field-hint">Pick one word that&rsquo;s easy to say out loud — you&rsquo;ll talk to it by name. e.g. atlas, scout, forge.</span>
                   </label>
                 </div>
                 <div className="ob-fieldset">
-                  <span className="ob-field-eyebrow ob-fieldset-eyebrow">EXECUTOR</span>
+                  <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 2 · AGENT CLIENT</span>
                   <div className="ob-exec-grid">
                     <div className="ob-exec-card ob-exec-card-on">
                       <span className="ob-exec-name">Codex</span>
-                      <span className="ob-exec-desc">Long-running agent · shell + browser</span>
+                      <span className="ob-exec-desc">OpenAI&rsquo;s coding agent</span>
                       <span className="ob-exec-check" aria-hidden="true"><Check size={11} strokeWidth={2.8} /></span>
                     </div>
-                    <div className="ob-exec-card" aria-disabled="true">
+                    <div className="ob-exec-card ob-exec-card-soon" aria-disabled="true">
                       <span className="ob-exec-name">Hermes</span>
-                      <span className="ob-exec-desc">Headless · ops + scripts</span>
+                      <span className="ob-exec-desc">Open-source agent by Nous Research</span>
+                      <span className="ob-exec-card-soon-badge">Coming soon</span>
                     </div>
                   </div>
+                  <span className="ob-field-hint">Pick the one you already use — newbro runs your tasks through it. You can switch anytime.</span>
                 </div>
               </div>
 
               <div className="dt-modal-col">
                 <div className="ob-fieldset">
                   <div className="ob-fieldset-eyebrow-row">
-                    <span className="ob-field-eyebrow">CONNECT A NODE</span>
-                    <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : commands ? "installs CLI + starts node" : "on demand"}</span>
+                    <span className="ob-field-eyebrow">STEP 3 · CONNECT A COMPUTER</span>
+                    <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : commands ? "installs CLI + starts the executor" : "on demand"}</span>
                   </div>
-                  <p className="ob-connect-note">
-                    <span className="ob-connect-note-desktop">New to Newbro CLI? Copy Install + connect. It installs/updates the CLI, then starts this node.</span>
-                    <span className="ob-connect-note-mobile">Copy or share Install + connect, then run it in Terminal on the desktop/always-on machine that should work for this Bro.</span>
-                  </p>
+                  <p className="ob-connect-guide">On the computer where {pendingBroName || trimmedName || "your bro"} should work, paste this in a terminal to install newbro:</p>
                   <div className="ob-connect">
                     <div className="ob-connect-cmd">
                       <span className="ob-connect-prompt">$</span>
-                      <span className="ob-connect-line">
-                        {commands ? commands.installConnect : <>curl -fsSL ... | sh -s -- executor run <span className="ob-connect-tok">--token pending</span></>}
-                      </span>
-                    </div>
-                    <div className="ob-connect-actions" aria-label="Connect command copy options">
-                      <button type="button" className="ob-connect-action ob-connect-action-primary" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.installConnect, "install"); }}>
-                        {copiedKind === "install" ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
-                        <span>{copiedKind === "install" ? "Copied install + connect" : "Copy install + connect"}</span>
-                      </button>
-                      <button type="button" className="ob-connect-action" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.runOnly, "run"); }}>
-                        {copiedKind === "run" ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
-                        <span>{copiedKind === "run" ? "Copied run-only command" : "Copy run-only command"}</span>
+                      <span className="ob-connect-line">{commands?.installOnly ?? "curl -fsSL newbro.dev/install.sh | sh"}</span>
+                      <button type="button" className="ob-connect-copy" aria-label="Copy install command" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.installOnly, "install"); }}>
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="9" y="9" width="11" height="11" rx="2"/>
+                          <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+                        </svg>
                       </button>
                     </div>
-                    {commands ? (
-                      <details className="ob-connect-alt">
-                        <summary>Already installed</summary>
-                        <pre>{commands.runOnly}</pre>
-                      </details>
-                    ) : null}
+                  </div>
+                  <p className="ob-connect-guide ob-connect-guide-2">Then start it with your one-time key — we filled in the details for you:</p>
+                  <div className="ob-connect">
+                    <div className="ob-connect-cmd">
+                      <span className="ob-connect-prompt">$</span>
+                      <span className="ob-connect-line">{commands?.runOnly ?? "newbro executor run --token pending"}</span>
+                      <button type="button" className="ob-connect-copy" aria-label="Copy connect command" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.runOnly, "run"); }}>
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="9" y="9" width="11" height="11" rx="2"/>
+                          <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+                        </svg>
+                      </button>
+                    </div>
                     <div className="ob-connect-status">
                       <span className="ob-connect-spinner" aria-hidden="true"><span /><span /><span /></span>
                       <span className="ob-connect-status-text">
-                        <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : commands ? `Listening for ${pendingBroName || trimmedName}...` : `Ready to connect ${trimmedName || "a Bro"}...`}</strong>
-                        <span>{completed ? "The Bro has been created after the node connected successfully." : commands ? `Run Install + connect on the machine where ${pendingBroName || trimmedName} should work. The Bro appears after the first successful connection.` : "Newbro will issue an install/connect command first. The Bro appears after the first successful connection."}</span>
+                        <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : commands ? `Waiting to hear from your computer…` : `Ready to connect ${trimmedName || "a bro"}...`}</strong>
+                        <span>{completed ? "The bro has been created after the computer connected successfully." : commands ? `This updates on its own once ${pendingBroName || trimmedName} connects. Nothing else on that computer changes.` : "Newbro will issue an install/connect command first. The bro appears after the first successful connection."}</span>
                       </span>
-                      <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "installs CLI + starts node" : "new"}</span>
+                      <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "installs CLI + starts the executor" : "new"}</span>
                     </div>
                   </div>
                   <div className="ob-connect-meta">
-                    <span>Real node credential flow</span>
+                    <button type="button" className="ob-link ob-link-sm">Get a fresh link</button>
                     <span className="ob-connect-meta-sep">·</span>
-                    <span>First successful connection creates the Bro</span>
+                    <button type="button" className="ob-link ob-link-sm">Walk me through it</button>
                   </div>
                 </div>
+
                 <div className="dt-modal-tip">
                   <span className="dt-modal-tip-eyebrow">TIP</span>
                   <p>
-                    The node is just a long-running process. It can sit on a Mac mini,
-                    a workshop laptop, or any always-on box. You can rebind {pendingBroName || trimmedName || "this Bro"} later.
+                    That computer can be anything that stays on — your Mac, a spare
+                    laptop, a mini in the closet. {pendingBroName || trimmedName || "your bro"} only runs there when you ask
+                    it to, and you can move it to another computer anytime.
                   </p>
                 </div>
               </div>
@@ -2003,7 +2182,7 @@ function CreateConnectSheet({
           <footer className="ob-sheet-foot">
             <span className="dt-modal-foot-status nb-create-connect-foot-status">
               <span className="dt-modal-foot-dot" />
-              {completed ? "Connected once · Bro ready" : commands ? "Waiting for first node connection" : "Install/connect command will be generated on demand"}
+              {completed ? "Connected once · Bro ready" : commands ? "We’ll detect your computer automatically · link valid 9:46" : "Install/connect command will be generated on demand"}
             </span>
             {commands && completed ? (
               <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" onClick={() => { void onCreated().finally(onClose); }}>
@@ -2012,7 +2191,7 @@ function CreateConnectSheet({
             ) : (
               <button type="button" data-testid="bro-setup-create-node" className={`ob-cta ob-cta-block${busy ? " ob-cta-pending" : ""}`} disabled={!canCreate} onClick={() => { void createAndConnect(); }}>
                 {busy ? <span className="ob-cta-spinner" aria-hidden="true" /> : null}
-                <span>{busy ? "Preparing..." : commands ? "Waiting for first connection..." : "Create and connect"}</span>
+                <span>{busy ? "Preparing..." : commands ? "Waiting for your computer…" : "Create and connect"}</span>
               </button>
             )}
           </footer>
@@ -2096,6 +2275,52 @@ function HomeBroCopyAction({ bro, variant }: { bro: BroCardModel; variant: "card
   );
 }
 
+// Wrap the `--token <value>` segment of a revealed command in a highlight span
+// so the terminal line reads like the prototype's coloured token.
+function highlightCommandToken(command: string): React.ReactNode {
+  const match = command.match(/--token\s+('[^']*'|"[^"]*"|\S+)/);
+  if (!match || match.index === undefined) return command;
+  const start = match.index;
+  const end = start + match[0].length;
+  return (
+    <>
+      {command.slice(0, start)}
+      <span className="dt-offline-cmd-tok">{command.slice(start, end)}</span>
+      {command.slice(end)}
+    </>
+  );
+}
+
+function OfflineCommandLine({
+  revealed,
+  masked,
+  copied,
+  onCopy,
+  testid,
+}: {
+  revealed: string | null;
+  masked: React.ReactNode;
+  copied: boolean;
+  onCopy: () => void;
+  testid: string;
+}) {
+  return (
+    <div className="dt-offline-cmd">
+      <span className="dt-offline-cmd-prompt">$</span>
+      <code className="dt-offline-cmd-line">{revealed ? highlightCommandToken(revealed) : masked}</code>
+      <button
+        type="button"
+        data-testid={testid}
+        className={`dt-offline-cmd-copy${copied ? " dt-offline-cmd-copy-done" : ""}`}
+        onClick={onCopy}
+      >
+        {copied ? <Check size={13} strokeWidth={2.4} /> : <Copy size={13} strokeWidth={1.9} />}
+        <span>{copied ? "Copied" : "Copy"}</span>
+      </button>
+    </div>
+  );
+}
+
 function OfflineBanner({
   bro,
   node,
@@ -2114,34 +2339,70 @@ function OfflineBanner({
   });
   const installCopied = copiedKind === "install";
   const runCopied = copiedKind === "run";
+  const [showReinstall, setShowReinstall] = useState(false);
+
+  if (mobile) {
+    return (
+      <section data-testid="bro-node-disconnected-warning" className="ob-offline-banner dt-offline-banner nb-artboard-offline">
+        <span className="ob-offline-banner-icon" aria-hidden="true">
+          <WifiOff size={16} strokeWidth={2} />
+        </span>
+        <div className="ob-offline-banner-body">
+          <strong>{node.name} is offline</strong>
+          <span>{bro.name} can't take new messages until this computer reconnects. Your draft is saved — the last turn retries on its own.</span>
+          <span>Copy or share Install + connect from desktop, then run it in Terminal on the computer that should work for this bro.</span>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <section data-testid="bro-node-disconnected-warning" className="ob-offline-banner dt-offline-banner nb-artboard-offline">
-      <span className="ob-offline-banner-icon" aria-hidden="true">
-        <WifiOff size={16} strokeWidth={2} />
-      </span>
-      <div className="ob-offline-banner-body">
-        <strong>{node.name} is not connected.</strong>
-        <span>{bro.name} can't take new messages until the node reconnects. The current draft stays saved.</span>
-        <span>{mobile ? "Copy or share Install + connect from desktop, then run it in Terminal on the machine that should work for this Bro." : "Copy Install + connect to reinstall/update the CLI and restart this node."}</span>
-        {!mobile && commands ? (
-          <>
-            <pre className="nb-artboard-command">{commands.installConnect}</pre>
-            <details className="nb-artboard-command-alt">
-              <summary>Already installed</summary>
-              <pre>{commands.runOnly}</pre>
-            </details>
-          </>
-        ) : null}
+    <section data-testid="bro-node-disconnected-warning" className="dt-offline-notice nb-artboard-offline">
+      <div className="dt-offline-notice-head">
+        <span className="dt-offline-notice-icon" aria-hidden="true">
+          <WifiOff size={17} strokeWidth={2} />
+        </span>
+        <div className="dt-offline-notice-copy">
+          <strong>{node.name} is offline</strong>
+          <span>{bro.name} can't take new messages until this computer reconnects. Your draft is saved — the last turn retries on its own.</span>
+        </div>
+        <span className="dt-offline-notice-status" aria-hidden="true">
+          <span className="dt-offline-notice-pip" />
+          Auto-retrying
+        </span>
       </div>
-      {!mobile && (
-        <div className="ob-offline-banner-actions">
-          <button type="button" data-testid="bro-node-copy-command" className="ob-offline-banner-action" onClick={() => { void copyInstall(); }}>
-            <span>{installCopied ? "Copied" : "Copy install + connect"}</span>
-            <SendHorizontal size={11} strokeWidth={2.2} />
-          </button>
-          <button type="button" data-testid="bro-node-copy-run-only-command" className="ob-offline-banner-action ob-offline-banner-action-secondary" onClick={() => { void copyRunOnly(); }}>
-            <span>{runCopied ? "Copied" : "Run-only"}</span>
-          </button>
+
+      <OfflineCommandLine
+        revealed={commands?.runOnly ?? null}
+        masked={<>newbro executor run <span className="dt-offline-cmd-tok">--token ••••••</span></>}
+        copied={runCopied}
+        onCopy={() => { void copyRunOnly(); }}
+        testid="bro-node-copy-run-only-command"
+      />
+
+      <div className="dt-offline-foot">
+        <span>Run on <strong>{node.name}</strong> to bring it back — it already has the CLI installed.</span>
+        <button
+          type="button"
+          className="dt-offline-disclose"
+          aria-expanded={showReinstall}
+          onClick={() => setShowReinstall((v) => !v)}
+        >
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+          {showReinstall ? "Hide reinstall" : "Reinstall or update the CLI"}
+        </button>
+      </div>
+
+      {showReinstall && (
+        <div className="dt-offline-reinstall">
+          <p>CLI missing or out of date? This installs the latest and reconnects in one step:</p>
+          <OfflineCommandLine
+            revealed={commands?.installConnect ?? null}
+            masked={<>curl -fsSL <span className="dt-offline-cmd-tok">newbro.dev/install.sh</span> | sh</>}
+            copied={installCopied}
+            onCopy={() => { void copyInstall(); }}
+            testid="bro-node-copy-command"
+          />
         </div>
       )}
     </section>
@@ -2512,10 +2773,10 @@ function MobileThreadSurface({
               aria-selected={inputMode === "ptt"}
               className={`mob-mode-btn${inputMode === "ptt" ? " mob-mode-btn-on" : ""}`}
               onClick={() => setInputMode("ptt")}
-              title="Tap to send"
+              title="Push to talk"
             >
               <span className="mob-mode-icon"><MessageSquare size={15} strokeWidth={2} /></span>
-              <span className="mob-mode-label">Tap to send</span>
+              <span className="mob-mode-label">Push to talk</span>
             </button>
             <button
               type="button"
@@ -2523,10 +2784,10 @@ function MobileThreadSurface({
               aria-selected={inputMode === "free"}
               className={`mob-mode-btn${inputMode === "free" ? " mob-mode-btn-on" : ""}`}
               onClick={() => setInputMode("free")}
-              title="Always on"
+              title="Hands-free"
             >
               <span className="mob-mode-icon"><Radio size={15} strokeWidth={2} /></span>
-              <span className="mob-mode-label">Always on</span>
+              <span className="mob-mode-label">Hands-free</span>
             </button>
             {inputMode !== "free" ? (
               <button
@@ -2548,14 +2809,14 @@ function MobileThreadSurface({
             <span className="ob-composer-lock-icon" aria-hidden="true">
               <WifiOff size={13} strokeWidth={2} />
             </span>
-            <span className="ob-composer-lock-text">{disabledReason ? `Sending paused while ${disabledReason}` : "Sending paused while the node is offline."}</span>
+            <span className="ob-composer-lock-text">{disabledReason ? `Sending paused while ${disabledReason}` : "Sending paused — reconnect your computer to resume"}</span>
           </div>
         ) : null}
         <div className={`thr-composer-row${disabled ? " ob-composer-row-disabled" : ""}`} aria-disabled={disabled || undefined}>
           {inputMode === "free" && !disabled ? (
             <button type="button" className={`thr-free${connected ? "" : " thr-free-open"}`} aria-label={connected ? "Stop voice session" : `Wake up ${bro.name}`} disabled={loading} onClick={toggleVoice}>
               <span className="thr-free-led thr-free-led-active" />
-              <span className="thr-free-label">{connected ? "Listening..." : "Always on · tap to talk"}</span>
+              <span className="thr-free-label">{connected ? "Listening..." : "Hands-free · tap to talk"}</span>
               <span className="thr-free-waves" aria-hidden="true">{Array.from({ length: 16 }).map((_, index) => <i key={index} style={{ height: `${4 + (index % 5) * 2}px` }} />)}</span>
             </button>
           ) : (
@@ -2579,7 +2840,7 @@ function MobileThreadSurface({
                       void submitDraftText();
                     }
                   }}
-                  placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? (planMode ? `Describe the task - ${bro.name} will plan it first` : `Message ${bro.name} - or hold the mic to talk`) : textState.reason}
+                  placeholder={disabled ? "Reconnect your computer before sending" : textState.enabled ? (planMode ? `Describe the task - ${bro.name} will plan it first` : `Message ${bro.name} - or hold the mic to talk`) : textState.reason}
                   disabled={disabled}
                 />
               </div>
@@ -2662,6 +2923,36 @@ function DesktopComposerBar({
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
   const [planMode, setPlanMode] = useState(false);
+  const [voiceMode, setVoiceMode] = useState<"ptt" | "free">("ptt");
+  const [recording, setRecording] = useState(false);
+  const [recSecs, setRecSecs] = useState(0);
+  const recTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (recTimer.current) clearInterval(recTimer.current); }, []);
+  const recFmt = `0:${String(recSecs).padStart(2, "0")}`;
+  const hasText = draft.trim().length > 0;
+  const opts = [
+    {
+      v: "ptt" as const,
+      label: "Push to talk",
+      icon: (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="3" width="6" height="11" rx="3"/>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+        </svg>
+      ),
+    },
+    {
+      v: "free" as const,
+      label: "Hands-free",
+      icon: (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="10" y="4" width="4" height="9" rx="2"/>
+          <path d="M6.5 8.5a6 6 0 0 0 0 7M17.5 8.5a6 6 0 0 1 0 7"/>
+          <path d="M12 17v3"/>
+        </svg>
+      ),
+    },
+  ];
   const connected = shell.voiceSession.phase === "connected";
   const loading = shell.voiceSession.phase === "loading";
   const audioState = activeCodexAudioState(shell, bro);
@@ -2682,6 +2973,38 @@ function DesktopComposerBar({
     onThreadResolved,
     onSent: shell.refreshShellSession,
   });
+
+  // Sync local recording state with recorder phase (covers cancel/blur reset)
+  useEffect(() => {
+    if (recorder.phase !== "recording" && recording) {
+      if (recTimer.current) clearInterval(recTimer.current);
+      setRecording(false);
+      setRecSecs(0);
+    }
+  }, [recorder.phase, recording]);
+
+  const startRec = (e?: React.PointerEvent<HTMLButtonElement>) => {
+    if (micDisabled) return;
+    e?.preventDefault();
+    if (e) e.currentTarget.setPointerCapture(e.pointerId);
+    setRecording(true);
+    setRecSecs(0);
+    if (recTimer.current) clearInterval(recTimer.current);
+    recTimer.current = setInterval(() => setRecSecs((s) => s + 1), 1000);
+    void recorder.start();
+  };
+  const stopRec = () => {
+    if (recTimer.current) clearInterval(recTimer.current);
+    setRecording(false);
+    setRecSecs(0);
+    void recorder.stopAndSend();
+  };
+  const cancelRec = () => {
+    if (recTimer.current) clearInterval(recTimer.current);
+    setRecording(false);
+    setRecSecs(0);
+    recorder.cancel();
+  };
 
   async function submitText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2745,102 +3068,151 @@ function DesktopComposerBar({
     }
   }
 
+  const planChip = !disabled && (
+    <button
+      type="button"
+      className={`dt-cmp-planchip${planMode ? " dt-cmp-planchip-on" : ""}`}
+      onClick={() => setPlanMode((current) => !current)}
+      aria-pressed={planMode}
+      title={`Plan mode · Shift+Tab — ${bro.name} proposes a plan before acting`}
+    >
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="9" width="6" height="6" rx="1.5"/>
+        <rect x="15" y="4" width="6" height="6" rx="1.5"/>
+        <rect x="15" y="14" width="6" height="6" rx="1.5"/>
+        <path d="M9 12h3M12 7v10M12 7h3M12 17h3"/>
+      </svg>
+      <span className="dt-cmp-planchip-label">Plan{planMode ? " on" : ""}</span>
+      <kbd className="dt-kbd dt-cmp-planchip-kbd">⇧⇥</kbd>
+    </button>
+  );
+
   return (
     <form className={`dt-cmp${disabled ? " dt-cmp-disabled" : ""}${planMode ? " dt-cmp-plan" : ""}`} onSubmit={submitText}>
       <div className="dt-cmp-head">
         <div className="dt-cmp-headl">
-          <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} aria-label="Voice mode">
-            <button type="button" className="dt-cmp-mode dt-cmp-mode-on">
-              <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-ptt${!connected && !disabled ? " dt-cmp-mode-dot-on" : ""}`} />
-              Push to talk
-            </button>
-            <button type="button" className="dt-cmp-mode" disabled={disabled}>
-              <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-free${connected ? " dt-cmp-mode-dot-on" : ""}`} />
-              Open channel
-            </button>
+          <div className="dt-cmp-modewrap">
+            <span className="dt-cmp-modewrap-label">Talk mode</span>
+            <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} role="tablist" aria-label="How you talk to the bro">
+              {opts.map((o) => {
+                const on = voiceMode === o.v;
+                return (
+                  <button
+                    key={o.v}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    disabled={disabled}
+                    className={`dt-cmp-mode${on ? ` dt-cmp-mode-on dt-cmp-mode-on-${o.v}` : ""}`}
+                    onClick={() => !disabled && setVoiceMode(o.v)}
+                  >
+                    <span className="dt-cmp-mode-ic" aria-hidden="true">{o.icon}</span>
+                    <span>{o.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          {!disabled ? (
-            <button
-              type="button"
-              className={`dt-cmp-planchip${planMode ? " dt-cmp-planchip-on" : ""}`}
-              aria-pressed={planMode}
-              title={`Plan mode · Shift+Tab — ${bro.name} proposes before acting`}
-              onClick={() => setPlanMode((current) => !current)}
-            >
-              <GitBranch size={13} strokeWidth={2.2} aria-hidden="true" />
-              <span className="dt-cmp-planchip-label">Plan mode</span>
-              <kbd className="dt-kbd dt-cmp-planchip-kbd">⇧⇥</kbd>
-            </button>
-          ) : null}
         </div>
         <span className="dt-cmp-hint">
-          {planMode && !disabled ? (
-            <span><strong>Plan mode</strong> · {bro.name} proposes a plan before acting</span>
+          {disabled ? (
+            <span>Sending paused — reconnect your computer to resume</span>
+          ) : voiceMode === "ptt" ? (
+            recording ? (
+              <span>Recording… release the mic to send</span>
+            ) : hasText ? (
+              <span>Press <kbd className="dt-kbd">Enter</kbd> to send</span>
+            ) : (
+              <span>Hold <kbd className="dt-kbd">Space</kbd> to talk, or type your message</span>
+            )
           ) : (
-            <>
-              <kbd className="dt-kbd">space</kbd>
-              {disabled ? "node required before sending" : "type sends directly"}
-            </>
+            <span>Mic's open — {bro.name} listens as you speak</span>
           )}
         </span>
       </div>
-      <div className="dt-cmp-bar">
-        <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
-        <input
-          id={`message-${bro.id}`}
-          className="dt-cmp-input"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Tab" && event.shiftKey) {
-              event.preventDefault();
-              if (!disabled) setPlanMode((current) => !current);
-            }
-          }}
-          placeholder={disabled ? "Reconnect the node before sending" : textState.enabled ? (planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
-          disabled={disabled}
-        />
-        <button
-          type="button"
-          data-testid="voice-session-start"
-          className={`dt-cmp-mic dt-cmp-mic-${micDisabled ? "off" : recorder.phase === "recording" ? "free" : "ptt"}`}
-          aria-label={micDisabled ? audioState.reason : "Hold to record audio"}
-          title={micDisabled ? audioState.reason : "Hold to record audio"}
-          disabled={micDisabled || loading || recorder.phase === "sending"}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            void recorder.start();
-          }}
-          onPointerUp={(event) => {
-            event.preventDefault();
-            void recorder.stopAndSend();
-          }}
-          onPointerCancel={recorder.cancel}
-          onBlur={recorder.cancel}
-          onKeyDown={(event) => {
-            if ((event.key === " " || event.key === "Enter") && recorder.phase === "idle") {
-              event.preventDefault();
-              void recorder.start();
-            }
-          }}
-          onKeyUp={(event) => {
-            if (event.key === " " || event.key === "Enter") {
-              event.preventDefault();
-              void recorder.stopAndSend();
-            }
-          }}
-        >
-          <Mic size={18} aria-hidden="true" />
-        </button>
-        <button
-          type="submit"
-          className="dt-cmp-send"
-          aria-label={textDisabled ? textState.reason : "Send message"}
-          disabled={textDisabled || !draft.trim()}
-        >
-          <SendHorizontal size={16} strokeWidth={2.2} />
-        </button>
+      <div className={`dt-cmp-bar${recording ? " dt-cmp-bar-rec" : ""}`}>
+        {planChip}
+        {recording ? (
+          <div className="dt-cmp-rec">
+            <span className="dt-cmp-rec-dot" aria-hidden="true" />
+            <span className="dt-cmp-rec-label">Listening…</span>
+            <span className="dt-cmp-rec-wave" aria-hidden="true">
+              {Array.from({ length: 30 }).map((_, i) => {
+                const h = 5 + Math.abs(Math.sin((i + 1) * 0.6)) * 15;
+                return <i key={i} style={{ height: h, animationDelay: `${(i % 7) * 0.07}s` }} />;
+              })}
+            </span>
+            <span className="dt-cmp-rec-time">{recFmt}</span>
+            <span className="dt-cmp-rec-hint">release to send</span>
+          </div>
+        ) : (
+          <>
+            <label className="sr-only" htmlFor={`message-${bro.id}`}>Message</label>
+            <input
+              id={`message-${bro.id}`}
+              className="dt-cmp-input"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Tab" && event.shiftKey) {
+                  event.preventDefault();
+                  if (!disabled) setPlanMode((current) => !current);
+                }
+              }}
+              placeholder={disabled ? "Reconnect your computer before sending" : textState.enabled ? (planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
+              disabled={disabled}
+            />
+          </>
+        )}
+        {hasText && !recording ? (
+          <button
+            type="submit"
+            className="dt-cmp-action dt-cmp-action-send dt-cmp-send"
+            aria-label={textDisabled ? textState.reason : "Send message"}
+            disabled={textDisabled || !draft.trim()}
+          >
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 19V5M5 12l7-7 7 7"/>
+            </svg>
+          </button>
+        ) : (
+          <button
+            type="button"
+            data-testid="voice-session-start"
+            className={`dt-cmp-action dt-cmp-action-mic dt-cmp-mic dt-cmp-mic-${micDisabled ? "off" : recorder.phase === "recording" ? "free" : "ptt"}${recording ? " dt-cmp-action-rec" : micDisabled ? " dt-cmp-action-mic-off" : " dt-cmp-action-mic-on"}`}
+            aria-label={micDisabled ? audioState.reason : "Hold to record audio"}
+            title={micDisabled ? audioState.reason : "Hold to record audio"}
+            disabled={micDisabled || loading || recorder.phase === "sending"}
+            onPointerDown={startRec}
+            onPointerUp={() => stopRec()}
+            onPointerLeave={recording ? cancelRec : undefined}
+            onPointerCancel={cancelRec}
+            onBlur={cancelRec}
+            onKeyDown={(event) => {
+              if ((event.key === " " || event.key === "Enter") && recorder.phase === "idle") {
+                startRec();
+              }
+            }}
+            onKeyUp={(event) => {
+              if (event.key === " " || event.key === "Enter") {
+                event.preventDefault();
+                stopRec();
+              }
+            }}
+          >
+            {recording ? (
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" rx="3"/>
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="12" rx="3"/>
+                <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+                {micDisabled && <path d="M3 3l18 18"/>}
+              </svg>
+            )}
+          </button>
+        )}
       </div>
     </form>
   );
@@ -3365,7 +3737,7 @@ function HomeAccountSheet({
           </span>
           <span className="acct-row-body">
             <span className="acct-row-title">Add a bro</span>
-            <span className="acct-row-meta">Name them, connect a node</span>
+            <span className="acct-row-meta">Name it, then connect a computer</span>
           </span>
           <span className="acct-row-chev">›</span>
         </button>
@@ -3557,7 +3929,11 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
                 <div className="ob-hero-body">
                   <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
                   <h2 className="ob-hero-h">You don't have a bro yet.</h2>
-                  <p className="ob-hero-sub">Create a worker persona, bind it to a user-owned executor node, and Newbro will generate an install/connect command for the machine that should work for this Bro.</p>
+                  <p className="ob-hero-sub">
+                    A <strong>bro</strong> is a teammate that works on a computer
+                    you trust. Give it a name, connect a computer, and it&rsquo;ll show
+                    up here ready to go.
+                  </p>
                   <div className="ob-hero-actions">
                     <button type="button" className="ob-cta ob-cta-block" onClick={() => setAddOpen(true)}>
                       <Plus size={15} strokeWidth={2.4} />
@@ -3818,7 +4194,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
             <section className="nb-mobile-first-run">
               <span className="home-section-eyebrow">Connect · {bro.name}</span>
               <h2>Set up this Bro before talking.</h2>
-              <p>Create or reveal Install + connect and run it on the machine where this Bro should work.</p>
+              <p>Create or reveal Install + connect and run it on the computer where this Bro should work.</p>
               <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onBack} onCreated={shell.refreshShellSession} bro={bro} />
             </section>
           </main>
@@ -3994,7 +4370,7 @@ export function ArtboardMobilePage({
 export function buildRuntimeBroCards(
   personas: Persona[],
   nodes: ExecutorNodeRecord[],
-  shell: Pick<ReturnType<typeof useNewbroShell>, "executionRuns" | "taskSummaries" | "tasks">,
+  shell: Pick<ReturnType<typeof useNewbroShell>, "executionRuns" | "taskSummaries" | "tasks" | "recentExecutionDetails">,
 ) {
-  return buildBroCardModels(personas, nodes, shell.executionRuns, shell.taskSummaries, shell.tasks);
+  return buildBroCardModels(personas, nodes, shell.executionRuns, shell.taskSummaries, shell.tasks, shell.recentExecutionDetails);
 }

@@ -1611,6 +1611,10 @@ class SessionRuntime:
             for request in interaction_requests
         ]
         attention_items = await self.blackboard.list_attention_items()
+        recent_execution_details = await self.blackboard.list_recent_task_execution_details(
+            task_limit=10,
+            entry_limit=8,
+        )
         summaries = [
             summary
             for summary in [await self.blackboard.get_summary(task.task_id) for task in tasks]
@@ -1660,6 +1664,7 @@ class SessionRuntime:
             agent_events=await self.blackboard.list_agent_events(),
             executor_capabilities=self._executor_capabilities_snapshot(),
             executor_nodes=await self.executor_node_manager.list_nodes(),
+            recent_execution_details=recent_execution_details,
             draft_session=self.draft_manager.active_session,
         )
 

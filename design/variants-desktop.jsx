@@ -257,7 +257,7 @@ function DesktopTopVoiceBar({ status = "ready", note = "No bros connected yet.",
           <span className="dt-topvoice-pill-dot" />
           {status === "ready"   && "READY"}
           {status === "live"    && "LIVE · listening"}
-          {status === "paused"  && "PAUSED · node offline"}
+          {status === "paused"  && "PAUSED · computer offline"}
           {status === "empty"   && "STANDBY"}
         </span>
         <span className="dt-topvoice-note">{note}</span>
@@ -307,8 +307,8 @@ function SignInDesktop() {
           <span className="ob-eyebrow ob-eyebrow-coral">INVITATION ONLY</span>
           <h1 className="dt-h1">Hi there.<br/>Let's get you in.</h1>
           <p className="dt-sub">
-            Newbro is a small crew of bros — each one bound to an executor
-            on a machine you trust. They keep working while you keep talking.
+            Newbro is a small crew of bros — each one lives on a computer you
+            trust and keeps working while you talk. No setup headaches.
           </p>
           <ul className="dt-signin-bullets">
             <li>
@@ -317,7 +317,7 @@ function SignInDesktop() {
             </li>
             <li>
               <span className="dt-signin-bullet-dot" />
-              <span>Connect your own machines as executor nodes.</span>
+              <span>Connect your own computers — a Mac, a spare laptop, anything that stays on.</span>
             </li>
             <li>
               <span className="dt-signin-bullet-dot" />
@@ -398,9 +398,9 @@ function FirstRunHomeDesktop() {
             <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
             <h1 className="dt-empty-h-lg">You don't have a bro yet.</h1>
             <p className="dt-empty-sub-lg">
-              A <strong>bro</strong> is a worker persona bound to an executor
-              on one of your machines. Create one, connect a node, and
-              they'll start working alongside you.
+              A <strong>bro</strong> is a teammate that works on a computer
+              you trust. Give it a name, connect a computer, and it'll start
+              working alongside you.
             </p>
             <div className="dt-empty-actions-lg">
               <button type="button" className="ob-cta dt-empty-cta-lg" onClick={() => setSheetOpen(true)}>
@@ -435,7 +435,8 @@ function CreateBroModal({ onClose }) {
       <header className="dt-modal-head">
         <div className="dt-modal-titles">
           <span className="ob-eyebrow ob-eyebrow-coral">NEW BRO</span>
-          <h2 className="dt-modal-h">Name it, then connect a node.</h2>
+          <h2 className="dt-modal-h">Set up your first bro</h2>
+          <p className="ob-sheet-intro">A bro works on a computer you keep on — your Mac, a spare laptop, anything. Three quick steps and it's ready.</p>
         </div>
         <button type="button" className="dt-modal-close" aria-label="Close" onClick={onClose}>
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -450,21 +451,21 @@ function CreateBroModal({ onClose }) {
           <div className="dt-modal-col">
             <div className="ob-fieldset">
               <label className="ob-field">
-                <span className="ob-field-eyebrow">NAME</span>
+                <span className="ob-field-eyebrow">STEP 1 · NAME IT</span>
                 <div className="ob-input ob-input-filled">
                   <span className="ob-input-prefix">@</span>
                   <input type="text" defaultValue="atlas" />
                 </div>
-                <span className="ob-field-hint">One word, easy to say out loud. e.g. atlas, scout, forge, muse.</span>
+                <span className="ob-field-hint">Pick one word that's easy to say out loud — you'll talk to it by name. e.g. atlas, scout, forge.</span>
               </label>
             </div>
 
             <div className="ob-fieldset">
-              <span className="ob-field-eyebrow ob-fieldset-eyebrow">EXECUTOR</span>
+              <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 2 · AGENT CLIENT</span>
               <div className="ob-exec-grid">
                 <div className="ob-exec-card ob-exec-card-on">
                   <span className="ob-exec-name">Codex</span>
-                  <span className="ob-exec-desc">Long-running agent · shell + browser</span>
+                  <span className="ob-exec-desc">OpenAI&rsquo;s coding agent</span>
                   <span className="ob-exec-check" aria-hidden="true">
                     <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M4 12.5L10 18L20 6"/>
@@ -473,9 +474,10 @@ function CreateBroModal({ onClose }) {
                 </div>
                 <div className="ob-exec-card">
                   <span className="ob-exec-name">Hermes</span>
-                  <span className="ob-exec-desc">Headless · ops + scripts</span>
+                  <span className="ob-exec-desc">Open-source agent by Nous Research</span>
                 </div>
               </div>
+              <span className="ob-field-hint">Pick the one you already use — newbro runs your tasks through it. You can switch anytime.</span>
             </div>
           </div>
 
@@ -483,16 +485,32 @@ function CreateBroModal({ onClose }) {
           <div className="dt-modal-col">
             <div className="ob-fieldset">
               <div className="ob-fieldset-eyebrow-row">
-                <span className="ob-field-eyebrow">CONNECT A NODE</span>
+                <span className="ob-field-eyebrow">STEP 3 · CONNECT A COMPUTER</span>
                 <span className="ob-fieldset-eyebrow-meta">expires in 9:46</span>
               </div>
+              <p className="ob-connect-guide">On the computer where atlas should work, paste this in a terminal to install newbro:</p>
               <div className="ob-connect">
                 <div className="ob-connect-cmd">
                   <span className="ob-connect-prompt">$</span>
                   <span className="ob-connect-line">
-                    npx newbro connect <span className="ob-connect-tok">--token K7P4Q9R-1f3a</span>
+                    curl -fsSL <span className="ob-connect-tok">newbro.dev/install.sh</span> | sh
                   </span>
-                  <button type="button" className="ob-connect-copy" aria-label="Copy command">
+                  <button type="button" className="ob-connect-copy" aria-label="Copy install command">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="9" y="9" width="11" height="11" rx="2"/>
+                      <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <p className="ob-connect-guide ob-connect-guide-2">Then start it with your one-time key — we filled in the details for you:</p>
+              <div className="ob-connect">
+                <div className="ob-connect-cmd ob-connect-cmd-multi">
+                  <span className="ob-connect-prompt">$</span>
+                  <span className="ob-connect-line">
+                    newbro executor run <span className="ob-connect-tok">--token MRElL_T251_gUOuC</span>
+                  </span>
+                  <button type="button" className="ob-connect-copy" aria-label="Copy connect command">
                     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="9" y="9" width="11" height="11" rx="2"/>
                       <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
@@ -504,25 +522,25 @@ function CreateBroModal({ onClose }) {
                     <span /><span /><span />
                   </span>
                   <span className="ob-connect-status-text">
-                    <strong>Listening for atlas…</strong>
-                    <span>Run that command on the machine where atlas should work.</span>
+                    <strong>Waiting to hear from your computer…</strong>
+                    <span>This updates on its own once atlas connects. Nothing else on that computer changes.</span>
                   </span>
                   <span className="ob-connect-time">0:14</span>
                 </div>
               </div>
               <div className="ob-connect-meta">
-                <button type="button" className="ob-link ob-link-sm">Rotate token</button>
+                <button type="button" className="ob-link ob-link-sm">Get a fresh link</button>
                 <span className="ob-connect-meta-sep">·</span>
-                <button type="button" className="ob-link ob-link-sm">How does this work?</button>
+                <button type="button" className="ob-link ob-link-sm">Walk me through it</button>
               </div>
             </div>
 
             <div className="dt-modal-tip">
               <span className="dt-modal-tip-eyebrow">TIP</span>
               <p>
-                The node is just a long-running process. It can sit on a Mac mini,
-                a workshop laptop, or any always-on box. You can rebind atlas to
-                a different node later.
+                That computer can be anything that stays on — your Mac, a spare
+                laptop, a mini in the closet. atlas only runs there when you ask
+                it to, and you can move it to another computer anytime.
               </p>
             </div>
           </div>
@@ -532,11 +550,11 @@ function CreateBroModal({ onClose }) {
       <footer className="dt-modal-foot">
         <span className="dt-modal-foot-status">
           <span className="dt-modal-foot-dot" />
-          Listening on relay.newbro.dev · token valid 9:46
+          We'll detect your computer automatically · link valid 9:46
         </span>
         <button type="button" className="ob-cta ob-cta-pending dt-modal-cta" disabled>
           <span className="ob-cta-spinner" aria-hidden="true" />
-          <span>Waiting for node…</span>
+          <span>Waiting for your computer…</span>
         </button>
       </footer>
     </div>
@@ -586,8 +604,27 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
   //   "free" — open channel, voice only. No typing.
   const voiceMode = mode === "free" ? "free" : "ptt";
   const opts = [
-    { v: "ptt",  label: "Tap to send" },
-    { v: "free", label: "Always on" },
+    {
+      v: "ptt",
+      label: "Push to talk",
+      icon: (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="3" width="6" height="11" rx="3"/>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+        </svg>
+      ),
+    },
+    {
+      v: "free",
+      label: "Hands-free",
+      icon: (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="10" y="4" width="4" height="9" rx="2"/>
+          <path d="M6.5 8.5a6 6 0 0 0 0 7M17.5 8.5a6 6 0 0 1 0 7"/>
+          <path d="M12 17v3"/>
+        </svg>
+      ),
+    },
   ];
 
   // Free-mode sub-mode comes from the shared voice context so it stays in
@@ -611,47 +648,78 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
     if (e.key === "Enter" && text.trim()) { e.preventDefault(); submit(); }
   };
 
+  // Push-to-talk recording — press & hold the trailing mic to record,
+  // release to send. Drives the in-bar live waveform + timer.
+  const [recording, setRecording] = React.useState(false);
+  const [recSecs, setRecSecs] = React.useState(0);
+  const recTimer = React.useRef(null);
+  const startRec = (e) => {
+    if (disabled) return;
+    if (e && e.preventDefault) e.preventDefault();
+    setRecording(true);
+    setRecSecs(0);
+    clearInterval(recTimer.current);
+    recTimer.current = setInterval(() => setRecSecs((s) => s + 1), 1000);
+  };
+  const stopRec = () => {
+    if (!recording) return;
+    clearInterval(recTimer.current);
+    setRecording(false);
+    setRecSecs(0);
+    // (captured audio would be sent to the bro here)
+  };
+  React.useEffect(() => () => clearInterval(recTimer.current), []);
+  const recFmt = `0:${String(recSecs).padStart(2, "0")}`;
+  const hasText = text.trim().length > 0;
+
+  // Plan-mode toggle. Lives inside the composer bar (leading the input),
+  // so it reads as "what happens when I send this" rather than a third
+  // talk mode sitting next to Push-to-talk / Hands-free.
+  const planChip = !disabled && (
+    <button
+      type="button"
+      className={`dt-cmp-planchip${planMode ? " dt-cmp-planchip-on" : ""}`}
+      onClick={() => onTogglePlan && onTogglePlan()}
+      aria-pressed={planMode}
+      title={`Plan mode · Shift+Tab — ${broName} proposes a plan before acting`}
+    >
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="9" width="6" height="6" rx="1.5"/>
+        <rect x="15" y="4" width="6" height="6" rx="1.5"/>
+        <rect x="15" y="14" width="6" height="6" rx="1.5"/>
+        <path d="M9 12h3M12 7v10M12 7h3M12 17h3"/>
+      </svg>
+      <span className="dt-cmp-planchip-label">Plan{planMode ? " on" : ""}</span>
+      <kbd className="dt-kbd dt-cmp-planchip-kbd">⇧⇥</kbd>
+    </button>
+  );
+
   return (
     <div className={`dt-cmp dt-cmp-${voiceMode}${disabled ? " dt-cmp-disabled" : ""}${planMode ? " dt-cmp-plan" : ""}`}>
       <div className="dt-cmp-head">
         <div className="dt-cmp-headl">
-          <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} role="tablist" aria-label="Input mode">
-          {opts.map((o) => {
-            const on = voiceMode === o.v;
-            return (
-              <button
-                key={o.v}
-                type="button"
-                role="tab"
-                aria-selected={on}
-                disabled={disabled}
-                className={`dt-cmp-mode${on ? " dt-cmp-mode-on" : ""}`}
-                onClick={() => !disabled && onMode && onMode(o.v)}
-              >
-                <span className={`dt-cmp-mode-dot dt-cmp-mode-dot-${o.v}${on ? " dt-cmp-mode-dot-on" : ""}`} aria-hidden="true" />
-                {o.label}
-              </button>
-            );
-          })}
+          <div className="dt-cmp-modewrap">
+            <span className="dt-cmp-modewrap-label">Talk mode</span>
+            <div className={`dt-cmp-modes${disabled ? " dt-cmp-modes-off" : ""}`} role="tablist" aria-label="How you talk to the bro">
+            {opts.map((o) => {
+              const on = voiceMode === o.v;
+              return (
+                <button
+                  key={o.v}
+                  type="button"
+                  role="tab"
+                  aria-selected={on}
+                  disabled={disabled}
+                  className={`dt-cmp-mode${on ? ` dt-cmp-mode-on dt-cmp-mode-on-${o.v}` : ""}`}
+                  onClick={() => !disabled && onMode && onMode(o.v)}
+                >
+                  <span className="dt-cmp-mode-ic" aria-hidden="true">{o.icon}</span>
+                  <span>{o.label}</span>
+                </button>
+              );
+            })}
+            </div>
           </div>
-          {!disabled && (
-            <button
-              type="button"
-              className={`dt-cmp-planchip${planMode ? " dt-cmp-planchip-on" : ""}`}
-              onClick={() => onTogglePlan && onTogglePlan()}
-              aria-pressed={planMode}
-              title="Plan mode · Shift+Tab — Atlas proposes before acting"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="9" width="6" height="6" rx="1.5"/>
-                <rect x="15" y="4" width="6" height="6" rx="1.5"/>
-                <rect x="15" y="14" width="6" height="6" rx="1.5"/>
-                <path d="M9 12h3M12 7v10M12 7h3M12 17h3"/>
-              </svg>
-              <span className="dt-cmp-planchip-label">Plan mode</span>
-              <kbd className="dt-kbd dt-cmp-planchip-kbd">⇧⇥</kbd>
-            </button>
-          )}
         </div>
 
         {voiceMode === "free" && !disabled && (
@@ -687,64 +755,104 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
 
         <span className="dt-cmp-hint">
           {disabled
-            ? <span>Sending paused while the node is offline.</span>
-            : planMode
-              ? <span><strong>Plan mode</strong> · {broName} proposes a plan before acting</span>
-              : voiceMode === "ptt"
-                ? <span>Hold <kbd className="dt-kbd">Space</kbd> to talk · <kbd className="dt-kbd">⇧⇥</kbd> to plan</span>
-                : subMode === "silent"
-                  ? <span>{broName} listens, replies when you finish</span>
-                  : <span>{broName} may chime in mid-turn</span>}
+            ? <span>Sending paused — reconnect your computer to resume</span>
+            : voiceMode === "ptt"
+              ? (recording
+                  ? <span>Recording… release the mic to send</span>
+                  : hasText
+                    ? <span>Press <kbd className="dt-kbd">Enter</kbd> to send</span>
+                    : <span>Hold <kbd className="dt-kbd">Space</kbd> to talk, or type your message</span>)
+              : subMode === "silent"
+                ? <span>Mic's open — just speak; {broName} replies when you pause</span>
+                : <span>Mic's open — {broName} may chime in as you go</span>}
         </span>
       </div>
 
       {voiceMode === "ptt" ? (
         // PTT mode — merged text + voice. Type or hold to talk.
-        <div className="dt-cmp-bar">
-          <input
-            type="text"
-            className="dt-cmp-input"
-            disabled={disabled}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder={
-              disabled
-                ? `${broName} can't take new messages — reconnect the node to resume`
-                : planMode
-                  ? `Describe the task — ${broName} will plan it first…`
-                  : `Hold space to talk, or type a message to ${broName}…`
-            }
-          />
-          <button
-            type="button"
-            className={`dt-cmp-mic dt-cmp-mic-${disabled ? "off" : "ptt"}`}
-            disabled={disabled}
-            aria-label="Hold to talk"
-          >
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="9" y="3" width="6" height="12" rx="3"/>
-              <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
-              {disabled && <path d="M3 3l18 18"/>}
-            </svg>
-          </button>
-          <button type="button" className="dt-cmp-send" disabled={disabled} aria-label="Send" onClick={submit}>
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 19V5M5 12l7-7 7 7"/>
-            </svg>
-          </button>
+        <div className={`dt-cmp-bar${recording ? " dt-cmp-bar-rec" : ""}`}>
+          {planChip}
+          {recording ? (
+            <div className="dt-cmp-rec">
+              <span className="dt-cmp-rec-dot" aria-hidden="true" />
+              <span className="dt-cmp-rec-label">Listening…</span>
+              <span className="dt-cmp-rec-wave" aria-hidden="true">
+                {Array.from({ length: 30 }).map((_, i) => {
+                  const h = 5 + Math.abs(Math.sin((i + 1) * 0.6)) * 15;
+                  return <i key={i} style={{ height: h, animationDelay: `${(i % 7) * 0.07}s` }} />;
+                })}
+              </span>
+              <span className="dt-cmp-rec-time">{recFmt}</span>
+              <span className="dt-cmp-rec-hint">release to send</span>
+            </div>
+          ) : (
+            <input
+              type="text"
+              className="dt-cmp-input"
+              disabled={disabled}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder={
+                disabled
+                  ? `${broName} can't take new messages — reconnect your computer to resume`
+                  : planMode
+                    ? `Describe the task — ${broName} will plan it first…`
+                    : `Hold to talk, or type a message to ${broName}…`
+              }
+            />
+          )}
+
+          {hasText && !recording ? (
+            <button
+              type="button"
+              className="dt-cmp-action dt-cmp-action-send"
+              disabled={disabled}
+              aria-label="Send message"
+              onClick={submit}
+            >
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 19V5M5 12l7-7 7 7"/>
+              </svg>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={`dt-cmp-action dt-cmp-action-mic dt-cmp-action-mic-${disabled ? "off" : "on"}${recording ? " dt-cmp-action-rec" : ""}`}
+              disabled={disabled}
+              aria-label={recording ? "Release to send" : "Hold to talk"}
+              title={recording ? "Release to send" : "Press and hold to talk"}
+              onPointerDown={startRec}
+              onPointerUp={stopRec}
+              onPointerLeave={stopRec}
+              onPointerCancel={stopRec}
+            >
+              {recording ? (
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                  <rect x="6" y="6" width="12" height="12" rx="3"/>
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="3" width="6" height="12" rx="3"/>
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+                  {disabled && <path d="M3 3l18 18"/>}
+                </svg>
+              )}
+            </button>
+          )}
         </div>
       ) : (
         // Free mode — voice only, no text input. Channel-open indicator + mic.
         <div className={`dt-cmp-channel dt-cmp-channel-${subMode}${disabled ? " dt-cmp-channel-off" : ""}`}>
+          {planChip}
           <span className={`dt-cmp-channel-led dt-cmp-channel-led-${subMode}`} aria-hidden="true" />
           <span className="dt-cmp-channel-text">
             <span className="dt-cmp-channel-title">
-              {disabled ? "Mic paused" : `Always on · ${subMode === "silent" ? "Talk less" : "Engage"}`}
+              {disabled ? "Mic paused" : `Hands-free · ${subMode === "silent" ? "Talk less" : "Engage"}`}
             </span>
             <span className="dt-cmp-channel-sub">
               {disabled
-                ? "Reconnect the node to resume the mic."
+                ? "Reconnect your computer to resume the mic."
                 : subMode === "silent"
                   ? `${broName} is listening — just speak when you're ready.`
                   : `${broName} is listening and will chime in if it helps.`}
@@ -870,13 +978,102 @@ function DTPlanProposal({ proposal, approved, onApprove, onKeep }) {
 
 // ─────────────────────────────────────────────────────────────
 // 4. BRO DETAIL — node offline
+//    Optimized top notice: status said once, leads with the single
+//    command most people need (restart on an already-set-up machine)
+//    in the real dark-terminal style; full reinstall is tucked behind
+//    a quiet disclosure.
+// ─────────────────────────────────────────────────────────────
+function DTOfflineNotice({ node = "Studio Mac", bro = "Atlas" }) {
+  const RUN_CMD = "newbro executor run --token MRElL_T251_gUOuC";
+  const INSTALL_CMD = "curl -fsSL newbro.dev/install.sh | sh";
+  const [showReinstall, setShowReinstall] = React.useState(false);
+  const [copied, setCopied] = React.useState(null); // 'run' | 'install' | null
+  const timer = React.useRef(0);
+  const copy = (key, text) => {
+    try { navigator.clipboard && navigator.clipboard.writeText(text); } catch (e) {}
+    setCopied(key);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(null), 1600);
+  };
+  const CopyBtn = ({ which, text }) => (
+    <button
+      type="button"
+      className={`dt-offline-cmd-copy${copied === which ? " dt-offline-cmd-copy-done" : ""}`}
+      onClick={() => copy(which, text)}
+    >
+      {copied === which ? (
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12.5L10 18L20 6"/></svg>
+      ) : (
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+      )}
+      <span>{copied === which ? "Copied" : "Copy"}</span>
+    </button>
+  );
+  return (
+    <div className="dt-offline-notice">
+      <div className="dt-offline-notice-head">
+        <span className="dt-offline-notice-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 8.5a18 18 0 0 1 20 0"/>
+            <path d="M5 12.5a13 13 0 0 1 14 0"/>
+            <path d="M8.5 16a8 8 0 0 1 7 0"/>
+            <circle cx="12" cy="20" r="0.9" fill="currentColor"/>
+            <path d="M3 3l18 18"/>
+          </svg>
+        </span>
+        <div className="dt-offline-notice-copy">
+          <strong>{node} is offline</strong>
+          <span>{bro} can&rsquo;t take new messages until this computer reconnects. Your draft is saved &mdash; the last turn retries on its own.</span>
+        </div>
+        <span className="dt-offline-notice-status" aria-hidden="true">
+          <span className="dt-offline-notice-pip" />
+          Auto-retrying
+        </span>
+      </div>
+
+      <div className="dt-offline-cmd">
+        <span className="dt-offline-cmd-prompt">$</span>
+        <code className="dt-offline-cmd-line">newbro executor run <span className="dt-offline-cmd-tok">--token MRElL_T251_gUOuC</span></code>
+        <CopyBtn which="run" text={RUN_CMD} />
+      </div>
+
+      <div className="dt-offline-foot">
+        <span>Run on <strong>{node}</strong> to bring it back &mdash; it already has the CLI installed.</span>
+        <button
+          type="button"
+          className="dt-offline-disclose"
+          aria-expanded={showReinstall}
+          onClick={() => setShowReinstall((v) => !v)}
+        >
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+          {showReinstall ? "Hide reinstall" : "Reinstall or update the CLI"}
+        </button>
+      </div>
+
+      {showReinstall && (
+        <div className="dt-offline-reinstall">
+          <p>CLI missing or out of date? This installs the latest and reconnects in one step:</p>
+          <div className="dt-offline-cmd">
+            <span className="dt-offline-cmd-prompt">$</span>
+            <code className="dt-offline-cmd-line">curl -fsSL <span className="dt-offline-cmd-tok">newbro.dev/install.sh</span> | sh</code>
+            <CopyBtn which="install" text={INSTALL_CMD} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+window.DTOfflineNotice = DTOfflineNotice;
+
+// ─────────────────────────────────────────────────────────────
+// 4b. BRO DETAIL — node offline (page)
 // ─────────────────────────────────────────────────────────────
 function BroDetailOfflineDesktop() {
   const [mode, setMode] = React.useState("ptt");
   return (
     <div className="dt-frame dt-shell">
       <DesktopHeader
-        statusPill={<HeaderStatusPill status="paused" label="PAUSED · NODE OFFLINE" />}
+        statusPill={<HeaderStatusPill status="paused" label="PAUSED · COMPUTER OFFLINE" />}
         broSwitch={
           <button type="button" className="dt-header-broswitch dt-header-broswitch-warn">
             <span className="dt-header-broswitch-avatar">
@@ -893,27 +1090,7 @@ function BroDetailOfflineDesktop() {
         <section className="dt-pane">
           <div className="dt-pane-scroll">
             <div className="dt-pane-content">
-              <div className="ob-offline-banner dt-offline-banner">
-                <span className="ob-offline-banner-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M2 8.5a18 18 0 0 1 20 0"/>
-                    <path d="M5 12.5a13 13 0 0 1 14 0"/>
-                    <path d="M8.5 16a8 8 0 0 1 7 0"/>
-                    <circle cx="12" cy="20" r="0.9" fill="currentColor"/>
-                    <path d="M3 3l18 18"/>
-                  </svg>
-                </span>
-                <div className="ob-offline-banner-body">
-                  <strong>Studio Mac dropped its connection.</strong>
-                  <span>Atlas can't take new messages until the node reconnects. Your last turn is saved and will retry automatically.</span>
-                </div>
-                <button type="button" className="ob-offline-banner-action">
-                  <span>Reconnect</span>
-                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 12h14M13 6l6 6-6 6"/>
-                  </svg>
-                </button>
-              </div>
+              <DTOfflineNotice node="Studio Mac" bro="Atlas" />
 
               <div className="dt-thread-day"><span>Today · 14:22</span></div>
 
@@ -921,22 +1098,10 @@ function BroDetailOfflineDesktop() {
                 <div className="dt-bubble dt-bubble-you">
                   Compare three SFO → JFK options for Friday — red-eye okay.
                 </div>
-                <div className="dt-bubble-meta">Voice · 0:06 · transcribed</div>
+                <div className="dt-bubble-meta">Voice · 0:06 · transcribed · sent to Atlas</div>
               </div>
 
-              <div className="dt-turn dt-turn-bro">
-                <div className="dt-bubble dt-bubble-bro">
-                  Got it. Pulling fares from United, Delta, JetBlue. Back in a minute.
-                </div>
-                <div className="dt-bubble-meta">Atlas · 14:22</div>
-              </div>
-
-              <div className="dt-turn dt-turn-bro">
-                <div className="dt-bubble dt-bubble-bro">
-                  Three landed. Delta non-stop wins on price and timing — JFK by 6:18a Sat. Want me to hold a seat?
-                </div>
-                <div className="dt-bubble-meta">Atlas · 14:23</div>
-              </div>
+              <DTReasoningBubble done broName="Atlas" />
 
               <div className="dt-turn dt-turn-sys">
                 <div className="dt-sys-event">
@@ -951,7 +1116,7 @@ function BroDetailOfflineDesktop() {
                 </div>
                 <div className="dt-bubble-meta dt-bubble-meta-failed">
                   <span className="dt-meta-failed-icon" aria-hidden="true">!</span>
-                  <span>Not delivered · waiting for node</span>
+                  <span>Not delivered · waiting for your computer</span>
                   <button type="button" className="dt-meta-retry">Retry when online</button>
                 </div>
               </div>
@@ -1100,7 +1265,7 @@ function HomeDesktop() {
                 <div>
                   <h1 className="dt-page-title">Home</h1>
                   <p className="dt-page-sub">
-                    Hold space anywhere, talk to any bro, or open one to read their thread. Sessions persist as long as the node stays online.
+                    Hold space anywhere, talk to any bro, or open one to read their thread. Sessions persist as long as that computer stays online.
                   </p>
                 </div>
                 <div className="dt-page-actions">
@@ -1419,6 +1584,122 @@ function DTAgentActivity({ state }) {
     </aside>
   );
 }
+// ─────────────────────────────────────────────────────────────
+// DTReasoningBubble — the agent's live reasoning stream. A single
+// blue bubble whose body keeps updating as the agent runs multiple
+// executions; each update is appended as a new line, the latest one
+// stays "active" while it works. No determinate progress (%, ETA).
+// ─────────────────────────────────────────────────────────────
+const DT_REASONING = {
+  steps: [
+    "Pulling Friday SFO → JFK fares from United, Delta, and JetBlue.",
+    "United — best red-eye is $452, 11:05p out, one stop via DEN.",
+    "Delta — non-stop $468, departs 9:40p, lands JFK 6:18a Sat.",
+    "JetBlue — $419, but the red-eye is basic-economy only. Flagging it for your veto.",
+    "Comparing the three on price against total door-to-door time…",
+  ],
+  answer:
+    "Three solid options. Delta's $468 non-stop is the best balance — 9:40p out, into JFK 6:18a Saturday. United's $452 red-eye saves a little but adds a DEN stop, and JetBlue is cheapest at $419 yet basic-economy only. Want me to hold the Delta seat?",
+};
+
+// done=true renders straight to the settled state — used for history /
+// already-finished turns, which never replay the live reasoning stream.
+function DTReasoningBubble({ data = DT_REASONING, broName = "Atlas", done = false }) {
+  const steps = data.steps;
+  const [phase, setPhase] = React.useState(done ? "done" : "streaming");
+  const [shown, setShown] = React.useState(done ? steps.length : 1);
+  const [open, setOpen] = React.useState(false); // expand collapsed reasoning
+
+  // Reveal one execution line at a time while streaming.
+  React.useEffect(() => {
+    if (phase !== "streaming" || shown >= steps.length) return;
+    const id = setTimeout(() => setShown((n) => Math.min(n + 1, steps.length)), 1900);
+    return () => clearTimeout(id);
+  }, [phase, shown, steps.length]);
+
+  // Once every line has streamed, settle into the done state and drop the
+  // live progress entirely.
+  React.useEffect(() => {
+    if (phase !== "streaming" || shown < steps.length) return;
+    const id = setTimeout(() => setPhase("done"), 1500);
+    return () => clearTimeout(id);
+  }, [phase, shown, steps.length]);
+
+  // ── DONE / HISTORY ── no reasoning progress; final answer + a tucked-away
+  // "Reasoned" toggle the user can expand on demand.
+  if (phase === "done") {
+    return (
+      <div className="dt-turn dt-turn-bro">
+        <div className="dt-bubble dt-bubble-bro dt-bubble-answer">
+          <button
+            type="button"
+            className={`dt-reason-collapsed${open ? " dt-reason-collapsed-open" : ""}`}
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+          >
+            <svg className="dt-reason-collapsed-check" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 12.5L10 18L20 6"/>
+            </svg>
+            <span>{open ? "Hide reasoning" : "Reasoned"}</span>
+            <svg className="dt-reason-collapsed-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M6 9l6 6 6-6"/>
+            </svg>
+          </button>
+          {open && (
+            <ol className="dt-reason-steps dt-reason-steps-static">
+              {steps.map((s, i) => (
+                <li key={i} className="dt-reason-step dt-reason-step-done">
+                  <span className="dt-reason-step-mark" aria-hidden="true" />
+                  <span className="dt-reason-step-text">{s}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+          <span className="dt-answer-text">{data.answer}</span>
+        </div>
+        <div className="dt-bubble-meta">{broName} · 14:24</div>
+      </div>
+    );
+  }
+
+  // ── STREAMING ── live reasoning; newest line + last 3 rounds, older faded.
+  const WINDOW = 4;
+  const start = Math.max(0, shown - WINDOW);
+  const visible = steps.slice(start, shown);
+  const FADE = [1, 0.74, 0.46, 0.2]; // by distance from the newest line
+
+  return (
+    <div className="dt-turn dt-turn-bro">
+      <div className="dt-bubble dt-bubble-bro dt-bubble-reason">
+        <span className="dt-reason-kicker">
+          <span className="dt-reason-orb" aria-hidden="true">
+            <span /><span /><span />
+          </span>
+          {broName} is reasoning
+        </span>
+        <ol className="dt-reason-steps">
+          {visible.map((s, j) => {
+            const idx = start + j;
+            const dist = visible.length - 1 - j; // 0 = newest
+            const isLast = dist === 0;
+            return (
+              <li
+                key={idx}
+                className={`dt-reason-step${isLast ? " dt-reason-step-active" : " dt-reason-step-done"}`}
+                style={{ opacity: FADE[dist] ?? 0.2 }}
+              >
+                <span className="dt-reason-step-mark" aria-hidden="true" />
+                <span className="dt-reason-step-text">{s}</span>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+      <div className="dt-bubble-meta">{broName} · updating live · 14:22</div>
+    </div>
+  );
+}
+
 function BroDetailActiveDesktop({ initialPlanMode = false, initialProposal = false } = {}) {
   const [mode, setMode] = React.useState("ptt");
   const [planMode, setPlanMode] = React.useState(initialPlanMode);
@@ -1476,27 +1757,10 @@ function BroDetailActiveDesktop({ initialPlanMode = false, initialProposal = fal
                     <div className="dt-bubble dt-bubble-you">
                       Compare three SFO → JFK options for Friday — red-eye okay.
                     </div>
-                    <div className="dt-bubble-meta">Voice · 0:06 · transcribed</div>
+                    <div className="dt-bubble-meta">Voice · 0:06 · transcribed · sent to Atlas</div>
                   </div>
 
-                  <div className="dt-turn dt-turn-bro">
-                    <div className="dt-bubble dt-bubble-bro">
-                      Got it. Pulling fares from United, Delta, JetBlue. Back in a minute.
-                    </div>
-                    <div className="dt-bubble-meta">Atlas · 14:22</div>
-                  </div>
-
-                  <div className="dt-turn dt-turn-bro">
-                    <div className="dt-status">
-                      <div className="dt-status-head">
-                        <span className="dt-status-spin" />
-                        <span className="dt-status-title">Pulling JetBlue fares</span>
-                        <span className="dt-status-pct">64%</span>
-                      </div>
-                      <div className="dt-status-bar"><i style={{ width: "64%" }} /></div>
-                      <div className="dt-status-foot">step 3 of 4 · est. 1m left</div>
-                    </div>
-                  </div>
+                  <DTReasoningBubble broName="Atlas" />
                 </React.Fragment>
               )}
             </div>

@@ -1,5 +1,45 @@
-import type { BroThread, BroTimelinePlan, ExecutionRun, Task, TaskStatus, TaskSummary } from "../../types";
+import type { BroThread, BroTimelinePlan, ExecutionDetailEntry, ExecutionRun, Task, TaskStatus, TaskSummary } from "../../types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord, RuntimeExecutorNodeInput, RuntimePersonaInput } from "./types";
+
+export interface ReasoningStep {
+  id: string;
+  label: string;
+  status: "active" | "done";
+  created_at: string;
+}
+
+const REASONING_EVENT_TYPES = new Set(["PROGRESS", "PLAN"]);
+
+function isRunInFlight(run: ExecutionRun): boolean {
+  return run.status === "running" || run.status === "created" || run.status === "waiting_executor";
+}
+
+export function buildReasoningStepsForTurn(
+  run: ExecutionRun | null | undefined,
+  details: ExecutionDetailEntry[] | null | undefined,
+): ReasoningStep[] {
+  if (!run || !details || details.length === 0) return [];
+  const filtered = details.filter((d) => REASONING_EVENT_TYPES.has(d.event_type));
+  if (filtered.length === 0) return [];
+  const inFlight = isRunInFlight(run);
+  const lastIndex = filtered.length - 1;
+  return filtered.map((d, i) => ({
+    id: d.detail_id,
+    label: d.text,
+    status: inFlight && i === lastIndex ? "active" : "done",
+    created_at: d.created_at,
+  }));
+}
+
+export function latestReasoningLabel(
+  details: ExecutionDetailEntry[] | null | undefined,
+): string | null {
+  if (!details || details.length === 0) return null;
+  for (let i = details.length - 1; i >= 0; i--) {
+    if (REASONING_EVENT_TYPES.has(details[i].event_type)) return details[i].text;
+  }
+  return null;
+}
 
 const avatarCycle = ["avatar_1", "avatar_2", "avatar_3", "avatar_4"] as const;
 
@@ -411,6 +451,7 @@ export function buildBroCardModels(
   executionRuns?: ExecutionRun[] | null,
   summaries?: TaskSummary[] | null,
   tasks?: Task[] | null,
+  recentExecutionDetails?: Record<string, ExecutionDetailEntry[]> | null,
 ): BroCardModel[] {
   if (!personas) {
     return [];
@@ -433,6 +474,8 @@ export function buildBroCardModels(
     const activeTask = latestTaskForBro(tasks, persona.persona_id);
     const activeRun = activeTask ? runsByTaskId.get(activeTask.task_id) : null;
     const activeSummary = activeTask ? summaryByTaskId.get(activeTask.task_id) : null;
+    const activeTaskDetails = activeTask ? (recentExecutionDetails?.[activeTask.task_id] ?? null) : null;
+    const latestReasoningStep = latestReasoningLabel(activeTaskDetails);
 
     const progressDetailsFromData = progressDetailsFromRuntime(activeTask, activeRun ?? null, activeSummary ?? null);
     const runStatus = activeRun?.status ?? null;
@@ -481,6 +524,7 @@ export function buildBroCardModels(
       progressLabel,
       progressDetails,
       idleNote: buildIdleNote(liveState, nodeName),
+      latestReasoningStep,
       source: "runtime",
     };
   });

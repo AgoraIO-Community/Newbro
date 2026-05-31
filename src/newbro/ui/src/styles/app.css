@@ -38,9 +38,15 @@
     --nb-coral-soft: #fff1ec;
     --nb-coral-border: #ffb89e;
     --nb-coral-shadow: rgba(255, 106, 61, 0.25);
+    /* Coral gradients — synced with the mobile design language.
+       -grad      : flatter 2-stop for message bubbles / large surfaces
+       -grad-btn  : richer 3-stop for circular/pill action buttons */
+    --nb-coral-grad:           linear-gradient(180deg, #ff8c5a 0%, #ff6a3d 100%);
+    --nb-coral-grad-btn:       linear-gradient(160deg, #ff8c5a 0%, #ff6a3d 60%, #e85528 100%);
+    --nb-coral-grad-btn-hover: linear-gradient(160deg, #ff7d4d 0%, #f05a2e 60%, #d4471f 100%);
     --nb-ink: #111827;
     --nb-ink-soft: #6b7280;
-    --nb-ink-muted: #9ca3af;
+    --nb-ink-muted: #7d8492;     /* tertiary, metadata, hints — kept legible on white (~3.6:1) */
     --nb-paper: #ffffff;
     --nb-paper-sub: #fafbfc;
     --nb-wash: #f5f6f8;
@@ -52,6 +58,8 @@
     --nb-live-ink: #059669;
     --nb-live-soft: #ecfdf5;
     --nb-live-edge: rgba(16, 185, 129, 0.2);
+    /* Green button gradient — mobile listening/recording mic */
+    --nb-live-grad-btn: linear-gradient(160deg, #34d399 0%, #10b981 60%, #047857 100%);
     --nb-warn: #f59e0b;
     --nb-warn-ink: #b45309;
     --nb-warn-soft: #fffbeb;
@@ -64,6 +72,8 @@
     --nb-info-ink: #2563eb;
     --nb-info-soft: #eff6ff;
     --nb-info-edge: rgba(59, 130, 246, 0.2);
+    /* Blue button gradient — mirrors --nb-coral-grad-btn for plan-mode approve */
+    --nb-info-grad-btn: linear-gradient(160deg, #60a5fa 0%, #3b82f6 60%, #2563eb 100%);
     --nb-radius-xs: 5px;
     --nb-radius-sm: 8px;
     --nb-radius-md: 10px;
@@ -2971,46 +2981,6 @@
 
 .nb-detail-runtime .nb-thread-toolbar {
   padding-bottom: 2px;
-}
-
-.nb-artboard-command {
-  max-width: 100%;
-  margin: 8px 0 0;
-  overflow-x: auto;
-  padding: 8px 10px;
-  border: 1px solid rgba(245, 158, 11, 0.22);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--nb-warn-ink);
-  font-family: var(--nb-font-mono);
-  font-size: 10.5px;
-  line-height: 1.45;
-  white-space: pre;
-}
-
-.nb-artboard-command-alt {
-  margin-top: 6px;
-  color: var(--nb-warn-ink);
-}
-
-.nb-artboard-command-alt summary {
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.nb-artboard-command-alt pre {
-  max-width: 100%;
-  margin: 6px 0 0;
-  overflow-x: auto;
-  padding: 8px 10px;
-  border: 1px solid rgba(245, 158, 11, 0.18);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.54);
-  font-family: var(--nb-font-mono);
-  font-size: 10.5px;
-  line-height: 1.45;
-  white-space: pre;
 }
 
 .ob-offline-banner-actions {

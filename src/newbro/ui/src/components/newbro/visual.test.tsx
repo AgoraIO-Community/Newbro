@@ -18,6 +18,7 @@ const bro = {
   progressLabel: "42%",
   progressDetails: ["Comparing the current page against Linear."],
   idleNote: "Ready",
+  latestReasoningStep: null,
 };
 
 describe("Bro detail runtime panels", () => {

@@ -20,6 +20,7 @@ from newbro.protocol import (
     Persona,
     SessionBinding,
     Task,
+    TaskExecutionDetailEntry,
     TaskSummary,
 )
 
@@ -50,6 +51,7 @@ class SessionSnapshot(BaseModel):
     agent_events: list[AgentEvent] = Field(default_factory=list)
     executor_capabilities: list[dict[str, object]] = Field(default_factory=list)
     executor_nodes: list[ExecutorNodeRecord] = Field(default_factory=list)
+    recent_execution_details: dict[str, list[TaskExecutionDetailEntry]] = Field(default_factory=dict)
     draft_session: DraftSession | None = None
  
 
