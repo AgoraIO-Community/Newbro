@@ -623,13 +623,13 @@
 }
 .dt-topvoice-btn:hover { background: var(--nb-wash-alt); }
 .dt-topvoice-btn-primary {
-  background: var(--nb-coral);
+  background: var(--nb-coral-grad-btn);
   color: white;
   border-color: transparent;
   box-shadow: var(--nb-shadow-cta);
   font-weight: 600;
 }
-.dt-topvoice-btn-primary:hover { background: var(--nb-coral-hover); }
+.dt-topvoice-btn-primary:hover { background: var(--nb-coral-grad-btn-hover); }
 
 /* page header */
 .dt-page-head {
@@ -1299,7 +1299,7 @@
   letter-spacing: 0;
 }
 .dt-bubble-you {
-  background: var(--nb-coral);
+  background: var(--nb-coral-grad);
   color: white;
   border-bottom-right-radius: 6px;
 }
@@ -1479,7 +1479,7 @@
   width: 36px; height: 36px;
   border-radius: 50%;
   border: 0;
-  background: var(--nb-coral);
+  background: var(--nb-coral-grad-btn);
   color: white;
   cursor: pointer;
 }
@@ -2481,7 +2481,7 @@
   padding: 8px 16px;
   border-radius: 999px;
   border: 0;
-  background: var(--nb-coral);
+  background: var(--nb-coral-grad-btn);
   color: white;
   font-family: inherit;
   font-size: 12.5px;
@@ -2490,7 +2490,7 @@
   letter-spacing: 0;
   box-shadow: var(--nb-shadow-cta);
 }
-.dt-text-send:hover { background: var(--nb-coral-hover); }
+.dt-text-send:hover { background: var(--nb-coral-grad-btn-hover); }
 .dt-text-send:disabled {
   background: var(--nb-paper-sub);
   color: var(--nb-ink-muted);
@@ -2512,12 +2512,12 @@
    ═══════════════════════════════════════════════ */
 .dt-page-actions { display: flex; align-items: center; gap: 10px; }
 .dt-page-action-primary {
-  background: var(--nb-coral);
+  background: var(--nb-coral-grad-btn);
   color: white;
   border-color: transparent;
   box-shadow: var(--nb-shadow-cta);
 }
-.dt-page-action-primary:hover { background: var(--nb-coral-hover); }
+.dt-page-action-primary:hover { background: var(--nb-coral-grad-btn-hover); }
 
 .dt-home-section {
   display: flex; flex-direction: column;
@@ -3068,12 +3068,12 @@
   color: var(--nb-coral);
 }
 .dt-compose-mic-live {
-  background: var(--nb-coral);
+  background: var(--nb-coral-grad-btn);
   color: white;
   border-color: transparent;
   box-shadow: var(--nb-shadow-cta);
 }
-.dt-compose-mic-live:hover { background: var(--nb-coral-hover); }
+.dt-compose-mic-live:hover { background: var(--nb-coral-grad-btn-hover); }
 
 /* live rail card variants */
 .dt-rail-card-live {
@@ -3387,12 +3387,12 @@
 .dt-cmp-send:active { transform: scale(0.96); }
 
 .dt-cmp-mic-ptt {
-  background: var(--nb-coral);
+  background: var(--nb-coral-grad-btn);
   color: white;
   box-shadow: 0 6px 14px -6px rgba(255,106,61,0.55), inset 0 1px 0 rgba(255,255,255,0.25);
   animation: dt-cmp-mic-breathe 1.8s ease-in-out infinite;
 }
-.dt-cmp-mic-ptt:hover { background: var(--nb-coral-hover); }
+.dt-cmp-mic-ptt:hover { background: var(--nb-coral-grad-btn-hover); }
 @keyframes dt-cmp-mic-breathe {
   0%, 100% { box-shadow: 0 6px 14px -6px rgba(255,106,61,0.55), inset 0 1px 0 rgba(255,255,255,0.25); }
   50%      { box-shadow: 0 8px 20px -6px rgba(255,106,61,0.75), inset 0 1px 0 rgba(255,255,255,0.25); }
@@ -3751,12 +3751,12 @@
 }
 .dt-planprop-approve {
   flex: 1;
-  background: var(--nb-coral);
+  background: var(--nb-coral-grad-btn);
   border: 0;
   color: #fff;
   box-shadow: 0 2px 6px rgba(255,106,61,0.3);
 }
-.dt-planprop-approve:hover { background: var(--nb-coral-hover); }
+.dt-planprop-approve:hover { background: var(--nb-coral-grad-btn-hover); }
 .dt-planprop-keep {
   padding: 0 14px;
   background: #fff;

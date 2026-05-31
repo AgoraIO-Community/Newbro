@@ -193,7 +193,7 @@
   padding: 0 18px;
   border-radius: var(--nb-radius-pill);
   border: 0;
-  background: var(--nb-coral);
+  background: var(--nb-coral-grad-btn);
   color: white;
   font-family: inherit;
   font-size: 14px;
@@ -203,7 +203,7 @@
   box-shadow: var(--nb-shadow-cta);
   transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
 }
-.ob-cta:hover { background: var(--nb-coral-hover); box-shadow: var(--nb-shadow-cta-hover); }
+.ob-cta:hover { background: var(--nb-coral-grad-btn-hover); box-shadow: var(--nb-shadow-cta-hover); }
 .ob-cta:active { transform: scale(0.98); }
 .ob-cta:disabled,
 .ob-cta-pending {
@@ -848,7 +848,7 @@
 
 .ob-connect-action-primary {
   border-color: rgba(255, 122, 89, 0.34);
-  background: var(--nb-coral);
+  background: var(--nb-coral-grad-btn);
   color: #fff;
 }
 
