@@ -1678,10 +1678,9 @@ function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
         <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
         <h1 className="dt-empty-h-lg">You don't have a bro yet.</h1>
         <p className="dt-empty-sub-lg">
-          A <strong>bro</strong> is a worker persona that lives on a computer you trust. Create one, connect a computer, and they'll start working alongside you.
-        </p>
-        <p className="dt-empty-sub-lg dt-empty-connect-note">
-          Creating a bro gives you a one-line install command — run it in Terminal on the computer that should do the work.
+          A <strong>bro</strong> is a teammate that works on a computer
+          you trust. Give it a name, connect a computer, and it&rsquo;ll start
+          working alongside you.
         </p>
         <div className="dt-empty-actions-lg">
           <button type="button" className="ob-cta dt-empty-cta-lg" onClick={onCreate}>
@@ -1990,6 +1989,15 @@ function CreateConnectSheet({
                     <button type="button" className="ob-link ob-link-sm">Walk me through it</button>
                   </div>
                 </div>
+
+                <div className="dt-modal-tip">
+                  <span className="dt-modal-tip-eyebrow">TIP</span>
+                  <p>
+                    That computer can be anything that stays on — your Mac, a spare
+                    laptop, a mini in the closet. {pendingBroName || trimmedName || "your bro"} only runs there when you ask
+                    it to, and you can move it to another computer anytime.
+                  </p>
+                </div>
               </div>
             </div>
             {error ? <div className="nb-status-banner nb-status-banner-error">{error}</div> : null}
@@ -1997,7 +2005,7 @@ function CreateConnectSheet({
           <footer className="ob-sheet-foot">
             <span className="dt-modal-foot-status nb-create-connect-foot-status">
               <span className="dt-modal-foot-dot" />
-              {completed ? "Connected once · Bro ready" : commands ? "Waiting for first node connection" : "Install/connect command will be generated on demand"}
+              {completed ? "Connected once · Bro ready" : commands ? "We’ll detect your computer automatically · link valid 9:46" : "Install/connect command will be generated on demand"}
             </span>
             {commands && completed ? (
               <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" onClick={() => { void onCreated().finally(onClose); }}>
@@ -3551,7 +3559,11 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
                 <div className="ob-hero-body">
                   <span className="ob-eyebrow ob-eyebrow-coral">YOUR CREW · 0 BROS</span>
                   <h2 className="ob-hero-h">You don't have a bro yet.</h2>
-                  <p className="ob-hero-sub">Create a bro and connect it to a computer you trust. Newbro will give you a one-line install command for that computer.</p>
+                  <p className="ob-hero-sub">
+                    A <strong>bro</strong> is a teammate that works on a computer
+                    you trust. Give it a name, connect a computer, and it&rsquo;ll show
+                    up here ready to go.
+                  </p>
                   <div className="ob-hero-actions">
                     <button type="button" className="ob-cta ob-cta-block" onClick={() => setAddOpen(true)}>
                       <Plus size={15} strokeWidth={2.4} />

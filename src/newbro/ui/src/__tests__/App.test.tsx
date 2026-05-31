@@ -602,7 +602,7 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    expect(await screen.findByTestId("mobile-empty-workspace")).toHaveTextContent("one-line install command");
+    expect(await screen.findByTestId("mobile-empty-workspace")).toHaveTextContent("Give it a name, connect a computer");
     fireEvent.click(screen.getByRole("button", { name: "Create your first bro" }));
 
     expect(await screen.findByText(/paste this in a terminal to install newbro/)).toBeInTheDocument();
