@@ -1945,7 +1945,7 @@ function CreateConnectSheet({
                 <div className="ob-fieldset">
                   <div className="ob-fieldset-eyebrow-row">
                     <span className="ob-field-eyebrow">CONNECT A COMPUTER</span>
-                    <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : commands ? "installs CLI + starts node" : "on demand"}</span>
+                    <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : commands ? "installs CLI + starts the executor" : "on demand"}</span>
                   </div>
                   <p className="ob-connect-note">
                     <span className="ob-connect-note-desktop">New to Newbro CLI? Copy Install + connect. It installs/updates the CLI, then starts this node.</span>
@@ -1980,7 +1980,7 @@ function CreateConnectSheet({
                         <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : commands ? `Waiting to hear from your computer…` : `Ready to connect ${trimmedName || "a Bro"}...`}</strong>
                         <span>{completed ? "The Bro has been created after the computer connected successfully." : commands ? `This updates on its own once ${pendingBroName || trimmedName} connects. Nothing else on that computer changes.` : "Newbro will issue an install/connect command first. The Bro appears after the first successful connection."}</span>
                       </span>
-                      <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "installs CLI + starts node" : "new"}</span>
+                      <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "installs CLI + starts the executor" : "new"}</span>
                     </div>
                   </div>
                   <div className="ob-connect-meta">
