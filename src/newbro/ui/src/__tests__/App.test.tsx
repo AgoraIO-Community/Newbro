@@ -92,6 +92,7 @@ const clientMock = vi.hoisted(() => ({
   createExecutorNode: vi.fn(),
   revealExecutorNodeConnectCommand: vi.fn(),
   buildExecutorConnectCommands: vi.fn(() => ({
+    installOnly: "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh",
     installConnect: "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --node-id node-1 --token token-1",
     runOnly: "newbro executor run --node-id node-1 --token token-1",
   })),
@@ -590,9 +591,9 @@ describe("Newbro artboard shell", () => {
     }));
     expect(clientMock.createPersona).not.toHaveBeenCalled();
     expect(await screen.findByText(/install-newbro-cli\.sh/)).toBeInTheDocument();
-    expect(screen.getByText(/New to Newbro CLI/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /(Copy|Copied) install \+ connect/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Copy run-only command/i })).toBeInTheDocument();
+    expect(screen.getByText(/paste this in a terminal to install newbro/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy install command/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
     expect(screen.getByText(/This updates on its own once atlas connects/)).toBeInTheDocument();
   });
 
@@ -604,10 +605,10 @@ describe("Newbro artboard shell", () => {
     expect(await screen.findByTestId("mobile-empty-workspace")).toHaveTextContent("one-line install command");
     fireEvent.click(screen.getByRole("button", { name: "Create your first bro" }));
 
-    expect(await screen.findByText(/Copy or share Install \+ connect/)).toBeInTheDocument();
-    expect(screen.getByText(/curl -fsSL \.\.\. \| sh -s -- executor run/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Copy install \+ connect/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Copy run-only command/i })).toBeInTheDocument();
+    expect(await screen.findByText(/paste this in a terminal to install newbro/)).toBeInTheDocument();
+    expect(screen.getByText(/curl -fsSL newbro\.dev\/install\.sh \| sh/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy install command/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
   });
 
 

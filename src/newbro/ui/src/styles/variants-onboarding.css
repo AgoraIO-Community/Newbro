@@ -796,6 +796,46 @@
 }
 .ob-connect-meta-sep { color: var(--nb-ink-muted); }
 
+.ob-sheet-intro {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--nb-ink-soft);
+  letter-spacing: -0.005em;
+  text-wrap: pretty;
+}
+.ob-connect-guide {
+  margin: 0 0 8px;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--nb-ink-soft);
+  letter-spacing: -0.005em;
+  text-wrap: pretty;
+}
+.ob-connect-guide-2 { margin-top: 10px; }
+
+/* Coming-soon disabled state for an executor card */
+.ob-exec-card-soon {
+  opacity: 0.55;
+  cursor: default;
+  filter: grayscale(0.15);
+}
+.ob-exec-card-soon-badge {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 6px;
+  font-family: var(--nb-font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--nb-ink-muted);
+  border: 1px solid var(--nb-line);
+  border-radius: 4px;
+  background: var(--nb-paper-sub);
+}
+
 .ob-connect-note {
   margin: 0 0 8px;
   color: var(--nb-ink-soft);

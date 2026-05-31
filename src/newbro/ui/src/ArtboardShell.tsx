@@ -1908,7 +1908,8 @@ function CreateConnectSheet({
           <header className="ob-sheet-head">
             <div className="ob-sheet-titles">
               <span className="ob-eyebrow ob-eyebrow-coral">NEW BRO</span>
-              <h2 className="ob-sheet-h">Name it, then connect a computer.</h2>
+              <h2 className="ob-sheet-h">Set up your first bro</h2>
+              <p className="ob-sheet-intro">A bro works on a computer you keep on — your Mac, a spare laptop, anything. Three quick steps and it&rsquo;s ready.</p>
             </div>
             <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}><X size={16} strokeWidth={2.2} /></button>
           </header>
@@ -1917,84 +1918,77 @@ function CreateConnectSheet({
               <div className="dt-modal-col">
                 <div className="ob-fieldset">
                   <label className="ob-field">
-                    <span className="ob-field-eyebrow">NAME</span>
+                    <span className="ob-field-eyebrow">STEP 1 · NAME IT</span>
                     <div className="ob-input ob-input-filled">
                       <span className="ob-input-prefix">@</span>
                       <input type="text" value={name} disabled={Boolean(bro) || Boolean(commands) || busy} onChange={(event) => setName(event.target.value)} />
                     </div>
-                    <span className="ob-field-hint">One word, easy to say out loud. e.g. atlas, scout, forge, muse.</span>
+                    <span className="ob-field-hint">Pick one word that&rsquo;s easy to say out loud — you&rsquo;ll talk to it by name. e.g. atlas, scout, forge.</span>
                   </label>
                 </div>
                 <div className="ob-fieldset">
-                  <span className="ob-field-eyebrow ob-fieldset-eyebrow">EXECUTOR</span>
+                  <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 2 · AGENT CLIENT</span>
                   <div className="ob-exec-grid">
                     <div className="ob-exec-card ob-exec-card-on">
                       <span className="ob-exec-name">Codex</span>
-                      <span className="ob-exec-desc">Long-running agent · shell + browser</span>
+                      <span className="ob-exec-desc">OpenAI&rsquo;s coding agent</span>
                       <span className="ob-exec-check" aria-hidden="true"><Check size={11} strokeWidth={2.8} /></span>
                     </div>
-                    <div className="ob-exec-card" aria-disabled="true">
+                    <div className="ob-exec-card ob-exec-card-soon" aria-disabled="true">
                       <span className="ob-exec-name">Hermes</span>
-                      <span className="ob-exec-desc">Headless · ops + scripts</span>
+                      <span className="ob-exec-desc">Open-source agent by Nous Research</span>
+                      <span className="ob-exec-card-soon-badge">Coming soon</span>
                     </div>
                   </div>
+                  <span className="ob-field-hint">Pick the one you already use — newbro runs your tasks through it. You can switch anytime.</span>
                 </div>
               </div>
 
               <div className="dt-modal-col">
                 <div className="ob-fieldset">
                   <div className="ob-fieldset-eyebrow-row">
-                    <span className="ob-field-eyebrow">CONNECT A COMPUTER</span>
+                    <span className="ob-field-eyebrow">STEP 3 · CONNECT A COMPUTER</span>
                     <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : commands ? "installs CLI + starts the executor" : "on demand"}</span>
                   </div>
-                  <p className="ob-connect-note">
-                    <span className="ob-connect-note-desktop">New to Newbro CLI? Copy Install + connect. It installs/updates the CLI, then starts this node.</span>
-                    <span className="ob-connect-note-mobile">Copy or share Install + connect, then run it in Terminal on the computer that should work for this bro.</span>
-                  </p>
+                  <p className="ob-connect-guide">On the computer where {pendingBroName || trimmedName || "your bro"} should work, paste this in a terminal to install newbro:</p>
                   <div className="ob-connect">
                     <div className="ob-connect-cmd">
                       <span className="ob-connect-prompt">$</span>
-                      <span className="ob-connect-line">
-                        {commands ? commands.installConnect : <>curl -fsSL ... | sh -s -- executor run <span className="ob-connect-tok">--token pending</span></>}
-                      </span>
-                    </div>
-                    <div className="ob-connect-actions" aria-label="Connect command copy options">
-                      <button type="button" className="ob-connect-action ob-connect-action-primary" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.installConnect, "install"); }}>
-                        {copiedKind === "install" ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
-                        <span>{copiedKind === "install" ? "Copied install + connect" : "Copy install + connect"}</span>
-                      </button>
-                      <button type="button" className="ob-connect-action" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.runOnly, "run"); }}>
-                        {copiedKind === "run" ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.9} />}
-                        <span>{copiedKind === "run" ? "Copied run-only command" : "Copy run-only command"}</span>
+                      <span className="ob-connect-line">{commands?.installOnly ?? "curl -fsSL newbro.dev/install.sh | sh"}</span>
+                      <button type="button" className="ob-connect-copy" aria-label="Copy install command" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.installOnly, "install"); }}>
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="9" y="9" width="11" height="11" rx="2"/>
+                          <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+                        </svg>
                       </button>
                     </div>
-                    {commands ? (
-                      <details className="ob-connect-alt">
-                        <summary>Already installed</summary>
-                        <pre>{commands.runOnly}</pre>
-                      </details>
-                    ) : null}
+                  </div>
+                  <p className="ob-connect-guide ob-connect-guide-2">Then start it with your one-time key — we filled in the details for you:</p>
+                  <div className="ob-connect">
+                    <div className="ob-connect-cmd">
+                      <span className="ob-connect-prompt">$</span>
+                      <span className="ob-connect-line">{commands?.runOnly ?? "newbro executor run --token pending"}</span>
+                      <button type="button" className="ob-connect-copy" aria-label="Copy connect command" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.runOnly, "run"); }}>
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="9" y="9" width="11" height="11" rx="2"/>
+                          <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+                        </svg>
+                      </button>
+                    </div>
                     <div className="ob-connect-status">
                       <span className="ob-connect-spinner" aria-hidden="true"><span /><span /><span /></span>
                       <span className="ob-connect-status-text">
-                        <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : commands ? `Waiting to hear from your computer…` : `Ready to connect ${trimmedName || "a Bro"}...`}</strong>
-                        <span>{completed ? "The Bro has been created after the computer connected successfully." : commands ? `This updates on its own once ${pendingBroName || trimmedName} connects. Nothing else on that computer changes.` : "Newbro will issue an install/connect command first. The Bro appears after the first successful connection."}</span>
+                        <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : commands ? `Waiting to hear from your computer…` : `Ready to connect ${trimmedName || "a bro"}...`}</strong>
+                        <span>{completed ? "The bro has been created after the computer connected successfully." : commands ? `This updates on its own once ${pendingBroName || trimmedName} connects. Nothing else on that computer changes.` : "Newbro will issue an install/connect command first. The bro appears after the first successful connection."}</span>
                       </span>
                       <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "installs CLI + starts the executor" : "new"}</span>
                     </div>
                   </div>
                   <div className="ob-connect-meta">
-                    <span>Real node credential flow</span>
+                    <button type="button" className="ob-link ob-link-sm">Get a fresh link</button>
                     <span className="ob-connect-meta-sep">·</span>
-                    <span>First successful connection creates the Bro</span>
+                    <button type="button" className="ob-link ob-link-sm">Walk me through it</button>
                   </div>
-                </div>
-                <div className="dt-modal-tip">
-                  <span className="dt-modal-tip-eyebrow">TIP</span>
-                  <p>
-                    The node is just a long-running process. It can sit on a Mac mini,
-                    a workshop laptop, or any always-on box. You can rebind {pendingBroName || trimmedName || "this Bro"} later.
-                  </p>
                 </div>
               </div>
             </div>
@@ -2012,7 +2006,7 @@ function CreateConnectSheet({
             ) : (
               <button type="button" data-testid="bro-setup-create-node" className={`ob-cta ob-cta-block${busy ? " ob-cta-pending" : ""}`} disabled={!canCreate} onClick={() => { void createAndConnect(); }}>
                 {busy ? <span className="ob-cta-spinner" aria-hidden="true" /> : null}
-                <span>{busy ? "Preparing..." : commands ? "Waiting for first connection..." : "Create and connect"}</span>
+                <span>{busy ? "Preparing..." : commands ? "Waiting for your computer…" : "Create and connect"}</span>
               </button>
             )}
           </footer>
