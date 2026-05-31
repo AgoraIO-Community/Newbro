@@ -15,6 +15,7 @@ from newbro.protocol import (
     ExecutionSession,
     ExecutorNodeRecord,
     InteractionRequest,
+    NativeReasoningStep,
     NotificationCandidate,
     OutboundTurnRequest,
     Persona,
@@ -52,6 +53,7 @@ class SessionSnapshot(BaseModel):
     executor_capabilities: list[dict[str, object]] = Field(default_factory=list)
     executor_nodes: list[ExecutorNodeRecord] = Field(default_factory=list)
     recent_execution_details: dict[str, list[TaskExecutionDetailEntry]] = Field(default_factory=dict)
+    recent_native_turn_reasoning: dict[str, list[NativeReasoningStep]] = Field(default_factory=dict)
     draft_session: DraftSession | None = None
  
 

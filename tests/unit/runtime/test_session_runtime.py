@@ -2820,3 +2820,18 @@ async def test_session_runtime_snapshot_carries_recent_execution_details():
     entries = snapshot.recent_execution_details["task-1"]
     assert [e.detail_id for e in entries] == ["d-1", "d-2"]
     assert all(isinstance(e, TaskExecutionDetailEntry) for e in entries)
+
+
+def test_session_snapshot_has_native_reasoning_field_default_empty():
+    from newbro.runtime.models import SessionSnapshot
+    from newbro.protocol import NativeReasoningStep
+
+    snap = SessionSnapshot(session_id="s1")
+    assert snap.recent_native_turn_reasoning == {}
+
+    step = NativeReasoningStep(
+        item_id="item-1", text="thinking", kind="progress", created_at="2026-05-31T00:00:00+00:00"
+    )
+    snap2 = SessionSnapshot(session_id="s1", recent_native_turn_reasoning={"k": [step]})
+    dumped = snap2.model_dump()
+    assert dumped["recent_native_turn_reasoning"]["k"][0]["kind"] == "progress"

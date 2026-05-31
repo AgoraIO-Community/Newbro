@@ -96,6 +96,7 @@ from .session import (
 )
 from .summary import TaskSummary
 from .task import Task
+from .native_reasoning import NativeReasoningStep
 from .task_execution_detail import TaskExecutionDetailEntry
 
 __all__ = [
@@ -177,6 +178,7 @@ __all__ = [
     "SupplyInteractionResponseCommand",
     "Task",
     "TaskCommand",
+    "NativeReasoningStep",
     "TaskExecutionDetailEntry",
     "TaskExecutionMode",
     "TaskCommandType",
