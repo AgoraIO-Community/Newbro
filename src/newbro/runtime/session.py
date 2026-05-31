@@ -68,6 +68,7 @@ from newbro.protocol import (
     InteractionRequest,
     InteractionRequestKind,
     MutationType,
+    NativeReasoningStep,
     NotificationDeliveryStatus,
     OutboundTurnRequest,
     RunStatus,
@@ -309,6 +310,23 @@ def _timeline_status_from_codex_event(
     if event_type in {"progress", "plan", "blocked", "waiting_executor"}:
         return "running"
     return "pending"
+
+
+_NATIVE_REASONING_TEXT_LIMIT = 280
+_NATIVE_REASONING_STORE_STEPS = 16
+_NATIVE_REASONING_STORE_TURNS = 20
+_NATIVE_REASONING_PROJECT_STEPS = 8
+_NATIVE_REASONING_PROJECT_TURNS = 10
+
+
+def _native_reasoning_key(
+    executor_id: str,
+    executor_thread_id: str | None,
+    executor_turn_id: str | None,
+) -> str | None:
+    if not executor_thread_id or not executor_turn_id:
+        return None
+    return f"{executor_id}::{executor_thread_id}::{executor_turn_id}"
 
 
 def _bro_timeline_turn_from_codex_turn_event(
@@ -1533,6 +1551,7 @@ class SessionRuntime:
     _selected_codex_thread_subscription_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False, repr=False)
     _open_bro_thread_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_executor_turns: dict[str, list[BroTimelineTurn]] = field(default_factory=dict, init=False, repr=False)
+    _native_turn_reasoning: dict[str, list[NativeReasoningStep]] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_timeline_status: dict[str, Literal["not_loaded", "loading", "loaded", "failed"]] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_timeline_errors: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_live_message_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
@@ -1665,6 +1684,7 @@ class SessionRuntime:
             executor_capabilities=self._executor_capabilities_snapshot(),
             executor_nodes=await self.executor_node_manager.list_nodes(),
             recent_execution_details=recent_execution_details,
+            recent_native_turn_reasoning=self._recent_native_turn_reasoning(),
             draft_session=self.draft_manager.active_session,
         )
 
@@ -2203,6 +2223,7 @@ class SessionRuntime:
                 timestamp=timestamp,
             )
         )
+        self._record_native_turn_reasoning(updated_request, message, timestamp)
         await self.interaction_manager.handle_outbound_codex_blocked(
             outbound_request=updated_request,
             message=message,
@@ -2587,6 +2608,98 @@ class SessionRuntime:
         if self._bro_thread_timeline_status.get(turn.thread_id) != "failed":
             self._bro_thread_timeline_status[turn.thread_id] = "loaded"
             self._bro_thread_timeline_errors.pop(turn.thread_id, None)
+
+    def _record_native_turn_reasoning(
+        self,
+        request: OutboundTurnRequest,
+        message: CodexTurnEventMessage,
+        timestamp: str,
+    ) -> None:
+        event_type = message.event_type.lower()
+        if event_type not in {"progress", "plan"}:
+            return
+        text = (message.message or "").strip()
+        if not text:
+            return
+        executor_thread_id = message.executor_thread_id or request.executor_thread_id
+        executor_turn_id = message.executor_turn_id or request.executor_turn_id
+        key = _native_reasoning_key(request.executor_id, executor_thread_id, executor_turn_id)
+        if key is None:
+            return
+        raw_item_id = message.metadata.get("codex_item_id")
+        item_id = raw_item_id if isinstance(raw_item_id, str) else ""
+        if not item_id:
+            return  # id-less events (e.g. the dispatch marker) are not real steps
+        step = NativeReasoningStep(
+            item_id=item_id,
+            text=text[:_NATIVE_REASONING_TEXT_LIMIT],
+            kind="plan" if event_type == "plan" else "progress",
+            created_at=timestamp,
+        )
+        steps = list(self._native_turn_reasoning.get(key, []))
+        if steps and steps[-1].item_id == item_id:
+            steps[-1] = step  # same codex item streaming -> grow in place
+        else:
+            steps.append(step)
+        steps = steps[-_NATIVE_REASONING_STORE_STEPS:]
+        self._native_turn_reasoning.pop(key, None)
+        self._native_turn_reasoning[key] = steps
+        while len(self._native_turn_reasoning) > _NATIVE_REASONING_STORE_TURNS:
+            oldest = next(iter(self._native_turn_reasoning))
+            self._native_turn_reasoning.pop(oldest, None)
+
+    def _record_interaction_answer_turn(
+        self,
+        request: InteractionRequest,
+        *,
+        user_visible_text: str | None,
+        client_request_id: str | None,
+    ) -> None:
+        text = (user_visible_text or "").strip()
+        if not text:
+            return
+        details = request.details or {}
+        thread_id = details.get("target_thread_id")
+        persona_id = details.get("persona_id")
+        if not isinstance(thread_id, str) or not thread_id:
+            return
+        if not isinstance(persona_id, str) or not persona_id:
+            return
+        timestamp = datetime.now(tz=UTC).isoformat()
+        stable_key = client_request_id or request.request_id
+        turn = BroTimelineTurn(
+            turn_id=f"{thread_id}:answer:{stable_key}",
+            thread_id=thread_id,
+            persona_id=persona_id,
+            executor_id=request.executor_type or "codex",
+            owner="executor",
+            client_request_id=client_request_id,
+            input_modality="text",
+            user=BroTimelineMessage(
+                message_id=f"{thread_id}:{stable_key}:user",
+                role="user",
+                kind="text",
+                text=text,
+                created_at=timestamp,
+                updated_at=timestamp,
+                status="completed",
+                metadata={"source": "native_interaction_answer"},
+            ),
+            status="completed",
+            created_at=timestamp,
+            updated_at=timestamp,
+            metadata={"source": "native_interaction_answer", "request_id": request.request_id},
+        )
+        self._upsert_bro_thread_executor_turn(turn)
+
+    def _recent_native_turn_reasoning(self) -> dict[str, list[NativeReasoningStep]]:
+        if not self._native_turn_reasoning:
+            return {}
+        keys = list(self._native_turn_reasoning.keys())[-_NATIVE_REASONING_PROJECT_TURNS:]
+        return {
+            key: self._native_turn_reasoning[key][-_NATIVE_REASONING_PROJECT_STEPS:]
+            for key in keys
+        }
 
     @property
     def voice_target_persona_id(self) -> str | None:
@@ -4671,6 +4784,11 @@ class SessionRuntime:
         if native_resolved:
             await self.blackboard.put_interaction_request(
                 resolution.request.model_copy(update={"resume_strategy": "native_response"})
+            )
+            self._record_interaction_answer_turn(
+                resolution.request,
+                user_visible_text=user_visible_text,
+                client_request_id=client_request_id,
             )
             if resolution.request.task_id is None:
                 await self.publish_snapshot(sync_imported_codex_threads=False)

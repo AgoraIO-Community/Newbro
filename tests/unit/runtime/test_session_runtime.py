@@ -2820,3 +2820,268 @@ async def test_session_runtime_snapshot_carries_recent_execution_details():
     entries = snapshot.recent_execution_details["task-1"]
     assert [e.detail_id for e in entries] == ["d-1", "d-2"]
     assert all(isinstance(e, TaskExecutionDetailEntry) for e in entries)
+
+
+def test_session_snapshot_has_native_reasoning_field_default_empty():
+    from newbro.runtime.models import SessionSnapshot
+    from newbro.protocol import NativeReasoningStep
+
+    snap = SessionSnapshot(session_id="s1")
+    assert snap.recent_native_turn_reasoning == {}
+
+    step = NativeReasoningStep(
+        item_id="item-1", text="thinking", kind="progress", created_at="2026-05-31T00:00:00+00:00"
+    )
+    snap2 = SessionSnapshot(session_id="s1", recent_native_turn_reasoning={"k": [step]})
+    dumped = snap2.model_dump()
+    assert dumped["recent_native_turn_reasoning"]["k"][0]["kind"] == "progress"
+
+
+@pytest.mark.anyio
+async def test_codex_turn_event_accumulates_native_reasoning():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        client_request_id="client-text-1",
+        text="do the thing",
+        status="accepted",
+        created_at="2026-05-30T08:00:00+00:00",
+    )
+    await session.blackboard.put_outbound_turn_request(request)
+
+    async def emit(text, *, item_id, event_type="progress"):
+        await session.handle_codex_turn_event(
+            CodexTurnEventMessage(
+                request_id="out-turn-1",
+                node_id="node-forge",
+                target_persona_id="forge",
+                target_thread_id="thread-1",
+                event_type=event_type,
+                message=text,
+                executor_thread_id="native-thread-1",
+                executor_turn_id="turn-1",
+                metadata={"codex_item_id": item_id},
+            )
+        )
+
+    await emit("Looking at the file", item_id="item-1")
+    await emit("Looking at the file tree now", item_id="item-1")  # same item grows -> in place
+    await emit("Writing the SCQA section", item_id="item-2")       # new item -> append
+    await emit("Final plan ready", item_id="item-3", event_type="plan")
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    key = "codex::native-thread-1::turn-1"
+    steps = snapshot.recent_native_turn_reasoning[key]
+    assert [s.text for s in steps] == [
+        "Looking at the file tree now",
+        "Writing the SCQA section",
+        "Final plan ready",
+    ]
+    assert steps[0].item_id == "item-1"
+    assert steps[-1].kind == "plan"
+
+
+@pytest.mark.anyio
+async def test_codex_turn_event_skips_steps_without_item_id():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        client_request_id="client-text-1",
+        text="do the thing",
+        status="accepted",
+        created_at="2026-05-30T08:00:00+00:00",
+    )
+    await session.blackboard.put_outbound_turn_request(request)
+
+    async def emit(text, *, item_id):
+        await session.handle_codex_turn_event(
+            CodexTurnEventMessage(
+                request_id="out-turn-1",
+                node_id="node-forge",
+                target_persona_id="forge",
+                target_thread_id="thread-1",
+                event_type="progress",
+                message=text,
+                executor_thread_id="native-thread-1",
+                executor_turn_id="turn-1",
+                metadata={"codex_item_id": item_id},
+            )
+        )
+
+    await emit("Direct instruction sent to Codex.", item_id="")   # dispatch marker -> skipped
+    await emit("Reading the spec", item_id="msg-1")               # real step -> recorded
+    await emit("Writing the code", item_id="msg-2")               # real step -> recorded
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    steps = snapshot.recent_native_turn_reasoning["codex::native-thread-1::turn-1"]
+    assert [s.text for s in steps] == ["Reading the spec", "Writing the code"]
+    assert all(s.item_id for s in steps)
+
+
+@pytest.mark.anyio
+async def test_native_reasoning_projection_bounds_steps_and_truncates_text():
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        client_request_id="client-text-1",
+        text="do the thing",
+        status="accepted",
+        created_at="2026-05-30T08:00:00+00:00",
+    )
+    await session.blackboard.put_outbound_turn_request(request)
+
+    # 12 distinct items, each with very long text
+    for i in range(12):
+        await session.handle_codex_turn_event(
+            CodexTurnEventMessage(
+                request_id="out-turn-1",
+                node_id="node-forge",
+                target_persona_id="forge",
+                target_thread_id="thread-1",
+                event_type="progress",
+                message="x" * 500,
+                executor_thread_id="native-thread-1",
+                executor_turn_id="turn-1",
+                metadata={"codex_item_id": f"item-{i}"},
+            )
+        )
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    steps = snapshot.recent_native_turn_reasoning["codex::native-thread-1::turn-1"]
+    # projection caps at 8 steps per turn
+    assert len(steps) == 8
+    # each step text truncated to 280 chars
+    assert all(len(s.text) == 280 for s in steps)
+
+
+@pytest.mark.anyio
+async def test_native_plan_answer_records_user_turn(monkeypatch: pytest.MonkeyPatch):
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    await session.blackboard.put_persona(
+        Persona(
+            persona_id="forge",
+            name="Forge",
+            avatar="bro",
+            base_prompt="",
+            executor_node_id="node-forge",
+            bro_detail_session_id="detail-forge",
+        )
+    )
+    await session.blackboard.put_task(
+        Task(
+            task_id="task-placeholder",
+            root_task_id="task-placeholder",
+            title="Done",
+            goal="Done",
+            status=TaskStatus.COMPLETED,
+            preferred_executor="codex",
+            metadata={"persona_id": "forge"},
+        )
+    )
+    await session.blackboard.put_session(
+        RuntimeExecutionSession(
+            execution_session_id="exec-1",
+            task_id="task-placeholder",
+            base_executor_id="codex",
+            executor_node_id="node-forge",
+            continuity_key="thread-1",
+            latest_resume_handle=AgentResumeHandle(
+                executor_id="codex",
+                session_handle="codex-thread-1",
+            ),
+        )
+    )
+    await session.blackboard.put_outbound_turn_request(
+        OutboundTurnRequest(
+            request_id="out-turn-q",
+            persona_id="forge",
+            executor_node_id="node-forge",
+            target_thread_id="exec-1",
+            text="Plan it",
+            plan_mode=True,
+            status="accepted",
+        )
+    )
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-q",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="exec-1",
+            event_type="blocked",
+            message="Pick the report style.",
+            metadata={
+                "thread_id": "native-thread-1",
+                "prompt": "Pick the report style.",
+                "interaction_kind": "plan_proposal",
+                "blocked_method": "item/completed:plan",
+                "proposal": {
+                    "summary": "Pick the report style.",
+                    "options": [
+                        {"id": "approved_codex_plan", "label": "Run proposed plan", "letter": "A"},
+                    ],
+                },
+            },
+        )
+    )
+    pending = await session.blackboard.list_interaction_requests()
+    assert len(pending) == 1
+    interaction_request_id = pending[0].request_id
+
+    async def fake_supply(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(session.executor_node_manager, "supply_interaction_response", fake_supply)
+
+    await session.resolve_interaction_request(
+        interaction_request_id,
+        action="approve",
+        option_id="approved_codex_plan",
+        client_request_id="plan-answer-1",
+        user_visible_text="Style: Product brief; Language: English",
+    )
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    answer_turns = [
+        t
+        for t in snapshot.bro_timeline_turns
+        if t.user is not None and t.user.text == "Style: Product brief; Language: English"
+    ]
+    assert len(answer_turns) == 1
+    assert answer_turns[0].client_request_id == "plan-answer-1"
+    assert answer_turns[0].created_at is not None
+    assert answer_turns[0].thread_id == "exec-1"
+    assert answer_turns[0].persona_id == "forge"

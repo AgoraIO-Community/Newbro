@@ -78,6 +78,7 @@ from .execution_mode import TaskExecutionMode
 from .interaction import AttentionItem, InteractionRequest
 from .interruption import Interruption
 from .mutation import TaskMutation
+from .native_reasoning import NativeReasoningStep
 from .notification import NotificationCandidate
 from .persona import Persona
 from .run import ExecutionRun
@@ -157,6 +158,7 @@ __all__ = [
     "Interruption",
     "InterruptionType",
     "MutationType",
+    "NativeReasoningStep",
     "NotificationCandidate",
     "NotificationCandidateType",
     "NotificationDeliveryStatus",

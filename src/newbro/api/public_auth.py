@@ -6,6 +6,8 @@ import hmac
 import os
 import secrets
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -67,10 +69,21 @@ class PublicAuthStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        # `with conn:` only manages the transaction (commit/rollback); it does NOT
+        # close the connection. Closing in `finally` releases the file descriptor
+        # deterministically instead of leaking it until cycle-GC reaps the
+        # Connection/Cursor reference cycle -- which under load exhausts the
+        # worker's open-file limit and surfaces as "unable to open database file".
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self._path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _init_db(self) -> None:
         with self._connect() as conn:

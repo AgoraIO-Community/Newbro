@@ -896,9 +896,8 @@ describe("Newbro artboard shell", () => {
       });
     });
     await waitFor(() => {
-      expect(screen.getAllByText("Imported request").length).toBeGreaterThanOrEqual(2);
+      expect(screen.getAllByText("Imported request").length).toBeGreaterThanOrEqual(1);
     });
-    expect(screen.getAllByText("Imported request").some((node) => node.closest(".dt-status-title"))).toBe(true);
     const importedRequestBubble = screen
       .getAllByText("Imported request")
       .find((node) => node.closest(".dt-turn-you"));
@@ -906,9 +905,10 @@ describe("Newbro artboard shell", () => {
     expect(
       within(importedRequestBubble!.closest(".dt-turn-you") as HTMLElement).getByText("Plan mode"),
     ).toBeInTheDocument();
+    // The assistant reply now renders as a conversational answer bubble, not a task card.
     const response = screen.getByText("Fetched history response.");
     expect(response).toBeInTheDocument();
-    expect(response.closest(".dt-status")).not.toBeNull();
+    expect(response.closest(".dt-bubble-answer")).not.toBeNull();
     expect(screen.getAllByText("You").length).toBeGreaterThanOrEqual(1);
   });
 
@@ -1036,6 +1036,215 @@ describe("Newbro artboard shell", () => {
     expect(screen.getAllByText("recorded follow-up").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Audio handled.")).toBeInTheDocument();
     expect(screen.getByLabelText("Message")).not.toBeDisabled();
+  });
+
+  it("shows visible steps for a settled native codex turn", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "codex-import-history",
+        executor_turn_id: "turn-r1",
+        executor_thread_id: "native-r1",
+        userText: "Make the report",
+        assistantText: "Done — report written.",
+      }),
+    ] as any;
+    (snapshot as any).recent_native_turn_reasoning = {
+      "codex::native-r1::turn-r1": [
+        { item_id: "i1", text: "Reading the spec", kind: "progress", created_at: "t1" },
+        { item_id: "i2", text: "Writing the section", kind: "progress", created_at: "t2" },
+      ],
+    };
+    const importedThread = {
+      thread_id: "codex-import-history",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: null,
+      status: "completed",
+      title: "Imported Codex thread",
+      preview: "Remote history",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-native-history" },
+    };
+    snapshot.bro_threads = [importedThread] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-history");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    // Two steps render visibly with no toggle and no "Reasoned" pill.
+    expect(await screen.findByText("Reading the spec")).toBeInTheDocument();
+    expect(screen.getByText("Writing the section")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reasoned/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Show all/i })).toBeNull();
+  });
+
+  it("collapses to the last 3 steps with a Show all toggle", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "codex-import-history",
+        executor_turn_id: "turn-r4",
+        executor_thread_id: "native-r4",
+        userText: "Make the report",
+        assistantText: "Done — report written.",
+      }),
+    ] as any;
+    (snapshot as any).recent_native_turn_reasoning = {
+      "codex::native-r4::turn-r4": [
+        { item_id: "i1", text: "Reading the spec", kind: "progress", created_at: "t1" },
+        { item_id: "i2", text: "Mapping the files", kind: "progress", created_at: "t2" },
+        { item_id: "i3", text: "Writing the section", kind: "progress", created_at: "t3" },
+        { item_id: "i4", text: "Verifying output", kind: "progress", created_at: "t4" },
+      ],
+    };
+    const importedThread = {
+      thread_id: "codex-import-history",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: null,
+      status: "completed",
+      title: "Imported Codex thread",
+      preview: "Remote history",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-native-history" },
+    };
+    snapshot.bro_threads = [importedThread] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-history");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    // Last 3 visible by default; the earliest is hidden behind the toggle.
+    expect(await screen.findByText("Mapping the files")).toBeInTheDocument();
+    expect(screen.getByText("Writing the section")).toBeInTheDocument();
+    expect(screen.getByText("Verifying output")).toBeInTheDocument();
+    expect(screen.queryByText("Reading the spec")).toBeNull();
+
+    const showAll = screen.getByRole("button", { name: /Show all 4 steps/i });
+    fireEvent.click(showAll);
+    expect(screen.getByText("Reading the spec")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Hide steps/i })).toBeInTheDocument();
+  });
+
+  it("does not repeat the answer message as a step", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    const turn = timelineTurn({
+      thread_id: "codex-import-history",
+      executor_turn_id: "turn-d1",
+      executor_thread_id: "native-d1",
+      userText: "Make the report",
+      assistantText: "Writing the section",
+    }) as any;
+    turn.assistant.metadata = { ...turn.assistant.metadata, codex_item_id: "i2" };
+    snapshot.bro_timeline_turns = [turn] as any;
+    (snapshot as any).recent_native_turn_reasoning = {
+      "codex::native-d1::turn-d1": [
+        { item_id: "i1", text: "Reading the spec", kind: "progress", created_at: "t1" },
+        { item_id: "i2", text: "Writing the section", kind: "progress", created_at: "t2" },
+      ],
+    };
+    const importedThread = {
+      thread_id: "codex-import-history",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: null,
+      status: "completed",
+      title: "Imported Codex thread",
+      preview: "Remote history",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-native-history" },
+    };
+    snapshot.bro_threads = [importedThread] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-history");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    // The non-matching step still renders.
+    expect(await screen.findByText("Reading the spec")).toBeInTheDocument();
+    // "Writing the section" is the answer; the matching step is dropped, so it appears once.
+    expect(screen.getAllByText("Writing the section")).toHaveLength(1);
+  });
+
+  it("streams reasoning for a running native codex turn", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "codex-import-history",
+        executor_turn_id: "turn-r2",
+        executor_thread_id: "native-r2",
+        userText: "Make the report",
+        status: "running",
+      }),
+    ] as any;
+    (snapshot as any).recent_native_turn_reasoning = {
+      "codex::native-r2::turn-r2": [
+        { item_id: "s1", text: "Scanning the repo", kind: "progress", created_at: "t1" },
+        { item_id: "s2", text: "Drafting the outline", kind: "progress", created_at: "t2" },
+      ],
+    };
+    const importedThread = {
+      thread_id: "codex-import-history",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: null,
+      status: "completed",
+      title: "Imported Codex thread",
+      preview: "Remote history",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-native-history" },
+    };
+    snapshot.bro_threads = [importedThread] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-history");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Drafting the outline")).toBeInTheDocument();
+    expect(screen.getByText("Scanning the repo")).toBeInTheDocument();
+    expect(document.querySelector(".dt-bubble-reason")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: /Reasoned/i })).toBeNull();
   });
 
   it("renders urls in imported user messages as links inside user bubbles", async () => {
@@ -1957,7 +2166,7 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    await screen.findByText("Review the unique explicit implement plan before execution.");
+    await screen.findByText("Final plan.");
     expect(screen.queryByRole("radiogroup", { name: /Plan options/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /Run proposed plan/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Confirm$/ })).not.toBeInTheDocument();
@@ -2008,7 +2217,9 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    expect((await screen.findAllByText("Refining proposal")).length).toBeGreaterThan(0);
+    // Turn carries no assistant text, so it renders as just the user message — and crucially
+    // not as a "refining / keep planning" proposal card.
+    expect((await screen.findAllByText("Draft a plan.")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Kept planning · refining")).not.toBeInTheDocument();
     expect(screen.queryByText("Review the unique denied stale plan before execution.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Keep planning/i })).not.toBeInTheDocument();
@@ -2147,6 +2358,31 @@ describe("Newbro artboard shell", () => {
     expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("renders the codex plan body in the proposal card and drops the generic summary", async () => {
+    const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
+      proposalSummary: "Review the proposed plan before execution.",
+      taskTitle: "Plan task",
+      proposalExtras: {
+        codex_plan: {
+          text: "Product Brief plan",
+          steps: [
+            { step: "Inventory existing variants", status: "pending" },
+            { step: "Write the Product Brief report", status: "pending" },
+          ],
+        },
+      },
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Inventory existing variants")).toBeInTheDocument();
+    expect(screen.getByText("Write the Product Brief report")).toBeInTheDocument();
+    expect(screen.queryByText("Review the proposed plan before execution.")).not.toBeInTheDocument();
+  });
+
   it("renders inline plan proposals after the result card for the same turn", async () => {
     const snapshot = planProposalThreadSnapshot("session-existing", "pending", {
       proposalSummary: "Review the unique ordered inline plan before execution.",
@@ -2168,7 +2404,7 @@ describe("Newbro artboard shell", () => {
     const userTurn = userText!.closest(".dt-turn-you") as HTMLElement;
     expect(within(userTurn).getByText("Plan mode")).toBeInTheDocument();
     const proposalTurn = screen.getByText("Review the unique ordered inline plan before execution.").closest(".dt-turn-plan") as HTMLElement;
-    const resultCard = screen.getByText("Unique ordered plan task").closest(".dt-status") as HTMLElement;
+    const resultCard = screen.getByText("Unique ordered task result.").closest(".dt-turn-bro") as HTMLElement;
 
     expect(userTurn.compareDocumentPosition(resultCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(resultCard.compareDocumentPosition(proposalTurn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

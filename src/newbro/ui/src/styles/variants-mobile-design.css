@@ -3067,9 +3067,9 @@
   cursor: pointer;
 }
 .plan-tab-on {
-  color: var(--nb-coral-hover);
-  border-color: var(--nb-coral-border);
-  background: var(--nb-coral-tint);
+  color: var(--nb-info-ink);
+  border-color: var(--nb-info-edge);
+  background: var(--nb-info-soft);
 }
 .plan-tab-done {
   color: var(--nb-live-ink);
