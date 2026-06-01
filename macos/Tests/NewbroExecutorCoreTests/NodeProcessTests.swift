@@ -59,6 +59,23 @@ final class NodeProcessTests: XCTestCase {
         XCTAssertFalse(proc.isRunning)
     }
 
+    func testStopDeliversExitBeforeReturning() {
+        // After stop() returns, onExit must already have fired, so restart can
+        // safely start a fresh run without racing a late exit callback.
+        let exitedFlag = Box<Bool>(false)
+        let proc = NodeProcess(
+            argv: ["/bin/sh", "-c", "printf '[start] up\\n'; while true; do sleep 0.1; done"],
+            onLine: { _ in },
+            onExit: { _ in exitedFlag.mutate { $0 = true } }
+        )
+        proc.start()
+        let deadline = Date().addingTimeInterval(5)
+        while !proc.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+        proc.stop()
+        XCTAssertTrue(exitedFlag.value)
+        XCTAssertFalse(proc.isRunning)
+    }
+
     func testStopTerminatesLongRunner() {
         let started = expectation(description: "started")
         started.assertForOverFulfill = false

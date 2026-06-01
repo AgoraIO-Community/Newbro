@@ -28,9 +28,13 @@ public struct LoginItem {
     }
 
     public func install() throws {
+        let plist = renderPlist()
+        guard !plist.isEmpty, let data = plist.data(using: .utf8) else {
+            throw CocoaError(.propertyListWriteStream)
+        }
         try FileManager.default.createDirectory(
             at: plistPath.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try renderPlist().data(using: .utf8)!.write(to: plistPath)
+        try data.write(to: plistPath)
     }
 
     public func remove() throws {

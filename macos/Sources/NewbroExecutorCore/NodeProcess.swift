@@ -78,15 +78,22 @@ public final class NodeProcess: NodeProcessProtocol {
     }
 
     public func stop(timeout: TimeInterval = 5.0) {
-        guard let proc = process, proc.isRunning else { return }
-        proc.terminate()
-        let deadline = Date().addingTimeInterval(timeout)
-        while proc.isRunning && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
+        if let proc = process, proc.isRunning {
+            proc.terminate()
+            let deadline = Date().addingTimeInterval(timeout)
+            while proc.isRunning && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if proc.isRunning {
+                kill(proc.processIdentifier, SIGKILL)
+                proc.waitUntilExit()
+            }
         }
-        if proc.isRunning {
-            kill(proc.processIdentifier, SIGKILL)
-            proc.waitUntilExit()
+        // Block until the reader queue has drained output and delivered onExit,
+        // so callers (e.g. restart) observe a fully settled state and never race
+        // a late onExit against a fresh start.
+        if process != nil {
+            queue.sync {}
         }
     }
 }
