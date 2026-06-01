@@ -35,6 +35,8 @@ final class AppModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &cancellables)
+        // Start auto-activate profiles at launch (login-item or manual).
+        autostart()
     }
 
     func refreshRuntime() { runtimeAvailable = locator.isRuntimeAvailable }
