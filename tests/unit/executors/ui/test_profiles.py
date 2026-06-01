@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from newbro.executors.ui.profiles import Profile, ProfileStore
+import pytest
+
+from newbro.executors.ui.profiles import (
+    ConnectCommandFields,
+    Profile,
+    ProfileStore,
+    conflicting_profile_ids,
+    parse_connect_command,
+)
 
 
 def test_save_then_load_round_trips_profiles(tmp_path):
@@ -30,15 +38,6 @@ def test_save_then_load_round_trips_profiles(tmp_path):
 def test_load_missing_file_returns_empty_list(tmp_path):
     store = ProfileStore(path=tmp_path / "does-not-exist.json")
     assert store.load() == []
-
-
-import pytest
-
-from newbro.executors.ui.profiles import (
-    ConnectCommandFields,
-    conflicting_profile_ids,
-    parse_connect_command,
-)
 
 
 def test_parse_connect_command_extracts_fields():
