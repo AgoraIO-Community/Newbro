@@ -183,6 +183,18 @@ mobile. Today its `TaskRecordCard` would show a plan/progress card. This matches
 desktop, which renders nothing in that case
 (`!mobile && isTurnSettled && (answerText || settledReasoningSteps.length > 0)`).
 
+**Verified against desktop.** `TimelineTurnView` has exactly one bro-side settled
+render (the desktop `DTAnswerBubble` at `ArtboardShell.tsx:1294`), gated on
+`answerText || settledReasoningSteps.length > 0`. There is no desktop `TaskRecordCard`
+here — the only `TaskRecordCard` (line `1317`) is `mobile`-gated. So when both
+`answerText` and the step list are empty, desktop already renders nothing on the bro
+side (just the user message and any plan proposal). The change makes mobile do the
+same; it is not a new rule.
+
+This state is rare: `answerText` falls back through `turn.assistant` text →
+`record.summary` → `record.description`, so a settled turn is "empty" only when all of
+those are blank.
+
 ## Testing (`__tests__/App.test.tsx`)
 
 A desktop test already exists: *"collapses to the last 3 steps with a Show all toggle"*
