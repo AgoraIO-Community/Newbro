@@ -18,6 +18,7 @@ public final class ProfileSupervisor: ObservableObject {
         var process: NodeProcessProtocol?
         let parser = StatusParser()
         var expectedStop = false
+        var exited = false
         let log: ProfileLogging?
         init(profile: Profile, log: ProfileLogging?) {
             self.profile = profile
@@ -62,6 +63,9 @@ public final class ProfileSupervisor: ObservableObject {
         lock.lock()
         guard let record = records[profileID] else { lock.unlock(); return }
         record.expectedStop = true
+        // If the process already exited (e.g. an errored record kept for the UI),
+        // reclaim it now — stopping a dead process won't re-fire handleExit.
+        if record.exited { records.removeValue(forKey: profileID) }
         let process = record.process
         lock.unlock()
         process?.stop(timeout: 5.0)
@@ -115,6 +119,7 @@ public final class ProfileSupervisor: ObservableObject {
             records.removeValue(forKey: profileID)
         } else {
             record.parser.onExit(code: code, expected: false)
+            record.exited = true
         }
         lock.unlock()
         notifyChange()

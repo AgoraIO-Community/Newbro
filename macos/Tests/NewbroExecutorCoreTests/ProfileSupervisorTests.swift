@@ -76,6 +76,16 @@ final class ProfileSupervisorTests: XCTestCase {
         XCTAssertTrue(created.allSatisfy { $0.stopped })
     }
 
+    func testStopOnErroredProfileDropsRecord() {
+        let sup = makeSupervisor()
+        sup.start(profile())
+        created[0].onExit(1)  // unexpected exit → error, record kept for the UI
+        XCTAssertEqual(sup.status(of: "p1"), .error)
+        XCTAssertEqual(sup.activeIDs(), Set(["p1"]))
+        sup.stop("p1")        // process already exited → record reclaimed now
+        XCTAssertEqual(sup.activeIDs(), [])
+    }
+
     func testLogFactoryReceivesLines() {
         final class FakeLog: ProfileLogging {
             private(set) var lines: [String] = []
