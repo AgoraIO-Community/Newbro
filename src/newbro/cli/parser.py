@@ -83,6 +83,10 @@ def build_parser(
     executor_parser = subparsers.add_parser("executor", help="Configure and run the detached executor node.")
     executor_subparsers = executor_parser.add_subparsers(dest="executor_command", required=True)
     executor_subparsers.add_parser("setup", help="Interactively configure the detached executor node.")
+    executor_subparsers.add_parser(
+        "ui",
+        help="Launch the macOS menu-bar executor app (requires the 'macos-ui' extra).",
+    )
     executor_run_parser = executor_subparsers.add_parser(
         "run",
         help="Run the detached executor node. Requires --base-url, --node-id, and --token.",

@@ -76,6 +76,10 @@ def cmd_executor(args: Any, app: Any) -> int:
         return setup_command.run_executor_setup(args, cli_factories.setup_context(app), cli_factories.setup_callbacks(app))
     if args.executor_command == "run":
         return run_command.run_executor(args, cli_factories.run_context(app), cli_factories.run_callbacks(args, app))
+    if args.executor_command == "ui":
+        from newbro.cli.commands import executor_ui as executor_ui_command
+
+        return executor_ui_command.run_executor_ui()
     raise app.CliError(f"Unknown executor command: {args.executor_command}")
 
 
