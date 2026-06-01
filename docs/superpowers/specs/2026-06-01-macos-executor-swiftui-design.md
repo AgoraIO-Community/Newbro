@@ -24,17 +24,17 @@ and its CLI/packaging wiring are removed.
   rumps version: multiple concurrent node profiles, run/stop/restart, live
   status, paste-connect-command, add/edit/delete, auto-activate, view logs,
   launch at login.
-- Zero configuration to run the node: the node command is baked at build time;
-  if the runtime is missing the app self-heals via the repo's `./install.sh`.
+- Zero configuration to run the node: the app resolves the standard
+  `uv`-installed `newbro` CLI (no repo coupling, no baked paths); if `newbro` is
+  missing, the app self-heals by running the public install script.
 - Keep node/protocol logic in the Python node; the app is a supervisor + editor.
 - Build and unit-test headlessly with the installed Swift toolchain (no Xcode
   project files, no GUI required for tests).
 
 ## Non-Goals
 
-- Bundling a self-contained Python runtime in the `.app` (the app assumes
-  `newbro` is installed on machines where it runs; it offers one-click install
-  if not).
+- Bundling a self-contained Python runtime in the `.app` (the app resolves the
+  externally-installed `newbro` CLI; it offers one-click install if missing).
 - Code signing / notarization / distribution outside the build machine (V1 is
   local, unsigned).
 - Re-implementing or changing the node (`newbro executor run`) behavior.
@@ -43,15 +43,20 @@ and its CLI/packaging wiring are removed.
 ## Resolved Decisions (from brainstorming)
 
 - **Logic home:** Swift owns everything; the Python `ui/` package is deleted.
-- **Node invocation:** the existing `newbro.executors.node` CLI, one subprocess
-  per active profile, several concurrent.
-- **Zero-config runtime:** node command + repo path + install-script path are
-  baked into the app at build time; missing runtime → "Install runtime…" runs
-  `./install.sh`, then re-checks; clear error if that fails. A hidden override
-  exists but is not required.
+- **Node invocation:** the public `newbro executor run …` CLI, one subprocess
+  per active profile, several concurrent. (`newbro executor run` itself launches
+  the `newbro.executors.node` process and forwards its status lines.)
+- **Zero-config runtime:** the app resolves the `newbro` executable at runtime
+  (override → `~/.local/bin/newbro` (the `uv tool install` location) →
+  login-shell `command -v newbro`); no repo path or venv is baked. Missing
+  runtime → "Install runtime…" runs the public install script
+  (`curl -fsSL <install-newbro-cli.sh> | sh`, which installs `uv` and
+  `uv tool install newbro-cli`), then re-resolves; clear error if that fails. A
+  hidden override exists but is not required.
 - **Build:** Swift Package under `macos/`, `swift build`, plus a `package-app.sh`
   that assembles a `Newbro Executor.app` bundle (menu-bar only via `LSUIElement`
-  + `setActivationPolicy(.accessory)`).
+  + `setActivationPolicy(.accessory)`). The bundle is repo-independent and
+  portable.
 - **macOS 14+** deployment target.
 - **Login item** points at `Bundle.main.bundlePath` (runs from any location).
 - **Unsigned, local V1.** Reuse `~/.newbro/menubar.json`. No custom icon.
@@ -74,15 +79,17 @@ macos/
 ```
 Newbro Executor.app  (MenuBarExtra, .accessory)
   ProfileSupervisor (ObservableObject, @Published)
-     ├─ per active profile: NodeProcess  ──▶ Process: <node_command>
+     ├─ per active profile: NodeProcess  ──▶ Process: <newbro> executor run
      │                       StatusParser              --base-url … --node-id …
      │                       ProfileLog                --token … --enabled-executor …
-  ProfileStore  ── ~/.newbro/menubar.json
-  RuntimeLocator ── Resources/runtime.json  (node_command, repo_path, install_script)
+  ProfileStore   ── ~/.newbro/menubar.json
+  RuntimeLocator ── resolves `newbro` (override → ~/.local/bin/newbro →
+     │                login-shell which); install via public install-newbro-cli.sh
   LoginItem  ── ~/Library/LaunchAgents/com.newbro.executor-ui.plist
         │ subprocess stdout/stderr (status lines)
         ▼
-  newbro.executors.node  ── outbound WS /api/executors/control  (unchanged)
+  newbro executor run → newbro.executors.node
+        ── outbound WS /api/executors/control  (unchanged)
 ```
 
 ### Boundary principle
@@ -136,10 +143,15 @@ owns its own reconnection. Process spawning is injected (a factory) so tests use
 a fake.
 
 ### `RuntimeLocator`
-Reads `Resources/runtime.json` (`node_command: [String]`, `repo_path`,
-`install_script`). `isRuntimeAvailable` checks `node_command[0]` exists.
-`nodeArgv(for: Profile)` builds the full argv. `runInstall()` runs
-`install_script`, streaming output, then re-checks. Holds the optional override.
+Resolves the `newbro` executable with no baked repo path: an optional override
+(stored in `UserDefaults`), then `~/.local/bin/newbro` (the `uv tool install`
+location), then a login-shell `command -v newbro`. `isRuntimeAvailable` is true
+when a resolved path exists. `nodeArgv(for: Profile)` builds
+`[newbro, "executor", "run", "--base-url", …, "--node-id", …, "--token", …]`
+plus `--enabled-executor` for each enabled family. `runInstall()` runs the
+public install script
+(`curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh`),
+streaming output, then re-resolves.
 
 ### `LoginItem`
 Renders/installs/removes
@@ -170,22 +182,20 @@ tails the file (works for stopped profiles).
 ## Build & Packaging
 
 - `swift build -c release` builds the `NewbroExecutor` executable.
-- `macos/package-app.sh`:
-  1. Resolve the node command from the building repo: prefer
-     `<repo>/.venv/bin/python -m newbro.executors.node`; verify it imports.
-     **Fail loudly** (`install newbro first: ./install.sh`) if it can't.
-  2. `swift build -c release`.
-  3. Assemble `macos/dist/Newbro Executor.app/Contents/{Info.plist, MacOS/,
-     Resources/runtime.json}`; copy the binary; write `Info.plist`
+- `macos/package-app.sh` (repo-independent — bakes nothing):
+  1. `swift build -c release`.
+  2. Assemble `macos/dist/Newbro Executor.app/Contents/{Info.plist, MacOS/}`;
+     copy the binary; write `Info.plist`
      (`CFBundleIdentifier=com.newbro.executor-ui`, `LSUIElement=true`,
-     bundle name/version) and `runtime.json` (node_command, repo_path,
-     install_script).
+     bundle name/version).
+- The install-script URL and the `newbro` resolution candidates are constants in
+  `NewbroExecutorCore` (no per-build configuration).
 - macOS 14 platform in `Package.swift`.
 
 ## Data Flow
 
 1. Launch → `setActivationPolicy(.accessory)`; `ProfileStore.load`;
-   `RuntimeLocator` check.
+   `RuntimeLocator` resolves `newbro`.
 2. Auto-start every profile with `autoActivate == true` that passes the
    completeness check and has an available runtime.
 3. Each `NodeProcess` streams lines → `StatusParser` updates the profile's
@@ -198,8 +208,10 @@ tails the file (works for stopped profiles).
 
 ## Error Handling
 
-- **Runtime missing** → "Node runtime not found" + tried path + "Install
-  runtime…" (`./install.sh`); clear failure message, no silent fallback.
+- **Runtime missing** (`newbro` not resolvable) → "Node runtime not found" +
+  the candidate paths tried + "Install runtime…" (runs the public
+  `install-newbro-cli.sh` via `curl … | sh`, then re-resolves); clear failure
+  message, no silent fallback.
 - **Incomplete executor setup** (no codex/acpx binary) → native alert pointing
   to `newbro executor setup` in a terminal.
 - **Bad node id/token** → persistent connecting/retrying state. The node service
@@ -227,8 +239,9 @@ Errors are per profile; one failing profile never disturbs another.
   assert line capture + exit code; assert `stop()` terminates a long-runner.
 - `ProfileSupervisor` — injected fake process factory: concurrent start/stop,
   per-profile independence, aggregate, stopAll.
-- `RuntimeLocator` — `runtime.json` parse; existence check present/missing;
-  `nodeArgv` shape.
+- `RuntimeLocator` — resolution order (override > `~/.local/bin/newbro` >
+  login-shell) against temp paths; present/missing detection; `nodeArgv` shape
+  (`executor run --base-url … --node-id … --token … --enabled-executor …`).
 - `LoginItem` — plist render contains label + app path; install→remove in a
   temp dir.
 
@@ -251,8 +264,12 @@ SwiftUI views hold no logic and are verified manually (`swift build` + launch).
 ## Open Risks / Notes
 
 - The app depends on `newbro` being installed where it runs; the install
-  self-heal covers the missing case but the per-executor binaries still need a
-  one-time `newbro executor setup`.
+  self-heal (`install-newbro-cli.sh` → `uv tool install newbro-cli`, landing at
+  `~/.local/bin/newbro`) covers the missing case, but the per-executor binaries
+  still need a one-time `newbro executor setup`.
+- `newbro executor run` requires the local executor runtime config; launched
+  non-interactively from the app, an incomplete config surfaces as the
+  "needs setup" alert rather than a TTY setup prompt.
 - Reusing `~/.newbro/menubar.json` means profiles created by the rumps version
   carry over unchanged.
 - Unsigned local builds may trigger a Gatekeeper prompt on first launch; opening
