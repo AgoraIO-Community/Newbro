@@ -30,3 +30,41 @@ def test_save_then_load_round_trips_profiles(tmp_path):
 def test_load_missing_file_returns_empty_list(tmp_path):
     store = ProfileStore(path=tmp_path / "does-not-exist.json")
     assert store.load() == []
+
+
+import pytest
+
+from newbro.executors.ui.profiles import (
+    ConnectCommandFields,
+    conflicting_profile_ids,
+    parse_connect_command,
+)
+
+
+def test_parse_connect_command_extracts_fields():
+    text = (
+        "newbro executor run --base-url https://synopse.example.com "
+        "--node-id node-1a2b --token tok-xyz "
+        "--enabled-executor codex --enabled-executor acpx"
+    )
+    fields = parse_connect_command(text)
+    assert fields == ConnectCommandFields(
+        base_url="https://synopse.example.com",
+        node_id="node-1a2b",
+        token="tok-xyz",
+        enabled_executors=["codex", "acpx"],
+    )
+
+
+def test_parse_connect_command_requires_core_fields():
+    with pytest.raises(ValueError):
+        parse_connect_command("newbro executor run --base-url https://x --node-id n")
+
+
+def test_conflicting_profile_ids_flags_same_node_and_url():
+    profiles = [
+        Profile(id="a", label="A", base_url="https://x", node_id="n1", token="t"),
+        Profile(id="b", label="B", base_url="https://x", node_id="n1", token="t2"),
+        Profile(id="c", label="C", base_url="https://x", node_id="n2", token="t3"),
+    ]
+    assert conflicting_profile_ids(profiles) == {"a", "b"}

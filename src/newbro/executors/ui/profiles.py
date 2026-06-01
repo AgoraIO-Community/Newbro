@@ -23,6 +23,53 @@ class Profile:
     auto_activate: bool = False
 
 
+@dataclass(slots=True)
+class ConnectCommandFields:
+    base_url: str
+    node_id: str
+    token: str
+    enabled_executors: list[str] = field(default_factory=list)
+
+
+def parse_connect_command(text: str) -> ConnectCommandFields:
+    tokens = shlex.split(text)
+    base_url = node_id = token = ""
+    enabled: list[str] = []
+    index = 0
+    while index < len(tokens):
+        flag = tokens[index]
+        if flag in {"--base-url", "--node-id", "--token", "--enabled-executor"} and index + 1 < len(tokens):
+            value = tokens[index + 1]
+            if flag == "--base-url":
+                base_url = value
+            elif flag == "--node-id":
+                node_id = value
+            elif flag == "--token":
+                token = value
+            else:
+                enabled.append(value)
+            index += 2
+            continue
+        index += 1
+    missing = [name for name, value in (("--base-url", base_url), ("--node-id", node_id), ("--token", token)) if not value]
+    if missing:
+        raise ValueError(f"connect command is missing required fields: {', '.join(missing)}")
+    return ConnectCommandFields(base_url=base_url, node_id=node_id, token=token, enabled_executors=enabled)
+
+
+def conflicting_profile_ids(profiles: list[Profile]) -> set[str]:
+    seen: dict[tuple[str, str], str] = {}
+    conflicts: set[str] = set()
+    for profile in profiles:
+        key = (profile.base_url, profile.node_id)
+        if key in seen:
+            conflicts.add(seen[key])
+            conflicts.add(profile.id)
+        else:
+            seen[key] = profile.id
+    return conflicts
+
+
 class ProfileStore:
     def __init__(self, *, path: Path = MENUBAR_CONFIG_FILE) -> None:
         self._path = path
