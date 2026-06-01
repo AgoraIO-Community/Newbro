@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -197,6 +198,69 @@ async def test_direct_ptt_selected_imported_thread_does_not_create_task_before_e
 
 
 @pytest.mark.anyio
+async def test_executor_audio_instruction_accepts_valid_pcm_payload_over_default_websocket_limit(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    websocket = FakeWebSocket()
+    sample_count = 600_000
+    pcm16 = b"\x00\x00" * sample_count
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-audio-large")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        runtime_session = app.state.runtime_container.get_session(session_id)
+        await _put_connected_audio_forge(runtime_session, app.state.runtime_container.executor_node_manager, websocket)
+
+        runtime_session._imported_codex_threads["codex-import-audio-large"] = BroThread(
+            thread_id="codex-import-audio-large",
+            persona_id="forge",
+            title="Imported",
+            status="completed",
+            has_resume_handle=True,
+        )
+        runtime_session._imported_codex_thread_resume_handles["codex-import-audio-large"] = AgentResumeHandle(
+            executor_id="codex",
+            session_handle="native-thread-large",
+            opaque={"cwd": "/tmp/work"},
+        )
+
+        post_task = asyncio.create_task(
+            client.post(
+                f"/api/sessions/{session_id}/executor-audio-instructions",
+                params={
+                    "target_persona_id": "forge",
+                    "target_thread_id": "codex-import-audio-large",
+                    "duration_ms": round((sample_count / 24000) * 1000),
+                    "sample_rate": 24000,
+                    "num_channels": 1,
+                    "samples_per_channel": sample_count,
+                },
+                content=pcm16,
+                headers={"Content-Type": "audio/pcm"},
+            )
+        )
+        for _ in range(100):
+            if websocket.sent:
+                break
+            await asyncio.sleep(0.01)
+        assert websocket.sent[0]["type"] == "transcribe_audio_instruction"
+        assert len(json.dumps(websocket.sent[0])) > 1_048_576
+        app.state.runtime_container.executor_node_manager.publish_audio_instruction_transcribed(
+            AudioInstructionTranscribedMessage(
+                request_id=websocket.sent[0]["request_id"],
+                node_id="node-forge",
+                executor_type="codex",
+                transcript_text="continue from large audio",
+                language="en",
+                duration_seconds=25.0,
+            )
+        )
+        response = await post_task
+
+    assert response.status_code == 200
+    assert websocket.sent[1]["type"] == "start_codex_turn"
+
+
+@pytest.mark.anyio
 async def test_executor_audio_upload_rejects_unsupported_mime_type(tmp_path):
     app = create_app()
     app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
@@ -217,6 +281,30 @@ async def test_executor_audio_upload_rejects_unsupported_mime_type(tmp_path):
         )
 
     assert response.status_code == 415
+
+
+@pytest.mark.anyio
+async def test_executor_audio_upload_rejects_pcm_body_size_mismatch(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-audio-mismatch")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        response = await client.post(
+            f"/api/sessions/{session_id}/executor-audio-instructions",
+            params={
+                "target_persona_id": "forge",
+                "duration_ms": 1,
+                "sample_rate": 24000,
+                "num_channels": 1,
+                "samples_per_channel": 24,
+            },
+            content=b"\x00\x00" * 23,
+            headers={"Content-Type": "audio/pcm"},
+        )
+
+    assert response.status_code == 400
+    assert "Audio PCM byte length does not match sample metadata" in response.text
 
 
 @pytest.mark.anyio

@@ -2,11 +2,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import runpy
 import sys
 
 
 ROOT = Path(__file__).resolve().parent
+VENV_PYTHON = ROOT / ".venv" / "bin" / "python"
+VENV_ROOT = ROOT / ".venv"
+
+if VENV_PYTHON.exists() and Path(sys.prefix).resolve() != VENV_ROOT.resolve():
+    os.execv(
+        str(VENV_PYTHON),
+        [str(VENV_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]],
+    )
+
 SRC = ROOT / "src"
 src_str = str(SRC)
 if src_str not in sys.path:

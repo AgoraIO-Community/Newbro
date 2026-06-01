@@ -1036,83 +1036,76 @@ function timelinePlan(value: unknown): BroTaskRecord["plan"] | undefined {
   return { text, explanation, steps };
 }
 
-// Collapsed steps affordance shown on a finished mobile bro turn — the live
-// reasoning stream is gone; tucked behind an expandable pill.
-function ThrReasoned({ steps }: { steps: ReasoningStep[] }) {
-  const [open, setOpen] = React.useState(false);
-  if (steps.length === 0) return null;
-  return (
-    <div className="thr-reasoned">
-      <button
-        type="button"
-        className={`thr-reasoned-toggle${open ? " thr-reasoned-toggle-open" : ""}`}
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-      >
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M4 12.5L10 18L20 6"/>
-        </svg>
-        <span>{open ? "Hide steps" : "Show steps"}</span>
-        <svg className="thr-reasoned-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M6 9l6 6 6-6"/>
-        </svg>
-      </button>
-      {open && (
-        <ol className="thr-reason-steps thr-reason-steps-static">
-          {steps.map((s) => (
-            <li key={s.id} className="thr-reason-step thr-reason-step-done">
-              <span className="thr-reason-mark" aria-hidden="true" />
-              <span className="thr-reason-text">{s.label}</span>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  );
-}
-
-// Settled desktop bro turn — the agent's progress messages shown as compact steps
-// (last 3 by default, with a "Show all N steps" toggle) followed by the final answer.
-function DTAnswerBubble({ bro, steps, answer }: { bro: BroCardModel; steps: ReasoningStep[]; answer: string }) {
+// Settled bro turn (desktop + mobile) — the agent's progress messages shown as
+// compact steps (last 3 by default, with a "Show all N steps" toggle) followed
+// by the final answer. Class names switch between dt-/thr- via the mobile flag.
+function SettledAnswerBubble({
+  bro,
+  steps,
+  answer,
+  mobile = false,
+}: {
+  bro: BroCardModel;
+  steps: ReasoningStep[];
+  answer: string;
+  mobile?: boolean;
+}) {
   const [showAll, setShowAll] = React.useState(false);
   const COLLAPSED = 3;
   const hasMore = steps.length > COLLAPSED;
   const visible = showAll ? steps : steps.slice(-COLLAPSED);
+
+  const turnClass = mobile ? "thr-turn thr-turn-bro" : "dt-turn dt-turn-bro";
+  const bubbleClass = mobile
+    ? "thr-bubble thr-bubble-bro thr-bubble-answer"
+    : "dt-bubble dt-bubble-bro dt-bubble-answer";
+  const collapsedClass = mobile ? "thr-reason-collapsed" : "dt-reason-collapsed";
+  const collapsedOpenClass = mobile ? "thr-reason-collapsed-open" : "dt-reason-collapsed-open";
+  const chevClass = mobile ? "thr-reason-collapsed-chev" : "dt-reason-collapsed-chev";
+  const stepsOlClass = mobile
+    ? "thr-reason-steps thr-reason-steps-static"
+    : "dt-reason-steps dt-reason-steps-static";
+  const stepLiClass = mobile ? "thr-reason-step thr-reason-step-done" : "dt-reason-step dt-reason-step-done";
+  const markClass = mobile ? "thr-reason-mark" : "dt-reason-step-mark";
+  const textClass = mobile ? "thr-reason-text" : "dt-reason-step-text";
+  const answerClass = mobile ? "thr-answer-text" : "dt-answer-text";
+  const metaClass = mobile ? "thr-meta" : "dt-bubble-meta";
+
   return (
-    <div className="dt-turn dt-turn-bro">
-      <div className="dt-bubble dt-bubble-bro dt-bubble-answer">
+    <div className={turnClass}>
+      <div className={bubbleClass}>
         {steps.length > 0 ? (
           <>
             {hasMore ? (
               <button
                 type="button"
-                className={`dt-reason-collapsed${showAll ? " dt-reason-collapsed-open" : ""}`}
+                className={`${collapsedClass}${showAll ? ` ${collapsedOpenClass}` : ""}`}
                 onClick={() => setShowAll((v) => !v)}
                 aria-expanded={showAll}
               >
                 <span>{showAll ? "Hide steps" : `Show all ${steps.length} steps`}</span>
-                <svg className="dt-reason-collapsed-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <svg className={chevClass} viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M6 9l6 6 6-6"/>
                 </svg>
               </button>
             ) : null}
-            <ol className="dt-reason-steps dt-reason-steps-static">
+            <ol className={stepsOlClass}>
               {visible.map((s) => (
-                <li key={s.id} className="dt-reason-step dt-reason-step-done">
-                  <span className="dt-reason-step-mark" aria-hidden="true" />
-                  <span className="dt-reason-step-text">{s.label}</span>
+                <li key={s.id} className={stepLiClass}>
+                  <span className={markClass} aria-hidden="true" />
+                  <span className={textClass}>{s.label}</span>
                 </li>
               ))}
             </ol>
           </>
         ) : null}
         {answer ? (
-          <div className="dt-answer-text">
+          <div className={answerClass}>
             <MarkdownText>{answer}</MarkdownText>
           </div>
         ) : null}
       </div>
-      <div className="dt-bubble-meta">
+      <div className={metaClass}>
         <MessageMeta label={bro.name} />
       </div>
     </div>
@@ -1198,7 +1191,7 @@ function TimelineTurnView({
   const activeRun = taskId
     ? (shell.executionRuns.find((r) => r.task_id === taskId && (r.status === "running" || r.status === "created" || r.status === "waiting_executor")) ?? null)
     : null;
-  // For the settled mobile pill, find any run for this task (including completed).
+  // For settled turns, find any run for this task (including completed runs).
   const anyRun = activeRun ?? (taskId ? (shell.executionRuns.find((r) => r.task_id === taskId) ?? null) : null);
   const details = taskId ? (shell.recentExecutionDetails[taskId] ?? null) : null;
   const nativeReasoningSteps = buildReasoningStepsForNativeTurn(turn, shell.recentNativeTurnReasoning);
@@ -1288,11 +1281,8 @@ function TimelineTurnView({
           <div className="thr-meta">{bro.name} · updating live</div>
         </div>
       ) : null}
-      {mobile && isTurnSettled && settledReasoningSteps.length > 0 ? (
-        <ThrReasoned steps={dedupedSettledSteps} />
-      ) : null}
-      {!mobile && isTurnSettled && (answerText || settledReasoningSteps.length > 0) ? (
-        <DTAnswerBubble bro={bro} steps={dedupedSettledSteps} answer={answerText} />
+      {isTurnSettled && (answerText || dedupedSettledSteps.length > 0) ? (
+        <SettledAnswerBubble bro={bro} steps={dedupedSettledSteps} answer={answerText} mobile={mobile} />
       ) : null}
       {!isTurnSettled && !mobile && reasoningSteps.length === 0 ? (
         <div className="dt-turn dt-turn-bro">
@@ -1314,7 +1304,6 @@ function TimelineTurnView({
           </div>
         </div>
       ) : null}
-      {isTurnSettled && mobile && record ? <TaskRecordCard bro={bro} record={record} mobile={mobile} /> : null}
       {proposalRequests.map((request) => (
         <PlanProposalCard
           key={request.request_id}
@@ -3261,7 +3250,6 @@ function DesktopActivityRail({
   onSelectThread,
   onNewThread,
   onShowMore,
-  offline,
 }: {
   bro: BroCardModel;
   threads: BroThreadRecord[];
@@ -3272,7 +3260,6 @@ function DesktopActivityRail({
   onSelectThread: (threadId: string) => void;
   onNewThread: () => void;
   onShowMore: () => void;
-  offline: ExecutorNodeRecord | null;
 }) {
   const threadList = threads ?? [];
   const hiddenThreadCount = Math.max(0, totalThreadCount - threadList.length);
@@ -3294,7 +3281,6 @@ function DesktopActivityRail({
                     <span>{pendingWorkspaceId ? workspaceNameFromId(pendingWorkspaceId) : "created on first send"}</span>
                   </span>
                 </span>
-                <span className="dt-threadlist-pip" />
               </button>
             </li>
           ) : null}
@@ -3317,7 +3303,6 @@ function DesktopActivityRail({
                     ) : null}
                   </span>
                 </span>
-                <span className={`dt-threadlist-pip${offline ? " dt-threadlist-pip-paused" : ""}`} />
               </button>
             </li>
           ))}
@@ -3581,7 +3566,6 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
             onSelectThread={selectThread}
             onNewThread={newThread}
             onShowMore={() => setThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE)}
-            offline={offline}
           />
           <section className="dt-pane">
             {offline ? (

@@ -61,10 +61,12 @@ Executor-node note:
   the transcript becomes direct executor work. Direct audio must carry explicit
   thread intent, either `target_thread_id` or `create_new_thread=true`; Newbro
   does not fall back to an active or latest thread when that intent is missing.
-  The command payload carries typed audio metadata plus JSON-safe audio content
+  The command payload carries typed audio metadata plus JSON-safe PCM16 content
   and does not require the detached node to read a backend-local filesystem
-  path. With an active run on the resolved thread this uses the run-event path;
-  otherwise it uses a direct transcription request before queuing a Codex task.
+  path. The executor-control websocket limit is explicitly sized for the current
+  60 second / 25 MB audio upload contract after base64 encoding. With an active
+  run on the resolved thread this uses the run-event path; otherwise it uses a
+  direct transcription request before starting a task-free Codex turn.
   `supports_audio_instruction` means the connected node can accept raw audio and
   produce a usable executor instruction. Whisper language defaults to automatic
   detection; foreground executor runs can override language and model with

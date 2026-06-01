@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from newbro.protocol import EXECUTOR_CONTROL_MAX_MESSAGE_BYTES
+
 
 def backend_command(venv_python: Path, host: str, port: int, *, reload: bool) -> list[str]:
     command = [
@@ -13,6 +15,8 @@ def backend_command(venv_python: Path, host: str, port: int, *, reload: bool) ->
         host,
         "--port",
         str(port),
+        "--ws-max-size",
+        str(EXECUTOR_CONTROL_MAX_MESSAGE_BYTES),
     ]
     if reload:
         command.append("--reload")
@@ -29,6 +33,8 @@ def service_command(venv_python: Path, host: str, port: int, *, reload: bool) ->
         host,
         "--port",
         str(port),
+        "--ws-max-size",
+        str(EXECUTOR_CONTROL_MAX_MESSAGE_BYTES),
     ]
     if reload:
         command.append("--reload")

@@ -2242,18 +2242,6 @@
   color: var(--nb-ink-muted);
   letter-spacing: 0;
 }
-.dt-threadlist-pip {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: var(--nb-live);
-  animation: dt-pulse 1.6s ease-in-out infinite;
-  flex-shrink: 0;
-}
-.dt-threadlist-pip-paused {
-  background: var(--nb-warn);
-  animation: none;
-}
-
 .dt-thread-more {
   display: inline-flex; align-items: center; gap: 7px;
   margin-top: 6px;
@@ -3957,7 +3945,6 @@
   .dt-home-chip-info .dt-home-chip-dot,
   .dt-bro-state-info .dt-bro-state-dot,
   .dt-bro-avatar-pip-info,
-  .dt-threadlist-pip,
   .dt-free-led-active,
   .dt-sys-event-spin,
   .dt-status-spin,

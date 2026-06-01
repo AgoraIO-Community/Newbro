@@ -33,6 +33,7 @@ from newbro.protocol import (
     DispatchTextInstructionCommand,
     ExecutorNodeExecutor,
     ExecutorTextInstruction,
+    EXECUTOR_CONTROL_MAX_MESSAGE_BYTES,
     ListCodexThreadsCommand,
     ReadCodexThreadCommand,
     RegisterNodeMessage,
@@ -150,6 +151,7 @@ class ExecutorNodeService:
                     proxy=None,
                     open_timeout=10.0,
                     close_timeout=10.0,
+                    max_size=EXECUTOR_CONTROL_MAX_MESSAGE_BYTES,
                 ) as websocket:
                     await self._send_json(
                         websocket,

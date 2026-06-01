@@ -5,6 +5,7 @@ import importlib
 from pathlib import Path
 
 from newbro.config_home import ConfigHomeMigrationResult
+from newbro.protocol import EXECUTOR_CONTROL_MAX_MESSAGE_BYTES
 
 cli_main = importlib.import_module("newbro.cli.main")
 
@@ -85,6 +86,46 @@ def test_executor_node_command_passes_audio_overrides():
         "zh",
         "--whisper-model",
         "small",
+    ]
+
+
+def test_backend_command_sets_executor_control_websocket_limit():
+    assert cli_main.command_specs.backend_command(
+        Path("/tmp/newbro/.venv/bin/python"),
+        "127.0.0.1",
+        8000,
+        reload=False,
+    ) == [
+        "/tmp/newbro/.venv/bin/python",
+        "-m",
+        "uvicorn",
+        "newbro.api.app:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        "--ws-max-size",
+        str(EXECUTOR_CONTROL_MAX_MESSAGE_BYTES),
+    ]
+
+
+def test_service_command_sets_executor_control_websocket_limit():
+    assert cli_main.command_specs.service_command(
+        Path("/tmp/newbro/.venv/bin/python"),
+        "0.0.0.0",
+        8000,
+        reload=False,
+    ) == [
+        "/tmp/newbro/.venv/bin/python",
+        "-m",
+        "uvicorn",
+        "newbro.service.app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--ws-max-size",
+        str(EXECUTOR_CONTROL_MAX_MESSAGE_BYTES),
     ]
 
 
@@ -959,6 +1000,8 @@ def test_start_runs_single_service_process(monkeypatch, tmp_path: Path):
                 "0.0.0.0",
                 "--port",
                 "8000",
+                "--ws-max-size",
+                str(EXECUTOR_CONTROL_MAX_MESSAGE_BYTES),
             ],
             tmp_path,
         )
@@ -996,6 +1039,8 @@ def test_start_uses_current_python_when_no_repo_venv(monkeypatch, tmp_path: Path
                 "0.0.0.0",
                 "--port",
                 "8000",
+                "--ws-max-size",
+                str(EXECUTOR_CONTROL_MAX_MESSAGE_BYTES),
             ],
             tmp_path,
         )

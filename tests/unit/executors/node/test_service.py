@@ -17,6 +17,7 @@ from newbro.executors.node.audio import AudioTranscriptionResult
 from newbro.protocol import (
     DispatchAudioInstructionCommand,
     DispatchTextInstructionCommand,
+    EXECUTOR_CONTROL_MAX_MESSAGE_BYTES,
     ExecutorAudioInstruction,
     ExecutorTextInstruction,
     StartCodexTurnCommand,
@@ -255,6 +256,7 @@ async def test_run_forever_reports_retry_then_ready(monkeypatch: pytest.MonkeyPa
     def fake_connect(url: str, **kwargs) -> FakeConnection:
         assert url == "ws://127.0.0.1:8000/api/executors/control"
         assert kwargs["proxy"] is None
+        assert kwargs["max_size"] == EXECUTOR_CONTROL_MAX_MESSAGE_BYTES
         attempt = attempts.pop(0)
         if isinstance(attempt, Exception):
             raise attempt
@@ -301,6 +303,7 @@ async def test_run_forever_reports_disconnect_after_ready(monkeypatch: pytest.Mo
     def fake_connect(url: str, **kwargs) -> FakeConnection:
         assert url == "ws://127.0.0.1:8000/api/executors/control"
         assert kwargs["proxy"] is None
+        assert kwargs["max_size"] == EXECUTOR_CONTROL_MAX_MESSAGE_BYTES
         return FakeConnection(websocket)
 
     async def fake_sleep(delay_seconds: float) -> None:

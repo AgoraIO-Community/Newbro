@@ -1147,6 +1147,72 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByRole("button", { name: /Hide steps/i })).toBeInTheDocument();
   });
 
+  it("renders settled mobile turn like desktop: last 3 steps, Show all toggle, inline answer, no task card", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    snapshot.bro_threads = [
+      {
+        thread_id: "thread-existing",
+        persona_id: "forge",
+        persona_name: "Forge",
+        executor_id: "codex",
+        executor_node_id: "node-forge",
+        execution_session_id: "exec-existing",
+        status: "completed",
+        title: "Previous request",
+        preview: "Previous request body",
+        progress: 100,
+        task_ids: [],
+        active_task_id: null,
+        latest_task_id: null,
+        has_resume_handle: true,
+        updated_at: "2026-05-20T12:00:00Z",
+        diagnostics: {},
+      },
+    ] as any;
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: "thread-existing",
+        executor_turn_id: "turn-r4",
+        executor_thread_id: "native-r4",
+        userText: "Make the report",
+        assistantText: "Done — report written.",
+      }),
+    ] as any;
+    (snapshot as any).recent_native_turn_reasoning = {
+      "codex::native-r4::turn-r4": [
+        { item_id: "i1", text: "Reading the spec", kind: "progress", created_at: "t1" },
+        { item_id: "i2", text: "Mapping the files", kind: "progress", created_at: "t2" },
+        { item_id: "i3", text: "Writing the section", kind: "progress", created_at: "t3" },
+        { item_id: "i4", text: "Verifying output", kind: "progress", created_at: "t4" },
+      ],
+    };
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    window.history.replaceState({}, "", "/mobile?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByTestId("mobile-bro-row-forge"));
+
+    // Inline answer renders.
+    expect(await screen.findByText("Done — report written.")).toBeInTheDocument();
+
+    // Last 3 steps visible; earliest hidden behind the toggle.
+    expect(screen.getByText("Mapping the files")).toBeInTheDocument();
+    expect(screen.getByText("Writing the section")).toBeInTheDocument();
+    expect(screen.getByText("Verifying output")).toBeInTheDocument();
+    expect(screen.queryByText("Reading the spec")).toBeNull();
+
+    // "Show all N steps" toggle expands to all steps.
+    const showAll = screen.getByRole("button", { name: /Show all 4 steps/i });
+    fireEvent.click(showAll);
+    expect(screen.getByText("Reading the spec")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Hide steps/i })).toBeInTheDocument();
+
+    // No legacy settled task card (status block / progress bar) for this turn.
+    expect(document.querySelector(".thr-status")).toBeNull();
+  });
+
   it("does not repeat the answer message as a step", async () => {
     const snapshot = forgeSnapshot("session-existing");
     const turn = timelineTurn({

@@ -56,15 +56,17 @@ The mic is enabled only when all of these facts are true:
 
 If any condition is false, recording is blocked before microphone capture starts.
 
-The upload endpoint accepts raw PCM only and validates owner auth, target Bro,
-connected Codex node, MIME type, duration, sample rate/channel metadata, size,
-and exactly one thread intent: `target_thread_id` or `create_new_thread=true`.
-The current limits are 60 seconds and 25 MB. Accepted audio is encoded as
-JSON-safe PCM content inside the typed executor-node command; the detached node
-does not read a backend-local audio path. If a matching active Codex run exists
-for the resolved thread, Newbro dispatches it over the typed executor-node
-protocol as `dispatch_audio_instruction` with an `ExecutorAudioInstruction`
-payload. If no active run exists for that resolved thread, Newbro sends
+The upload endpoint accepts raw PCM16 only and validates owner auth, target Bro,
+connected Codex node, MIME type, duration, sample rate/channel metadata, exact
+PCM byte length, size, and exactly one thread intent: `target_thread_id` or
+`create_new_thread=true`. The current limits are 60 seconds and 25 MB. Accepted
+audio is encoded as JSON-safe PCM content inside the typed executor-node command;
+the detached node does not read a backend-local audio path. The executor-control
+websocket limit is explicitly sized for this base64 command payload. If a
+matching active Codex run exists for the resolved thread, Newbro dispatches it
+over the typed executor-node protocol as `dispatch_audio_instruction` with an
+`ExecutorAudioInstruction` payload. If no active run exists for that resolved
+thread, Newbro sends
 `transcribe_audio_instruction`, receives a Whisper transcript from the executor
 node, stores an `OutboundTurnRequest`, and starts a task-free Codex turn from
 that transcript with `start_codex_turn`.
