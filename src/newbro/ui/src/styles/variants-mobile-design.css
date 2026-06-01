@@ -3279,8 +3279,36 @@
 .thr-reason-collapsed-open .thr-reason-collapsed-chev { transform: rotate(180deg); }
 .thr-answer-text {
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.42;
   color: var(--nb-ink);
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   text-wrap: pretty;
+  /* Markdown is rendered as real elements; reset the bubble's pre-wrap so the
+     newlines between <li>/<p> nodes don't become preserved vertical whitespace. */
+  white-space: normal;
+}
+.thr-answer-text > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.thr-answer-text :is(p, ul, ol, blockquote, table) {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.thr-answer-text :is(pre) {
+  margin-top: 3px;
+  margin-bottom: 3px;
+}
+.thr-answer-text :is(ul, ol) {
+  padding-left: 18px;
+}
+/* Tailwind v4 space-y-* sets margin-block-end on :not(:last-child); neutralize it
+   and drive the inter-item gap from a single margin-top so the list stays tight. */
+.thr-answer-text :is(ul, ol) > li {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.thr-answer-text :is(ul, ol) > li + li {
+  margin-top: 2px;
 }
