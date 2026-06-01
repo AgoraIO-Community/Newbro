@@ -1,5 +1,8 @@
 # macOS Menu-Bar Executor App — Design
 
+> Superseded by the native SwiftUI rewrite
+> (see `2026-06-01-macos-executor-swiftui-design.md` / `2026-06-01-macos-executor-swiftui.md`). Kept for history.
+
 Status: design (approved for planning)
 Date: 2026-06-01
 

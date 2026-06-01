@@ -1,5 +1,8 @@
 # macOS Menu-Bar Executor App Implementation Plan
 
+> Superseded by the native SwiftUI rewrite
+> (see `2026-06-01-macos-executor-swiftui-design.md` / `2026-06-01-macos-executor-swiftui.md`). Kept for history.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a macOS menu-bar app that supervises multiple concurrent Newbro executor-node profiles, each its own `newbro executor run` subprocess, with live status and credential editing.
