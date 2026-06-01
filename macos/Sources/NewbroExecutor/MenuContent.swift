@@ -41,10 +41,7 @@ struct MenuContent: View {
             get: { model.loginItemEnabled },
             set: { _ in model.toggleLoginItem() }))
         Divider()
-        Button("Quit") {
-            model.supervisor.stopAll()
-            NSApplication.shared.terminate(nil)
-        }
+        Button("Quit") { model.quit() }
     }
 
     private func pasteConnectCommand() {

@@ -9,21 +9,25 @@ final class AppModel: ObservableObject {
     @Published var runtimeAvailable: Bool = true
     @Published var installLog: String = ""
 
-    let supervisor: ProfileSupervisor
+    private let supervisor: ProfileSupervisor
     private let store = ProfileStore()
     private let locator = RuntimeLocator()
     private let loginItem: LoginItem
     private var cancellables: Set<AnyCancellable> = []
+    private var installProcess: NodeProcess?
+    // Blocking node lifecycle calls (stop/restart busy-wait up to 5s) run here
+    // so they never freeze the main actor / menu.
+    private let controlQueue = DispatchQueue(label: "newbro.ui.control")
 
     init() {
-        let locatorRef = RuntimeLocator()
+        let loc = locator
         self.loginItem = LoginItem(appPath: Bundle.main.bundlePath)
         self.supervisor = ProfileSupervisor(
             processFactory: .init(make: { argv, onLine, onExit in
                 NodeProcess(argv: argv, onLine: onLine, onExit: onExit)
             }),
             argvBuilder: { profile in
-                locatorRef.nodeArgv(for: profile) ?? []
+                loc.nodeArgv(for: profile) ?? []
             },
             logFactory: { profile in
                 ProfileLog(path: ProfileLog.defaultPath(profileID: profile.id))
@@ -62,8 +66,19 @@ final class AppModel: ObservableObject {
         guard runtimeAvailable else { return }
         supervisor.start(profile)
     }
-    func stop(_ profile: Profile) { supervisor.stop(profile.id) }
-    func restart(_ profile: Profile) { supervisor.restart(profile) }
+    func stop(_ profile: Profile) {
+        controlQueue.async { [supervisor] in supervisor.stop(profile.id) }
+    }
+    func restart(_ profile: Profile) {
+        guard runtimeAvailable else { return }
+        controlQueue.async { [supervisor] in supervisor.restart(profile) }
+    }
+
+    func quit() {
+        // Stop every node before exiting so no orphaned subprocess survives.
+        supervisor.stopAll()
+        NSApplication.shared.terminate(nil)
+    }
 
     func toggleAutoActivate(_ profile: Profile) {
         guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
@@ -72,9 +87,9 @@ final class AppModel: ObservableObject {
     }
 
     func delete(_ profile: Profile) {
-        supervisor.stop(profile.id)
         profiles.removeAll { $0.id == profile.id }
         try? store.save(profiles)
+        controlQueue.async { [supervisor] in supervisor.stop(profile.id) }
     }
 
     func upsert(_ profile: Profile) {
@@ -116,15 +131,19 @@ final class AppModel: ObservableObject {
     func installRuntime() {
         let argv = locator.installCommandArgv()
         installLog = "Installing…\n"
-        let process = NodeProcess(
+        // Retain the process; otherwise it is deallocated before it runs.
+        installProcess = NodeProcess(
             argv: argv,
             onLine: { [weak self] line in
                 Task { @MainActor in self?.installLog += line + "\n" }
             },
             onExit: { [weak self] _ in
-                Task { @MainActor in self?.refreshRuntime() }
+                Task { @MainActor in
+                    self?.refreshRuntime()
+                    self?.installProcess = nil
+                }
             })
-        process.start()
+        installProcess?.start()
     }
 
     func emptyProfile() -> Profile {
