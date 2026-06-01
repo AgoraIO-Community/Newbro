@@ -32,41 +32,49 @@ public final class NodeProcess: NodeProcessProtocol {
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            self?.ingest(data)
-        }
-        proc.terminationHandler = { [weak self] proc in
-            guard let self else { return }
-            pipe.fileHandleForReading.readabilityHandler = nil
-            self.flush()
-            self.onExit(proc.terminationStatus)
-        }
         process = proc
-        try? proc.run()
+        do {
+            try proc.run()
+        } catch {
+            process = nil
+            onExit(127)
+            return
+        }
+        // A single serial reader owns all output consumption and the exit
+        // report. Reading to EOF, flushing, then waiting and calling onExit on
+        // the same queue guarantees every onLine is delivered strictly before
+        // onExit — no readabilityHandler/terminationHandler race.
+        let handle = pipe.fileHandleForReading
+        queue.async { [weak self] in
+            while true {
+                let data = handle.availableData
+                if data.isEmpty { break }  // EOF
+                self?.ingest(data)
+            }
+            self?.flushPartial()
+            proc.waitUntilExit()
+            self?.onExit(proc.terminationStatus)
+        }
     }
 
+    /// Runs on `queue`. Appends bytes and emits each complete (newline-terminated) line.
     private func ingest(_ data: Data) {
-        queue.async {
-            self.buffer.append(data)
-            while let newline = self.buffer.firstIndex(of: 0x0A) {
-                let lineData = self.buffer.subdata(in: self.buffer.startIndex..<newline)
-                self.buffer.removeSubrange(self.buffer.startIndex...newline)
-                if let line = String(data: lineData, encoding: .utf8) {
-                    self.onLine(line)
-                }
+        buffer.append(data)
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let lineData = buffer.subdata(in: buffer.startIndex..<newline)
+            buffer.removeSubrange(buffer.startIndex...newline)
+            if let line = String(data: lineData, encoding: .utf8) {
+                onLine(line)
             }
         }
     }
 
-    private func flush() {
-        queue.sync {
-            if !self.buffer.isEmpty, let line = String(data: self.buffer, encoding: .utf8) {
-                self.onLine(line)
-            }
-            self.buffer.removeAll()
+    /// Runs on `queue`. Emits any trailing partial line left at EOF.
+    private func flushPartial() {
+        if !buffer.isEmpty, let line = String(data: buffer, encoding: .utf8) {
+            onLine(line)
         }
+        buffer.removeAll()
     }
 
     public func stop(timeout: TimeInterval = 5.0) {

@@ -26,6 +26,39 @@ final class NodeProcessTests: XCTestCase {
         XCTAssertEqual(code.value, 0)
     }
 
+    func testAllLinesDeliveredBeforeExit() {
+        // Regression: onLine must never fire after onExit. The reader queue
+        // delivers every line, then reports exit, on one serial queue.
+        let events = Box<[String]>([])
+        let exited = expectation(description: "exited")
+        let proc = NodeProcess(
+            argv: ["/bin/sh", "-c", "printf '[start] a\\n[ready] b\\n'; exit 0"],
+            onLine: { line in events.mutate { $0.append("line:\(line)") } },
+            onExit: { _ in events.mutate { $0.append("exit") }; exited.fulfill() }
+        )
+        proc.start()
+        wait(for: [exited], timeout: 10)
+        let recorded = events.value
+        XCTAssertEqual(recorded.last, "exit")
+        let exitIndex = recorded.firstIndex(of: "exit")!
+        XCTAssertTrue(recorded[..<exitIndex].allSatisfy { $0.hasPrefix("line:") })
+        XCTAssertEqual(recorded.filter { $0.hasPrefix("line:") }.count, 2)
+    }
+
+    func testLaunchFailureReportsExit() {
+        let code = Box<Int32>(0)
+        let exited = expectation(description: "exited")
+        let proc = NodeProcess(
+            argv: ["/nonexistent/definitely-not-here", "arg"],
+            onLine: { _ in },
+            onExit: { c in code.mutate { $0 = c }; exited.fulfill() }
+        )
+        proc.start()
+        wait(for: [exited], timeout: 10)
+        XCTAssertEqual(code.value, 127)
+        XCTAssertFalse(proc.isRunning)
+    }
+
     func testStopTerminatesLongRunner() {
         let started = expectation(description: "started")
         started.assertForOverFulfill = false
