@@ -49,7 +49,9 @@ Executor-node note:
   token, and enabled executor families, and runs as an independent
   `newbro executor run` subprocess; several profiles can run concurrently. The
   app only edits connection profiles — deeper executor runtime config stays
-  owned by `newbro executor setup`.
+  owned by `newbro executor setup`. Because the node service reconnects in an
+  unbounded loop, a rejected `node_id`/`token` shows in the app as a continuous
+  connecting/retrying state rather than a terminal error.
 - local executor-family/tool config no longer uses an `executor_node.enabled`
   toggle; `newbro executor run` may trigger the same local setup flow when
   executor commands or enabled families are missing

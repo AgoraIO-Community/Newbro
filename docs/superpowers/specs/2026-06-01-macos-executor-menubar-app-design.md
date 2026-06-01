@@ -261,6 +261,36 @@ Stop/Restart when running).
 
 Errors are always per profile; one failing profile never disturbs another.
 
+## Known Limitations (as shipped)
+
+These are intentional V1 boundaries where the implemented behavior differs from
+the idealized Error Handling above; they are documented rather than worked
+around.
+
+- **Bad credentials present as a perpetual retry, not `error`.** The detached
+  node service (`ExecutorNodeService`) reconnects on its own in an unbounded
+  loop with a fixed delay, and a server-side registration rejection is caught
+  and retried like any transient failure. Because the node process does not
+  exit on a rejected `node_id`/`token`, the UI keeps mapping its
+  `[warn] connect_failed=… → [retry]` output to `connecting`/`retrying` and
+  never reaches `error`. The app therefore cannot distinguish a bad credential
+  from a transient outage. Changing this would require bounded/terminal retry
+  behavior in the node service itself (an `ExecutorNodeService` change governed
+  by the AGENTS.md "no fallback without approval" rule), so it is deferred. The
+  `StatusModel.error` state is still reached when the process exits unexpectedly
+  for other reasons.
+- **`error` from process exit, not from auth.** The supervisor surfaces `error`
+  only when a running node subprocess exits unexpectedly; it does not add a
+  process-restart backoff loop, because the node owns its own reconnection.
+- **Manual `Add`/`Edit` profile forms are not implemented.** Profiles are
+  created/updated via **Paste connect command…**; per-profile **Delete**,
+  **Auto-activate at login**, and **View recent log…** are available, but
+  multi-field manual entry/editing is deferred (rumps multi-field forms are
+  clunky). Hand-editing `~/.newbro/menubar.json` remains possible.
+- **Login-item path is hardcoded** to `/Applications/Newbro Executor.app`.
+  Running the bundle from another location makes the login item point at a
+  missing path. Acceptable while signing/distribution is out of V1 scope.
+
 ## Packaging & Distribution
 
 - `py2app` setup script (e.g. `packaging/menubar/setup.py`) builds
