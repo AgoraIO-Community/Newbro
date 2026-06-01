@@ -27,6 +27,8 @@ All commands below run from `src/newbro/ui/`.
 **Files:**
 - Test: `src/__tests__/App.test.tsx` (add a new `it(...)` block immediately after the existing `it("collapses to the last 3 steps with a Show all toggle", …)` which ends at line 1148)
 
+> **Why the `/mobile` route?** Mobile rendering is triggered three ways: the `/mobile` route (unconditional), and the `/` and `/bros/$broId` routes when `useIsMobile()` (`matchMedia("(max-width: 767px)")`) is true (`router.tsx`). All three render the same `ArtboardMobilePage → MobileThreadSurface → TimelineTurnView mobile` path that `SettledAnswerBubble` lives in. The test uses `/mobile` because it is deterministic in jsdom (no `matchMedia` mocking) and exercises that identical path; the breakpoint trigger is pre-existing routing logic this change does not modify.
+
 - [ ] **Step 1: Write the failing test**
 
 Insert this block after line 1148 in `src/__tests__/App.test.tsx`:
