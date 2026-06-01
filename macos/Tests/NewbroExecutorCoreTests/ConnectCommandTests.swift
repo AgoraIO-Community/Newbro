@@ -12,7 +12,14 @@ final class ConnectCommandTests: XCTestCase {
     }
 
     func testMissingCoreFieldThrows() {
-        XCTAssertThrowsError(try parseConnectCommand("newbro executor run --base-url https://x"))
+        XCTAssertThrowsError(try parseConnectCommand("newbro executor run --base-url https://x")) { error in
+            XCTAssertEqual(error as? ConnectCommandError, .missingFields(["--node-id", "--token"]))
+        }
+    }
+
+    func testValueFlagAsLastTokenDoesNotCrash() {
+        XCTAssertThrowsError(try parseConnectCommand(
+            "newbro executor run --base-url https://x --node-id n --token"))
     }
 
     func testConflictingProfileIDs() {
