@@ -14,6 +14,7 @@ class _Record:
     profile: Profile
     controller: Any
     status_model: StatusModel
+    log: Any = None
     expected_stop: bool = False
 
 
@@ -31,11 +32,13 @@ class ProfileSupervisor:
         controller_factory: Callable[..., Any],
         status_factory: Callable[[], StatusModel],
         build_argv: Callable[[Profile], list[str]],
+        log_factory: Callable[[Profile], Any] | None = None,
         cwd: Path,
     ) -> None:
         self._controller_factory = controller_factory
         self._status_factory = status_factory
         self._build_argv = build_argv
+        self._log_factory = log_factory
         self._cwd = cwd
         self._records: dict[str, _Record] = {}
         self._lock = threading.RLock()
@@ -46,7 +49,8 @@ class ProfileSupervisor:
                 return
             status_model = self._status_factory()
             status_model.on_start()
-            record = _Record(profile=profile, controller=None, status_model=status_model)
+            log = self._log_factory(profile) if self._log_factory is not None else None
+            record = _Record(profile=profile, controller=None, status_model=status_model, log=log)
             controller = self._controller_factory(
                 argv=self._build_argv(profile),
                 cwd=self._cwd,
@@ -73,8 +77,12 @@ class ProfileSupervisor:
     def _on_line(self, profile_id: str, line: str) -> None:
         with self._lock:
             record = self._records.get(profile_id)
-            if record is not None:
-                record.status_model.on_line(line)
+            if record is None:
+                return
+            record.status_model.on_line(line)
+            log = record.log
+        if log is not None:
+            log.append(line)
 
     def _on_exit(self, profile_id: str, code: int) -> None:
         with self._lock:

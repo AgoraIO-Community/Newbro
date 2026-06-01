@@ -85,3 +85,32 @@ def test_stop_all_stops_every_controller():
     sup.start(profile("p2", "node-2"))
     sup.stop_all()
     assert all(c.stopped for c in FakeController.instances)
+
+
+def test_log_factory_receives_node_lines():
+    FakeController.instances = []
+
+    class FakeLog:
+        def __init__(self):
+            self.lines: list[str] = []
+
+        def append(self, line: str) -> None:
+            self.lines.append(line)
+
+    created: list[FakeLog] = []
+
+    def log_factory(_profile):
+        log = FakeLog()
+        created.append(log)
+        return log
+
+    sup = ProfileSupervisor(
+        controller_factory=lambda **kw: FakeController(**kw),
+        status_factory=StatusModel,
+        build_argv=lambda profile: ["run", profile.node_id],
+        cwd=Path.cwd(),
+        log_factory=log_factory,
+    )
+    sup.start(profile())
+    FakeController.instances[0].on_line("[ready] executor node node_id=node-1 executors=codex newbro=https://x")
+    assert created[0].lines == ["[ready] executor node node_id=node-1 executors=codex newbro=https://x"]
