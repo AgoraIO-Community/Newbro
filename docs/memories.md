@@ -2,6 +2,10 @@
 
 Short log of important design decisions and changes for Newbro.
 
+## 2026-06-01
+
+- Raised the executor-control websocket frame limit to match Bro Detail PCM16 push-to-talk command payloads, and made audio upload validation require exact PCM byte length for declared sample metadata.
+
 ## 2026-05-30
 
 - Changed Bro Detail plan proposal confirmation so selecting a Codex-provided option replies with that option label as both executor answer and visible user text; `Implement it` is now an explicit synthetic option only for final Codex plan artifacts.

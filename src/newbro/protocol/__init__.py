@@ -77,6 +77,11 @@ from .executor_node import (
 from .execution_mode import TaskExecutionMode
 from .interaction import AttentionItem, InteractionRequest
 from .interruption import Interruption
+from .limits import (
+    EXECUTOR_CONTROL_MAX_MESSAGE_BYTES,
+    MAX_EXECUTOR_AUDIO_BYTES,
+    MAX_EXECUTOR_AUDIO_DURATION_MS,
+)
 from .mutation import TaskMutation
 from .native_reasoning import NativeReasoningStep
 from .notification import NotificationCandidate
@@ -139,6 +144,7 @@ __all__ = [
     "DraftSession",
     "DraftSessionStatus",
     "DraftSnapshot",
+    "EXECUTOR_CONTROL_MAX_MESSAGE_BYTES",
     "ExecutionMode",
     "ExecutionRun",
     "ExecutionSession",
@@ -154,6 +160,8 @@ __all__ = [
     "InteractionStateMessage",
     "InteractionType",
     "ListCodexThreadsCommand",
+    "MAX_EXECUTOR_AUDIO_BYTES",
+    "MAX_EXECUTOR_AUDIO_DURATION_MS",
     "ReadCodexThreadCommand",
     "Interruption",
     "InterruptionType",

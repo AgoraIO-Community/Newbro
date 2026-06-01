@@ -4,11 +4,10 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from newbro.api.public_auth import require_session_owner
+from newbro.protocol import MAX_EXECUTOR_AUDIO_BYTES, MAX_EXECUTOR_AUDIO_DURATION_MS
 
 router = APIRouter()
 
-MAX_AUDIO_BYTES = 25 * 1024 * 1024
-MAX_AUDIO_DURATION_MS = 60_000
 ALLOWED_AUDIO_MIME_TYPES = {"audio/pcm", "audio/x-pcm", "application/octet-stream"}
 
 
@@ -34,7 +33,7 @@ async def submit_executor_audio_instruction(
     create_new_thread: bool = Query(default=False),
     workspace_id: str | None = Query(default=None, min_length=1),
     client_request_id: str | None = Query(default=None, min_length=1),
-    duration_ms: int = Query(gt=0, le=MAX_AUDIO_DURATION_MS),
+    duration_ms: int = Query(gt=0, le=MAX_EXECUTOR_AUDIO_DURATION_MS),
     sample_rate: int = Query(ge=8000, le=96000),
     num_channels: int = Query(ge=1, le=2),
     samples_per_channel: int = Query(gt=0),
@@ -46,8 +45,11 @@ async def submit_executor_audio_instruction(
     body = await request.body()
     if not body:
         raise HTTPException(status_code=400, detail="Audio body is empty.")
-    if len(body) > MAX_AUDIO_BYTES:
+    if len(body) > MAX_EXECUTOR_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="Audio body exceeds 25 MB.")
+    expected_body_bytes = samples_per_channel * num_channels * 2
+    if len(body) != expected_body_bytes:
+        raise HTTPException(status_code=400, detail="Audio PCM byte length does not match sample metadata.")
     expected_duration_ms = round((samples_per_channel / sample_rate) * 1000)
     if abs(expected_duration_ms - duration_ms) > 1500:
         raise HTTPException(status_code=400, detail="Audio duration metadata does not match sample count.")

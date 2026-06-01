@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import stat
+import subprocess
+import sys
 import tomllib
 
 
@@ -10,6 +14,33 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_root_launcher_layout_has_only_newbro_bootstrap() -> None:
     assert (ROOT / "newbro").is_file()
     assert not (ROOT / "newbro.py").exists()
+
+
+def test_root_launcher_reexecs_repo_virtualenv_python(tmp_path: Path) -> None:
+    root = tmp_path
+    launcher = root / "newbro"
+    launcher.write_text((ROOT / "newbro").read_text(encoding="utf-8"), encoding="utf-8")
+
+    venv_bin = root / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    invoked = root / "invoked.txt"
+    fake_python = venv_bin / "python"
+    fake_python.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$0\" \"$@\" > {invoked}\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
+
+    subprocess.run(
+        [sys.executable, str(launcher), "doctor"],
+        check=True,
+        cwd=root,
+        env={**os.environ, "LC_ALL": "C.UTF-8"},
+    )
+
+    lines = invoked.read_text(encoding="utf-8").splitlines()
+    assert lines == [str(fake_python), str(launcher.resolve()), "doctor"]
 
 
 def test_public_package_metadata_documents_newbro_namespace() -> None:
