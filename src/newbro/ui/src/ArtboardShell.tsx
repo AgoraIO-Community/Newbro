@@ -1191,7 +1191,7 @@ function TimelineTurnView({
   const activeRun = taskId
     ? (shell.executionRuns.find((r) => r.task_id === taskId && (r.status === "running" || r.status === "created" || r.status === "waiting_executor")) ?? null)
     : null;
-  // For the settled mobile pill, find any run for this task (including completed).
+  // For settled turns, find any run for this task (including completed runs).
   const anyRun = activeRun ?? (taskId ? (shell.executionRuns.find((r) => r.task_id === taskId) ?? null) : null);
   const details = taskId ? (shell.recentExecutionDetails[taskId] ?? null) : null;
   const nativeReasoningSteps = buildReasoningStepsForNativeTurn(turn, shell.recentNativeTurnReasoning);
