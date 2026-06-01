@@ -15,6 +15,7 @@ final class AppModel: ObservableObject {
     private let loginItem: LoginItem
     private var cancellables: Set<AnyCancellable> = []
     private var installProcess: NodeProcess?
+    private let windows = WindowManager()
     // Blocking node lifecycle calls (stop/restart busy-wait up to 5s) run here
     // so they never freeze the main actor / menu.
     private let controlQueue = DispatchQueue(label: "newbro.ui.control")
@@ -120,6 +121,30 @@ final class AppModel: ObservableObject {
 
     func recentLog(_ profile: Profile) -> [String] {
         ProfileLog(path: ProfileLog.defaultPath(profileID: profile.id)).recent()
+    }
+
+    // MARK: - Windows
+
+    func editProfile(_ profileID: String) {
+        let windowID = "edit-\(profileID)"
+        windows.show(id: windowID, title: "Edit Profile",
+                     size: NSSize(width: 420, height: 360)) { [self] in
+            ProfileEditView(model: self, profileID: profileID,
+                            onClose: { [weak self] in self?.windows.close(id: windowID) })
+        }
+    }
+
+    func addProfile() {
+        let new = emptyProfile()
+        upsert(new)
+        editProfile(new.id)
+    }
+
+    func viewLog(_ profileID: String) {
+        windows.show(id: "log-\(profileID)", title: "Recent Log",
+                     size: NSSize(width: 560, height: 360)) { [self] in
+            LogView(model: self, profileID: profileID)
+        }
     }
 
     var loginItemEnabled: Bool { loginItem.isInstalled }

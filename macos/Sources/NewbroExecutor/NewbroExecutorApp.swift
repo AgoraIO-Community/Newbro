@@ -20,13 +20,6 @@ struct NewbroExecutorApp: App {
             Image(systemName: glyph(for: model.aggregate()))
         }
         .menuBarExtraStyle(.menu)
-
-        WindowGroup("Edit Profile", id: "edit", for: String.self) { $profileID in
-            ProfileEditView(model: model, profileID: profileID)
-        }
-        WindowGroup("Recent Log", id: "log", for: String.self) { $profileID in
-            LogView(model: model, profileID: profileID)
-        }
     }
 
     private func glyph(for status: NodeStatus) -> String {

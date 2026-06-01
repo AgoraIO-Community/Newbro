@@ -4,7 +4,7 @@ import NewbroExecutorCore
 struct ProfileEditView: View {
     @ObservedObject var model: AppModel
     let profileID: String?
-    @Environment(\.dismiss) private var dismiss
+    let onClose: () -> Void
 
     @State private var label = ""
     @State private var baseURL = ""
@@ -24,7 +24,7 @@ struct ProfileEditView: View {
             Toggle("acpx", isOn: $acpx)
             Toggle("Auto-activate at login", isOn: $autoActivate)
             HStack {
-                Button("Cancel") { dismiss() }
+                Button("Cancel") { onClose() }
                 Button("Save") { save() }
             }
         }
@@ -52,6 +52,6 @@ struct ProfileEditView: View {
         let id = profileID ?? "profile-\(UUID().uuidString.prefix(8))"
         model.upsert(Profile(id: id, label: label, baseURL: baseURL, nodeID: nodeID,
                              token: token, enabledExecutors: executors, autoActivate: autoActivate))
-        dismiss()
+        onClose()
     }
 }

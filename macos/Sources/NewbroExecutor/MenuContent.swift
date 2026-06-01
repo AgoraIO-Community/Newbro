@@ -3,7 +3,6 @@ import NewbroExecutorCore
 
 struct MenuContent: View {
     @ObservedObject var model: AppModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         if !model.runtimeAvailable {
@@ -25,17 +24,13 @@ struct MenuContent: View {
                 Toggle("Auto-activate at login", isOn: Binding(
                     get: { profile.autoActivate },
                     set: { _ in model.toggleAutoActivate(profile) }))
-                Button("View recent log…") { openWindow(id: "log", value: profile.id) }
-                Button("Edit…") { openWindow(id: "edit", value: profile.id) }
+                Button("View recent log…") { model.viewLog(profile.id) }
+                Button("Edit…") { model.editProfile(profile.id) }
                 Button("Delete") { model.delete(profile) }
             }
         }
         Divider()
-        Button("Add profile…") {
-            let new = model.emptyProfile()
-            model.upsert(new)
-            openWindow(id: "edit", value: new.id)
-        }
+        Button("Add profile…") { model.addProfile() }
         Button("Paste connect command…") { pasteConnectCommand() }
         Toggle("Launch at login", isOn: Binding(
             get: { model.loginItemEnabled },
