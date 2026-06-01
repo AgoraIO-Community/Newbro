@@ -1,5 +1,3 @@
-import Foundation
-
 public enum NodeStatus: String, Equatable, Sendable {
     case idle, starting, connecting, ready, disconnected, retrying, error, stopped
 }
