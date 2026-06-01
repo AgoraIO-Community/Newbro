@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .target(name: "NewbroExecutorCore"),
-        .executableTarget(
+        .target(
             name: "NewbroExecutor",
             dependencies: ["NewbroExecutorCore"]
         ),
