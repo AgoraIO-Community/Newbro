@@ -8,6 +8,7 @@ import rumps
 
 from newbro.cli.command_specs import executor_node_command
 from newbro.executors.ui.login_item import LoginItem, login_item_plist_path
+from newbro.executors.ui.logs import ProfileLog, ui_log_path
 from newbro.executors.ui.process import NodeProcessController
 from newbro.executors.ui.profiles import (
     Profile,
@@ -57,9 +58,11 @@ class MenuBarApp(rumps.App):
             status_factory=StatusModel,
             build_argv=_build_argv,
             cwd=Path.home(),
+            log_factory=lambda profile: ProfileLog(path=ui_log_path(profile.id)),
         )
         self._login_item = LoginItem(app_path=_app_bundle_path())
         self._profiles = self._store.load()
+        self._menu_signature: tuple | None = None
         self._refresh_timer = rumps.Timer(self._tick, 1.0)
         self._refresh_timer.start()
         self._autostart()
@@ -72,9 +75,21 @@ class MenuBarApp(rumps.App):
 
     def _tick(self, _timer: "rumps.Timer") -> None:
         self.title = _STATUS_GLYPH[self._supervisor.aggregate_status()]
-        self._rebuild_menu()
+        signature = self._current_signature()
+        if signature != self._menu_signature:
+            self._rebuild_menu()
+
+    def _current_signature(self) -> tuple:
+        return (
+            login_item_plist_path().exists(),
+            tuple(
+                (p.id, p.label, p.auto_activate, self._supervisor.status_of(p.id))
+                for p in self._profiles
+            ),
+        )
 
     def _rebuild_menu(self) -> None:
+        self._menu_signature = self._current_signature()
         self.menu.clear()
         conflicts = conflicting_profile_ids(self._profiles)
         for profile in self._profiles:
@@ -92,6 +107,11 @@ class MenuBarApp(rumps.App):
                 item.add(rumps.MenuItem("Restart", callback=self._make_restart(profile)))
             else:
                 item.add(rumps.MenuItem("Start", callback=self._make_start(profile)))
+            auto = rumps.MenuItem("Auto-activate at login", callback=self._make_toggle_autostart(profile))
+            auto.state = 1 if profile.auto_activate else 0
+            item.add(auto)
+            item.add(rumps.MenuItem("View recent log…", callback=self._make_view_log(profile)))
+            item.add(rumps.MenuItem("Delete", callback=self._make_delete(profile)))
             self.menu.add(item)
         self.menu.add(rumps.separator)
         self.menu.add(rumps.MenuItem("Paste connect command…", callback=self._paste_connect_command))
@@ -117,6 +137,35 @@ class MenuBarApp(rumps.App):
 
     def _make_restart(self, profile: Profile):
         return lambda _sender: self._supervisor.restart(profile)
+
+    def _make_toggle_autostart(self, profile: Profile):
+        def _cb(sender):
+            profile.auto_activate = not profile.auto_activate
+            sender.state = 1 if profile.auto_activate else 0
+            self._store.save(self._profiles)
+        return _cb
+
+    def _make_view_log(self, profile: Profile):
+        def _cb(_sender):
+            lines = ProfileLog(path=ui_log_path(profile.id)).recent()
+            body = "\n".join(lines[-40:]) if lines else "No log output yet."
+            rumps.alert(f"{profile.label} — recent log", body)
+        return _cb
+
+    def _make_delete(self, profile: Profile):
+        def _cb(_sender):
+            if rumps.alert(
+                f"Delete profile “{profile.label}”?",
+                "This stops the node if running and removes the profile. The node credentials stay valid on the server.",
+                ok="Delete",
+                cancel="Cancel",
+            ) != 1:
+                return
+            self._supervisor.stop(profile.id)
+            self._profiles = [p for p in self._profiles if p.id != profile.id]
+            self._store.save(self._profiles)
+            self._rebuild_menu()
+        return _cb
 
     def _paste_connect_command(self, _sender) -> None:
         response = rumps.Window(
