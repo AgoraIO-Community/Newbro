@@ -707,28 +707,33 @@
   box-shadow: var(--nb-shadow-hairline);
 }
 .ob-connect-cmd {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: flex-start; gap: 8px;
   min-width: 0;
   max-width: 100%;
-  padding: 11px 12px;
+  /* extra right padding leaves room for the absolutely-positioned copy button */
+  padding: 11px 46px 11px 12px;
   background: #16181d;
   color: #d6d8de;
   font-family: var(--nb-font-mono);
   font-size: 11.5px;
+  line-height: 1.55;
   letter-spacing: 0;
   position: relative;
 }
-.ob-connect-prompt { color: #ff9a78; font-weight: 700; }
+.ob-connect-prompt { color: #ff9a78; font-weight: 700; flex-shrink: 0; }
 .ob-connect-line {
   flex: 1 1 auto;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* show the full command, wrapping long tokens instead of truncating */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .ob-connect-tok { color: #ffae8b; }
 .ob-connect-copy {
+  position: absolute;
+  top: 8px; right: 8px;
   width: 26px; height: 26px;
   border-radius: 6px;
   background: rgba(255,255,255,0.08);
