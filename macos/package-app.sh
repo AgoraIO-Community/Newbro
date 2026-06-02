@@ -53,4 +53,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# Ad-hoc seal the whole bundle (Info.plist + binary). `--sign -` needs no
+# certificate or Apple account; it is NOT notarization. It ensures a downloaded
+# copy shows the overridable "unverified developer" dialog rather than an
+# "app is damaged" error that cannot be cleared via "Open Anyway".
+echo "[package-app] ad-hoc signing bundle"
+codesign --force --deep --sign - "$APP"
+
 echo "[package-app] done: $APP"
