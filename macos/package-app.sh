@@ -30,6 +30,7 @@ mkdir -p "$APP/Contents/MacOS"
 cp "$BIN_PATH" "$APP/Contents/MacOS/$BIN_NAME"
 mkdir -p "$APP/Contents/Resources"
 cp "$HERE/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp "$HERE/Resources/MenuBarBro.png" "$APP/Contents/Resources/MenuBarBro.png"
 
 # Unquoted heredoc delimiter so ${VERSION} expands. The body contains no other
 # shell metacharacters ($, backtick, backslash), so this is safe.
