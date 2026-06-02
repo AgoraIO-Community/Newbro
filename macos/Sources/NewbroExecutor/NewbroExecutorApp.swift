@@ -34,6 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var pip: NSView!
     private var cancellable: AnyCancellable?
+    private var updates: UpdateService!
+    private var updateTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -70,6 +72,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.updatePip() }
         updatePip()
+
+        let releaseClient = ReleaseClient()
+        let updates = UpdateService(
+            fetchLatest: { try? await releaseClient.latest() },
+            installedCLIVersion: { [weak model] in model?.installedCLIVersion() },
+            appVersion: { [weak model] in model?.appVersion },
+            activeProfileIDs: { [weak model] in model?.activeProfileIDs() ?? [] },
+            stopProfile: { [weak model] id in model?.stop(profileID: id) },
+            startProfile: { [weak model] id in model?.start(profileID: id) },
+            runInstaller: { [weak model] completion in model?.runInstaller(completion) })
+        self.updates = updates
+        Task { await updates.check() }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.updates.check() }
+        }
     }
 
     private func updatePip() {
@@ -125,6 +142,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                     state: model.loginItemEnabled ? .on : .off) { [weak self] in
             self?.model.toggleLoginItem()
         })
+
+        menu.addItem(.separator())
+        let cliLabel = updates.installedCLI.map { "newbro CLI v\($0)" } ?? "newbro CLI"
+        let statusTitle: String
+        if updates.isUpdating {
+            statusTitle = "Updating CLI…"
+        } else if let available = updates.status.cliUpdate {
+            statusTitle = "Update available: \(available)"
+        } else {
+            statusTitle = "\(cliLabel) · up to date"
+        }
+        let statusRow = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
+        statusRow.isEnabled = false
+        menu.addItem(statusRow)
+
+        if let available = updates.status.cliUpdate, !updates.isUpdating {
+            menu.addItem(ActionMenuItem(title: "Update CLI to \(available)") { [weak self] in
+                self?.updates.updateCLI()
+            })
+        }
+        menu.addItem(ActionMenuItem(title: "Check for Updates…") { [weak self] in
+            Task { @MainActor in await self?.updates.check() }
+        })
+        if let appAvailable = updates.status.appUpdate {
+            menu.addItem(ActionMenuItem(title: "Download app update \(appAvailable)…") { [weak self] in
+                guard let url = self?.updates.releasePageURL else { return }
+                NSWorkspace.shared.open(url)
+            })
+        }
+        if let error = updates.lastError {
+            let errorRow = NSMenuItem(title: error, action: nil, keyEquivalent: "")
+            errorRow.isEnabled = false
+            menu.addItem(errorRow)
+        }
+
         menu.addItem(.separator())
         menu.addItem(ActionMenuItem(title: "Quit") { [weak self] in self?.model.quit() })
     }
