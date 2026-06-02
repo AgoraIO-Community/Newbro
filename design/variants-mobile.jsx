@@ -1241,7 +1241,7 @@ function PlanProposal({ proposal, approved, onApprove, onKeep }) {
 
 // Collapsed "Reasoned" affordance shown on a finished bro turn — the live
 // reasoning stream is gone; tucked behind an expandable pill (mirrors desktop).
-function ThrReasoned({ steps }) {
+function ThrReasoned({ steps, marks = false }) {
   const [open, setOpen] = React.useState(false);
   return (
     <div className="thr-reasoned">
@@ -1262,9 +1262,20 @@ function ThrReasoned({ steps }) {
       {open && (
         <ol className="thr-reason-steps thr-reason-steps-static">
           {steps.map((s, i) => (
-            <li key={i} className="thr-reason-step thr-reason-step-done">
-              <span className="thr-reason-mark" aria-hidden="true" />
-              <span className="thr-reason-text">{s.label}</span>
+            <li key={i} className={`thr-reason-step thr-reason-step-done${marks && s.kind === "act" ? " thr-reason-step-act" : ""}`}>
+              {marks && s.kind === "act" ? (
+                <span className="thr-reason-mark thr-reason-mark-act" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6a1.5 1.5 0 0 0 2.1 2.1l6-6a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-2.1z"/>
+                  </svg>
+                </span>
+              ) : (
+                <span className="thr-reason-mark" aria-hidden="true" />
+              )}
+              <span className="thr-reason-text">
+                {marks && s.kind === "act" && s.tool && <span className="thr-reason-tool">{s.tool}</span>}
+                {s.label}
+              </span>
             </li>
           ))}
         </ol>
@@ -1276,11 +1287,39 @@ function ThrReasoned({ steps }) {
 function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {}) {
   const v = useVoice();
   if (!v) return null;
-  const { mode, transcript, draft, reply, vu, script, inputMode, setInputMode, freeSubMode, setFreeSubMode, textValue, setTextValue, sendText, freeStart, stepIdx, progress, hasArtifact, audioDuration, turnKind, turnDuration, interjection } = v;
+  const { mode, transcript, draft, reply, vu, script, inputMode, setInputMode, freeSubMode, setFreeSubMode, textValue, setTextValue, sendText, freeStart, stepIdx, progress, hasArtifact, audioDuration, turnKind, turnDuration, interjection, msgInstant, msgMarks, msgSteer, force } = v;
   const meta = stateMeta[mode];
 
   // Codex-only plan mode.
   const isCodex = M_BRO.executor === "Codex";
+
+  // Live-reasoning Stop (msgSteer). Freezes the running turn and shows the
+  // stopped state; Resume pins it back to working. Mirrors desktop.
+  const [stopped, setStopped] = React.useState(false);
+  const stopRun   = () => { setStopped(true); if (force) force("working"); };
+  const resumeRun = () => { setStopped(false); if (force) force("working"); };
+  React.useEffect(() => { if (mode !== "working") setStopped(false); }, [mode]);
+
+  // Shared renderers for a reasoning line — tool-action lines (msgMarks) get a
+  // wrench mark + a mono tool token, distinct from plain "thinking" prose.
+  const renderReasonMark = (st) => {
+    if (msgMarks && st.kind === "act") {
+      return (
+        <span className="thr-reason-mark thr-reason-mark-act" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6a1.5 1.5 0 0 0 2.1 2.1l6-6a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-2.1z"/>
+          </svg>
+        </span>
+      );
+    }
+    return <span className="thr-reason-mark" aria-hidden="true" />;
+  };
+  const renderReasonText = (st) => (
+    <span className="thr-reason-text">
+      {msgMarks && st.kind === "act" && st.tool && <span className="thr-reason-tool">{st.tool}</span>}
+      {st.label}
+    </span>
+  );
   const [planMode, setPlanMode]   = React.useState(initialPlanMode); // ⇧⇥ plan mode
   const [proposal, setProposal]   = React.useState(initialProposal);// plan-mode card shown
   const [approved, setApproved]   = React.useState(false);
@@ -1467,9 +1506,22 @@ function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {
           {/* PTT/text: brief "received" pulse since there's no draft to show */}
           {mode === "thinking" && !draft && (
             <div className="thr-turn thr-turn-bro">
-              <div className="thr-bubble thr-bubble-bro thr-bubble-typing">
-                <span className="thr-think-dots"><i/><i/><i/></span>
-              </div>
+              {msgInstant ? (
+                <div className="thr-bubble thr-bubble-bro thr-reason">
+                  <span className="thr-reason-kicker">
+                    <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+                    {M_BRO.name} is reasoning
+                  </span>
+                  <div className="thr-reason-skeleton" aria-hidden="true">
+                    <span style={{ width: "84%" }} />
+                    <span style={{ width: "58%" }} />
+                  </div>
+                </div>
+              ) : (
+                <div className="thr-bubble thr-bubble-bro thr-bubble-typing">
+                  <span className="thr-think-dots"><i/><i/><i/></span>
+                </div>
+              )}
               <div className="thr-meta">{turnKind === "audio" ? "Heard you · spinning up" : "Got it · spinning up"}</div>
             </div>
           )}
@@ -1488,7 +1540,7 @@ function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {
               <div className="thr-bubble thr-bubble-bro thr-reason">
                 <span className="thr-reason-kicker">
                   <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-                  {M_BRO.name} is reasoning
+                  {stopped ? `${M_BRO.name} stopped` : `${M_BRO.name} is reasoning`}
                 </span>
                 <ol className="thr-reason-steps">
                   {(() => {
@@ -1503,23 +1555,41 @@ function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {
                       return (
                         <li
                           key={startAt + j}
-                          className={`thr-reason-step${isLast ? " thr-reason-step-active" : " thr-reason-step-done"}`}
+                          className={`thr-reason-step${isLast && !stopped ? " thr-reason-step-active" : " thr-reason-step-done"}${msgMarks && s.kind === "act" ? " thr-reason-step-act" : ""}`}
                           style={{ opacity: FADE[dist] ?? 0.26 }}
                         >
-                          <span className="thr-reason-mark" aria-hidden="true" />
-                          <span className="thr-reason-text">{s.label}</span>
+                          {renderReasonMark(s)}
+                          {renderReasonText(s)}
                         </li>
                       );
                     });
                   })()}
                 </ol>
+                {msgSteer && !stopped && (
+                  <div className="thr-reason-steer">
+                    <button type="button" className="thr-reason-stop" onClick={stopRun}>
+                      <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+                      Stop
+                    </button>
+                    <span className="thr-reason-steer-hint">Tap to cut in</span>
+                  </div>
+                )}
+                {msgSteer && stopped && (
+                  <div className="thr-reason-steer thr-reason-steer-stopped">
+                    <span className="thr-reason-stoptag">Stopped — say what to change.</span>
+                    <button type="button" className="thr-reason-resume" onClick={resumeRun}>
+                      <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M7 5l11 7-11 7z"/></svg>
+                      Resume
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="thr-meta">{M_BRO.name} · updating live</div>
+              <div className="thr-meta">{M_BRO.name} · {stopped ? "paused by you" : "updating live"}</div>
             </div>
           )}
           {reply && (
             <div className="thr-turn thr-turn-bro">
-              <ThrReasoned steps={script.steps} />
+              <ThrReasoned steps={script.steps} marks={msgMarks} />
               <div className={`thr-bubble thr-bubble-bro${mode === "reporting" && reply.length < script.reply.length ? " thr-bubble-live" : ""}`}>
                 {reply}
                 {mode === "reporting" && reply.length < script.reply.length && <span className="thr-caret" />}

@@ -26,10 +26,10 @@ const SCRIPT = {
     "Return: top 3 with carrier, depart time, fare, refund rule.",
   taskTitle: "Compare three SFO → JFK options",
   steps: [
-    { label: "Pull route inventory", note: "Checked 12 carrier × time combinations." },
-    { label: "Filter under $250 round trip", note: "Kept JetBlue · Delta · Frontier." },
-    { label: "Verify refund rules", note: "Reading fare-class fine print." },
-    { label: "Compose comparison", note: "Carrier · depart · price · refund." },
+    { label: "Pull route inventory", note: "Checked 12 carrier × time combinations.", kind: "act", tool: "routes.search" },
+    { label: "Filter under $250 round trip", note: "Kept JetBlue · Delta · Frontier.", kind: "think" },
+    { label: "Verify refund rules", note: "Reading fare-class fine print.", kind: "act", tool: "fares.rules" },
+    { label: "Compose comparison", note: "Carrier · depart · price · refund.", kind: "think" },
   ],
   reply:
     "Three options under $250 are ready. JetBlue 7:30 AM is the cleanest pick — $217 round trip with free changes up to 24h. Two more in the artifact. Want me to hold the first one?",
@@ -73,6 +73,14 @@ function VoiceProvider({ children }) {
   const [hasArtifact, setHasArtifact] = React.useState(false);
   const [vu, setVu] = React.useState(0); // 0..1 volume meter
   const [turn, setTurn] = React.useState(0); // conversation turn counter
+
+  // ── Assistant-message loading treatment (desktop demo tweaks) ──
+  // msgInstant — bubble appears instantly with a skeleton before first line
+  // msgMarks   — distinguish "acting" lines (tool calls) from "thinking" lines
+  // msgSteer   — show a quiet Stop / Steer control on the live bubble
+  const [msgInstant, setMsgInstant] = React.useState(true);
+  const [msgMarks, setMsgMarks]     = React.useState(true);
+  const [msgSteer, setMsgSteer]     = React.useState(true);
 
   const timers = React.useRef([]);
   const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
@@ -339,6 +347,7 @@ function VoiceProvider({ children }) {
     freeSubMode, setFreeSubMode,
     textValue, setTextValue,
     audioDuration, turnKind, turnDuration, interjection,
+    msgInstant, setMsgInstant, msgMarks, setMsgMarks, msgSteer, setMsgSteer,
     script: SCRIPT,
     hold, release, reset, force, sendText, freeStart,
   };

@@ -1545,6 +1545,109 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Instant skeleton — bubble is on screen the moment you send; two shimmer
+   bars stand in for the first reasoning lines before they land. */
+.dt-reason-skeleton {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 4px 0 1px;
+}
+.dt-reason-skeleton span {
+  height: 9px;
+  border-radius: 5px;
+  background: linear-gradient(
+    100deg,
+    rgba(59,130,246,0.08) 30%,
+    rgba(59,130,246,0.20) 50%,
+    rgba(59,130,246,0.08) 70%
+  );
+  background-size: 220% 100%;
+  animation: dt-reason-shimmer 1.25s ease-in-out infinite;
+}
+@keyframes dt-reason-shimmer {
+  from { background-position: 180% 0; }
+  to   { background-position: -80% 0; }
+}
+
+/* Tool-action lines — a "doing" line (an API call, a write) gets a square
+   wrench mark + a mono token naming the tool, distinct from prose thinking. */
+.dt-reason-step-mark-act {
+  display: inline-grid; place-items: center;
+  width: 18px; height: 14px;
+  margin-top: 1px;
+  color: var(--nb-info-ink);
+}
+.dt-reason-step-mark-act::before { display: none; }
+.dt-reason-step:not(:last-child) .dt-reason-step-mark-act::after {
+  top: 15px; bottom: -6px;
+}
+.dt-reason-step-done .dt-reason-step-mark-act { color: var(--nb-info); opacity: 0.6; }
+.dt-reason-tool {
+  display: inline-flex; align-items: center;
+  margin-right: 7px;
+  padding: 1px 6px;
+  border-radius: var(--nb-radius-xs);
+  background: rgba(59,130,246,0.10);
+  border: 1px solid var(--nb-info-edge);
+  color: var(--nb-info-ink);
+  font-family: var(--nb-font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  vertical-align: 1.5px;
+  white-space: nowrap;
+}
+
+/* Steer / interrupt — quiet controls on the live bubble. Desktop has the
+   room; voice-first users want to cut in mid-turn. */
+.dt-reason-steer {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 3px;
+  padding-top: 9px;
+  border-top: 1px solid var(--nb-info-edge);
+}
+.dt-reason-steer-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--nb-info-edge);
+  background: rgba(59,130,246,0.06);
+  color: var(--nb-info-ink);
+  font-family: var(--nb-font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.dt-reason-steer-btn:hover { background: rgba(59,130,246,0.12); }
+.dt-reason-steer-btn:active { transform: translateY(0.5px); }
+.dt-reason-steer-stop {
+  color: var(--nb-danger-ink);
+  border-color: var(--nb-danger-edge);
+  background: var(--nb-danger-soft);
+}
+.dt-reason-steer-stop:hover { background: #fde7e7; }
+.dt-reason-steer-hint {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--nb-ink-muted);
+  letter-spacing: 0.01em;
+}
+.dt-reason-steer-stopped { gap: 9px; }
+.dt-reason-steer-stoptag {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--nb-ink-soft);
+  letter-spacing: -0.01em;
+}
+.dt-reason-steer-resume {
+  margin-left: auto; flex-shrink: 0;
+  color: var(--nb-live-ink);
+  border-color: var(--nb-live-edge);
+  background: var(--nb-live-soft);
+}
+.dt-reason-steer-resume:hover { background: #dcfce7; }
+
 /* Settled / history state — reasoning progress is gone; a tucked-away
    "Reasoned" toggle sits above the final answer. */
 .dt-bubble-answer {
@@ -2062,6 +2165,56 @@
   white-space: nowrap;
 }
 .dt-roster-row-offline .dt-roster-last { color: var(--nb-warn-ink); }
+
+/* offline standby row — keeps the Install & connect action inline */
+.dt-roster-row-offline {
+  grid-template-columns: 32px auto 1fr auto;
+  border-color: var(--nb-warn-edge);
+  background: var(--nb-warn-soft);
+  cursor: default;
+}
+.dt-roster-row-offline:hover { background: var(--nb-warn-soft); border-color: var(--nb-warn-edge); }
+.dt-roster-offline-note {
+  font-size: 11.5px;
+  color: var(--nb-warn-ink);
+  opacity: 0.82;
+  white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;
+}
+.dt-roster-connect {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  background: var(--nb-coral);
+  border: 1px solid var(--nb-coral);
+  color: #fff;
+  font-family: inherit; font-size: 12px; font-weight: 650; letter-spacing: -0.01em;
+  cursor: pointer; white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, transform 0.12s;
+}
+.dt-roster-connect:hover { background: var(--nb-coral-hover); border-color: var(--nb-coral-hover); transform: translateY(-1px); }
+.dt-roster-connect:active { transform: none; }
+.dt-roster-actions { display: flex; align-items: center; gap: 7px; }
+.dt-roster-runonly {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  background: var(--nb-paper);
+  border: 1px solid var(--nb-warn-edge);
+  color: var(--nb-warn-ink);
+  font-family: inherit; font-size: 12px; font-weight: 600; letter-spacing: -0.01em;
+  cursor: pointer; white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.dt-roster-runonly:hover { background: var(--nb-warn-soft); border-color: var(--nb-warn); }
+.dt-roster-connect-done,
+.dt-roster-connect-done:hover {
+  background: rgba(31,138,91,0.12);
+  border-color: rgba(31,138,91,0.34);
+  color: #1f8a5b;
+  transform: none;
+}
 
 /* ─────────────────────────────────────────────
    AGENT ACTIVITY RAIL (BroDetail pages)
@@ -2868,6 +3021,42 @@
   color: var(--nb-ink-muted);
   padding: 0 4px;
 }
+
+/* ── offline bro card (Needs you) ────────────────────────────── */
+.ob-eyebrow-warn { color: var(--nb-warn-ink); }
+.dt-bro-card-offline { background: var(--nb-warn-soft); border-color: var(--nb-warn-edge); }
+.dt-bro-card-offline:hover { border-color: var(--nb-warn-edge); transform: none; box-shadow: var(--nb-shadow-hairline); }
+.dt-bro-card-task-offline {
+  background: rgba(255,255,255,0.55);
+  border: 1px solid var(--nb-warn-edge);
+  color: var(--nb-warn-ink);
+}
+.dt-bro-card-task-offline .dt-bro-card-task-text { white-space: normal; opacity: 0.9; }
+.dt-bro-card-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.dt-bro-card-connect {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--nb-coral);
+  border: 1px solid var(--nb-coral);
+  color: #fff;
+  font-family: inherit; font-size: 12.5px; font-weight: 650; letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.12s;
+}
+.dt-bro-card-connect:hover { background: var(--nb-coral-hover); border-color: var(--nb-coral-hover); transform: translateY(-1px); }
+.dt-bro-card-connect:active { transform: none; }
+.dt-bro-card-open {
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--nb-paper);
+  border: 1px solid var(--nb-warn-edge);
+  color: var(--nb-warn-ink);
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.dt-bro-card-open:hover { background: var(--nb-warn-soft); border-color: var(--nb-warn); }
 
 /* recents */
 .dt-recent-list {
