@@ -2408,7 +2408,7 @@ function OfflineBanner({
         <div className="ob-offline-banner-body">
           <strong>{node.name} is offline</strong>
           <span>{bro.name} can't take new messages until this computer reconnects. Your draft is saved — the last turn retries on its own.</span>
-          <span>Copy or share Install + connect from desktop, then run it in Terminal on the computer that should work for this bro.</span>
+          <span>Copy the connect command from desktop, then paste it into the Newbro app on the Mac that should work for this bro.</span>
         </div>
       </section>
     );
@@ -2439,7 +2439,7 @@ function OfflineBanner({
       />
 
       <div className="dt-offline-foot">
-        <span>Run on <strong>{node.name}</strong> to bring it back — it already has the CLI installed.</span>
+        <span><strong>Open the Newbro app on {node.name}</strong> — it reconnects on its own. Not set up there yet? Copy the connect command above and paste it into the app.</span>
         <button
           type="button"
           className="dt-offline-disclose"
@@ -2447,13 +2447,13 @@ function OfflineBanner({
           onClick={() => setShowReinstall((v) => !v)}
         >
           <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
-          {showReinstall ? "Hide reinstall" : "Reinstall or update the CLI"}
+          {showReinstall ? "Hide terminal" : "Reinstall from a terminal"}
         </button>
       </div>
 
       {showReinstall && (
         <div className="dt-offline-reinstall">
-          <p>CLI missing or out of date? This installs the latest and reconnects in one step:</p>
+          <p>The app keeps the CLI updated automatically. To reinstall manually, run this in a terminal:</p>
           <OfflineCommandLine
             revealed={commands?.installConnect ?? null}
             masked={<>curl -fsSL <span className="dt-offline-cmd-tok">newbro.dev/install.sh</span> | sh</>}

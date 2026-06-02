@@ -1786,7 +1786,7 @@ describe("Newbro artboard shell", () => {
     fireEvent.click(runCopy);
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("newbro executor run --node-id node-1 --token token-1"));
     await waitFor(() => expect(runCopy).toHaveTextContent("Copied"));
-    fireEvent.click(screen.getByRole("button", { name: /Reinstall or update the CLI/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Reinstall from a terminal/i }));
     fireEvent.click(screen.getByTestId("bro-node-copy-command"));
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("install-newbro-cli.sh")));
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
