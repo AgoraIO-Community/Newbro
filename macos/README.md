@@ -18,3 +18,15 @@ The app resolves the `newbro` CLI at runtime (override → `~/.local/bin/newbro`
 
 Profiles are stored in `~/.newbro/menubar.json`; logs in
 `~/.newbro/logs/executor-ui-<id>.log`.
+
+## Releases
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the app
+for both architectures and publishes two unsigned DMGs to a GitHub Release:
+
+- `NewbroExecutor-<version>-arm64.dmg` — Apple Silicon (M-series)
+- `NewbroExecutor-<version>-x86_64.dmg` — Intel
+
+The app is unsigned, so on first launch right-click it in `/Applications` and
+choose **Open** (or run
+`xattr -dr com.apple.quarantine "/Applications/Newbro Executor.app"`).
