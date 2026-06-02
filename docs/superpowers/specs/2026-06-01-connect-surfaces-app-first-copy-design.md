@@ -94,6 +94,15 @@ Restructure the step from two terminal commands to app-first:
   connect". **Footer status:** "Install/connect command will be generated on
   demand" → "Download link + connect command will be generated on demand".
 
+**Mobile behavior:** the create-bro modal is a single responsive component
+(desktop modal / mobile bottom-sheet), so this step also renders on phones,
+where a Mac `.dmg` download is not actionable. On mobile (the same `mobile`
+breakpoint the rest of the app uses), replace the **Download the Newbro app**
+button with instructional text — "Install the Newbro app on the Mac that will
+run **{bro}**, then paste this connect command into it" — and keep the
+`runOnly` connect command box (copy/share). The Advanced/terminal disclosure
+stays available. This mirrors the existing offline-header mobile pattern.
+
 ### 2. Bro-detail offline header
 
 The app auto-supervises and auto-reconnects, so the primary CTA becomes opening
