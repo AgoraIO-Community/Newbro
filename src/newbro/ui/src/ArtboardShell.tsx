@@ -1048,11 +1048,19 @@ function SettledAnswerBubble({
   steps,
   answer,
   mobile = false,
+  sessionId = null,
+  workspaceRoot = null,
+  threadId = null,
+  turnId = null,
 }: {
   bro: BroCardModel;
   steps: ReasoningStep[];
   answer: string;
   mobile?: boolean;
+  sessionId?: string | null;
+  workspaceRoot?: string | null;
+  threadId?: string | null;
+  turnId?: string | null;
 }) {
   const [showAll, setShowAll] = React.useState(false);
   const COLLAPSED = 3;
@@ -1105,7 +1113,13 @@ function SettledAnswerBubble({
         ) : null}
         {answer ? (
           <div className={answerClass}>
-            <MarkdownText>{answer}</MarkdownText>
+            <MarkdownText
+              downloadContext={
+                sessionId && threadId && turnId && workspaceRoot
+                  ? { sessionId, threadId, turnId, workspaceRoot }
+                  : undefined
+              }
+            >{answer}</MarkdownText>
           </div>
         ) : null}
       </div>
@@ -1180,11 +1194,15 @@ function TimelineTurnView({
   turn,
   mobile = false,
   onTextTurn,
+  sessionId = null,
+  workspaceRoot = null,
 }: {
   bro: BroCardModel;
   turn: BroTimelineTurn;
   mobile?: boolean;
   onTextTurn?: (turn: TextTurn) => void;
+  sessionId?: string | null;
+  workspaceRoot?: string | null;
 }) {
   const shell = useNewbroShell();
   const record = timelineTaskRecord(turn);
@@ -1228,7 +1246,16 @@ function TimelineTurnView({
       <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
       {phase === "done" ? (
         (answerText || dedupedSettledSteps.length > 0) ? (
-          <SettledAnswerBubble bro={bro} steps={dedupedSettledSteps} answer={answerText} mobile={mobile} />
+          <SettledAnswerBubble
+            bro={bro}
+            steps={dedupedSettledSteps}
+            answer={answerText}
+            mobile={mobile}
+            sessionId={sessionId}
+            workspaceRoot={workspaceRoot}
+            threadId={turn.thread_id}
+            turnId={turn.turn_id}
+          />
         ) : null
       ) : (
         <ReasoningBubble
@@ -2404,7 +2431,14 @@ function ThreadPanel({
         </div>
       ) : null}
       {renderedTurns.map((turn) => (
-        <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} onTextTurn={onTextTurn} />
+        <TimelineTurnView
+          key={turn.turn_id}
+          bro={bro}
+          turn={turn}
+          onTextTurn={onTextTurn}
+          sessionId={shell.activeShellSessionId}
+          workspaceRoot={selectedThread?.workspaceId ?? null}
+        />
       ))}
       {fallbackProposalRequests.map((request) => (
         <PlanProposalCard
@@ -2650,7 +2684,15 @@ function MobileThreadSurface({
           </div>
         ) : null}
         {renderedTurns.map((turn) => (
-          <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} mobile onTextTurn={onTextTurn} />
+          <TimelineTurnView
+            key={turn.turn_id}
+            bro={bro}
+            turn={turn}
+            mobile
+            onTextTurn={onTextTurn}
+            sessionId={shell.activeShellSessionId}
+            workspaceRoot={selectedThread?.workspaceId ?? null}
+          />
         ))}
         {fallbackProposalRequests.map((request) => (
           <PlanProposalCard

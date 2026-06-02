@@ -10,7 +10,7 @@ import type {
   TaskCommandType,
 } from "../types";
 
-const API_PREFIX = "/api";
+export const API_PREFIX = "/api";
 const NEWBRO_CLI_INSTALL_URL =
   "https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh";
 const configuredApiBaseUrl = getConfiguredApiBaseUrl();
@@ -134,7 +134,7 @@ function normalizePath(path: string): string {
   return path.replace(/^\/+/, "");
 }
 
-function buildHttpUrl(path: string): string {
+export function buildHttpUrl(path: string): string {
   if (configuredApiBaseUrl === null) {
     return path;
   }
