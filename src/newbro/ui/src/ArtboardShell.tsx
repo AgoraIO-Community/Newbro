@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import { ArrowUp, Check, ChevronLeft, Copy, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
+import { ArrowUp, Check, ChevronLeft, Copy, Download, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorConnectCommands,
   clearDraft,
@@ -22,6 +22,8 @@ import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
 import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
+
+const APP_DOWNLOAD_URL = "https://github.com/AgoraIO/Synopse/releases/latest";
 
 type RuntimePage = "home" | "detail";
 type HomeBroState = "working" | "idle" | "offline";
@@ -1989,11 +1991,13 @@ function CreateConnectSheet({
   onClose,
   onCreated,
   bro,
+  mobile = false,
 }: {
   sessionId: string;
   onClose: () => void;
   onCreated: () => Promise<void>;
   bro?: BroCardModel | null;
+  mobile?: boolean;
 }) {
   const [name, setName] = useState(bro?.name ?? "atlas");
   const [commands, setCommands] = useState<ExecutorConnectCommands | null>(null);
@@ -2003,6 +2007,7 @@ function CreateConnectSheet({
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
   const [pendingBroName, setPendingBroName] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(false);
   const finalizingRef = useRef(false);
   const trimmedName = name.trim();
   const canCreate = trimmedName.length > 0 && !busy && !commands && !pendingNodeId && !completed;
@@ -2146,22 +2151,20 @@ function CreateConnectSheet({
                 <div className="ob-fieldset">
                   <div className="ob-fieldset-eyebrow-row">
                     <span className="ob-field-eyebrow">STEP 3 · CONNECT A COMPUTER</span>
-                    <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : commands ? "installs CLI + starts the executor" : "on demand"}</span>
+                    <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : commands ? "download app + paste connect" : "on demand"}</span>
                   </div>
-                  <p className="ob-connect-guide">On the computer where {pendingBroName || trimmedName || "your bro"} should work, paste this in a terminal to install newbro:</p>
-                  <div className="ob-connect">
-                    <div className="ob-connect-cmd">
-                      <span className="ob-connect-prompt">$</span>
-                      <span className="ob-connect-line">{commands?.installOnly ?? "curl -fsSL newbro.dev/install.sh | sh"}</span>
-                      <button type="button" className="ob-connect-copy" aria-label="Copy install command" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.installOnly, "install"); }}>
-                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="9" y="9" width="11" height="11" rx="2"/>
-                          <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  <p className="ob-connect-guide ob-connect-guide-2">Then start it with your one-time key — we filled in the details for you:</p>
+                  {mobile ? (
+                    <p className="ob-connect-guide">Install the Newbro app on the Mac that will run {pendingBroName || trimmedName || "your bro"}, then paste this connect command into it (menu → Paste connect command):</p>
+                  ) : (
+                    <>
+                      <p className="ob-connect-guide">On the Mac where {pendingBroName || trimmedName || "your bro"} should work, install the Newbro app:</p>
+                      <a className="ob-download" href={APP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
+                        <Download size={14} strokeWidth={2} />
+                        Download the Newbro app
+                      </a>
+                      <p className="ob-connect-guide ob-connect-guide-2">Then copy this connect command and paste it into the app (menu → Paste connect command):</p>
+                    </>
+                  )}
                   <div className="ob-connect">
                     <div className="ob-connect-cmd">
                       <span className="ob-connect-prompt">$</span>
@@ -2177,11 +2180,44 @@ function CreateConnectSheet({
                       <span className="ob-connect-spinner" aria-hidden="true"><span /><span /><span /></span>
                       <span className="ob-connect-status-text">
                         <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : commands ? `Waiting to hear from your computer…` : `Ready to connect ${trimmedName || "a bro"}...`}</strong>
-                        <span>{completed ? "The bro has been created after the computer connected successfully." : commands ? `This updates on its own once ${pendingBroName || trimmedName} connects. Nothing else on that computer changes.` : "Newbro will issue an install/connect command first. The bro appears after the first successful connection."}</span>
+                        <span>{completed ? "The bro has been created after the computer connected successfully." : commands ? `This updates on its own once ${pendingBroName || trimmedName} connects. Nothing else on that Mac changes.` : "Newbro will issue a connect command first. The bro appears after the first successful connection."}</span>
                       </span>
-                      <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "installs CLI + starts the executor" : "new"}</span>
+                      <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "download app + paste connect" : "new"}</span>
                     </div>
                   </div>
+                  <button type="button" className="ob-link ob-link-sm ob-terminal-toggle" aria-expanded={showTerminal} onClick={() => setShowTerminal((v) => !v)}>
+                    {showTerminal ? "Hide terminal option" : "Not on a Mac? Connect from a terminal"}
+                  </button>
+                  {showTerminal ? (
+                    <div className="ob-terminal-fallback">
+                      <p className="ob-connect-guide">Install — paste this in a terminal on that computer:</p>
+                      <div className="ob-connect">
+                        <div className="ob-connect-cmd">
+                          <span className="ob-connect-prompt">$</span>
+                          <span className="ob-connect-line">{commands?.installOnly ?? "curl -fsSL newbro.dev/install.sh | sh"}</span>
+                          <button type="button" className="ob-connect-copy" aria-label="Copy install command" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.installOnly, "install"); }}>
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="9" y="9" width="11" height="11" rx="2"/>
+                              <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                      <p className="ob-connect-guide ob-connect-guide-2">Then start it with your one-time key:</p>
+                      <div className="ob-connect">
+                        <div className="ob-connect-cmd">
+                          <span className="ob-connect-prompt">$</span>
+                          <span className="ob-connect-line">{commands?.runOnly ?? "newbro executor run --token pending"}</span>
+                          <button type="button" className="ob-connect-copy" aria-label="Copy connect command from terminal" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.runOnly, "run"); }}>
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="9" y="9" width="11" height="11" rx="2"/>
+                              <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="ob-connect-meta">
                     <button type="button" className="ob-link ob-link-sm">Get a fresh link</button>
                     <span className="ob-connect-meta-sep">·</span>
@@ -2192,9 +2228,9 @@ function CreateConnectSheet({
                 <div className="dt-modal-tip">
                   <span className="dt-modal-tip-eyebrow">TIP</span>
                   <p>
-                    That computer can be anything that stays on — your Mac, a spare
+                    That computer should be a Mac that stays on — your main machine, a spare
                     laptop, a mini in the closet. {pendingBroName || trimmedName || "your bro"} only runs there when you ask
-                    it to, and you can move it to another computer anytime.
+                    it to. (Linux or a server? Use the terminal option above.)
                   </p>
                 </div>
               </div>
@@ -2204,7 +2240,7 @@ function CreateConnectSheet({
           <footer className="ob-sheet-foot">
             <span className="dt-modal-foot-status nb-create-connect-foot-status">
               <span className="dt-modal-foot-dot" />
-              {completed ? "Connected once · Bro ready" : commands ? "We’ll detect your computer automatically · link valid 9:46" : "Install/connect command will be generated on demand"}
+              {completed ? "Connected once · Bro ready" : commands ? "We’ll detect your computer automatically · link valid 9:46" : "Download link + connect command will be generated on demand"}
             </span>
             {commands && completed ? (
               <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" onClick={() => { void onCreated().finally(onClose); }}>
@@ -4041,6 +4077,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
           sessionId={shell.activeShellSessionId}
           onClose={() => setAddOpen(false)}
           onCreated={shell.refreshShellSession}
+          mobile
         />
       ) : null}
     </MobileStage>
@@ -4212,7 +4249,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
               <span className="home-section-eyebrow">Connect · {bro.name}</span>
               <h2>Set up this Bro before talking.</h2>
               <p>Create or reveal Install + connect and run it on the computer where this Bro should work.</p>
-              <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onBack} onCreated={shell.refreshShellSession} bro={bro} />
+              <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onBack} onCreated={shell.refreshShellSession} bro={bro} mobile />
             </section>
           </main>
         </div>

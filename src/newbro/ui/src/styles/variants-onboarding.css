@@ -1100,3 +1100,22 @@
 /* keep the offline thread variant a little tighter than live threads */
 .ob-thr-offline .thr-bar-state-warn { color: var(--nb-warn-ink); }
 .ob-thr-offline .thr-bar-state-warn .thr-bar-dot { background: var(--nb-warn); animation: none; }
+
+.ob-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--nb-info-grad-btn, #2563eb);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  margin: 2px 0 4px;
+}
+.ob-download:hover { filter: brightness(1.05); }
+
+.ob-terminal-toggle { margin-top: 6px; }
+.ob-terminal-fallback { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }

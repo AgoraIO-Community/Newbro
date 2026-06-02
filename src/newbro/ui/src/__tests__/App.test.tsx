@@ -590,11 +590,14 @@ describe("Newbro artboard shell", () => {
       enabled_executors: ["codex"],
     }));
     expect(clientMock.createPersona).not.toHaveBeenCalled();
-    expect(await screen.findByText(/install-newbro-cli\.sh/)).toBeInTheDocument();
-    expect(screen.getByText(/paste this in a terminal to install newbro/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Copy install command/i })).toBeInTheDocument();
+    expect(await screen.findByText(/install the Newbro app/i)).toBeInTheDocument();
+    const download = screen.getByRole("link", { name: /Download the Newbro app/i });
+    expect(download).toHaveAttribute("href", "https://github.com/AgoraIO/Synopse/releases/latest");
+    expect(screen.getByText(/paste it into the app/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
     expect(screen.getByText(/This updates on its own once atlas connects/)).toBeInTheDocument();
+    // Terminal commands are tucked behind a disclosure, hidden by default.
+    expect(screen.queryByRole("button", { name: /Copy install command/i })).not.toBeInTheDocument();
   });
 
   it("shows mobile install/connect instructions before creating the first Bro", async () => {
@@ -605,10 +608,11 @@ describe("Newbro artboard shell", () => {
     expect(await screen.findByTestId("mobile-empty-workspace")).toHaveTextContent("Give it a name, connect a computer");
     fireEvent.click(screen.getByRole("button", { name: "Create your first bro" }));
 
-    expect(await screen.findByText(/paste this in a terminal to install newbro/)).toBeInTheDocument();
-    expect(screen.getByText(/curl -fsSL newbro\.dev\/install\.sh \| sh/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Copy install command/i })).toBeDisabled();
+    expect(await screen.findByText(/Install the Newbro app on the Mac/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
+    // No usable Mac download on a phone, and terminal commands stay collapsed.
+    expect(screen.queryByRole("link", { name: /Download the Newbro app/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Copy install command/i })).not.toBeInTheDocument();
   });
 
 
