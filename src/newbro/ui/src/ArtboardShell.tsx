@@ -3743,7 +3743,7 @@ function AddBroTile({ editing, onClick }: { editing: boolean; onClick: () => voi
       </span>
       <span className="home-add-body">
         <span className="home-add-title">Add a bro</span>
-        <span className="home-add-sub">Generates an install/connect command</span>
+        <span className="home-add-sub">Download the app + connect a computer</span>
       </span>
       <span className="home-add-arrow">›</span>
     </button>
