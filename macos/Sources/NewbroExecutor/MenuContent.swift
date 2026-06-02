@@ -14,7 +14,9 @@ struct MenuContent: View {
             let active = model.isActive(profile)
             let status = model.status(of: profile)
             let running = active && status != .stopped && status != .error
-            Menu("\(profile.label) — \(status.rawValue)\(model.conflicts().contains(profile.id) ? "  (duplicate node id)" : "")") {
+            let title = "\(profile.label) — \(status.rawValue)"
+                + (model.conflicts().contains(profile.id) ? "  (duplicate node id)" : "")
+            Menu {
                 if running {
                     Button("Stop") { model.stop(profile) }
                     Button("Restart") { model.restart(profile) }
@@ -27,6 +29,12 @@ struct MenuContent: View {
                 Button("View recent log…") { model.viewLog(profile.id) }
                 Button("Edit…") { model.editProfile(profile.id) }
                 Button("Delete") { model.delete(profile) }
+            } label: {
+                Label {
+                    Text(title)
+                } icon: {
+                    Image(nsImage: statusTone(status).dotImage())
+                }
             }
         }
         Divider()
