@@ -115,6 +115,6 @@ jobs:
             `/Applications` and choose **Open** (or run
             `xattr -dr com.apple.quarantine "/Applications/Newbro Executor.app"`).
 
-            **Downloads**
-            - Apple Silicon (M-series): `NewbroExecutor-<version>-arm64.dmg`
-            - Intel: `NewbroExecutor-<version>-x86_64.dmg`
+            **Downloads** (pick the asset matching your Mac)
+            - Apple Silicon (M-series): the `-arm64.dmg` asset below
+            - Intel: the `-x86_64.dmg` asset below
