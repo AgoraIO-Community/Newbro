@@ -15,6 +15,7 @@ final class AppModel: ObservableObject {
     private let loginItem: LoginItem
     private var cancellables: Set<AnyCancellable> = []
     private var installProcess: NodeProcess?
+    private var updateInstallProcess: NodeProcess?
     private let windows = WindowManager()
     // Blocking node lifecycle calls (stop/restart busy-wait up to 5s) run here
     // so they never freeze the main actor / menu.
@@ -62,6 +63,59 @@ final class AppModel: ObservableObject {
     func aggregate() -> NodeStatus { supervisor.aggregateStatus() }
     func isActive(_ profile: Profile) -> Bool { supervisor.activeIDs().contains(profile.id) }
     func conflicts() -> Set<String> { conflictingProfileIDs(profiles) }
+
+    // MARK: - Update support
+
+    /// IDs of profiles currently being supervised (active).
+    func activeProfileIDs() -> [String] { Array(supervisor.activeIDs()) }
+
+    func start(profileID id: String) {
+        guard runtimeAvailable, let profile = profiles.first(where: { $0.id == id }) else { return }
+        supervisor.start(profile)
+    }
+
+    func stop(profileID id: String) {
+        controlQueue.async { [supervisor] in supervisor.stop(id) }
+    }
+
+    /// The installed CLI version, read by running `newbro --version` (e.g. "0.1.2").
+    func installedCLIVersion() -> String? {
+        guard let newbro = locator.resolveNewbro() else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: newbro)
+        process.arguments = ["--version"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let output = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // Output is "newbro 0.1.2" → take the last whitespace-separated token.
+        return output.split(separator: " ").last.map(String.init)
+    }
+
+    /// Run the CLI installer/upgrader; `completion` is invoked on the main actor
+    /// with the process exit code.
+    func runInstaller(_ completion: @escaping @MainActor (Int32) -> Void) {
+        let argv = locator.installCommandArgv()
+        updateInstallProcess = NodeProcess(
+            argv: argv,
+            onLine: { _ in },
+            onExit: { [weak self] code in
+                Task { @MainActor in
+                    self?.updateInstallProcess = nil
+                    completion(code)
+                }
+            })
+        updateInstallProcess?.start()
+    }
+
+    /// The app's own version from the bundle (CFBundleShortVersionString).
+    var appVersion: String? {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+    }
 
     func start(_ profile: Profile) {
         guard runtimeAvailable else { return }
