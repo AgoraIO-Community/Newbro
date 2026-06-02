@@ -77,9 +77,11 @@ In `NewbroExecutorCore`:
 ### App layer (`NewbroExecutor`)
 
 - `ReleaseClient`: calls the GitHub latest-release endpoint and decodes
-  `tag_name` plus the first `*.dmg` browser-download URL. The URLSession data
-  fetch is injected (`(URL) async throws -> Data`) so parsing is unit-testable
-  against a canned JSON fixture. Returns `ReleaseInfo { tag: String, dmgURL: URL? }`.
+  `tag_name` plus the release page `html_url`. The URLSession data fetch is
+  injected (`(URL) async throws -> Data`) so parsing is unit-testable against a
+  canned JSON fixture. Returns `ReleaseInfo { tag: String, pageURL: URL? }`.
+  (We open the release page rather than a specific DMG asset because there are
+  two per-arch DMGs — the user picks the one for their Mac.)
 - `CLIVersionProbe`: runs `<newbro> --version` using the path from
   `RuntimeLocator`, returns the trimmed version string (or nil on failure).
 - `UpdateService: ObservableObject`:
@@ -93,8 +95,8 @@ In `NewbroExecutorCore`:
     3. Run `install-newbro-cli.sh` (via `NodeProcess`), capturing output.
     4. **Always** restart the snapshotted nodes (success or failure).
     5. Re-run `check()`; on installer failure, publish an error string for the menu.
-  - `openAppDownload()` — opens the release's DMG URL (or release page) in the
-    browser.
+  - `openAppDownload()` — opens the release page (`pageURL`) in the browser so
+    the user downloads the DMG matching their Mac's architecture.
   - Holds weak references to `ProfileSupervisor`/`AppModel`; network and process
     spawns are injected so the apply-flow ordering can be tested with fakes.
 
@@ -121,7 +123,7 @@ A dedicated section in the existing `AppDelegate` `NSMenu`, rebuilt on open from
 
 ```
 launch / 6h timer / "Check for Updates…"
-   → ReleaseClient.latest()  ──► tag_name (vY), dmgURL
+   → ReleaseClient.latest()  ──► tag_name (vY), release pageURL
    → CLIVersionProbe()       ──► installed CLI (vX)
    → Bundle CFBundleShortVersionString ──► app version
    → updateStatus(...)       ──► UpdateStatus  ──► menu
@@ -151,7 +153,7 @@ launch / 6h timer / "Check for Updates…"
   dev-default app suppressed, unparseable inputs → no false positives. Runs under
   the existing `swift test --package-path macos` gate.
 - **App (automated):** `ReleaseClient` decoding from a canned GitHub JSON
-  fixture (tag + dmg asset); `UpdateService.updateCLI()` with a fake supervisor
+  fixture (tag + release page URL); `UpdateService.updateCLI()` with a fake supervisor
   and fake installer asserting the stop → update → restart ordering, and that
   restart still happens when the installer fails.
 - **Python (automated):** a test asserting `newbro --version` prints the package
