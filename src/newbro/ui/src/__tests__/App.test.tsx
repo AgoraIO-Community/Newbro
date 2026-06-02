@@ -1889,6 +1889,8 @@ describe("Newbro artboard shell", () => {
           persona_name: "Forge",
           executor_id: "codex",
           executor_node_id: "node-forge",
+          workspace_id: "/tmp/work",
+          workspace_name: "work",
           execution_session_id: "exec-existing",
           status: "completed",
           title: "Previous request",
@@ -1914,6 +1916,7 @@ describe("Newbro artboard shell", () => {
       ],
     };
     clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValueOnce(snapshot);
     clientMock.closeBroThread.mockResolvedValueOnce(snapshot);
     window.history.replaceState({}, "", "/mobile?sid=session-existing");
 
