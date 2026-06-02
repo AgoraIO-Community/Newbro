@@ -2329,71 +2329,24 @@ function HomeBroCopyAction({ bro, variant }: { bro: BroCardModel; variant: "card
   );
 }
 
-// Wrap the `--token <value>` segment of a revealed command in a highlight span
-// so the terminal line reads like the prototype's coloured token.
-function highlightCommandToken(command: string): React.ReactNode {
-  const match = command.match(/--token\s+('[^']*'|"[^"]*"|\S+)/);
-  if (!match || match.index === undefined) return command;
-  const start = match.index;
-  const end = start + match[0].length;
-  return (
-    <>
-      {command.slice(0, start)}
-      <span className="dt-offline-cmd-tok">{command.slice(start, end)}</span>
-      {command.slice(end)}
-    </>
-  );
-}
-
-function OfflineCommandLine({
-  revealed,
-  masked,
-  copied,
-  onCopy,
-  testid,
-}: {
-  revealed: string | null;
-  masked: React.ReactNode;
-  copied: boolean;
-  onCopy: () => void;
-  testid: string;
-}) {
-  return (
-    <div className="dt-offline-cmd">
-      <span className="dt-offline-cmd-prompt">$</span>
-      <code className="dt-offline-cmd-line">{revealed ? highlightCommandToken(revealed) : masked}</code>
-      <button
-        type="button"
-        data-testid={testid}
-        className={`dt-offline-cmd-copy${copied ? " dt-offline-cmd-copy-done" : ""}`}
-        onClick={onCopy}
-      >
-        {copied ? <Check size={13} strokeWidth={2.4} /> : <Copy size={13} strokeWidth={1.9} />}
-        <span>{copied ? "Copied" : "Copy"}</span>
-      </button>
-    </div>
-  );
-}
-
 function OfflineBanner({
   bro,
   node,
-  sessionId,
+  neverConnected = false,
+  onConnect,
   mobile,
 }: {
   bro: BroCardModel;
   node: ExecutorNodeRecord;
-  sessionId: string | null;
+  neverConnected?: boolean;
+  onConnect: () => void;
   mobile?: boolean;
 }) {
-  const { copyInstall, copyRunOnly, copiedKind, commands } = useCopyNodeConnectCommand({
-    sessionId,
-    broSource: bro.source,
-    nodeId: node.node_id,
-  });
-  const installCopied = copiedKind === "install";
-  const runCopied = copiedKind === "run";
-  const [showReinstall, setShowReinstall] = useState(false);
+  const title = neverConnected ? `${node.name} isn't connected yet` : `${node.name} is offline`;
+  const body = neverConnected
+    ? `Set it up in the Newbro app — ${bro.name} can take messages once it connects.`
+    : `${bro.name} can't take new messages until this computer reconnects. Your draft is saved — the last turn retries on its own.`;
+  const action = neverConnected ? "Set up" : "Reconnect";
 
   if (mobile) {
     return (
@@ -2402,9 +2355,9 @@ function OfflineBanner({
           <WifiOff size={16} strokeWidth={2} />
         </span>
         <div className="ob-offline-banner-body">
-          <strong>{node.name} is offline</strong>
-          <span>{bro.name} can't take new messages until this computer reconnects. Your draft is saved — the last turn retries on its own.</span>
-          <span>Copy the connect command from desktop, then paste it into the Newbro app on the Mac that should work for this bro.</span>
+          <strong>{title}</strong>
+          <span>{body}</span>
+          <button type="button" className="ob-offline-action" onClick={onConnect}>{action} with the app</button>
         </div>
       </section>
     );
@@ -2417,48 +2370,19 @@ function OfflineBanner({
           <WifiOff size={17} strokeWidth={2} />
         </span>
         <div className="dt-offline-notice-copy">
-          <strong>{node.name} is offline</strong>
-          <span>{bro.name} can't take new messages until this computer reconnects. Your draft is saved — the last turn retries on its own.</span>
+          <strong>{title}</strong>
+          <span>{body}</span>
         </div>
-        <span className="dt-offline-notice-status" aria-hidden="true">
-          <span className="dt-offline-notice-pip" />
-          Auto-retrying
-        </span>
+        {!neverConnected ? (
+          <span className="dt-offline-notice-status" aria-hidden="true">
+            <span className="dt-offline-notice-pip" />
+            Auto-retrying
+          </span>
+        ) : null}
       </div>
-
-      <OfflineCommandLine
-        revealed={commands?.runOnly ?? null}
-        masked={<>newbro executor run <span className="dt-offline-cmd-tok">--token ••••••</span></>}
-        copied={runCopied}
-        onCopy={() => { void copyRunOnly(); }}
-        testid="bro-node-copy-run-only-command"
-      />
-
       <div className="dt-offline-foot">
-        <span><strong>Open the Newbro app on {node.name}</strong> — it reconnects on its own. Not set up there yet? Copy the connect command above and paste it into the app.</span>
-        <button
-          type="button"
-          className="dt-offline-disclose"
-          aria-expanded={showReinstall}
-          onClick={() => setShowReinstall((v) => !v)}
-        >
-          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
-          {showReinstall ? "Hide terminal" : "Reinstall from a terminal"}
-        </button>
+        <button type="button" className="ob-offline-action" onClick={onConnect}>{action} with the app</button>
       </div>
-
-      {showReinstall && (
-        <div className="dt-offline-reinstall">
-          <p>The app keeps the CLI updated automatically. To reinstall manually, run this in a terminal:</p>
-          <OfflineCommandLine
-            revealed={commands?.installConnect ?? null}
-            masked={<>curl -fsSL <span className="dt-offline-cmd-tok">newbro.dev/install.sh</span> | sh</>}
-            copied={installCopied}
-            onCopy={() => { void copyInstall(); }}
-            testid="bro-node-copy-command"
-          />
-        </div>
-      )}
     </section>
   );
 }
@@ -3391,6 +3315,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [threadVisibleCount, setThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
+  const [connectOpen, setConnectOpen] = useState(false);
   const openedThreadRef = useRef<string | null>(null);
   const activeThreadRef = useRef<string | null>(null);
   const recentResolveRef = useRef<string | null>(null);
@@ -3602,7 +3527,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
           <section className="dt-pane">
             {offline ? (
               <div className="dt-pane-banner">
-                <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} />
+                <OfflineBanner bro={bro} node={offline} neverConnected={nodeState.kind === "never_connected"} onConnect={() => setConnectOpen(true)} />
               </div>
             ) : null}
             <div className="dt-pane-scroll" ref={threadScrollRef}>
@@ -3645,6 +3570,9 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
         onSelectWorkspace={selectWorkspace}
         onClose={() => setWorkspacePickerOpen(false)}
       />
+      {connectOpen && shell.activeShellSessionId ? (
+        <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setConnectOpen(false)} onCreated={shell.refreshShellSession} bro={bro} />
+      ) : null}
     </DesktopFrame>
   );
 }
@@ -4090,6 +4018,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [drawerThreadVisibleCount, setDrawerThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
+  const [connectOpen, setConnectOpen] = useState(false);
   const openedThreadRef = useRef<string | null>(null);
   const activeThreadRef = useRef<string | null>(null);
   const recentResolveRef = useRef<string | null>(null);
@@ -4363,7 +4292,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
             <span>New thread with {bro.name}</span>
           </button>
         </aside>
-        {offline ? <OfflineBanner bro={bro} node={offline} sessionId={shell.activeShellSessionId} mobile /> : null}
+        {offline ? <OfflineBanner bro={bro} node={offline} neverConnected={nodeState.kind === "never_connected"} onConnect={() => setConnectOpen(true)} mobile /> : null}
         <MobileThreadSurface
           bro={bro}
           selectedThreadId={directThreadIntent.targetThreadId}
@@ -4388,6 +4317,9 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
           onClose={() => setWorkspacePickerOpen(false)}
         />
       </div>
+      {connectOpen && shell.activeShellSessionId ? (
+        <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setConnectOpen(false)} onCreated={shell.refreshShellSession} bro={bro} mobile />
+      ) : null}
     </MobileStage>
   );
 }

@@ -1778,17 +1778,12 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    expect(await screen.findByTestId("bro-node-disconnected-warning")).toHaveTextContent("Workshop Mini is offline");
-    // Primary command is the restart/run command; install+reconnect is tucked behind a disclosure.
-    const runCopy = screen.getByTestId("bro-node-copy-run-only-command");
-    expect(runCopy).toHaveTextContent("Copy");
-    expect(screen.queryByTestId("bro-node-copy-command")).not.toBeInTheDocument();
-    fireEvent.click(runCopy);
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("newbro executor run --node-id node-1 --token token-1"));
-    await waitFor(() => expect(runCopy).toHaveTextContent("Copied"));
-    fireEvent.click(screen.getByRole("button", { name: /Reinstall from a terminal/i }));
-    fireEvent.click(screen.getByTestId("bro-node-copy-command"));
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("install-newbro-cli.sh")));
+    const banner = await screen.findByTestId("bro-node-disconnected-warning");
+    expect(banner).toHaveTextContent("Workshop Mini is offline");
+    // The banner no longer holds the command; it opens the setup dialog.
+    expect(screen.queryByTestId("bro-node-copy-run-only-command")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Reconnect/i }));
+    expect(await screen.findByText(/Reconnect forge|Reconnect Forge/i)).toBeInTheDocument();
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
     expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
   });
