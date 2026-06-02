@@ -86,4 +86,31 @@ describe("useThreadSelection", () => {
     expect(onNoWorkspace).toHaveBeenCalledTimes(1);
     expect(result.current.workspacePickerOpen).toBe(false);
   });
+
+  it("opens the active thread once; a re-render does not re-open it", () => {
+    const openThread = vi.fn();
+    setUrl("thread=a");
+    const threads: T[] = [{ threadId: "a" }];
+    const { rerender } = renderHook(() => useThreadSelection<T>(defaults({ threads, openThread })));
+    expect(openThread).toHaveBeenCalledWith("bro-1", "a");
+    expect(openThread).toHaveBeenCalledTimes(1);
+    rerender();
+    expect(openThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not close the live thread on re-render when the caller passes a fresh closure", () => {
+    // Regression: closeThread must NOT be an effect dep, or the unmount cleanup
+    // fires every render (the caller passes an inline closure each time).
+    const realClose = vi.fn();
+    setUrl("thread=a");
+    const threads: T[] = [{ threadId: "a" }];
+    const { rerender, unmount } = renderHook(() =>
+      useThreadSelection<T>(defaults({ threads, closeThread: (id, tid) => realClose(id, tid) })),
+    );
+    rerender();
+    rerender();
+    expect(realClose).not.toHaveBeenCalled();
+    unmount();
+    expect(realClose).toHaveBeenCalledTimes(1);
+  });
 });

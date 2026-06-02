@@ -33,15 +33,25 @@ export function useThreadSelection<T extends { threadId: string }>(
 ): UseThreadSelectionResult<T> {
   const { broId, broSource, threads, workspaceOptions, needsConnect, openThread, closeThread, onNoWorkspace } = params;
 
-  const initialUrlThread = readThreadIdFromUrl();
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
-    initialUrlThread === NEW_THREAD_SENTINEL ? null : initialUrlThread,
-  );
-  const [pendingNewThread, setPendingNewThread] = useState(initialUrlThread === NEW_THREAD_SENTINEL);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => {
+    const initial = readThreadIdFromUrl();
+    return initial === NEW_THREAD_SENTINEL ? null : initial;
+  });
+  const [pendingNewThread, setPendingNewThread] = useState(() => readThreadIdFromUrl() === NEW_THREAD_SENTINEL);
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const openedThreadRef = useRef<string | null>(null);
   const activeThreadRef = useRef<string | null>(null);
+  // Hold the latest open/close callbacks in refs so the open/unmount effects
+  // don't list them as deps — callers pass inline closures, and a changing
+  // identity would otherwise re-run the open effect every render and (worse)
+  // fire the unmount cleanup early, closing the live thread prematurely.
+  const openThreadRef = useRef(openThread);
+  const closeThreadRef = useRef(closeThread);
+  useEffect(() => {
+    openThreadRef.current = openThread;
+    closeThreadRef.current = closeThread;
+  });
 
   const matchedThread = threads.find((thread) => thread.threadId === selectedThreadId) ?? null;
   const selectedThread = pendingNewThread ? null : matchedThread;
@@ -61,8 +71,8 @@ export function useThreadSelection<T extends { threadId: string }>(
     if (pendingNewThread || needsConnect || !broId || broSource !== "runtime" || !activeThreadId) return;
     if (openedThreadRef.current === activeThreadId) return;
     openedThreadRef.current = activeThreadId;
-    openThread(broId, activeThreadId);
-  }, [activeThreadId, broId, broSource, needsConnect, pendingNewThread, openThread]);
+    openThreadRef.current(broId, activeThreadId);
+  }, [activeThreadId, broId, broSource, needsConnect, pendingNewThread]);
 
   useEffect(() => {
     activeThreadRef.current = activeThreadId;
@@ -71,10 +81,10 @@ export function useThreadSelection<T extends { threadId: string }>(
   useEffect(() => {
     return () => {
       if (broSource === "runtime" && broId) {
-        closeThread(broId, activeThreadRef.current);
+        closeThreadRef.current(broId, activeThreadRef.current);
       }
     };
-  }, [broId, broSource, closeThread]);
+  }, [broId, broSource]);
 
   function selectThread(threadId: string) {
     setPendingNewThread(false);
