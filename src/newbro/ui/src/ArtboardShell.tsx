@@ -20,6 +20,8 @@ import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForNative
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
+import { deriveReasoningPhase } from "./lib/reasoningPhase";
+import { ReasoningBubble } from "./ReasoningBubble";
 import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
@@ -1205,7 +1207,6 @@ function TimelineTurnView({
     : activeRun
       ? []
       : buildReasoningStepsForTurn(anyRun, details);
-  const isTurnSettled = activeRun === null && !nativeInFlight;
   const answerText = timelineMessageText(turn.assistant) || record?.summary?.trim() || record?.description?.trim() || "";
   const rawAnswerItemId = turn.assistant?.metadata?.codex_item_id;
   const answerItemId = typeof rawAnswerItemId === "string" ? rawAnswerItemId : null;
@@ -1213,99 +1214,32 @@ function TimelineTurnView({
     ? settledReasoningSteps.filter((s) => s.id !== answerItemId)
     : settledReasoningSteps;
 
+  const phase = deriveReasoningPhase({
+    status: turn.status,
+    stepCount: reasoningSteps.length,
+    hasAnswer: answerText !== "",
+  });
+  const stopTaskId = turn.task?.task_id ?? null;
+  const canStop = phase !== "done" && stopTaskId !== null;
+  const onStop = () => { if (stopTaskId) shell.cancelTask(stopTaskId); };
+
   return (
     <>
       <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
-      {!mobile && reasoningSteps.length > 0 ? (
-        <div className="dt-turn dt-turn-bro">
-          <div className="dt-bubble dt-bubble-bro dt-bubble-reason">
-            <span className="dt-reason-kicker">
-              <span className="dt-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-              {bro.name} is working
-            </span>
-            <ol className="dt-reason-steps">
-              {(() => {
-                const upto = reasoningSteps.length;
-                const WINDOW = 3;
-                const startAt = Math.max(0, upto - WINDOW);
-                const vis = reasoningSteps.slice(startAt, upto);
-                const FADE = [1, 0.55, 0.26];
-                return vis.map((s, j) => {
-                  const dist = vis.length - 1 - j;
-                  const isLast = dist === 0;
-                  return (
-                    <li
-                      key={s.id}
-                      className={`dt-reason-step${isLast ? " dt-reason-step-active" : " dt-reason-step-done"}`}
-                      style={{ opacity: FADE[dist] ?? 0.26 }}
-                    >
-                      <span className="dt-reason-step-mark" aria-hidden="true" />
-                      <span className="dt-reason-step-text">{s.label}</span>
-                    </li>
-                  );
-                });
-              })()}
-            </ol>
-          </div>
-        </div>
-      ) : null}
-      {mobile && reasoningSteps.length > 0 ? (
-        <div className="thr-turn thr-turn-bro">
-          <div className="thr-bubble thr-bubble-bro thr-reason">
-            <span className="thr-reason-kicker">
-              <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-              {bro.name} is working
-            </span>
-            <ol className="thr-reason-steps">
-              {(() => {
-                const upto = reasoningSteps.length;
-                const WINDOW = 3;
-                const startAt = Math.max(0, upto - WINDOW);
-                const vis = reasoningSteps.slice(startAt, upto);
-                const FADE = [1, 0.55, 0.26];
-                return vis.map((s, j) => {
-                  const dist = vis.length - 1 - j;
-                  const isLast = dist === 0;
-                  return (
-                    <li
-                      key={s.id}
-                      className={`thr-reason-step${isLast ? " thr-reason-step-active" : " thr-reason-step-done"}`}
-                      style={{ opacity: FADE[dist] ?? 0.26 }}
-                    >
-                      <span className="thr-reason-mark" aria-hidden="true" />
-                      <span className="thr-reason-text">{s.label}</span>
-                    </li>
-                  );
-                });
-              })()}
-            </ol>
-          </div>
-          <div className="thr-meta">{bro.name} · updating live</div>
-        </div>
-      ) : null}
-      {isTurnSettled && (answerText || dedupedSettledSteps.length > 0) ? (
-        <SettledAnswerBubble bro={bro} steps={dedupedSettledSteps} answer={answerText} mobile={mobile} />
-      ) : null}
-      {!isTurnSettled && !mobile && reasoningSteps.length === 0 ? (
-        <div className="dt-turn dt-turn-bro">
-          <div className="dt-bubble dt-bubble-bro dt-bubble-reason" aria-live="polite">
-            <span className="dt-reason-kicker">
-              <span className="dt-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-              {bro.name} is working
-            </span>
-          </div>
-        </div>
-      ) : null}
-      {!isTurnSettled && mobile && reasoningSteps.length === 0 ? (
-        <div className="thr-turn thr-turn-bro">
-          <div className="thr-bubble thr-bubble-bro thr-reason" aria-live="polite">
-            <span className="thr-reason-kicker">
-              <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-              {bro.name} is working
-            </span>
-          </div>
-        </div>
-      ) : null}
+      {phase === "done" ? (
+        (answerText || dedupedSettledSteps.length > 0) ? (
+          <SettledAnswerBubble bro={bro} steps={dedupedSettledSteps} answer={answerText} mobile={mobile} />
+        ) : null
+      ) : (
+        <ReasoningBubble
+          broName={bro.name}
+          phase={phase}
+          steps={reasoningSteps}
+          mobile={Boolean(mobile)}
+          canStop={canStop}
+          onStop={onStop}
+        />
+      )}
       {proposalRequests.map((request) => (
         <PlanProposalCard
           key={request.request_id}
