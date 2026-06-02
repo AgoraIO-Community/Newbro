@@ -26,7 +26,7 @@ export function ReasoningBubble({
   onStop,
 }: {
   broName: string;
-  phase: ReasoningPhase; // "ack" | "streaming"
+  phase: Exclude<ReasoningPhase, "done">; // "ack" | "streaming" — done is rendered by SettledAnswerBubble
   steps: ReasoningStepView[];
   mobile: boolean;
   canStop: boolean;
