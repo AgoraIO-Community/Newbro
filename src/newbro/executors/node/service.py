@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
+import hashlib
 import json
 from dataclasses import dataclass, field
 import logging
@@ -17,6 +19,11 @@ from newbro.communication.persona_pool import resolve_workspace
 from newbro.executors.adapters.acpx import AcpxExecutor, AcpxExecutorSession
 from newbro.executors.adapters.codex import CodexExecutor, CodexExecutorSession
 from newbro.executors.core import ExecutorEvent, ExecutorEventType, ExecutorSession
+from newbro.executors.node.workspace_files import (
+    WorkspaceFileAccessError,
+    iter_file_bytes,
+    resolve_within_workspace,
+)
 from newbro.protocol import (
     AckMessage,
     AudioInstructionTranscribedMessage,
@@ -36,6 +43,7 @@ from newbro.protocol import (
     EXECUTOR_CONTROL_MAX_MESSAGE_BYTES,
     ListCodexThreadsCommand,
     ReadCodexThreadCommand,
+    ReadWorkspaceFileCommand,
     RegisterNodeMessage,
     ReleaseRunCommand,
     RunEventMessage,
@@ -44,6 +52,9 @@ from newbro.protocol import (
     SupplyInteractionResponseCommand,
     TranscribeAudioInstructionCommand,
     UnsubscribeCodexThreadCommand,
+    WorkspaceFileChunk,
+    WorkspaceFileEof,
+    WorkspaceFileError,
 )
 
 from .audio import AudioTranscriber, build_audio_transcriber
@@ -126,6 +137,7 @@ class ExecutorNodeService:
         self._executors = self._build_executors(executors_config)
         self._audio_transcriber = audio_transcriber or build_audio_transcriber(audio_config)
         self._live_sessions: dict[str, ExecutorSession] = {}
+        self._thread_workspaces: dict[str, str] = {}
         self._active_runs: dict[str, LocalRunContext] = {}
         self._codex_thread_subscriptions: dict[str, CodexThreadSubscriptionContext] = {}
         self._background_commands: set[asyncio.Task[None]] = set()
@@ -223,6 +235,10 @@ class ExecutorNodeService:
         if message_type == "read_codex_thread":
             command = ReadCodexThreadCommand.model_validate(payload)
             self._schedule_background_command(self._read_codex_thread(websocket, command))
+            return
+        if message_type == "read_workspace_file":
+            command = ReadWorkspaceFileCommand.model_validate(payload)
+            self._schedule_background_command(self._read_workspace_file(websocket, command))
             return
         if message_type == "subscribe_codex_thread":
             command = SubscribeCodexThreadCommand.model_validate(payload)
@@ -482,6 +498,8 @@ class ExecutorNodeService:
                 ).model_dump(mode="json"),
             )
             return
+        if command.workspace_id:
+            self._thread_workspaces[command.thread_id] = str(resolve_workspace(command.workspace_id))
         task = asyncio.create_task(self._stream_codex_thread_events(websocket, session, command))
         self._codex_thread_subscriptions[command.subscription_id] = CodexThreadSubscriptionContext(
             executor=executor,
@@ -1061,6 +1079,66 @@ class ExecutorNodeService:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+
+    async def _read_workspace_file(
+        self, websocket: Any, command: ReadWorkspaceFileCommand
+    ) -> None:
+        root = self._thread_workspaces.get(command.thread_id)
+        if root is None:
+            await self._send_json(
+                websocket,
+                WorkspaceFileError(
+                    request_id=command.request_id,
+                    code="denied",
+                    message="no workspace binding for thread",
+                ).model_dump(mode="json"),
+            )
+            return
+        try:
+            real = resolve_within_workspace(command.path, root)
+        except WorkspaceFileAccessError as exc:
+            await self._send_json(
+                websocket,
+                WorkspaceFileError(
+                    request_id=command.request_id, code=exc.code, message=exc.message
+                ).model_dump(mode="json"),
+            )
+            return
+
+        digest = hashlib.sha256()
+        seq = 0
+        total = 0
+        try:
+            # iter_file_bytes does the size-cap check before the first yield, so a
+            # too_large file errors before any chunk is sent.
+            for block in iter_file_bytes(real):
+                digest.update(block)
+                total += len(block)
+                await self._send_json(
+                    websocket,
+                    WorkspaceFileChunk(
+                        request_id=command.request_id,
+                        seq=seq,
+                        data=base64.b64encode(block).decode("ascii"),
+                    ).model_dump(mode="json"),
+                )
+                seq += 1
+        except WorkspaceFileAccessError as exc:
+            await self._send_json(
+                websocket,
+                WorkspaceFileError(
+                    request_id=command.request_id, code=exc.code, message=exc.message
+                ).model_dump(mode="json"),
+            )
+            return
+        await self._send_json(
+            websocket,
+            WorkspaceFileEof(
+                request_id=command.request_id,
+                total_bytes=total,
+                sha256=digest.hexdigest(),
+            ).model_dump(mode="json"),
+        )
 
     async def _send_json(self, websocket: Any, payload: dict[str, object]) -> None:
         async with self._send_lock:
