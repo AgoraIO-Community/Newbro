@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -30,6 +32,7 @@ from newbro.protocol import (
     InteractionRequest,
     ListCodexThreadsCommand,
     ReadCodexThreadCommand,
+    ReadWorkspaceFileCommand,
     RegisterNodeMessage,
     RunEventMessage,
     StartCodexTurnCommand,
@@ -37,6 +40,9 @@ from newbro.protocol import (
     SupplyInteractionResponseCommand,
     TranscribeAudioInstructionCommand,
     UnsubscribeCodexThreadCommand,
+    WorkspaceFileChunk,
+    WorkspaceFileEof,
+    WorkspaceFileError,
 )
 from newbro.executors.node.registry import (
     ExecutorNodeConnectionView,
@@ -72,6 +78,24 @@ class ExecutorNodeAuthError(RuntimeError):
     pass
 
 
+class WorkspaceFileUnavailable(Exception):
+    """The node is offline / unreachable / timed out."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class WorkspaceFileDenied(Exception):
+    """The node refused the file (denied / not_found / too_large / read_error)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 class ExecutorNodeManager:
     def __init__(
         self,
@@ -91,6 +115,9 @@ class ExecutorNodeManager:
         self._codex_thread_subscribe_requests: dict[str, asyncio.Future[CodexThreadSubscribedMessage]] = {}
         self._codex_thread_unsubscribe_requests: dict[str, asyncio.Future[CodexThreadUnsubscribedMessage]] = {}
         self._codex_thread_event_queue: asyncio.Queue[CodexThreadEventMessage] = asyncio.Queue()
+        self._workspace_file_streams: dict[
+            str, asyncio.Queue[WorkspaceFileChunk | WorkspaceFileEof | WorkspaceFileError]
+        ] = {}
 
     @property
     def detached_executor_types(self) -> tuple[str, ...]:
@@ -798,6 +825,57 @@ class ExecutorNodeManager:
                 await connection.websocket.close(code=4403)
             await self.disconnect(websocket=connection.websocket, reason="credentials_revoked")
         return await self._registry.delete_node(node_id)
+
+    async def read_workspace_file(
+        self,
+        *,
+        node_id: str,
+        thread_id: str,
+        path: str,
+        timeout: float = 30.0,
+    ) -> AsyncIterator[bytes]:
+        connection = self._connections_by_node.get(node_id)
+        if connection is None:
+            raise WorkspaceFileUnavailable("node_offline", "executor node not connected")
+        request_id = f"workspace-file-{uuid4().hex[:12]}"
+        queue: asyncio.Queue[WorkspaceFileChunk | WorkspaceFileEof | WorkspaceFileError] = asyncio.Queue()
+        self._workspace_file_streams[request_id] = queue
+        command = ReadWorkspaceFileCommand(
+            request_id=request_id, thread_id=thread_id, path=path
+        )
+        try:
+            await self._send_json(connection, command.model_dump(mode="json"))
+            while True:
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=timeout)
+                except asyncio.TimeoutError as exc:
+                    raise WorkspaceFileUnavailable("node_offline", "timed out") from exc
+                if isinstance(message, WorkspaceFileChunk):
+                    yield base64.b64decode(message.data)
+                elif isinstance(message, WorkspaceFileEof):
+                    return
+                else:  # WorkspaceFileError
+                    raise WorkspaceFileDenied(message.code, message.message)
+        finally:
+            self._workspace_file_streams.pop(request_id, None)
+
+    def publish_workspace_file_chunk(self, message: WorkspaceFileChunk) -> AckMessage:
+        return self._publish_workspace_file(message)
+
+    def publish_workspace_file_eof(self, message: WorkspaceFileEof) -> AckMessage:
+        return self._publish_workspace_file(message)
+
+    def publish_workspace_file_error(self, message: WorkspaceFileError) -> AckMessage:
+        return self._publish_workspace_file(message)
+
+    def _publish_workspace_file(
+        self, message: WorkspaceFileChunk | WorkspaceFileEof | WorkspaceFileError
+    ) -> AckMessage:
+        queue = self._workspace_file_streams.get(message.request_id)
+        if queue is None:
+            return AckMessage(message_type=message.type, ok=False, detail="unknown_request")
+        queue.put_nowait(message)
+        return AckMessage(message_type=message.type, detail="ok")
 
     async def _send_json(self, connection: NodeConnectionState, payload: dict[str, object]) -> None:
         async with connection.send_lock:
