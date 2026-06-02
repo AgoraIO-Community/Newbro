@@ -3312,3 +3312,19 @@
 .thr-answer-text :is(ul, ol) > li + li {
   margin-top: 2px;
 }
+
+/* Instant loading skeleton (mobile). */
+.thr-reason-head { display: flex; align-items: center; gap: 8px; }
+.thr-reason-skeleton { display: flex; flex-direction: column; gap: 7px; padding: 3px 0 1px; }
+.thr-reason-skeleton span {
+  height: 9px; border-radius: 5px;
+  background: linear-gradient(100deg, rgba(59,130,246,0.08) 30%, rgba(59,130,246,0.20) 50%, rgba(59,130,246,0.08) 70%);
+  background-size: 220% 100%;
+  animation: thr-reason-shimmer 1.25s ease-in-out infinite;
+}
+@keyframes thr-reason-shimmer { from { background-position: 180% 0; } to { background-position: -80% 0; } }
+.thr-reason-stop {
+  margin-left: auto; font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  padding: 3px 9px; border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.14); background: transparent; color: rgba(0,0,0,0.55);
+}
