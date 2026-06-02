@@ -28,6 +28,8 @@ echo "[package-app] assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BIN_PATH" "$APP/Contents/MacOS/$BIN_NAME"
+mkdir -p "$APP/Contents/Resources"
+cp "$HERE/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 # Unquoted heredoc delimiter so ${VERSION} expands. The body contains no other
 # shell metacharacters ($, backtick, backslash), so this is safe.
@@ -40,6 +42,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Newbro Executor</string>
   <key>CFBundleIdentifier</key><string>com.newbro.executor-ui</string>
   <key>CFBundleExecutable</key><string>NewbroExecutor</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
