@@ -190,6 +190,15 @@ class CodexExecutor:
                     exc,
                 )
         if last_error is not None:
+            # The compatibility tiers can't help when the app-server pipe is gone;
+            # surface the codex process's own stderr so the real cause is visible.
+            stderr = self._app_session.stderr_text() if self._app_session is not None else ""
+            if stderr:
+                LOGGER.warning(
+                    "Codex thread/list failed on all compatibility paths; "
+                    "last codex app-server stderr:\n%s",
+                    stderr,
+                )
             raise last_error
         return []
 

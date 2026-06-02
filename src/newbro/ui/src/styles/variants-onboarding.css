@@ -718,7 +718,7 @@
   letter-spacing: 0;
   position: relative;
 }
-.ob-connect-prompt { color: #ff9a78; font-weight: 700; }
+.ob-connect-prompt { color: #ff9a78; font-weight: 700; flex-shrink: 0; }
 .ob-connect-line {
   flex: 1 1 auto;
   min-width: 0;
@@ -805,14 +805,15 @@
   text-wrap: pretty;
 }
 .ob-connect-guide {
-  margin: 0 0 8px;
+  margin: 2px 0;
   padding: 0 2px;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--nb-ink-soft);
   letter-spacing: -0.005em;
   text-wrap: pretty;
 }
+/* extra space before the "then copy the connect command" sub-section */
 .ob-connect-guide-2 { margin-top: 10px; }
 
 /* Coming-soon disabled state for an executor card */
@@ -1100,3 +1101,56 @@
 /* keep the offline thread variant a little tighter than live threads */
 .ob-thr-offline .thr-bar-state-warn { color: var(--nb-warn-ink); }
 .ob-thr-offline .thr-bar-state-warn .thr-bar-dot { background: var(--nb-warn); animation: none; }
+
+.ob-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--nb-info-grad-btn, #2563eb);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  margin: 0;
+}
+.ob-download:hover { filter: brightness(1.05); }
+
+/* Muted disclosure (matches the offline notice chevron), not a coral link. */
+.ob-terminal-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  padding: 2px 0;
+  margin: 4px 0 0;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--nb-ink-muted);
+  cursor: pointer;
+}
+.ob-terminal-toggle:hover { color: var(--nb-ink-soft); }
+.ob-terminal-toggle svg { transition: transform 0.15s ease; }
+.ob-terminal-toggle-open svg { transform: rotate(90deg); }
+.ob-terminal-fallback { display: flex; flex-direction: column; gap: 6px; }
+
+.ob-offline-action {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--nb-info-grad-btn, #2563eb);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ob-offline-action:hover { filter: brightness(1.05); }
+.dt-header-pill-action { border: 0; cursor: pointer; font: inherit; }
+.dt-header-pill-action:hover { filter: brightness(1.06); }

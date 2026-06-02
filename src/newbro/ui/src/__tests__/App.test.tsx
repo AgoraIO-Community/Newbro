@@ -590,11 +590,14 @@ describe("Newbro artboard shell", () => {
       enabled_executors: ["codex"],
     }));
     expect(clientMock.createPersona).not.toHaveBeenCalled();
-    expect(await screen.findByText(/install-newbro-cli\.sh/)).toBeInTheDocument();
-    expect(screen.getByText(/paste this in a terminal to install newbro/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Copy install command/i })).toBeInTheDocument();
+    expect(await screen.findByText(/install the Newbro app/i)).toBeInTheDocument();
+    const download = screen.getByRole("link", { name: /Download the Newbro app/i });
+    expect(download).toHaveAttribute("href", "https://github.com/AgoraIO/Synopse/releases/latest");
+    expect(screen.getByText(/paste it into the app/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
     expect(screen.getByText(/This updates on its own once atlas connects/)).toBeInTheDocument();
+    // Terminal commands are tucked behind a disclosure, hidden by default.
+    expect(screen.queryByRole("button", { name: /Copy install command/i })).not.toBeInTheDocument();
   });
 
   it("shows mobile install/connect instructions before creating the first Bro", async () => {
@@ -605,10 +608,11 @@ describe("Newbro artboard shell", () => {
     expect(await screen.findByTestId("mobile-empty-workspace")).toHaveTextContent("Give it a name, connect a computer");
     fireEvent.click(screen.getByRole("button", { name: "Create your first bro" }));
 
-    expect(await screen.findByText(/paste this in a terminal to install newbro/)).toBeInTheDocument();
-    expect(screen.getByText(/curl -fsSL newbro\.dev\/install\.sh \| sh/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Copy install command/i })).toBeDisabled();
+    expect(await screen.findByText(/Install the Newbro app on the Mac/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
+    // No usable Mac download on a phone, and terminal commands stay collapsed.
+    expect(screen.queryByRole("link", { name: /Download the Newbro app/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Copy install command/i })).not.toBeInTheDocument();
   });
 
 
@@ -677,40 +681,29 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByRole("heading", { name: "Forge" })).toBeInTheDocument();
   });
 
-  it("offers an install-first copy connect command action on home when the bro's node is offline", async () => {
+  it("opens the setup dialog from an offline home bro card", async () => {
     const offlineNode = usableExecutorNode({
       connected_executors: [],
       connection_status: "disconnected",
       last_connected_at: "2026-05-23T20:00:00Z",
     });
     clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
-    clientMock.revealExecutorNodeConnectCommand.mockResolvedValueOnce({
-      node: offlineNode,
-      token: "token-revive",
-    });
     window.history.replaceState({}, "", "/?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
 
-    const copyBtn = await screen.findByTestId("home-bro-copy-command-forge");
-    fireEvent.click(copyBtn);
-
-    await waitFor(() => expect(clientMock.revealExecutorNodeConnectCommand).toHaveBeenCalledWith("session-existing", "node-forge"));
-    expect(clientMock.buildExecutorConnectCommands).toHaveBeenCalledWith("node-forge", "token-revive", {
-      enabledExecutors: ["codex"],
-      acpxAgent: null,
-    });
-    expect(window.location.pathname).toBe("/");
+    fireEvent.click(await screen.findByTestId(/^home-bro-connect-/));
+    expect(await screen.findByText(/Reconnect |Set up /i)).toBeInTheDocument();
   });
 
-  it("hides the home copy connect command action for connected bros", async () => {
+  it("hides the home connect action for connected bros", async () => {
     clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing"));
     window.history.replaceState({}, "", "/?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
 
     await screen.findByTestId("bro-card-forge");
-    expect(screen.queryByTestId("home-bro-copy-command-forge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId(/^home-bro-connect-/)).not.toBeInTheDocument();
   });
 
   it("opens a recent Home thread through the Bro detail route", async () => {
@@ -1774,19 +1767,34 @@ describe("Newbro artboard shell", () => {
 
     render(<RouterProvider router={getRouter()} />);
 
-    expect(await screen.findByTestId("bro-node-disconnected-warning")).toHaveTextContent("Workshop Mini is offline");
-    // Primary command is the restart/run command; install+reconnect is tucked behind a disclosure.
-    const runCopy = screen.getByTestId("bro-node-copy-run-only-command");
-    expect(runCopy).toHaveTextContent("Copy");
-    expect(screen.queryByTestId("bro-node-copy-command")).not.toBeInTheDocument();
-    fireEvent.click(runCopy);
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("newbro executor run --node-id node-1 --token token-1"));
-    await waitFor(() => expect(runCopy).toHaveTextContent("Copied"));
-    fireEvent.click(screen.getByRole("button", { name: /Reinstall or update the CLI/i }));
-    fireEvent.click(screen.getByTestId("bro-node-copy-command"));
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("install-newbro-cli.sh")));
+    const banner = await screen.findByTestId("bro-node-disconnected-warning");
+    expect(banner).toHaveTextContent("Workshop Mini is offline");
+    // The banner no longer holds the command; it opens the setup dialog.
+    expect(screen.queryByTestId("bro-node-copy-run-only-command")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Reconnect/i }));
+    expect(await screen.findByText(/Reconnect forge|Reconnect Forge/i)).toBeInTheDocument();
+    // The dialog auto-reveals the real connect command (token, not "pending"),
+    // and the copy button is enabled.
+    expect(await screen.findByText(/--token token-1/)).toBeInTheDocument();
+    expect(screen.queryByText(/--token pending/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy connect command" })).toBeEnabled();
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
     expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
+  });
+
+  it("opens the setup dialog from the detail header pill", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /computer offline · set up/i }));
+    expect(await screen.findByText(/Reconnect Forge|Reconnect forge/i)).toBeInTheDocument();
   });
 
   it("clears the existing thread history when 'New thread' is clicked on the desktop detail page", async () => {

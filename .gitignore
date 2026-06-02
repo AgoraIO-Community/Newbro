@@ -12,6 +12,7 @@ newbro.egg-info/
 synopse.egg-info/
 src/*.egg-info/
 .codex
+.superpowers/
 src/newbro/ui/node_modules/
 src/newbro/ui/.vercel/
 src/newbro/ui/.vite/

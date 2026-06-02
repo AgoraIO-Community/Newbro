@@ -43,6 +43,13 @@ Executor-node note:
 - the executor node's Newbro URL is a client-side runtime input passed through
   the UI's install/update-and-connect command or run-only
   `newbro executor run --base-url ...`, not server-owned node metadata
+- a native macOS menu-bar app (SwiftUI, under `macos/`) supervises multiple
+  executor-node profiles stored in `~/.newbro/menubar.json`. Each profile runs
+  as an independent `newbro executor run` subprocess; several run concurrently.
+  The app resolves the installed `newbro` CLI at runtime and only edits
+  connection profiles — deeper executor runtime config stays owned by
+  `newbro executor setup`. A rejected `node_id`/`token` shows as a continuous
+  connecting/retrying state because the node service reconnects unboundedly.
 - local executor-family/tool config no longer uses an `executor_node.enabled`
   toggle; `newbro executor run` may trigger the same local setup flow when
   executor commands or enabled families are missing

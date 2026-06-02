@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from importlib import metadata
 from pathlib import Path
 
 from newbro.config_home import format_user_path
@@ -26,6 +27,16 @@ def build_parser(
     start_public_port: int,
 ) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=cli_name, description="Newbro developer CLI.")
+    try:
+        _version = metadata.version("newbro-cli")
+    except metadata.PackageNotFoundError:
+        _version = "0+unknown"
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {_version}",
+        help="Show the installed newbro-cli version and exit.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     setup_parser = subparsers.add_parser(
