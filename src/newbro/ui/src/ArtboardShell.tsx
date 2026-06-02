@@ -3573,7 +3573,14 @@ function MobileBroCard({ bro, onOpen, onSetup }: { bro: BroCardModel; onOpen: (i
     );
   }
   return (
-    <button type="button" data-testid={`mobile-bro-row-${bro.id}`} className="home-row" onClick={() => onOpen(bro.id)}>
+    <div
+      role="button"
+      tabIndex={0}
+      data-testid={`mobile-bro-row-${bro.id}`}
+      className="home-row"
+      onClick={() => onOpen(bro.id)}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(bro.id); } }}
+    >
       <div className={`home-row-avatar home-row-avatar-${tone}`}>
         <BroAvatar character={avatarTypeToCharacter(bro.avatarType)} state={state} size={42} />
       </div>
@@ -3588,7 +3595,7 @@ function MobileBroCard({ bro, onOpen, onSetup }: { bro: BroCardModel; onOpen: (i
         <span className={`home-chip home-chip-${tone}`}><span className="home-chip-dot" />{chipLabel}</span>
         <HomeBroConnectAction bro={bro} variant="card" onSetup={onSetup} />
       </div>
-    </button>
+    </div>
   );
 }
 
