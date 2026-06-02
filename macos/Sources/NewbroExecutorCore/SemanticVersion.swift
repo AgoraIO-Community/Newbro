@@ -1,3 +1,5 @@
+import Foundation
+
 /// A minimal `X.Y.Z` version, tolerant of a leading `v` and ignoring any
 /// pre-release/build suffix (`-rc1`, `+build`). Missing minor/patch default to 0.
 public struct SemanticVersion: Comparable, Equatable, Sendable {
