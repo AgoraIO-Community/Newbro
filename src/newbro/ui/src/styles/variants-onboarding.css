@@ -810,15 +810,16 @@
   text-wrap: pretty;
 }
 .ob-connect-guide {
-  margin: 0;
+  margin: 2px 0;
   padding: 0 2px;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--nb-ink-soft);
   letter-spacing: -0.005em;
   text-wrap: pretty;
 }
-.ob-connect-guide-2 { margin-top: 0; }
+/* extra space before the "then copy the connect command" sub-section */
+.ob-connect-guide-2 { margin-top: 10px; }
 
 /* Coming-soon disabled state for an executor card */
 .ob-exec-card-soon {
@@ -1131,7 +1132,7 @@
   background: transparent;
   border: 0;
   padding: 2px 0;
-  margin: 0;
+  margin: 4px 0 0;
   font-family: inherit;
   font-size: 11px;
   font-weight: 500;
