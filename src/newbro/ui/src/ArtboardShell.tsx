@@ -4038,7 +4038,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
                 <button
                   type="button"
                   className={`thr-drawer-item ${thread.status === "running" ? "thr-drawer-item-working" : "thr-drawer-item-open"}${!pendingNewThread && activeThreadId === thread.threadId ? " thr-drawer-item-on" : ""}`}
-                  onClick={() => selectThread(thread.threadId)}
+                  onClick={() => { selectThread(thread.threadId); setPickerOpen(false); }}
                 >
                 <span className="thr-drawer-item-dot" aria-hidden="true" />
                 <span className="thr-drawer-item-body">
@@ -4078,7 +4078,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
               <span>Show {Math.min(THREAD_LIST_PAGE_SIZE, hiddenDrawerThreadCount)} more</span>
             </button>
           ) : null}
-          <button type="button" className="thr-drawer-new" onClick={newThread}>
+          <button type="button" className="thr-drawer-new" onClick={() => { newThread(); setPickerOpen(false); }}>
             <Plus size={14} strokeWidth={2.2} />
             <span>New thread with {bro.name}</span>
           </button>
@@ -4104,7 +4104,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
           open={workspacePickerOpen}
           broName={bro.name}
           workspaceOptions={workspaceOptions}
-          onSelectWorkspace={selectWorkspace}
+          onSelectWorkspace={(workspaceId) => { selectWorkspace(workspaceId); setPickerOpen(false); }}
           onClose={() => setWorkspacePickerOpen(false)}
         />
       </div>
