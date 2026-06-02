@@ -2185,7 +2185,8 @@ function CreateConnectSheet({
                       <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "download app + paste connect" : "new"}</span>
                     </div>
                   </div>
-                  <button type="button" className="ob-link ob-link-sm ob-terminal-toggle" aria-expanded={showTerminal} onClick={() => setShowTerminal((v) => !v)}>
+                  <button type="button" className={`ob-terminal-toggle${showTerminal ? " ob-terminal-toggle-open" : ""}`} aria-expanded={showTerminal} onClick={() => setShowTerminal((v) => !v)}>
+                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
                     {showTerminal ? "Hide terminal option" : "Not on a Mac? Connect from a terminal"}
                   </button>
                   {showTerminal ? (
@@ -2218,11 +2219,6 @@ function CreateConnectSheet({
                       </div>
                     </div>
                   ) : null}
-                  <div className="ob-connect-meta">
-                    <button type="button" className="ob-link ob-link-sm">Get a fresh link</button>
-                    <span className="ob-connect-meta-sep">·</span>
-                    <button type="button" className="ob-link ob-link-sm">Walk me through it</button>
-                  </div>
                 </div>
 
                 <div className="dt-modal-tip">
