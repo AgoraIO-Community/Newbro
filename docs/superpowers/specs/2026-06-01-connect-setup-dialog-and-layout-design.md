@@ -84,19 +84,23 @@ target:
   equivalent pill, wire it the same way, otherwise the `OfflineBanner` button
   (below) is its entry point.
 
-### D. `OfflineBanner` never-connected copy fix + dialog button
+### D. `OfflineBanner` → thin banner that opens the dialog
 
-- Branch the copy on whether the node has ever connected (the banner already has
-  `node`; use the same signal `deriveBroNodeState`/`hasNodeEverConnected` exposes,
-  or pass a `neverConnected` boolean from the caller which already knows
-  `nodeState.kind`):
-  - **never-connected:** "Set up the Newbro app on {node} and paste the connect
-    command below." (title e.g. "{node} isn't connected yet")
-  - **disconnected:** keep the current "Open the Newbro app on {node} — it
-    reconnects on its own…".
-- Add a primary button **"Set up with the app"** / **"Reconnect"** that opens the
-  same dialog (calls a passed `onConnect`), so the banner is consistent with the
-  card and pill. Keep the existing quick copy-command control.
+The banner becomes a short status line + a button; all command/terminal detail
+lives in the dialog (the single source). Remove the inline `OfflineCommandLine`
+command box, the reinstall disclosure (`showReinstall`), and the
+`useCopyNodeConnectCommand` usage from `OfflineBanner`.
+
+- Branch the copy on whether the node has ever connected (pass a
+  `neverConnected` boolean from the caller, which already knows `nodeState.kind`):
+  - **never-connected:** title "{node} isn't connected yet"; body "Set it up in
+    the Newbro app — {bro} can take messages once it connects."
+  - **disconnected:** title "{node} is offline"; body "{bro} can't take new
+    messages until this computer reconnects. Your draft is saved — the last turn
+    retries on its own." Keep the "Auto-retrying" pip (desktop).
+- Add a primary button — **"Set up"** (never-connected) / **"Reconnect"**
+  (disconnected) — that calls a passed `onConnect`, opening the same setup dialog
+  as the card and pill. Both desktop and mobile branches use this thin form.
 
 ### E. `CreateConnectSheet` STEP 3 layout cleanup
 
@@ -110,14 +114,17 @@ possible, in `variants-onboarding.css`):
   tighter sub-group is wanted for the install-guide→command pairing, wrap each
   guide+box in a small flex column with a 6px gap rather than per-element
   margins.
-- Differentiate the **"Not on a Mac? Connect from a terminal"** toggle from the
-  coral meta links: render it as a muted disclosure (reuse the offline
-  `dt-offline-disclose` chevron style — small, ink-muted, with a rotating
-  chevron) instead of an `ob-link` coral link, and separate it from the
-  `.ob-connect-meta` row (e.g. a hairline or extra space) so the two link groups
-  no longer stack as one block.
-- Keep the markup/test hooks stable (the aria-labels and the disclosure
-  behavior); this is spacing + the toggle's visual treatment, not new structure.
+- **Remove** the non-functional `.ob-connect-meta` block entirely (the
+  "Get a fresh link" / "Walk me through it" placeholder links). This deletes one
+  of the two clashing link rows, so the terminal toggle no longer competes with
+  them.
+- Render the remaining **"Not on a Mac? Connect from a terminal"** toggle as a
+  muted disclosure (reuse the offline `dt-offline-disclose` chevron style —
+  small, ink-muted, rotating chevron) instead of an `ob-link` coral link, so it
+  reads as a secondary affordance.
+- Keep the command-box markup/test hooks stable (the aria-labels and the
+  disclosure behavior); this is spacing + the toggle's visual treatment + the
+  meta-row removal, not new command structure.
 - **Visual verification:** because this is layout, verify the rendered STEP 3
   dialog (run the UI and open the create/reconnect dialog, or have the reviewer
   confirm) before considering it done; iterate on spacing values against the
@@ -125,7 +132,13 @@ possible, in `variants-onboarding.css`):
 
 ## Testing
 
-- Reuse `App.test.tsx`. Add/adjust:
+- Reuse `App.test.tsx`. Note the existing offline test asserts the in-banner
+  command controls (`bro-node-copy-run-only-command`, `bro-node-copy-command`,
+  "Reinstall from a terminal"); since the banner becomes thin, **rewrite** that
+  test to assert the new flow instead: the banner shows the status + a
+  "Reconnect"/"Set up" button, clicking it opens the dialog, and the
+  connect-command copy now lives in the dialog.
+- Add/adjust:
   - Clicking the home card's "Reconnect"/"Set up" button opens the dialog
     (assert the dialog heading "Reconnect {bro}" / "Set up {bro}" appears and the
     card did not navigate).
