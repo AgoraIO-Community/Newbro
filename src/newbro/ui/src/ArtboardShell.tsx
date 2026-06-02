@@ -2028,6 +2028,27 @@ function CreateConnectSheet({
   const trimmedName = name.trim();
   const canCreate = trimmedName.length > 0 && !busy && !commands && !pendingNodeId && !completed;
 
+  // For an existing bro that already has a node, reveal its connect command as
+  // soon as the dialog opens, so the command + copy work without a "create" click.
+  useEffect(() => {
+    const nodeId = bro?.executorNodeId;
+    if (!nodeId || commands) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const issue = await revealExecutorNodeConnectCommand(sessionId, nodeId);
+        if (cancelled) return;
+        setCommands(buildExecutorConnectCommands(issue.node.node_id, issue.token, {
+          enabledExecutors: issue.node.enabled_executors,
+          acpxAgent: issue.node.acpx_agent,
+        }));
+      } catch (err) {
+        if (!cancelled) setError(describeError(err, "Could not load the connect command for this Bro."));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [bro?.executorNodeId, commands, sessionId]);
+
   async function copyCommand(value: string, kind: "install" | "run") {
     await navigator.clipboard?.writeText(value).then(() => setCopiedKind(kind), () => setCopiedKind(null));
   }
@@ -2254,7 +2275,7 @@ function CreateConnectSheet({
               <span className="dt-modal-foot-dot" />
               {completed ? "Connected once · Bro ready" : commands ? "We’ll detect your computer automatically · link valid 9:46" : "Download link + connect command will be generated on demand"}
             </span>
-            {commands && completed ? (
+            {commands && (completed || bro?.executorNodeId) ? (
               <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" onClick={() => { void onCreated().finally(onClose); }}>
                 Done
               </button>

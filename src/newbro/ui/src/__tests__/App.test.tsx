@@ -1773,6 +1773,11 @@ describe("Newbro artboard shell", () => {
     expect(screen.queryByTestId("bro-node-copy-run-only-command")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Reconnect/i }));
     expect(await screen.findByText(/Reconnect forge|Reconnect Forge/i)).toBeInTheDocument();
+    // The dialog auto-reveals the real connect command (token, not "pending"),
+    // and the copy button is enabled.
+    expect(await screen.findByText(/--token token-1/)).toBeInTheDocument();
+    expect(screen.queryByText(/--token pending/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy connect command" })).toBeEnabled();
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
     expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
   });
