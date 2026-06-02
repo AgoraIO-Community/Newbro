@@ -27,9 +27,9 @@ for both architectures and publishes two unsigned DMGs to a GitHub Release:
 - `NewbroExecutor-<version>-arm64.dmg` — Apple Silicon (M-series)
 - `NewbroExecutor-<version>-x86_64.dmg` — Intel
 
-The app is unsigned, so on first launch right-click it in `/Applications` and
-choose **Open** (or run
-`xattr -dr com.apple.quarantine "/Applications/Newbro Executor.app"`).
+The app is unsigned, so the first launch on each Mac needs a one-time approval —
+see [Installing on another Mac](#installing-on-another-mac-unsigned-build) below
+for the steps (they differ by macOS version; no `xattr` needed).
 
 ## Installing on another Mac (unsigned build)
 
