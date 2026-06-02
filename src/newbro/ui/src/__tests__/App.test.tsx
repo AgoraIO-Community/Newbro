@@ -681,40 +681,29 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByRole("heading", { name: "Forge" })).toBeInTheDocument();
   });
 
-  it("offers an install-first copy connect command action on home when the bro's node is offline", async () => {
+  it("opens the setup dialog from an offline home bro card", async () => {
     const offlineNode = usableExecutorNode({
       connected_executors: [],
       connection_status: "disconnected",
       last_connected_at: "2026-05-23T20:00:00Z",
     });
     clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
-    clientMock.revealExecutorNodeConnectCommand.mockResolvedValueOnce({
-      node: offlineNode,
-      token: "token-revive",
-    });
     window.history.replaceState({}, "", "/?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
 
-    const copyBtn = await screen.findByTestId("home-bro-copy-command-forge");
-    fireEvent.click(copyBtn);
-
-    await waitFor(() => expect(clientMock.revealExecutorNodeConnectCommand).toHaveBeenCalledWith("session-existing", "node-forge"));
-    expect(clientMock.buildExecutorConnectCommands).toHaveBeenCalledWith("node-forge", "token-revive", {
-      enabledExecutors: ["codex"],
-      acpxAgent: null,
-    });
-    expect(window.location.pathname).toBe("/");
+    fireEvent.click(await screen.findByTestId(/^home-bro-connect-/));
+    expect(await screen.findByText(/Reconnect |Set up /i)).toBeInTheDocument();
   });
 
-  it("hides the home copy connect command action for connected bros", async () => {
+  it("hides the home connect action for connected bros", async () => {
     clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing"));
     window.history.replaceState({}, "", "/?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
 
     await screen.findByTestId("bro-card-forge");
-    expect(screen.queryByTestId("home-bro-copy-command-forge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId(/^home-bro-connect-/)).not.toBeInTheDocument();
   });
 
   it("opens a recent Home thread through the Bro detail route", async () => {

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import { ArrowUp, Check, ChevronLeft, Copy, Download, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
+import { ArrowUp, Check, ChevronLeft, Download, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorConnectCommands,
   clearDraft,
@@ -1823,7 +1823,7 @@ function StateChip({ state }: { state: HomeBroState }) {
   );
 }
 
-function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; onOpen: (id: string) => void; featured?: boolean }) {
+function DesktopBroCard({ bro, onOpen, onSetup, featured = false }: { bro: BroCardModel; onOpen: (id: string) => void; onSetup: (bro: BroCardModel) => void; featured?: boolean }) {
   const state = homeBroState(bro);
   const tone = homeBroTone(state);
   return (
@@ -1854,14 +1854,14 @@ function DesktopBroCard({ bro, onOpen, featured = false }: { bro: BroCardModel; 
             <span className="dt-bro-card-reasoning-text">{bro.latestReasoningStep || bro.progressLabel}</span>
           </div>
         ) : null}
-        <HomeBroCopyAction bro={bro} variant="card" />
+        <HomeBroConnectAction bro={bro} variant="card" onSetup={onSetup} />
       </div>
       <span className="dt-bro-card-arrow">›</span>
     </a>
   );
 }
 
-function DesktopRosterRow({ bro, onOpen }: { bro: BroCardModel; onOpen: (id: string) => void }) {
+function DesktopRosterRow({ bro, onOpen, onSetup }: { bro: BroCardModel; onOpen: (id: string) => void; onSetup: (bro: BroCardModel) => void }) {
   const state = homeBroState(bro);
   return (
     <a data-testid={`bro-card-${bro.id}`} className={`dt-roster-row dt-roster-row-${state}`} href={broDetailHref(bro.id)} onClickCapture={(event) => { if (clickedInsideHomeCardAction(event)) event.preventDefault(); }} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
@@ -1870,7 +1870,7 @@ function DesktopRosterRow({ bro, onOpen }: { bro: BroCardModel; onOpen: (id: str
       </div>
       <span className="dt-roster-name">{bro.name}</span>
       <span className="dt-roster-last">{homeBroLast(bro, state)}</span>
-      <HomeBroCopyAction bro={bro} variant="row" />
+      <HomeBroConnectAction bro={bro} variant="row" onSetup={onSetup} />
     </a>
   );
 }
@@ -1909,6 +1909,7 @@ function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
 function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) => void }) {
   const shell = useNewbroShell();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [setupBro, setSetupBro] = useState<BroCardModel | null>(null);
   const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
   const workingBros = homeBros.filter((bro) => homeBroState(bro) === "working");
   const standingByBros = homeBros.filter((bro) => homeBroState(bro) !== "working");
@@ -1945,7 +1946,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
                       <span className="dt-home-section-sub">Sessions currently dispatched</span>
                     </div>
                     <div className="dt-bro-grid">
-                      {workingBros.map((bro) => <DesktopBroCard key={bro.id} bro={bro} featured onOpen={onOpenBro} />)}
+                      {workingBros.map((bro) => <DesktopBroCard key={bro.id} bro={bro} featured onOpen={onOpenBro} onSetup={setSetupBro} />)}
                     </div>
                   </section>
                 ) : null}
@@ -1955,7 +1956,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
                     <span className="dt-home-section-sub">Quiet for now - hold space to wake one</span>
                   </div>
                   <div className="dt-bro-roster">
-                    {standingByBros.map((bro) => <DesktopRosterRow key={bro.id} bro={bro} onOpen={onOpenBro} />)}
+                    {standingByBros.map((bro) => <DesktopRosterRow key={bro.id} bro={bro} onOpen={onOpenBro} onSetup={setSetupBro} />)}
                   </div>
                 </section>
               </>
@@ -1993,6 +1994,9 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
       )}
       {sheetOpen && shell.activeShellSessionId ? (
         <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setSheetOpen(false)} onCreated={shell.refreshShellSession} />
+      ) : null}
+      {setupBro && shell.activeShellSessionId ? (
+        <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setSetupBro(null)} onCreated={shell.refreshShellSession} bro={setupBro} />
       ) : null}
     </DesktopFrame>
   );
@@ -2267,76 +2271,26 @@ function CreateConnectSheet({
   );
 }
 
-function useCopyNodeConnectCommand(args: {
-  sessionId: string | null;
-  broSource: BroCardModel["source"];
-  nodeId: string | null;
-}): { copyInstall: () => Promise<void>; copyRunOnly: () => Promise<void>; copiedKind: "install" | "run" | null; commands: ExecutorConnectCommands | null } {
-  const [commands, setCommands] = useState<ExecutorConnectCommands | null>(null);
-  const [copiedKind, setCopiedKind] = useState<"install" | "run" | null>(null);
-  const { sessionId, broSource, nodeId } = args;
-  const revealCommands = useCallback(async () => {
-    if (!sessionId || !nodeId || broSource !== "runtime") return null;
-    const issue = await revealExecutorNodeConnectCommand(sessionId, nodeId);
-    const next = buildExecutorConnectCommands(issue.node.node_id, issue.token, {
-      enabledExecutors: issue.node.enabled_executors,
-      acpxAgent: issue.node.acpx_agent,
-    });
-    setCommands(next);
-    return next;
-  }, [sessionId, broSource, nodeId]);
-  const copyInstall = useCallback(async () => {
-    const next = commands ?? await revealCommands();
-    if (!next) return;
-    await navigator.clipboard?.writeText(next.installConnect).then(() => setCopiedKind("install"), () => setCopiedKind(null));
-  }, [commands, revealCommands]);
-  const copyRunOnly = useCallback(async () => {
-    const next = commands ?? await revealCommands();
-    if (!next) return;
-    await navigator.clipboard?.writeText(next.runOnly).then(() => setCopiedKind("run"), () => setCopiedKind(null));
-  }, [commands, revealCommands]);
-  return { copyInstall, copyRunOnly, copiedKind, commands };
-}
 
-function HomeBroCopyAction({ bro, variant }: { bro: BroCardModel; variant: "card" | "row" }) {
-  const shell = useNewbroShell();
-  const { copyInstall, copiedKind } = useCopyNodeConnectCommand({
-    sessionId: shell.activeShellSessionId,
-    broSource: bro.source,
-    nodeId: bro.executorNodeId,
-  });
-  if (bro.liveState !== "offline" || bro.source !== "runtime") return null;
-  const copied = copiedKind === "install";
+function HomeBroConnectAction({ bro, variant, onSetup }: { bro: BroCardModel; variant: "card" | "row"; onSetup: (bro: BroCardModel) => void }) {
+  if (bro.source !== "runtime") return null;
+  if (bro.liveState !== "offline" && bro.liveState !== "unbound") return null;
+  const label = bro.nodeName ? "Reconnect" : "Set up";
   const handle = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    void copyInstall();
+    onSetup(bro);
   };
-  if (variant === "card") {
-    return (
-      <button
-        type="button"
-        data-testid={`home-bro-copy-command-${bro.id}`}
-        data-home-card-action="copy-connect"
-        className="dt-bro-card-copy"
-        onClick={handle}
-      >
-        {copied ? <Check size={12} strokeWidth={2.2} /> : <Copy size={12} strokeWidth={2} />}
-        <span>{copied ? "Copied" : "Copy install + connect"}</span>
-      </button>
-    );
-  }
   return (
     <button
       type="button"
-      data-testid={`home-bro-copy-command-${bro.id}`}
-      data-home-card-action="copy-connect"
-      className="dt-roster-copy"
-      title={copied ? "Copied to clipboard" : "Copy the install/update command that reconnects this Bro's node"}
+      data-testid={`home-bro-connect-${bro.id}`}
+      data-home-card-action="connect"
+      className={variant === "card" ? "dt-bro-card-copy" : "dt-roster-copy"}
       onClick={handle}
     >
-      {copied ? <Check size={12} strokeWidth={2.2} /> : <Copy size={12} strokeWidth={2} />}
-      <span>{copied ? "Copied" : "Copy install + connect"}</span>
+      <Plus size={12} strokeWidth={2} />
+      <span>{label}</span>
     </button>
   );
 }
@@ -3589,7 +3543,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   );
 }
 
-function MobileBroCard({ bro, onOpen }: { bro: BroCardModel; onOpen: (id: string) => void }) {
+function MobileBroCard({ bro, onOpen, onSetup }: { bro: BroCardModel; onOpen: (id: string) => void; onSetup: (bro: BroCardModel) => void }) {
   const state = homeBroState(bro);
   const tone = homeBroTone(state);
   const chipLabel = homeBroChipLabel(state);
@@ -3632,6 +3586,7 @@ function MobileBroCard({ bro, onOpen }: { bro: BroCardModel; onOpen: (id: string
       </div>
       <div className="home-row-right">
         <span className={`home-chip home-chip-${tone}`}><span className="home-chip-dot" />{chipLabel}</span>
+        <HomeBroConnectAction bro={bro} variant="card" onSetup={onSetup} />
       </div>
     </button>
   );
@@ -3643,16 +3598,18 @@ function HomeBroEditable({
   editing,
   onRemove,
   onOpen,
+  onSetup,
 }: {
   bro: BroCardModel;
   featured: boolean;
   editing: boolean;
   onRemove: (id: string) => void;
   onOpen: (id: string) => void;
+  onSetup: (bro: BroCardModel) => void;
 }) {
   return (
     <div className={`home-edit-wrap${editing ? " home-edit-wrap-on" : ""}${featured ? " home-edit-wrap-card" : " home-edit-wrap-row"}`}>
-      <MobileBroCard bro={bro} onOpen={editing ? () => {} : onOpen} />
+      <MobileBroCard bro={bro} onOpen={editing ? () => {} : onOpen} onSetup={onSetup} />
       {editing && (
         <button
           type="button"
@@ -3847,6 +3804,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
   const [addOpen, setAddOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [signOutPending, setSignOutPending] = useState(false);
+  const [setupBro, setSetupBro] = useState<BroCardModel | null>(null);
 
   const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
   const working = homeBros.filter((bro) => homeBroState(bro) === "working");
@@ -3950,7 +3908,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
                   </div>
                   <div className="home-flight">
                     {working.map((bro) => (
-                      <HomeBroEditable key={bro.id} bro={bro} featured editing={editMode} onRemove={setConfirmId} onOpen={onOpenBro} />
+                      <HomeBroEditable key={bro.id} bro={bro} featured editing={editMode} onRemove={setConfirmId} onOpen={onOpenBro} onSetup={setSetupBro} />
                     ))}
                   </div>
                 </section>
@@ -3962,7 +3920,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
                 </div>
                 <div className="home-list">
                   {standing.map((bro) => (
-                    <HomeBroEditable key={bro.id} bro={bro} featured={false} editing={editMode} onRemove={setConfirmId} onOpen={onOpenBro} />
+                    <HomeBroEditable key={bro.id} bro={bro} featured={false} editing={editMode} onRemove={setConfirmId} onOpen={onOpenBro} onSetup={setSetupBro} />
                   ))}
                   <AddBroTile editing={editMode} onClick={() => setAddOpen(true)} />
                 </div>
@@ -4015,6 +3973,9 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
           onCreated={shell.refreshShellSession}
           mobile
         />
+      ) : null}
+      {setupBro && shell.activeShellSessionId ? (
+        <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setSetupBro(null)} onCreated={shell.refreshShellSession} bro={setupBro} mobile />
       ) : null}
     </MobileStage>
   );
