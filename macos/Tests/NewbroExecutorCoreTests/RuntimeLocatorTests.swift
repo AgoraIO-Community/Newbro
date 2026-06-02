@@ -14,6 +14,18 @@ final class RuntimeLocatorTests: XCTestCase {
         XCTAssertTrue(locator.isRuntimeAvailable)
     }
 
+    func testNewbroBinEnvironmentOverrideWins() {
+        let dev = "/Users/test/dev/newbro"
+        setenv("NEWBRO_BIN", dev, 1)
+        defer { unsetenv("NEWBRO_BIN") }
+        // overridePath defaults to the NEWBRO_BIN env var.
+        let locator = RuntimeLocator(
+            homeDir: home,
+            fileExists: { $0 == dev || $0 == "/Users/test/.local/bin/newbro" },
+            whichNewbro: { nil })
+        XCTAssertEqual(locator.resolveNewbro(), dev)
+    }
+
     func testOverrideWins() {
         let override = "/opt/newbro"
         let locator = RuntimeLocator(

@@ -9,7 +9,11 @@ public struct RuntimeLocator {
     private let fileExists: (String) -> Bool
     private let whichNewbro: () -> String?
 
-    public init(overridePath: String? = nil,
+    /// `overridePath` defaults to the `NEWBRO_BIN` environment variable, so a
+    /// local dev build can point the app at a working-copy `newbro` (e.g. the
+    /// repo's `./newbro`) by launching the app binary with `NEWBRO_BIN=…` set.
+    /// It takes precedence over the installed `~/.local/bin/newbro`.
+    public init(overridePath: String? = ProcessInfo.processInfo.environment["NEWBRO_BIN"],
                 homeDir: URL = FileManager.default.homeDirectoryForCurrentUser,
                 fileExists: @escaping (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) },
                 whichNewbro: @escaping () -> String? = RuntimeLocator.loginShellWhich) {
