@@ -17,17 +17,8 @@ struct NewbroExecutorApp: App {
         MenuBarExtra {
             MenuContent(model: model)
         } label: {
-            Image(systemName: glyph(for: model.aggregate()))
+            MenuBarLabel(tone: statusTone(model.aggregate()))
         }
         .menuBarExtraStyle(.menu)
-    }
-
-    private func glyph(for status: NodeStatus) -> String {
-        switch status {
-        case .ready: return "circle.fill"
-        case .connecting, .starting, .retrying: return "arrow.triangle.2.circlepath"
-        case .disconnected, .error: return "exclamationmark.triangle.fill"
-        case .stopped, .idle: return "circle"
-        }
     }
 }
