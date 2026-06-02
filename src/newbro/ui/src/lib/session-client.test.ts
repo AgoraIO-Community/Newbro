@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildExecutorConnectCommands,
   buildExecutorInstallOnlyCommand,
+  sendSocketCommand,
 } from "./session-client";
 
 class MockWebSocket {
@@ -459,6 +460,20 @@ describe("buildExecutorInstallOnlyCommand", () => {
     expect(cmd).toMatch(/^curl -fsSL .+ \| sh$/);
     expect(cmd).not.toContain("executor run");
     expect(cmd).not.toContain("--token");
+  });
+});
+
+describe("sendSocketCommand", () => {
+  it("emits a cancel_task send_command with the task id", () => {
+    const sent: string[] = [];
+    const socket = { send: (m: string) => sent.push(m) } as unknown as WebSocket;
+    sendSocketCommand(socket, "req-1", "cancel_task", "task-1");
+    expect(JSON.parse(sent[0])).toEqual({
+      type: "send_command",
+      request_id: "req-1",
+      command_type: "cancel_task",
+      task_id: "task-1",
+    });
   });
 });
 
