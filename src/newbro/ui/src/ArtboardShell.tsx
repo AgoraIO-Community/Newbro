@@ -2111,8 +2111,8 @@ function CreateConnectSheet({
           <header className="ob-sheet-head">
             <div className="ob-sheet-titles">
               <span className="ob-eyebrow ob-eyebrow-coral">NEW BRO</span>
-              <h2 className="ob-sheet-h">Set up your first bro</h2>
-              <p className="ob-sheet-intro">A bro works on a computer you keep on — your Mac, a spare laptop, anything. Three quick steps and it&rsquo;s ready.</p>
+              <h2 className="ob-sheet-h">{bro ? (bro.nodeName ? `Reconnect ${bro.name}` : `Set up ${bro.name}`) : "Set up your first bro"}</h2>
+              <p className="ob-sheet-intro">{bro ? (bro.nodeName ? `Get ${bro.name} back online — install the Newbro app on its Mac and paste the connect command.` : `Install the Newbro app on the Mac that runs ${bro.name}, then paste the connect command.`) : "A bro works on a Mac you keep on. Three quick steps and it’s ready."}</p>
             </div>
             <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}><X size={16} strokeWidth={2.2} /></button>
           </header>
