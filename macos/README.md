@@ -30,3 +30,35 @@ for both architectures and publishes two unsigned DMGs to a GitHub Release:
 The app is unsigned, so on first launch right-click it in `/Applications` and
 choose **Open** (or run
 `xattr -dr com.apple.quarantine "/Applications/Newbro Executor.app"`).
+
+## Installing on another Mac (unsigned build)
+
+The app is ad-hoc signed but not notarized (no paid Apple Developer account), so
+the **first** launch on a Mac other than the build machine needs a one-time
+approval. No terminal or `xattr` is required.
+
+1. **Build and share (you):**
+   ```bash
+   ./macos/package-app.sh
+   ```
+   Then compress `macos/dist/Newbro Executor.app` (Finder → Compress, or
+   `ditto -c -k --keepParent "macos/dist/Newbro Executor.app" NewbroExecutor.zip`)
+   and send it (AirDrop, download, etc.).
+
+2. **Recipient:** unzip it, and optionally drag `Newbro Executor.app` to
+   `/Applications`.
+
+3. **First launch — one-time approval.** Double-click the app. If macOS blocks it
+   ("can't verify the developer"):
+   - **macOS 14 (Sonoma) or earlier:** Control-click (right-click) the app icon →
+     **Open** → **Open** in the dialog.
+   - **macOS 15 (Sequoia) or later:** open **System Settings → Privacy &
+     Security**, scroll to **Security**, find the message
+     "*Newbro Executor* was blocked…" → click **Open Anyway** → confirm and
+     authenticate (Touch ID / password).
+
+4. After approving once, the app opens normally every time — no terminal, no
+   `xattr`.
+
+This step exists only because the app isn't notarized; it is a one-time,
+per-machine action.
