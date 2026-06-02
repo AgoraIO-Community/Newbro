@@ -18,8 +18,37 @@ public enum ConnectCommandError: Error, Equatable {
     case missingFields([String])
 }
 
+/// Tokenize a shell-style command line, honoring single/double quotes so a
+/// shell-quoted value like `'codex'` becomes `codex`. Correctly reassembles the
+/// `'a'"'"'b'` single-quote-escaping pattern that POSIX shell quoting emits.
+func shellTokenize(_ text: String) -> [String] {
+    var tokens: [String] = []
+    var current = ""
+    var hasToken = false
+    var quote: Character? = nil
+    for ch in text {
+        if let active = quote {
+            if ch == active { quote = nil } else { current.append(ch) }
+            continue
+        }
+        if ch == "'" || ch == "\"" {
+            quote = ch
+            hasToken = true
+            continue
+        }
+        if ch.isWhitespace {
+            if hasToken { tokens.append(current); current = ""; hasToken = false }
+            continue
+        }
+        current.append(ch)
+        hasToken = true
+    }
+    if hasToken { tokens.append(current) }
+    return tokens
+}
+
 public func parseConnectCommand(_ text: String) throws -> ConnectCommandFields {
-    let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    let tokens = shellTokenize(text)
     var baseURL = "", nodeID = "", token = ""
     var enabled: [String] = []
     var index = 0
