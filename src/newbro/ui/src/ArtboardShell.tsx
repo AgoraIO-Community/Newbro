@@ -16,6 +16,7 @@ import {
   type ExecutorConnectCommands,
 } from "./lib/session-client";
 import { readThreadIdFromUrl, replaceThreadIdInUrl } from "./lib/session-url";
+import { useThreadSelection } from "./lib/useThreadSelection";
 import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForNativeTurn, buildReasoningStepsForTurn, type ReasoningStep } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
@@ -3231,15 +3232,8 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const shell = useNewbroShell();
   const [textTurns, setTextTurns] = useState<TextTurn[]>([]);
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readThreadIdFromUrl());
-  const [pendingNewThread, setPendingNewThread] = useState(false);
-  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null);
-  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [threadVisibleCount, setThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const [connectOpen, setConnectOpen] = useState(false);
-  const openedThreadRef = useRef<string | null>(null);
-  const activeThreadRef = useRef<string | null>(null);
-  const recentResolveRef = useRef<string | null>(null);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
@@ -3252,20 +3246,28 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const persona = bro?.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
   const threads = bro?.source === "runtime" ? buildBroThreadRecords(bro.id, shell.broThreads) : [];
   const workspaceOptions = useMemo(() => buildWorkspaceOptions(threads), [threads]);
-  const matchedThread = threads.find((thread) => thread.threadId === selectedThreadId);
-  const isResolveLag =
-    !pendingNewThread
-    && selectedThreadId !== null
-    && !matchedThread
-    && recentResolveRef.current === selectedThreadId;
-  const selectedThread = pendingNewThread || isResolveLag
-    ? null
-    : matchedThread ?? threads[0] ?? null;
-  const activeThreadId = pendingNewThread
-    ? null
-    : isResolveLag
-      ? selectedThreadId
-      : selectedThread?.threadId ?? null;
+  const {
+    selectedThreadId,
+    pendingNewThread,
+    pendingWorkspaceId,
+    workspacePickerOpen,
+    setWorkspacePickerOpen,
+    selectedThread,
+    activeThreadId,
+    selectThread,
+    newThread,
+    selectWorkspace,
+    resolveThread,
+  } = useThreadSelection({
+    broId: bro?.id ?? null,
+    broSource: bro?.source ?? null,
+    threads,
+    workspaceOptions,
+    needsConnect,
+    openThread: (id, tid) => { void shell.openRuntimeBroThread(id, tid); },
+    closeThread: (id, tid) => { void shell.closeRuntimeBroThread(id, tid); },
+    onNoWorkspace: () => shell.setShellError("No Codex workspace is available for this Bro yet."),
+  });
   const visibleThreads = useMemo(
     () => threads.slice(0, threadVisibleCount),
     [threadVisibleCount, threads],
@@ -3285,22 +3287,6 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   ].join("::");
 
   useEffect(() => {
-    if (pendingNewThread || threads.length === 0) return;
-    const exists = selectedThreadId ? threads.some((thread) => thread.threadId === selectedThreadId) : false;
-    if (exists) {
-      if (recentResolveRef.current === selectedThreadId) {
-        recentResolveRef.current = null;
-      }
-      return;
-    }
-    if (recentResolveRef.current === selectedThreadId) {
-      return;
-    }
-    setSelectedThreadId(threads[0].threadId);
-    replaceThreadIdInUrl(threads[0].threadId);
-  }, [pendingNewThread, selectedThreadId, threads]);
-
-  useEffect(() => {
     setThreadVisibleCount(THREAD_LIST_PAGE_SIZE);
   }, [broId]);
 
@@ -3310,65 +3296,6 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     if (selectedIndex < threadVisibleCount) return;
     setThreadVisibleCount(Math.ceil((selectedIndex + 1) / THREAD_LIST_PAGE_SIZE) * THREAD_LIST_PAGE_SIZE);
   }, [activeThreadId, threadVisibleCount, threads]);
-
-  function selectThread(threadId: string) {
-    setPendingNewThread(false);
-    setPendingWorkspaceId(null);
-    setWorkspacePickerOpen(false);
-    setSelectedThreadId(threadId);
-    replaceThreadIdInUrl(threadId);
-    openedThreadRef.current = null;
-  }
-
-  function newThread() {
-    if (workspaceOptions.length === 0) {
-      shell.setShellError("No Codex workspace is available for this Bro yet.");
-      return;
-    }
-    setWorkspacePickerOpen(true);
-  }
-
-  function selectWorkspace(workspaceId: string) {
-    if (bro?.source === "runtime") {
-      void shell.closeRuntimeBroThread(bro.id, activeThreadId);
-    }
-    setPendingNewThread(true);
-    setPendingWorkspaceId(workspaceId);
-    setWorkspacePickerOpen(false);
-    setSelectedThreadId(null);
-    replaceThreadIdInUrl(null);
-  }
-
-  function resolveThread(threadId: string | null) {
-    if (!threadId) return;
-    recentResolveRef.current = threadId;
-    setPendingNewThread(false);
-    setPendingWorkspaceId(null);
-    setWorkspacePickerOpen(false);
-    setSelectedThreadId(threadId);
-    replaceThreadIdInUrl(threadId);
-    openedThreadRef.current = threadId;
-  }
-
-  useEffect(() => {
-    if (pendingNewThread || needsConnect || !bro || bro.source !== "runtime" || !activeThreadId) return;
-    if (recentResolveRef.current === activeThreadId) return;
-    if (openedThreadRef.current === activeThreadId) return;
-    openedThreadRef.current = activeThreadId;
-    void shell.openRuntimeBroThread(bro.id, activeThreadId);
-  }, [activeThreadId, bro?.id, bro?.source, needsConnect, pendingNewThread]);
-
-  useEffect(() => {
-    activeThreadRef.current = activeThreadId;
-  }, [activeThreadId]);
-
-  useEffect(() => {
-    return () => {
-      if (bro?.source === "runtime") {
-        void shell.closeRuntimeBroThread(bro.id, activeThreadRef.current);
-      }
-    };
-  }, [bro?.id, bro?.source]);
 
   useEffect(() => {
     const element = threadScrollRef.current;
