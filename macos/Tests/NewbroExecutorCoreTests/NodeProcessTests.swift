@@ -76,6 +76,22 @@ final class NodeProcessTests: XCTestCase {
         XCTAssertFalse(proc.isRunning)
     }
 
+    func testHonorsCustomEnvironment() {
+        // The menu-bar app launches with a minimal PATH; it must be able to
+        // override the child's environment (so e.g. `node`/`codex` resolve).
+        let lines = Box<[String]>([])
+        let exited = expectation(description: "exited")
+        let proc = NodeProcess(
+            argv: ["/bin/sh", "-c", "printf 'PATHIS=%s\\n' \"$PATH\""],
+            environment: ["PATH": "/custom/bin:/usr/bin"],
+            onLine: { line in lines.mutate { $0.append(line) } },
+            onExit: { _ in exited.fulfill() }
+        )
+        proc.start()
+        wait(for: [exited], timeout: 10)
+        XCTAssertTrue(lines.value.contains("PATHIS=/custom/bin:/usr/bin"))
+    }
+
     func testStopTerminatesLongRunner() {
         let started = expectation(description: "started")
         started.assertForOverFulfill = false

@@ -21,12 +21,17 @@ final class AppModel: ObservableObject {
     // so they never freeze the main actor / menu.
     private let controlQueue = DispatchQueue(label: "newbro.ui.control")
 
+    /// Login-shell PATH so node subprocesses (and the `node`-based `codex`
+    /// they exec) resolve under the app's otherwise-minimal launchd env.
+    private let childEnv = RuntimeLocator.childEnvironment()
+
     init() {
         let loc = locator
+        let env = RuntimeLocator.childEnvironment()
         self.loginItem = LoginItem(appPath: Bundle.main.bundlePath)
         self.supervisor = ProfileSupervisor(
             processFactory: .init(make: { argv, onLine, onExit in
-                NodeProcess(argv: argv, onLine: onLine, onExit: onExit)
+                NodeProcess(argv: argv, environment: env, onLine: onLine, onExit: onExit)
             }),
             argvBuilder: { profile in
                 loc.nodeArgv(for: profile) ?? []
@@ -102,6 +107,7 @@ final class AppModel: ObservableObject {
         let argv = locator.installCommandArgv()
         updateInstallProcess = NodeProcess(
             argv: argv,
+            environment: childEnv,
             onLine: { _ in },
             onExit: { [weak self] code in
                 Task { @MainActor in
@@ -213,6 +219,7 @@ final class AppModel: ObservableObject {
         // Retain the process; otherwise it is deallocated before it runs.
         installProcess = NodeProcess(
             argv: argv,
+            environment: childEnv,
             onLine: { [weak self] line in
                 Task { @MainActor in self?.installLog += line + "\n" }
             },

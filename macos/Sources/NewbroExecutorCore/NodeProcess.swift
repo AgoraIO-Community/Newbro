@@ -8,6 +8,7 @@ public protocol NodeProcessProtocol: AnyObject {
 
 public final class NodeProcess: NodeProcessProtocol {
     private let argv: [String]
+    private let environment: [String: String]?
     private let onLine: (String) -> Void
     private let onExit: (Int32) -> Void
     private var process: Process?
@@ -15,9 +16,11 @@ public final class NodeProcess: NodeProcessProtocol {
     private var buffer = Data()
 
     public init(argv: [String],
+                environment: [String: String]? = nil,
                 onLine: @escaping (String) -> Void,
                 onExit: @escaping (Int32) -> Void) {
         self.argv = argv
+        self.environment = environment
         self.onLine = onLine
         self.onExit = onExit
     }
@@ -29,6 +32,7 @@ public final class NodeProcess: NodeProcessProtocol {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: argv[0])
         proc.arguments = Array(argv.dropFirst())
+        if let environment { proc.environment = environment }
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
