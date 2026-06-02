@@ -65,6 +65,7 @@ from .executor_node import (
     InteractionStateMessage,
     ListCodexThreadsCommand,
     ReadCodexThreadCommand,
+    ReadWorkspaceFileCommand,
     RegisterNodeMessage,
     ReleaseRunCommand,
     RunEventMessage,
@@ -73,6 +74,9 @@ from .executor_node import (
     SupplyInteractionResponseCommand,
     TranscribeAudioInstructionCommand,
     UnsubscribeCodexThreadCommand,
+    WorkspaceFileChunk,
+    WorkspaceFileEof,
+    WorkspaceFileError,
 )
 from .execution_mode import TaskExecutionMode
 from .interaction import AttentionItem, InteractionRequest
@@ -163,6 +167,7 @@ __all__ = [
     "MAX_EXECUTOR_AUDIO_BYTES",
     "MAX_EXECUTOR_AUDIO_DURATION_MS",
     "ReadCodexThreadCommand",
+    "ReadWorkspaceFileCommand",
     "Interruption",
     "InterruptionType",
     "MutationType",
@@ -197,6 +202,9 @@ __all__ = [
     "TaskSummary",
     "TranscribeAudioInstructionCommand",
     "UnsubscribeCodexThreadCommand",
+    "WorkspaceFileChunk",
+    "WorkspaceFileEof",
+    "WorkspaceFileError",
     "UiUpdate",
     "AckMessage",
 ]
