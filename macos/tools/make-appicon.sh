@@ -10,14 +10,10 @@ OUT="$HERE/../Resources/AppIcon.icns"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-LOGO_PNG="$WORK/logo.png"
 ICONSET="$WORK/AppIcon.iconset"
 
-echo "[make-appicon] converting logo webp -> png"
-sips -s format png "$LOGO_WEBP" --out "$LOGO_PNG" >/dev/null
-
 echo "[make-appicon] rendering iconset"
-swift "$HERE/make-appicon.swift" "$LOGO_PNG" "$ICONSET"
+swift "$HERE/make-appicon.swift" "$LOGO_WEBP" "$ICONSET"
 
 echo "[make-appicon] building icns"
 mkdir -p "$HERE/../Resources"
