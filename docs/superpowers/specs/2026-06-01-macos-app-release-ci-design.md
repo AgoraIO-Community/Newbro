@@ -47,6 +47,19 @@ Move permissions to per-job scope:
 - `publish`: `id-token: write` (PyPI trusted publishing), `contents: read`.
 - `macos`: `contents: write` (create/attach the GitHub Release).
 
+### Two architectures, two DMGs
+
+The runner is Apple Silicon, but Intel Macs must be supported too — shipped as
+**two separate packages** (not a universal binary). The `macos` job builds the
+app twice, once per architecture, and produces two distinctly named DMGs
+attached to the same Release:
+
+- `NewbroExecutor-<version>-arm64.dmg` (Apple Silicon)
+- `NewbroExecutor-<version>-x86_64.dmg` (Intel)
+
+Per-arch builds use `swift build -c release --arch <arch>`. The Apple Silicon
+runner can cross-compile the `x86_64` slice this way.
+
 ### `macos` job steps
 
 1. **Checkout** (`actions/checkout@v4`).
@@ -54,29 +67,33 @@ Move permissions to per-job scope:
    `NewbroExecutorCore` unit tests passing.
 3. **Derive version**: reuse the existing tag logic to set `RELEASE_VERSION`
    (`v?*` → strip leading `v`; fail on a non-`v` tag).
-4. **Build the app**: run `macos/package-app.sh`, passing the release version
-   via an env var so the bundle's `CFBundleShortVersionString` and
-   `CFBundleVersion` are stamped from the tag (see script change below).
-5. **Build the `.dmg`**: `brew install create-dmg`, then build
-   `NewbroExecutor-<version>.dmg` from `dist/Newbro Executor.app` with a
-   drag-to-`/Applications` layout. The app is unsigned / ad-hoc — no signing
-   secrets are used.
-6. **Release**: create or attach to the GitHub Release for the tag with
-   `softprops/action-gh-release`, uploading the `.dmg` asset. The Release body
+4. **Install `create-dmg`**: `brew install create-dmg`.
+5. **Build per arch (arm64, then x86_64)**: for each arch, run
+   `macos/package-app.sh` with the release version and target arch, then build
+   `NewbroExecutor-<version>-<arch>.dmg` from the resulting
+   `Newbro Executor.app` with a drag-to-`/Applications` layout. The app is
+   unsigned / ad-hoc — no signing secrets are used.
+6. **Release**: create the GitHub Release for the tag with
+   `softprops/action-gh-release`, **published immediately**, uploading both
+   `.dmg` assets in a single step (one Release, no race). The Release body
    includes a Gatekeeper note for the unsigned app (first launch: right-click →
-   **Open**, or `xattr -dr com.apple.quarantine "<app path>"`).
+   **Open**, or `xattr -dr com.apple.quarantine "<app path>"`) and tells users
+   which DMG matches their chip.
 
 ### `macos/package-app.sh` change
 
-Make the version configurable instead of hardcoded:
+Make the version and architecture configurable instead of hardcoded:
 
 - Read a version from an env var (e.g. `NEWBRO_APP_VERSION`), defaulting to
   `1.0` for local builds so existing behavior is preserved.
 - Substitute it into both `CFBundleShortVersionString` and `CFBundleVersion`
   in the generated `Info.plist`.
+- Accept an optional target architecture (e.g. `NEWBRO_APP_ARCH` =
+  `arm64` | `x86_64`); when set, pass `--arch <arch>` to `swift build` and the
+  `--show-bin-path` lookup. Default (unset) keeps the current native build.
 
 This keeps `package-app.sh` the single source of truth for assembling the
-bundle; CI only passes the version in.
+bundle; CI only passes the version and arch in.
 
 ## Decisions / rationale
 
@@ -85,8 +102,10 @@ bundle; CI only passes the version in.
 - **`.dmg` via `create-dmg`**: chosen for drag-to-Applications UX (the reason
   for picking `.dmg`); one `brew install`. Plain `hdiutil` would be
   zero-dependency but plainer.
-- **GitHub Release** as the distribution channel: standard, downloadable from
-  the repo's Releases page.
+- **GitHub Release** as the distribution channel, **published immediately**:
+  standard, downloadable from the repo's Releases page; fully automated.
+- **Two per-arch DMGs (arm64 + x86_64), not a universal binary**: explicit user
+  choice to ship separate packages for Apple Silicon and Intel.
 - **Add a job to the existing workflow** (rename to `release.yml`): both
   executor artifacts live in one workflow run, matching "together with
   executor."
@@ -98,5 +117,4 @@ bundle; CI only passes the version in.
 - Code signing and notarization; Apple Developer secrets.
 - Auto-update feed (Sparkle, etc.).
 - Homebrew cask / other distribution channels.
-- Universal-binary or architecture matrix concerns beyond what
-  `swift build -c release` produces on the runner.
+- Universal (fat) binary — superseded by shipping two separate per-arch DMGs.
