@@ -1722,12 +1722,14 @@ function Header({
   onHome,
   onLogout,
   account,
+  onConnect,
 }: {
   active: RuntimePage;
   bro?: BroCardModel | null;
   onHome: () => void;
   onLogout: () => void;
   account: string;
+  onConnect?: () => void;
 }) {
   const tone = bro ? homeBroTone(homeBroState(bro)) : "calm";
   const detailPaused = bro?.liveState === "offline" || bro?.liveState === "unbound";
@@ -1754,10 +1756,17 @@ function Header({
       </div>
       <div className="dt-header-r">
         {bro ? (
-          <span className={`dt-header-pill ${detailPaused ? "dt-header-pill-paused" : "dt-header-pill-live"}`}>
-            <span className="dt-header-pill-dot" />
-            {detailPaused ? "paused · computer offline" : "live · listening"}
-          </span>
+          detailPaused && onConnect ? (
+            <button type="button" className="dt-header-pill dt-header-pill-paused dt-header-pill-action" onClick={onConnect}>
+              <span className="dt-header-pill-dot" />
+              computer offline · set up
+            </button>
+          ) : (
+            <span className={`dt-header-pill ${detailPaused ? "dt-header-pill-paused" : "dt-header-pill-live"}`}>
+              <span className="dt-header-pill-dot" />
+              {detailPaused ? "paused · computer offline" : "live · listening"}
+            </span>
+          )
         ) : null}
         <span className="dt-header-account dt-header-static">
           <span className="dt-header-account-avatar">{account.trim().charAt(0).toUpperCase() || "N"}</span>
@@ -1776,11 +1785,13 @@ function DesktopFrame({
   bro,
   children,
   onHome,
+  onConnect,
 }: {
   active: RuntimePage;
   bro?: BroCardModel | null;
   children: React.ReactNode;
   onHome: () => void;
+  onConnect?: () => void;
 }) {
   const shell = useNewbroShell();
   return (
@@ -1792,6 +1803,7 @@ function DesktopFrame({
           onHome={onHome}
           account={shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in"}
           onLogout={() => { void shell.logout(); }}
+          onConnect={onConnect}
         />
         <main className="dt-main" data-testid="newbro-shell">
           {children}
@@ -3505,7 +3517,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   };
 
   return (
-    <DesktopFrame active="detail" bro={bro} onHome={onHome}>
+    <DesktopFrame active="detail" bro={bro} onHome={onHome} onConnect={() => setConnectOpen(true)}>
       {needsConnect && shell.activeShellSessionId ? (
         <div className="dt-main-pad nb-detail-connect-stage">
           <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onHome} onCreated={shell.refreshShellSession} bro={bro} />

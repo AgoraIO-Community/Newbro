@@ -1151,3 +1151,5 @@
   cursor: pointer;
 }
 .ob-offline-action:hover { filter: brightness(1.05); }
+.dt-header-pill-action { border: 0; cursor: pointer; font: inherit; }
+.dt-header-pill-action:hover { filter: brightness(1.06); }

@@ -1788,6 +1788,21 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
   });
 
+  it("opens the setup dialog from the detail header pill", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /computer offline · set up/i }));
+    expect(await screen.findByText(/Reconnect Forge|Reconnect forge/i)).toBeInTheDocument();
+  });
+
   it("clears the existing thread history when 'New thread' is clicked on the desktop detail page", async () => {
     const snapshot = {
       ...forgeSnapshot("session-existing"),
