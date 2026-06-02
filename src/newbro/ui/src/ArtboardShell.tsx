@@ -2182,16 +2182,10 @@ function CreateConnectSheet({
                   </div>
                   <span className="ob-field-hint">Pick the one you already use — newbro runs your tasks through it. You can switch anytime.</span>
                 </div>
-              </div>
-
-              <div className="dt-modal-col">
                 <div className="ob-fieldset">
-                  <div className="ob-fieldset-eyebrow-row">
-                    <span className="ob-field-eyebrow">STEP 3 · CONNECT A COMPUTER</span>
-                    <span className="ob-fieldset-eyebrow-meta">{completed ? "connected" : commands ? "download app + paste connect" : "on demand"}</span>
-                  </div>
+                  <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 3 · DOWNLOAD THE APP</span>
                   {mobile ? (
-                    <p className="ob-connect-guide">Install the Newbro app on the Mac that will run {pendingBroName || trimmedName || "your bro"}, then paste this connect command into it (menu → Paste connect command):</p>
+                    <p className="ob-connect-guide">Install the Newbro app on the Mac that will run {pendingBroName || trimmedName || "your bro"}.</p>
                   ) : (
                     <>
                       <p className="ob-connect-guide">On the Mac where {pendingBroName || trimmedName || "your bro"} should work, install the Newbro app:</p>
@@ -2199,9 +2193,15 @@ function CreateConnectSheet({
                         <Download size={14} strokeWidth={2} />
                         Download the Newbro app
                       </a>
-                      <p className="ob-connect-guide ob-connect-guide-2">Then copy this connect command and paste it into the app (menu → Paste connect command):</p>
                     </>
                   )}
+                </div>
+              </div>
+
+              <div className="dt-modal-col">
+                <div className="ob-fieldset">
+                  <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 4 · PASTE THE COMMAND</span>
+                  <p className="ob-connect-guide">Copy this connect command and paste it into the app (menu → Paste connect command):</p>
                   <div className="ob-connect">
                     <div className="ob-connect-cmd">
                       <span className="ob-connect-prompt">$</span>
@@ -2219,7 +2219,7 @@ function CreateConnectSheet({
                         <strong>{completed ? `${pendingBroName || trimmedName} is connected.` : commands ? `Waiting to hear from your computer…` : `Ready to connect ${trimmedName || "a bro"}...`}</strong>
                         <span>{completed ? "The bro has been created after the computer connected successfully." : commands ? `This updates on its own once ${pendingBroName || trimmedName} connects. Nothing else on that Mac changes.` : "Newbro will issue a connect command first. The bro appears after the first successful connection."}</span>
                       </span>
-                      <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "download app + paste connect" : "new"}</span>
+                      <span className="ob-connect-time">{completed ? "done" : copiedKind ? "copied" : commands ? "waiting" : "new"}</span>
                     </div>
                   </div>
                   <button type="button" className={`ob-terminal-toggle${showTerminal ? " ob-terminal-toggle-open" : ""}`} aria-expanded={showTerminal} onClick={() => setShowTerminal((v) => !v)}>
