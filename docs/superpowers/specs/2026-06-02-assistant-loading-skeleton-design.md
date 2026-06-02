@@ -1,4 +1,4 @@
-# Responsive Assistant Loading State — Design
+# Responsive Assistant Loading State + Stop — Design
 
 Status: design (approved for planning)
 Date: 2026-06-02
@@ -7,15 +7,19 @@ Date: 2026-06-02
 
 Make the chat UI show a "Bro is working" loading state **the instant a message
 is sent**, so the user never stares at a blank wait and doubts whether the
-assistant is dead. Today the assistant-side reasoning bubble renders only once
-`reasoningSteps.length > 0`, so the gap between send and the first reasoning line
-shows nothing. This adds an **instant shimmer skeleton** (the "ack" phase) and
-formalizes the live reasoning bubble into three phases — **ack → streaming →
-done** — on both desktop and mobile.
+assistant is dead — and let the user **Stop** a running turn. Today the
+assistant-side reasoning bubble renders only once `reasoningSteps.length > 0`, so
+the gap between send and the first reasoning line shows nothing, and there is no
+way to cancel a turn from the timeline. This adds an **instant shimmer skeleton**
+(the "ack" phase), formalizes the live reasoning bubble into three phases —
+**ack → streaming → done** — on both desktop and mobile, and adds a **Stop**
+control that cancels the running turn.
 
 This ports the loading treatment prototyped in `design/` (the `DTReasoningBubble`
-"instant skeleton + streamed thinking + collapse") into the real UI. It is
-frontend-only: no protocol, runtime, or backend changes.
+"instant skeleton + streamed thinking + collapse") into the real UI. The loading
+treatment is frontend-only; **Stop** reuses the existing `cancel_task` command
+transport and runtime handling (no backend changes — that path already exists,
+just unused by any component today).
 
 ## Goal / Success Criterion
 
@@ -24,14 +28,19 @@ frontend-only: no protocol, runtime, or backend changes.
   until the first reasoning line, the answer, or a terminal status arrives.
 - The user is never left with a silent, empty assistant area while a turn is
   in flight.
+- While a turn is in flight (and has a server-side task), a **Stop** control
+  cancels it; the turn settles to `cancelled` and the bubble shows the done
+  state.
 
 ## Non-Goals
 
 - Tool marks (act-vs-think distinction) — needs a new backend signal; deferred.
-- Steer / mid-turn redirect / cancel wiring — runtime-dependent; deferred.
+- Steer / mid-turn redirect (injecting a new instruction into a running turn) —
+  runtime-dependent; deferred. (Stop/cancel **is** in scope — see Stop below.)
 - A timeout / "taking longer than usual" / stuck-turn affordance — worthwhile
   follow-up, not in this V1. The shimmer signals "working," not "stuck."
-- Any change to how reasoning/progress signals are produced by the runtime.
+- Any change to how reasoning/progress signals are produced by the runtime, or
+  to the `cancel_task` command / runtime cancel handling (already implemented).
 
 ## Context (current behavior)
 
@@ -90,6 +99,8 @@ Extracted out of the ~2000-line `ArtboardShell.tsx` into a focused component.
   mobile={boolean}
   collapsedOpen={boolean}
   onToggleCollapsed={() => void}
+  canStop={boolean}             // in-flight AND turn has a task_id
+  onStop={() => void}           // cancels the turn (immediate, no confirm)
 />
 ```
 
@@ -98,11 +109,13 @@ existing conventions):
 
 - **ack** — the existing bubble shell + "{broName} is working" kicker, with the
   step list replaced by **two shimmer skeleton lines** (`*-reason-skel` +
-  `*-reason-shimmer` keyframe). The only new markup.
+  `*-reason-shimmer` keyframe). The only new markup. A **Stop** button shows when
+  `canStop` (i.e., the task exists; hidden during the optimistic-only instant).
 - **streaming** — the existing windowed, fading last-3 reasoning steps. Unchanged
-  behavior; the first real line simply replaces the shimmer.
+  behavior; the first real line simply replaces the shimmer. **Stop** shows when
+  `canStop`.
 - **done** — the existing answer + tucked-away collapsed reasoning (desktop
-  expandable / mobile collapsed pill). Unchanged behavior.
+  expandable / mobile collapsed pill). Unchanged behavior. No Stop.
 
 ### Integration in `TimelineBroTurn`
 
@@ -114,12 +127,38 @@ const phase = deriveReasoningPhase({
   stepCount: reasoningSteps.length,
   hasAnswer: answerText !== "",
 });
+const taskId = turn.task?.task_id ?? null;
+const canStop = phase !== "done" && taskId !== null;
+const onStop = () => { if (taskId) shell.cancelTask(taskId); };
 ```
 
-and renders `<ReasoningBubble phase=… mobile=… …/>`, replacing the current inline
-`!mobile && reasoningSteps.length > 0` block. The live bubble (ack + streaming)
-now renders on **both** desktop and mobile; the done-phase collapse keeps each
-surface's existing treatment.
+and renders `<ReasoningBubble phase=… mobile=… canStop=… onStop=… …/>`,
+replacing the current inline `!mobile && reasoningSteps.length > 0` block. The
+live bubble (ack + streaming) now renders on **both** desktop and mobile; the
+done-phase collapse keeps each surface's existing treatment.
+
+### Unit 3 — `cancelTask` (shell method)
+
+No component currently sends a cancel, though the transport exists. Add a thin
+method to `useNewbroShellState` in `NewbroShell.tsx`, mirroring the existing
+`sendSocketMessage` send path:
+
+```ts
+function cancelTask(taskId: string): boolean {
+  const socket = socketRef.current;
+  if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+  sendSocketCommand(socket, newRequestId(), "cancel_task", taskId);
+  return true;
+}
+```
+
+Expose `cancelTask` on the shell context (the `return { … }` value) so
+`useNewbroShell()` provides it to `TimelineBroTurn`. The runtime already handles
+`CANCEL_TASK` → `_cancel_live_run` → `executor.cancel_run(...)`; the task/turn
+then transitions to `cancelled`, which `deriveReasoningPhase` maps to `done`.
+
+Cancel is **immediate** (no confirm dialog), matching the "stop generating"
+pattern.
 
 ### CSS
 
@@ -137,6 +176,9 @@ No other CSS changes — streaming/done styles already exist.
    running) → `phase = streaming` → windowed steps replace the shimmer.
 3. Answer / terminal status (`completed | failed | cancelled` or `hasAnswer`) →
    `phase = done` → answer + collapsed reasoning.
+4. Stop (any time the task exists and the turn is in flight) → `shell.cancelTask`
+   sends `cancel_task` over the socket → runtime cancels the live run → turn →
+   `cancelled` → `phase = done`.
 
 ## Edge Cases
 
@@ -147,6 +189,11 @@ No other CSS changes — streaming/done styles already exist.
   "stuck"). A timeout affordance is a deferred follow-up (Non-Goals).
 - Optimistic → canonical swap: continuous because both carry the same
   `client_request_id`; phase is derived per-turn from `turn.status`.
+- Stop with no task_id yet (optimistic-only instant): `canStop` is false, so the
+  button is hidden — nothing to cancel server-side. The window is brief.
+- Stop with a closed/absent socket: `cancelTask` returns `false` and no-ops; the
+  turn keeps running (no spurious local state change).
+- Stop already-settled turn: not possible — `canStop` is false in `done`.
 
 ## Testing
 
@@ -159,16 +206,25 @@ and `src/newbro/ui/src/**/*.test.tsx`.
   `completed` → `done`; `failed` → `done`; `cancelled` → `done`.
 - **`<ReasoningBubble>`** (RTL render) — ack renders the shimmer skeleton and no
   step list; streaming renders the windowed steps; done renders answer +
-  collapsed reasoning; `mobile` uses `thr-` classes, desktop uses `dt-`.
+  collapsed reasoning; `mobile` uses `thr-` classes, desktop uses `dt-`. Stop
+  button: shown in ack/streaming when `canStop`, hidden in done and when
+  `!canStop`; clicking it calls `onStop` once.
+- **`cancelTask`** (unit) — sends a `cancel_task` `send_command` over the socket
+  with the given `task_id`; returns `false` (no send) when the socket is
+  closed/absent. Mirror the existing `sendSocketMessage`/`session-client` tests.
 - Manual: send a text turn against a running backend and confirm the skeleton
-  appears immediately and transitions ack → streaming → done.
+  appears immediately and transitions ack → streaming → done; click Stop and
+  confirm the turn settles to cancelled.
 
 ## Files
 
 - Modify: `src/newbro/ui/src/ArtboardShell.tsx` (`TimelineBroTurn`: derive phase,
-  render `<ReasoningBubble>`; remove the `!mobile && reasoningSteps.length > 0`
-  inline block).
+  compute `canStop`/`onStop`, render `<ReasoningBubble>`; remove the
+  `!mobile && reasoningSteps.length > 0` inline block).
+- Modify: `src/newbro/ui/src/NewbroShell.tsx` — add `cancelTask(taskId)` to
+  `useNewbroShellState` and expose it on the shell context.
 - Create: `deriveReasoningPhase` + `<ReasoningBubble>` (new module under
   `src/newbro/ui/src/`, following existing file/layout conventions).
 - Modify: the desktop + mobile stylesheets — add the shimmer skeleton CSS.
-- Create: unit/render tests next to the existing UI tests.
+- Create: unit/render tests next to the existing UI tests (deriveReasoningPhase,
+  ReasoningBubble incl. Stop, cancelTask).
