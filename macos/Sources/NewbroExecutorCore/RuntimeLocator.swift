@@ -76,4 +76,36 @@ public struct RuntimeLocator {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return output.isEmpty ? nil : output
     }
+
+    /// The login shell's PATH. A menu-bar/login-item app inherits a minimal
+    /// launchd PATH, so node subprocesses (and tools they exec, like the
+    /// `node`-based `codex` binary) must run with the user's real PATH.
+    public static func loginShellPath() -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        proc.arguments = ["-lc", "printf %s \"$PATH\""]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+        } catch {
+            return nil
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        let output = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return output.isEmpty ? nil : output
+    }
+
+    /// The current process environment with PATH replaced by the login-shell
+    /// PATH (when available), suitable for launching node subprocesses.
+    public static func childEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        if let shellPath = loginShellPath(), !shellPath.isEmpty {
+            env["PATH"] = shellPath
+        }
+        return env
+    }
 }
