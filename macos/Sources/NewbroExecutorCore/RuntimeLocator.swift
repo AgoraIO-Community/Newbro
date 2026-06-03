@@ -111,12 +111,25 @@ public struct RuntimeLocator {
     public static func extractVersion(_ output: String) -> String? {
         let pattern = #"(?<![A-Za-z0-9._-])\d+(?:\.\d+)+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?(?![A-Za-z0-9._-])"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-        let range = NSRange(output.startIndex..<output.endIndex, in: output)
-        guard let match = regex.firstMatch(in: output, range: range),
-              let matchRange = Range(match.range, in: output) else {
-            return nil
+        var hasCodexLine = false
+        var candidates: [String] = []
+        for line in output.split(whereSeparator: \.isNewline) {
+            let lineText = String(line)
+            let isCodexLine = lineText.localizedCaseInsensitiveContains("codex")
+            hasCodexLine = hasCodexLine || isCodexLine
+            let lineRange = NSRange(lineText.startIndex..<lineText.endIndex, in: lineText)
+            let lineMatches = regex.matches(in: lineText, range: lineRange).compactMap { match -> String? in
+                guard let matchRange = Range(match.range, in: lineText) else { return nil }
+                return String(lineText[matchRange])
+            }
+            guard !lineMatches.isEmpty else { continue }
+            if isCodexLine {
+                return lineMatches[0]
+            }
+            candidates.append(contentsOf: lineMatches)
         }
-        return String(output[matchRange])
+        if hasCodexLine { return nil }
+        return candidates.count == 1 ? candidates[0] : nil
     }
 
     public static func loginShellWhichCommand(_ name: String) -> String? {
@@ -176,6 +189,10 @@ public struct RuntimeLocator {
         guard result == .success else {
             proc.terminate()
             _ = semaphore.wait(timeout: .now() + 0.2)
+            if proc.isRunning {
+                kill(proc.processIdentifier, SIGKILL)
+                _ = semaphore.wait(timeout: .now() + 0.2)
+            }
             return false
         }
         return true

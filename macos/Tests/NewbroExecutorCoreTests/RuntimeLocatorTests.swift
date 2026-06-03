@@ -115,6 +115,29 @@ final class RuntimeLocatorTests: XCTestCase {
             "1.2.3-beta")
     }
 
+    func testExtractVersionPrefersCodexLineOverEarlierWarningVersion() {
+        XCTAssertEqual(
+            RuntimeLocator.extractVersion("""
+            node warning 20.1.0
+            codex 1.2.3
+            """),
+            "1.2.3")
+    }
+
+    func testExtractVersionReturnsNilWhenMultipleNonCodexVersionsExist() {
+        XCTAssertNil(RuntimeLocator.extractVersion("""
+        node warning 20.1.0
+        npm warning 9.8.7
+        """))
+    }
+
+    func testExtractVersionDoesNotFallbackWhenCodexLineIsMalformed() {
+        XCTAssertNil(RuntimeLocator.extractVersion("""
+        codex version unavailable
+        node warning 20.1.0
+        """))
+    }
+
     func testExtractVersionReturnsNilForMalformedOutput() {
         XCTAssertNil(RuntimeLocator.extractVersion("warning: codex version unavailable"))
     }
