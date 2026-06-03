@@ -26,4 +26,10 @@ final class ReleaseClientTests: XCTestCase {
         XCTAssertEqual(info.tag, "v0.3.0")
         XCTAssertNil(info.pageURL)
     }
+
+    func testLatestURLUsesCommunityNewbroRepository() {
+        XCTAssertEqual(
+            ReleaseClient.latestURL.absoluteString,
+            "https://api.github.com/repos/AgoraIO-Community/Newbro/releases/latest")
+    }
 }

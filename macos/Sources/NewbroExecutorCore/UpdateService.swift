@@ -1,6 +1,11 @@
 import Foundation
 import Combine
 
+public enum UpdateServiceEvent: Equatable, Sendable {
+    case cliUpdateSucceeded(restartedProfileCount: Int)
+    case cliUpdateFailed(exitCode: Int32, restartedProfileCount: Int)
+}
+
 /// Drives update checks and the orchestrated CLI update (stop → upgrade →
 /// restart). UI-free: all side effects (network, version probe, supervisor
 /// start/stop, installer) are injected, so it is fully unit-testable and the
@@ -23,6 +28,7 @@ public final class UpdateService: ObservableObject {
     private let stopProfile: @MainActor (String) -> Void
     private let startProfile: @MainActor (String) -> Void
     private let runInstaller: @MainActor (@escaping @MainActor (Int32) -> Void) -> Void
+    private let onEvent: @MainActor (UpdateServiceEvent) -> Void
 
     public init(
         fetchLatest: @escaping () async -> ReleaseInfo?,
@@ -31,7 +37,8 @@ public final class UpdateService: ObservableObject {
         activeProfileIDs: @escaping @MainActor () -> [String],
         stopProfile: @escaping @MainActor (String) -> Void,
         startProfile: @escaping @MainActor (String) -> Void,
-        runInstaller: @escaping @MainActor (@escaping @MainActor (Int32) -> Void) -> Void
+        runInstaller: @escaping @MainActor (@escaping @MainActor (Int32) -> Void) -> Void,
+        onEvent: @escaping @MainActor (UpdateServiceEvent) -> Void = { _ in }
     ) {
         self.fetchLatest = fetchLatest
         self.installedCLIVersion = installedCLIVersion
@@ -40,6 +47,7 @@ public final class UpdateService: ObservableObject {
         self.stopProfile = stopProfile
         self.startProfile = startProfile
         self.runInstaller = runInstaller
+        self.onEvent = onEvent
     }
 
     public func check() async {
@@ -70,7 +78,9 @@ public final class UpdateService: ObservableObject {
             self.isUpdating = false
             if code != 0 {
                 self.lastError = "Update failed (exit \(code)). Nodes restarted."
+                self.onEvent(.cliUpdateFailed(exitCode: code, restartedProfileCount: ids.count))
             } else {
+                self.onEvent(.cliUpdateSucceeded(restartedProfileCount: ids.count))
                 Task { await self.check() }
             }
         }

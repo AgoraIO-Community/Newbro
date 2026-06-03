@@ -592,7 +592,7 @@ describe("Newbro artboard shell", () => {
     expect(clientMock.createPersona).not.toHaveBeenCalled();
     expect(await screen.findByText(/install the Newbro app/i)).toBeInTheDocument();
     const download = screen.getByRole("link", { name: /Download the Newbro app/i });
-    expect(download).toHaveAttribute("href", "https://github.com/AgoraIO/Synopse/releases/latest");
+    expect(download).toHaveAttribute("href", "https://github.com/AgoraIO-Community/Newbro/releases/latest");
     expect(screen.getByText(/paste it into the app/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
     expect(screen.getByText(/This updates on its own once atlas connects/)).toBeInTheDocument();

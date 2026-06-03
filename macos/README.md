@@ -13,8 +13,25 @@ open "macos/dist/Newbro Executor.app"     # launch (menu-bar only, no Dock icon)
 The app resolves the `newbro` CLI at runtime (override → `~/.local/bin/newbro`
 → login-shell `command -v newbro`). If `newbro` is missing, the menu shows
 "Node runtime not found" with an "Install runtime…" action that runs the public
-`install-newbro-cli.sh`. Per-executor binaries (codex/acpx) still need a one-time
-`newbro executor setup`.
+`install-newbro-cli.sh`.
+
+On launch the app probes `codex` through the login-shell PATH. If Codex is
+found, the menu shows its version and the CLI can auto-write the minimal Codex
+executor config on first run. If Codex is not found, the menu shows
+"No Codex found. Newbro may not work properly." Use `newbro executor setup`
+for custom Codex paths, ACPX, or recovery.
+
+The update section reports separate components:
+
+- `Newbro CLI: vX.Y.Z` is the installed `newbro` command that runs executor
+  nodes.
+- `Menu bar app: vA.B.C` is this macOS app bundle. Local builds stamped with
+  the default bundle version show as `Menu bar app: local build (bundle v1.0)`.
+- CLI and app update rows name the component that is behind.
+
+Runtime install, CLI upgrade, and manual update checks show disabled in-progress
+rows while they run. Runtime install and CLI upgrade also send macOS
+notifications when they finish or fail.
 
 Profiles are stored in `~/.newbro/menubar.json`; logs in
 `~/.newbro/logs/executor-ui-<id>.log`.

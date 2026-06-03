@@ -77,4 +77,113 @@ final class RuntimeLocatorTests: XCTestCase {
         XCTAssertTrue(argv[2].contains("install-newbro-cli.sh"))
         XCTAssertTrue(argv[2].contains("curl -fsSL"))
     }
+
+    func testCodexStatusReportsVersion() {
+        let locator = RuntimeLocator(
+            overridePath: nil,
+            homeDir: home,
+            fileExists: { _ in false },
+            whichNewbro: { nil },
+            whichCommand: { name in name == "codex" ? "/opt/bin/codex" : nil },
+            runCommand: { argv, _ in
+                XCTAssertEqual(argv, ["/opt/bin/codex", "--version"])
+                return (0, "codex 0.42.0\n")
+            })
+        XCTAssertEqual(locator.codexRuntimeStatus().menuTitle, "Codex v0.42.0")
+        XCTAssertTrue(locator.codexRuntimeStatus().isAvailable)
+    }
+
+    func testCodexStatusWarnsWhenMissing() {
+        let locator = RuntimeLocator(
+            overridePath: nil,
+            homeDir: home,
+            fileExists: { _ in false },
+            whichNewbro: { nil },
+            whichCommand: { _ in nil },
+            runCommand: { _, _ in (1, "") })
+        XCTAssertEqual(locator.codexRuntimeStatus().menuTitle, "No Codex found. Newbro may not work properly.")
+        XCTAssertFalse(locator.codexRuntimeStatus().isAvailable)
+    }
+
+    func testRefreshCommandStatusReplacesStaleCache() {
+        var cached = CommandStatus(
+            command: nil,
+            version: nil,
+            menuTitle: "No Codex found. Newbro may not work properly.",
+            isAvailable: false)
+        let refreshed = refreshCommandStatus(&cached) {
+            CommandStatus(command: "/opt/bin/codex",
+                          version: "0.42.0",
+                          menuTitle: "Codex v0.42.0",
+                          isAvailable: true)
+        }
+
+        XCTAssertEqual(refreshed.menuTitle, "Codex v0.42.0")
+        XCTAssertEqual(cached, refreshed)
+        XCTAssertTrue(cached.isAvailable)
+    }
+
+    func testExtractVersionIgnoresTrailingWarnings() {
+        XCTAssertEqual(
+            RuntimeLocator.extractVersion("""
+            warning: using fallback path
+            codex 1.2.3-beta
+            trailing junk after version
+            """),
+            "1.2.3-beta")
+    }
+
+    func testExtractVersionPrefersCodexLineOverEarlierWarningVersion() {
+        XCTAssertEqual(
+            RuntimeLocator.extractVersion("""
+            node warning 20.1.0
+            codex 1.2.3
+            """),
+            "1.2.3")
+    }
+
+    func testExtractVersionReturnsNilWhenMultipleNonCodexVersionsExist() {
+        XCTAssertNil(RuntimeLocator.extractVersion("""
+        node warning 20.1.0
+        npm warning 9.8.7
+        """))
+    }
+
+    func testExtractVersionDoesNotFallbackWhenCodexLineIsMalformed() {
+        XCTAssertNil(RuntimeLocator.extractVersion("""
+        codex version unavailable
+        node warning 20.1.0
+        """))
+    }
+
+    func testExtractVersionReturnsNilForMalformedOutput() {
+        XCTAssertNil(RuntimeLocator.extractVersion("warning: codex version unavailable"))
+    }
+
+    func testCodexStatusShowsDetectedWhenVersionOutputIsMalformed() {
+        let locator = RuntimeLocator(
+            overridePath: nil,
+            homeDir: home,
+            fileExists: { _ in false },
+            whichNewbro: { nil },
+            whichCommand: { name in name == "codex" ? "/opt/bin/codex" : nil },
+            runCommand: { _, _ in (0, "warning: codex version unavailable") })
+        let status = locator.codexRuntimeStatus()
+        XCTAssertEqual(status.menuTitle, "Codex detected")
+        XCTAssertTrue(status.isAvailable)
+        XCTAssertNil(status.version)
+    }
+
+    func testLoginShellWhichCommandRejectsInvalidNames() {
+        XCTAssertNil(RuntimeLocator.loginShellWhichCommand("definitely_missing_codex; echo injected"))
+    }
+
+    func testRunCommandOutputTimesOut() {
+        let result = RuntimeLocator.runCommandOutput(
+            ["/bin/sh", "-c", "sleep 1; echo late"],
+            nil,
+            timeout: 0.01)
+        XCTAssertEqual(result.0, 124)
+        XCTAssertEqual(result.1, "")
+    }
 }

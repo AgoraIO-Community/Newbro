@@ -7,9 +7,19 @@ import NewbroExecutorCore
 final class AppModel: ObservableObject {
     @Published var profiles: [Profile] = []
     @Published var runtimeAvailable: Bool = true
+    @Published var codexStatus = CommandStatus(
+        command: nil,
+        version: nil,
+        menuTitle: "No Codex found. Newbro may not work properly.",
+        isAvailable: false)
+    @Published var isInstallingRuntime: Bool = false
+    @Published var runtimeInstallError: String?
     @Published var installLog: String = ""
 
     private let supervisor: ProfileSupervisor
+    private let notifier: AppNotifying
+    private let notificationController: ProfileNotificationController
+    private let eventRelay: ProfileLifecycleEventRelay
     private let store = ProfileStore()
     private let locator = RuntimeLocator()
     private let loginItem: LoginItem
@@ -25,7 +35,17 @@ final class AppModel: ObservableObject {
     /// they exec) resolve under the app's otherwise-minimal launchd env.
     private let childEnv = RuntimeLocator.childEnvironment()
 
-    init() {
+    init(notifier: AppNotifying? = nil) {
+        let notifier = notifier ?? MacAppNotifier()
+        self.notifier = notifier
+        let notificationController = ProfileNotificationController(notifier: notifier)
+        self.notificationController = notificationController
+        let eventRelay = ProfileLifecycleEventRelay { event in
+            await MainActor.run {
+                notificationController.notify(event)
+            }
+        }
+        self.eventRelay = eventRelay
         let loc = locator
         let env = RuntimeLocator.childEnvironment()
         self.loginItem = LoginItem(appPath: Bundle.main.bundlePath)
@@ -38,9 +58,13 @@ final class AppModel: ObservableObject {
             },
             logFactory: { profile in
                 ProfileLog(path: ProfileLog.defaultPath(profileID: profile.id))
+            },
+            onEvent: { event in
+                eventRelay.enqueue(event)
             })
         self.profiles = store.load()
         self.runtimeAvailable = locator.isRuntimeAvailable
+        self.codexStatus = locator.codexRuntimeStatus()
         // Forward supervisor status changes so SwiftUI re-renders the menu/icon.
         supervisor.objectWillChange
             .receive(on: RunLoop.main)
@@ -50,18 +74,28 @@ final class AppModel: ObservableObject {
         autostart()
     }
 
-    func refreshRuntime() { runtimeAvailable = locator.isRuntimeAvailable }
+    func refreshRuntime() {
+        runtimeAvailable = locator.isRuntimeAvailable
+        refreshCodexStatus()
+    }
+
+    @discardableResult
+    func refreshCodexStatus() -> CommandStatus {
+        refreshCommandStatus(&codexStatus) {
+            locator.codexRuntimeStatus()
+        }
+    }
 
     func autostart() {
-        guard runtimeAvailable else { return }
-        for profile in profiles where profile.autoActivate && isComplete(profile) {
-            supervisor.start(profile)
+        for action in autostartProfileActions(in: profiles,
+                                              runtimeAvailable: runtimeAvailable,
+                                              codexRuntimeAvailable: codexRuntimeAvailable) {
+            perform(action)
         }
     }
 
     func isComplete(_ profile: Profile) -> Bool {
-        !profile.baseURL.isEmpty && !profile.nodeID.isEmpty
-            && !profile.token.isEmpty && !profile.enabledExecutors.isEmpty
+        profileIsComplete(profile)
     }
 
     func status(of profile: Profile) -> NodeStatus { supervisor.status(of: profile.id) }
@@ -75,8 +109,10 @@ final class AppModel: ObservableObject {
     func activeProfileIDs() -> [String] { Array(supervisor.activeIDs()) }
 
     func start(profileID id: String) {
-        guard runtimeAvailable, let profile = profiles.first(where: { $0.id == id }) else { return }
-        supervisor.start(profile)
+        perform(startProfileAction(in: profiles,
+                                   profileID: id,
+                                   runtimeAvailable: runtimeAvailable,
+                                   codexRuntimeAvailable: codexRuntimeAvailable))
     }
 
     func stop(profileID id: String) {
@@ -124,15 +160,17 @@ final class AppModel: ObservableObject {
     }
 
     func start(_ profile: Profile) {
-        guard runtimeAvailable else { return }
-        supervisor.start(profile)
+        perform(startProfileAction(for: profile,
+                                   runtimeAvailable: runtimeAvailable,
+                                   codexRuntimeAvailable: codexRuntimeAvailable))
     }
     func stop(_ profile: Profile) {
         controlQueue.async { [supervisor] in supervisor.stop(profile.id) }
     }
     func restart(_ profile: Profile) {
-        guard runtimeAvailable else { return }
-        controlQueue.async { [supervisor] in supervisor.restart(profile) }
+        perform(restartProfileAction(for: profile,
+                                     runtimeAvailable: runtimeAvailable,
+                                     codexRuntimeAvailable: codexRuntimeAvailable))
     }
 
     func quit() {
@@ -162,21 +200,82 @@ final class AppModel: ObservableObject {
         try? store.save(profiles)
     }
 
-    func addFromConnectCommand(_ text: String) throws {
+    @discardableResult
+    func addFromConnectCommand(_ text: String) throws -> Profile {
         let fields = try parseConnectCommand(text)
-        if let index = profiles.firstIndex(where: {
-            $0.nodeID == fields.nodeID && $0.baseURL == fields.baseURL
-        }) {
+        let matchingIndex = firstMatchingProfileIndex(in: profiles,
+                                                      baseURL: fields.baseURL,
+                                                      nodeID: fields.nodeID)
+        let wasUpdate = matchingIndex != nil
+        let profile: Profile
+        if let index = matchingIndex {
             profiles[index].token = fields.token
             profiles[index].enabledExecutors = fields.enabledExecutors
+            profile = profiles[index]
         } else {
-            profiles.append(Profile(
-                id: "profile-\(UUID().uuidString.prefix(8))",
-                label: fields.baseURL, baseURL: fields.baseURL,
-                nodeID: fields.nodeID, token: fields.token,
-                enabledExecutors: fields.enabledExecutors))
+            profile = Profile(
+                id: uniqueProfileID(existing: profiles),
+                label: fields.baseURL,
+                baseURL: fields.baseURL,
+                nodeID: fields.nodeID,
+                token: fields.token,
+                enabledExecutors: fields.enabledExecutors)
+            profiles.append(profile)
         }
         try? store.save(profiles)
+        let didRequestStart = autoStartPastedProfile(profile)
+        notifier.notify(
+            title: pasteNotificationTitle(wasUpdate: wasUpdate, started: didRequestStart),
+            body: profile.label)
+        return profile
+    }
+
+    private func autoStartPastedProfile(_ profile: Profile) -> Bool {
+        let action = pastedProfileAction(for: profile,
+                                         runtimeAvailable: runtimeAvailable,
+                                         isActive: isActive(profile),
+                                         codexRuntimeAvailable: codexRuntimeAvailable)
+        switch action {
+        case .start(let profile):
+            notificationController.suppressNextStart(profileID: profile.id)
+        case .restart(let profile):
+            notificationController.suppressNextRestart(profileID: profile.id)
+        case nil:
+            break
+        }
+        perform(action)
+        return action != nil
+    }
+
+    private func pasteNotificationTitle(wasUpdate: Bool, started: Bool) -> String {
+        switch (wasUpdate, started) {
+        case (false, true): return "Profile created and started"
+        case (false, false): return "Profile created"
+        case (true, true): return "Profile updated and started"
+        case (true, false): return "Profile updated"
+        }
+    }
+
+    func canStart(_ profile: Profile) -> Bool {
+        return profileCanStart(profile, codexRuntimeAvailable: codexRuntimeAvailable)
+    }
+
+    private func codexRuntimeAvailable() -> Bool {
+        refreshCodexStatus().isAvailable
+    }
+
+    private func perform(_ action: ProfileLifecycleAction?) {
+        guard let action else { return }
+        perform(action)
+    }
+
+    private func perform(_ action: ProfileLifecycleAction) {
+        switch action {
+        case .start(let profile):
+            supervisor.start(profile)
+        case .restart(let profile):
+            controlQueue.async { [supervisor] in supervisor.restart(profile) }
+        }
     }
 
     func recentLog(_ profile: Profile) -> [String] {
@@ -194,12 +293,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func addProfile() {
-        let new = emptyProfile()
-        upsert(new)
-        editProfile(new.id)
-    }
-
     func viewLog(_ profileID: String) {
         windows.show(id: "log-\(profileID)", title: "Recent Log",
                      size: NSSize(width: 560, height: 360)) { [self] in
@@ -214,7 +307,10 @@ final class AppModel: ObservableObject {
     }
 
     func installRuntime() {
+        guard !isInstallingRuntime else { return }
         let argv = locator.installCommandArgv()
+        isInstallingRuntime = true
+        runtimeInstallError = nil
         installLog = "Installing…\n"
         // Retain the process; otherwise it is deallocated before it runs.
         installProcess = NodeProcess(
@@ -223,17 +319,60 @@ final class AppModel: ObservableObject {
             onLine: { [weak self] line in
                 Task { @MainActor in self?.installLog += line + "\n" }
             },
-            onExit: { [weak self] _ in
+            onExit: { [weak self] code in
                 Task { @MainActor in
-                    self?.refreshRuntime()
-                    self?.installProcess = nil
+                    guard let self else { return }
+                    self.refreshRuntime()
+                    let completion = runtimeInstallCompletion(
+                        exitCode: code,
+                        runtimeAvailable: self.runtimeAvailable)
+                    self.runtimeInstallError = completion.errorRow
+                    self.notifier.notify(
+                        title: completion.notificationTitle,
+                        body: completion.notificationBody)
+                    self.isInstallingRuntime = false
+                    self.installProcess = nil
                 }
             })
         installProcess?.start()
     }
 
-    func emptyProfile() -> Profile {
-        Profile(id: "profile-\(UUID().uuidString.prefix(8))", label: "New profile",
-                baseURL: "", nodeID: "", token: "")
+    func notifyUpdateEvent(_ event: UpdateServiceEvent) {
+        switch event {
+        case .cliUpdateSucceeded:
+            notifier.notify(title: "Newbro CLI updated", body: "Executor nodes restarted.")
+        case let .cliUpdateFailed(code, _):
+            notifier.notify(title: "Newbro CLI update failed", body: "Exit \(code). Executor nodes restarted.")
+        }
+    }
+}
+
+@MainActor
+private final class ProfileNotificationController {
+    private let notifier: AppNotifying
+    private let suppression = ProfileLifecycleEventSuppression()
+
+    init(notifier: AppNotifying) {
+        self.notifier = notifier
+    }
+
+    func suppressNextStart(profileID: String) {
+        suppression.suppressNextStart(profileID: profileID)
+    }
+
+    func suppressNextRestart(profileID: String) {
+        suppression.suppressNextRestart(profileID: profileID)
+    }
+
+    func notify(_ event: ProfileLifecycleEvent) {
+        if suppression.shouldSuppress(event) { return }
+        switch event {
+        case let .started(_, label):
+            notifier.notify(title: "Profile started", body: label)
+        case let .stopped(_, label):
+            notifier.notify(title: "Profile stopped", body: label)
+        case let .error(_, label, _):
+            notifier.notify(title: "Profile error", body: label)
+        }
     }
 }

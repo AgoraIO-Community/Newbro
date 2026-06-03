@@ -77,11 +77,40 @@ public func parseConnectCommand(_ text: String) throws -> ConnectCommandFields {
                                 enabledExecutors: enabled)
 }
 
+public func normalizedBaseURL(_ value: String) -> String {
+    var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    while text.hasSuffix("/") { text.removeLast() }
+    return text
+}
+
+public func normalizedProfileIdentity(baseURL: String, nodeID: String) -> String {
+    normalizedBaseURL(baseURL) + "\u{0}" + nodeID.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+public func firstMatchingProfileIndex(in profiles: [Profile], baseURL: String, nodeID: String) -> Int? {
+    let target = normalizedProfileIdentity(baseURL: baseURL, nodeID: nodeID)
+    return profiles.firstIndex {
+        normalizedProfileIdentity(baseURL: $0.baseURL, nodeID: $0.nodeID) == target
+    }
+}
+
+public func uniqueProfileID(existing profiles: [Profile],
+                            maxAttempts: Int = 100,
+                            generate: () -> String = { "profile-\(UUID().uuidString.prefix(8))" }) -> String {
+    let existingIDs = Set(profiles.map(\.id))
+    precondition(maxAttempts > 0, "maxAttempts must be positive")
+    for _ in 0..<maxAttempts {
+        let candidate = generate()
+        if !existingIDs.contains(candidate) { return candidate }
+    }
+    preconditionFailure("Unable to generate a unique profile ID")
+}
+
 public func conflictingProfileIDs(_ profiles: [Profile]) -> Set<String> {
     var seen: [String: String] = [:]
     var conflicts: Set<String> = []
     for profile in profiles {
-        let key = profile.baseURL + "\u{0}" + profile.nodeID
+        let key = normalizedProfileIdentity(baseURL: profile.baseURL, nodeID: profile.nodeID)
         if let first = seen[key] {
             conflicts.insert(first)
             conflicts.insert(profile.id)

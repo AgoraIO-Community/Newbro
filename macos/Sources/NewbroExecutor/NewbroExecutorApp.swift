@@ -81,7 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             activeProfileIDs: { [weak model] in model?.activeProfileIDs() ?? [] },
             stopProfile: { [weak model] id in model?.stop(profileID: id) },
             startProfile: { [weak model] id in model?.start(profileID: id) },
-            runInstaller: { [weak model] completion in model?.runInstaller(completion) })
+            runInstaller: { [weak model] completion in model?.runInstaller(completion) },
+            onEvent: { [weak model] event in model?.notifyUpdateEvent(event) })
         self.updates = updates
         Task { await updates.check() }
         updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
@@ -101,11 +102,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func build(into menu: NSMenu) {
+        model.refreshCodexStatus()
+
         if !model.runtimeAvailable {
             menu.addItem(NSMenuItem(title: "Node runtime not found", action: nil, keyEquivalent: ""))
-            menu.addItem(ActionMenuItem(title: "Install runtime…") { [weak self] in self?.model.installRuntime() })
+            if model.isInstallingRuntime {
+                menu.addItem(disabledMenuItem(title: "Installing runtime…"))
+            } else {
+                menu.addItem(ActionMenuItem(title: "Install runtime…") { [weak self] in self?.model.installRuntime() })
+            }
+            if let error = model.runtimeInstallError {
+                menu.addItem(disabledMenuItem(title: error))
+            }
             menu.addItem(.separator())
         }
+
+        let codexRow = NSMenuItem(title: model.codexStatus.menuTitle, action: nil, keyEquivalent: "")
+        codexRow.isEnabled = false
+        menu.addItem(codexRow)
+        menu.addItem(.separator())
 
         for profile in model.profiles {
             let status = model.status(of: profile)
@@ -135,8 +150,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(row)
         }
 
-        menu.addItem(.separator())
-        menu.addItem(ActionMenuItem(title: "Add profile…") { [weak self] in self?.model.addProfile() })
+        if !model.profiles.isEmpty {
+            menu.addItem(.separator())
+        }
         menu.addItem(ActionMenuItem(title: "Paste connect command…") { [weak self] in self?.pasteConnectCommand() })
         menu.addItem(ActionMenuItem(title: "Launch at login",
                                     state: model.loginItemEnabled ? .on : .off) { [weak self] in
@@ -144,29 +160,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         })
 
         menu.addItem(.separator())
-        let cliLabel = updates.installedCLI.map { "newbro CLI v\($0)" } ?? "newbro CLI"
-        let statusTitle: String
+        let rows = updateMenuRows(installedCLI: updates.installedCLI,
+                                  installedApp: model.appVersion,
+                                  status: updates.status)
+        menu.addItem(disabledMenuItem(title: rows.cliVersionRow))
+        menu.addItem(disabledMenuItem(title: rows.appVersionRow))
+
         if updates.isUpdating {
-            statusTitle = "Updating CLI…"
-        } else if let available = updates.status.cliUpdate {
-            statusTitle = "Update available: \(available)"
-        } else {
-            statusTitle = "\(cliLabel) · up to date"
+            menu.addItem(disabledMenuItem(title: "Updating Newbro CLI…"))
+        } else if let cliUpdateRow = rows.cliUpdateRow {
+            menu.addItem(disabledMenuItem(title: cliUpdateRow))
         }
-        let statusRow = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
-        statusRow.isEnabled = false
-        menu.addItem(statusRow)
+
+        if let appUpdateRow = rows.appUpdateRow {
+            menu.addItem(disabledMenuItem(title: appUpdateRow))
+        }
 
         if let available = updates.status.cliUpdate, !updates.isUpdating {
             menu.addItem(ActionMenuItem(title: "Update CLI to \(available)") { [weak self] in
                 self?.updates.updateCLI()
             })
         }
-        menu.addItem(ActionMenuItem(title: "Check for Updates…") { [weak self] in
-            Task { @MainActor in await self?.updates.check() }
-        })
+        if updates.isChecking {
+            menu.addItem(disabledMenuItem(title: "Checking for updates…"))
+        } else {
+            menu.addItem(ActionMenuItem(title: "Check for Updates…") { [weak self] in
+                Task { @MainActor in await self?.updates.check() }
+            })
+        }
         if let appAvailable = updates.status.appUpdate {
-            menu.addItem(ActionMenuItem(title: "Download app update \(appAvailable)…") { [weak self] in
+            menu.addItem(ActionMenuItem(title: "Download menu bar app \(appAvailable)…") { [weak self] in
                 guard let url = self?.updates.releasePageURL else { return }
                 NSWorkspace.shared.open(url)
             })
@@ -181,8 +204,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(ActionMenuItem(title: "Quit") { [weak self] in self?.model.quit() })
     }
 
+    private func disabledMenuItem(title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
     private func pasteConnectCommand() {
         guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        try? model.addFromConnectCommand(text)
+        _ = try? model.addFromConnectCommand(text)
     }
 }
