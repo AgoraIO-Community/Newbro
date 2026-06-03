@@ -21,6 +21,14 @@ executor config on first run. If Codex is not found, the menu shows
 "No Codex found. Newbro may not work properly." Use `newbro executor setup`
 for custom Codex paths, ACPX, or recovery.
 
+The update section reports separate components:
+
+- `Newbro CLI: vX.Y.Z` is the installed `newbro` command that runs executor
+  nodes.
+- `Menu bar app: vA.B.C` is this macOS app bundle. Local builds stamped with
+  the default bundle version show as `Menu bar app: local build (bundle v1.0)`.
+- CLI and app update rows name the component that is behind.
+
 Profiles are stored in `~/.newbro/menubar.json`; logs in
 `~/.newbro/logs/executor-ui-<id>.log`.
 

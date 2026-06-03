@@ -177,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Task { @MainActor in await self?.updates.check() }
         })
         if let appAvailable = updates.status.appUpdate {
-            menu.addItem(ActionMenuItem(title: "Download app update \(appAvailable)…") { [weak self] in
+            menu.addItem(ActionMenuItem(title: "Download menu bar app \(appAvailable)…") { [weak self] in
                 guard let url = self?.updates.releasePageURL else { return }
                 NSWorkspace.shared.open(url)
             })

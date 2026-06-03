@@ -19,10 +19,18 @@ public struct UpdateMenuRows: Equatable, Sendable {
 
 public func updateMenuRows(installedCLI: String?, installedApp: String?, status: UpdateStatus) -> UpdateMenuRows {
     UpdateMenuRows(
-        cliVersionRow: installedCLI.map { "newbro CLI v\($0)" } ?? "newbro CLI version unknown",
-        appVersionRow: installedApp.map { "App v\($0)" } ?? "App version unknown",
-        cliUpdateRow: status.cliUpdate.map { "CLI update available: \($0)" },
-        appUpdateRow: status.appUpdate.map { "App update available: \($0)" })
+        cliVersionRow: installedCLI.map { "Newbro CLI: v\($0)" } ?? "Newbro CLI: version unknown",
+        appVersionRow: appVersionMenuRow(installedApp),
+        cliUpdateRow: status.cliUpdate.map { "Newbro CLI update: \($0) available" },
+        appUpdateRow: status.appUpdate.map { "Menu bar app update: \($0) available" })
+}
+
+private func appVersionMenuRow(_ installedApp: String?) -> String {
+    guard let installedApp else { return "Menu bar app: version unknown" }
+    if installedApp == "1.0" {
+        return "Menu bar app: local build (bundle v1.0)"
+    }
+    return "Menu bar app: v\(installedApp)"
 }
 
 /// Compute which components have an update available. Never reports a false
