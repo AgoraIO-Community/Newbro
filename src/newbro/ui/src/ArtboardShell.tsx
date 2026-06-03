@@ -25,7 +25,7 @@ import { ReasoningBubble } from "./ReasoningBubble";
 import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
-const APP_DOWNLOAD_URL = "https://github.com/AgoraIO/Synopse/releases/latest";
+const APP_DOWNLOAD_URL = "https://github.com/AgoraIO-Community/Newbro/releases/latest";
 
 type RuntimePage = "home" | "detail";
 type HomeBroState = "working" | "idle" | "offline";
