@@ -56,6 +56,12 @@ class SetupResolutionCallbacks:
     resolve_agora_connector_setup_values: Callable[..., tuple[dict[str, object], dict[str, str | None]]]
 
 
+@dataclass(slots=True)
+class CodexAutoSetupResult:
+    setup: ConnectorSetupResult
+    command: str
+
+
 def resolve_connector_setup_values(
     *,
     existing_values: dict[str, str],
@@ -239,6 +245,41 @@ def resolve_executor_setup_values(
     )
 
 
+def resolve_codex_auto_setup_values(
+    *,
+    existing_config_yaml: dict[str, object],
+    callbacks: SetupResolutionCallbacks,
+) -> CodexAutoSetupResult | None:
+    command = callbacks.detected_codex_command()
+    if not command or not callbacks.command_available(command):
+        return None
+
+    executors_block = callbacks.existing_executors_config(existing_config_yaml)
+    codex_block = dict(executors_block.get("codex", {}))
+    codex_block["command"] = command
+    codex_block.setdefault("blocked_wait_timeout_seconds", 900.0)
+    executors_block["codex"] = codex_block
+
+    return CodexAutoSetupResult(
+        command=command,
+        setup=ConnectorSetupResult(
+            env_values={},
+            config_path=callbacks.connector_config_path(),
+            config_text=callbacks.render_connector_config(
+                runtime=callbacks.existing_runtime_config(existing_config_yaml),
+                connector_host=callbacks.existing_connector_host_config(existing_config_yaml),
+                connectors=callbacks.existing_connectors_config(existing_config_yaml),
+                executor_node={"enabled_executors": ["codex"]},
+                executors={
+                    key: value
+                    for key, value in executors_block.items()
+                    if key == "codex"
+                },
+            ),
+        ),
+    )
+
+
 def executor_runtime_config_complete(
     existing_config_yaml: dict[str, object],
     existing_values: dict[str, str],
@@ -272,7 +313,6 @@ def executor_runtime_ready(
         command = str(
             existing_block.get("command")
             or existing_values.get(CODEX_COMMAND_KEY)
-            or callbacks.detected_codex_command()
             or ""
         ).strip()
         return bool(command) and callbacks.command_available(command)
