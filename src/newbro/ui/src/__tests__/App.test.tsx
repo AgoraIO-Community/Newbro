@@ -95,6 +95,7 @@ const clientMock = vi.hoisted(() => ({
     installOnly: "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh",
     installConnect: "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --node-id node-1 --token token-1",
     runOnly: "newbro executor run --node-id node-1 --token token-1",
+    connectSettings: "newbro://connect?base_url=http%3A%2F%2Flocalhost%3A8000&node_id=node-1&token=token-1",
   })),
   sendDraft: vi.fn(async () => ({ task_id: "task-1" })),
   clearDraft: vi.fn(async () => ({ status: "cleared" })),
@@ -522,6 +523,10 @@ describe("Newbro artboard shell", () => {
     clientMock.signupPublicUser.mockResolvedValue({ user: { user_id: "user-1", email: "user@example.com" } });
     clientMock.getCurrentUser.mockResolvedValue({ user: { user_id: "user-1" } });
     clientMock.logoutPublicUser.mockResolvedValue({ ok: true });
+    clientMock.getSessionSnapshot.mockReset();
+    clientMock.closeBroThread.mockReset();
+    clientMock.getConversationSnapshot.mockReset();
+    clientMock.openBroThread.mockReset();
     clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => (
       sessionId === "session-existing" ? forgeSnapshot(sessionId) : emptySessionSnapshot(sessionId)
     ));
@@ -579,11 +584,34 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => expect(clientMock.signupPublicUser).toHaveBeenCalledWith("user@example.com", "K7P4Q9R8"));
   });
 
+  it("issues real first-run credentials when the setup sheet opens", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create your first bro" }));
+
+    expect(await screen.findByTestId("bro-setup-create-node")).toBeInTheDocument();
+    expect(screen.getByText(/On the Mac where atlas should work/i)).toBeInTheDocument();
+    await waitFor(() => expect(clientMock.createExecutorNode).toHaveBeenCalledWith("session-1", {
+      name: "atlas local node",
+      enabled_executors: ["codex"],
+    }));
+    expect(screen.queryByText(/token=pending/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/newbro:\/\/connect\?base_url=.*token=token-1/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy connect settings/i })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Not on a Mac/i }));
+    expect(screen.queryByText(/--token pending/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy install command/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Copy connect command from terminal/i })).toBeEnabled();
+
+    fireEvent.click(within(screen.getByRole("dialog", { name: /Create and connect a Bro/i })).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Create and connect a Bro/i })).not.toBeInTheDocument());
+  });
+
   it("waits for the first node connection before creating the first Bro", async () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Create your first bro" }));
-    fireEvent.click(await screen.findByTestId("bro-setup-create-node"));
 
     await waitFor(() => expect(clientMock.createExecutorNode).toHaveBeenCalledWith("session-1", {
       name: "atlas local node",
@@ -593,11 +621,20 @@ describe("Newbro artboard shell", () => {
     expect(await screen.findByText(/install the Newbro app/i)).toBeInTheDocument();
     const download = screen.getByRole("link", { name: /Download the Newbro app/i });
     expect(download).toHaveAttribute("href", "https://github.com/AgoraIO-Community/Newbro/releases/latest");
-    expect(screen.getByText(/paste it into the app/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
+    expect(screen.getByText(/Copy the connect settings/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy connect settings/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Copy connect settings/i }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "newbro://connect?base_url=http%3A%2F%2Flocalhost%3A8000&node_id=node-1&token=token-1",
+    ));
     expect(screen.getByText(/This updates on its own once atlas connects/)).toBeInTheDocument();
     // Terminal commands are tucked behind a disclosure, hidden by default.
     expect(screen.queryByRole("button", { name: /Copy install command/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Not on a Mac/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Copy connect command from terminal/i }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(
+      "newbro executor run --node-id node-1 --token token-1",
+    ));
   });
 
   it("shows mobile install/connect instructions before creating the first Bro", async () => {
@@ -609,7 +646,7 @@ describe("Newbro artboard shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create your first bro" }));
 
     expect(await screen.findByText(/Install the Newbro app on the Mac/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Copy connect command/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy connect settings/i })).toBeInTheDocument();
     // No usable Mac download on a phone, and terminal commands stay collapsed.
     expect(screen.queryByRole("link", { name: /Download the Newbro app/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Copy install command/i })).not.toBeInTheDocument();
@@ -639,7 +676,6 @@ describe("Newbro artboard shell", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Create your first bro" }));
-    fireEvent.click(await screen.findByTestId("bro-setup-create-node"));
 
     await waitFor(() => expect(clientMock.createPersona).toHaveBeenCalledTimes(1), { timeout: 3500 });
     expect(clientMock.createPersona).toHaveBeenCalledWith("session-1", {
@@ -1773,11 +1809,11 @@ describe("Newbro artboard shell", () => {
     expect(screen.queryByTestId("bro-node-copy-run-only-command")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Reconnect/i }));
     expect(await screen.findByText(/Reconnect forge|Reconnect Forge/i)).toBeInTheDocument();
-    // The dialog auto-reveals the real connect command (token, not "pending"),
+    // The dialog auto-reveals the real connect settings (token, not "pending"),
     // and the copy button is enabled.
-    expect(await screen.findByText(/--token token-1/)).toBeInTheDocument();
-    expect(screen.queryByText(/--token pending/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Copy connect command" })).toBeEnabled();
+    expect(await screen.findByText(/token=token-1/)).toBeInTheDocument();
+    expect(screen.queryByText(/token=pending/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy connect settings" })).toBeEnabled();
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
     expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
   });

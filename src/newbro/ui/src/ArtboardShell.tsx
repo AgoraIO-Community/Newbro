@@ -1980,12 +1980,13 @@ function CreateConnectSheet({
   const [commands, setCommands] = useState<ExecutorConnectCommands | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copiedKind, setCopiedKind] = useState<"install" | "run" | null>(null);
+  const [copiedKind, setCopiedKind] = useState<"install" | "run" | "settings" | null>(null);
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
   const [pendingBroName, setPendingBroName] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
   const finalizingRef = useRef(false);
+  const autoIssueStartedRef = useRef(false);
   const trimmedName = name.trim();
   const canCreate = trimmedName.length > 0 && !busy && !commands && !pendingNodeId && !completed;
 
@@ -2010,7 +2011,7 @@ function CreateConnectSheet({
     return () => { cancelled = true; };
   }, [bro?.executorNodeId, commands, sessionId]);
 
-  async function copyCommand(value: string, kind: "install" | "run") {
+  async function copyCommand(value: string, kind: "install" | "run" | "settings") {
     await navigator.clipboard?.writeText(value).then(() => setCopiedKind(kind), () => setCopiedKind(null));
   }
 
@@ -2038,7 +2039,7 @@ function CreateConnectSheet({
     }
   }
 
-  async function createAndConnect() {
+  async function issueConnectCredentials({ copyInstall }: { copyInstall: boolean }) {
     if (!canCreate) return;
     setBusy(true);
     setError(null);
@@ -2055,7 +2056,9 @@ function CreateConnectSheet({
       setPendingNodeId(issue.node.last_connected_at ? null : issue.node.node_id);
       setPendingBroName(nextBroName);
       setCompleted(false);
-      await copyCommand(nextCommands.installConnect, "install");
+      if (copyInstall) {
+        await copyCommand(nextCommands.installConnect, "install");
+      }
       await onCreated();
       if (issue.node.last_connected_at) {
         await finalizeConnectedNode(issue.node.node_id, nextBroName);
@@ -2066,6 +2069,16 @@ function CreateConnectSheet({
       setBusy(false);
     }
   }
+
+  function createAndConnect() {
+    void issueConnectCredentials({ copyInstall: true });
+  }
+
+  useEffect(() => {
+    if (autoIssueStartedRef.current || bro?.executorNodeId || !canCreate) return;
+    autoIssueStartedRef.current = true;
+    void issueConnectCredentials({ copyInstall: false });
+  }, [bro?.executorNodeId, canCreate]);
 
   useEffect(() => {
     if (!pendingNodeId || !pendingBroName || completed) return;
@@ -2110,7 +2123,7 @@ function CreateConnectSheet({
             <div className="ob-sheet-titles">
               <span className="ob-eyebrow ob-eyebrow-coral">NEW BRO</span>
               <h2 className="ob-sheet-h">{bro ? (bro.nodeName ? `Reconnect ${bro.name}` : `Set up ${bro.name}`) : "Set up your first bro"}</h2>
-              <p className="ob-sheet-intro">{bro ? (bro.nodeName ? `Get ${bro.name} back online — install the Newbro app on its Mac and paste the connect command.` : `Install the Newbro app on the Mac that runs ${bro.name}, then paste the connect command.`) : "A bro works on a Mac you keep on. Three quick steps and it’s ready."}</p>
+              <p className="ob-sheet-intro">{bro ? (bro.nodeName ? `Get ${bro.name} back online — install the Newbro app on its Mac and copy the connect settings.` : `Install the Newbro app on the Mac that runs ${bro.name}, then copy the connect settings.`) : "A bro works on a Mac you keep on. Three quick steps and it’s ready."}</p>
             </div>
             <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}><X size={16} strokeWidth={2.2} /></button>
           </header>
@@ -2161,13 +2174,13 @@ function CreateConnectSheet({
 
               <div className="dt-modal-col">
                 <div className="ob-fieldset">
-                  <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 4 · PASTE THE COMMAND</span>
-                  <p className="ob-connect-guide">Copy this connect command and paste it into the app (menu → Paste connect command):</p>
+                  <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 4 · COPY CONNECT SETTINGS</span>
+                  <p className="ob-connect-guide">Copy the connect settings. If the Newbro app is running on this Mac, it applies them automatically.</p>
                   <div className="ob-connect">
                     <div className="ob-connect-cmd">
-                      <span className="ob-connect-prompt">$</span>
-                      <span className="ob-connect-line">{commands?.runOnly ?? "newbro executor run --token pending"}</span>
-                      <button type="button" className="ob-connect-copy" aria-label="Copy connect command" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.runOnly, "run"); }}>
+                      <span className="ob-connect-prompt">url</span>
+                      <span className="ob-connect-line">{commands?.connectSettings ?? "Connect settings will appear after credentials are issued."}</span>
+                      <button type="button" className="ob-connect-copy" aria-label="Copy connect settings" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.connectSettings, "settings"); }}>
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                           <rect x="9" y="9" width="11" height="11" rx="2"/>
                           <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
@@ -2206,7 +2219,7 @@ function CreateConnectSheet({
                       <div className="ob-connect">
                         <div className="ob-connect-cmd">
                           <span className="ob-connect-prompt">$</span>
-                          <span className="ob-connect-line">{commands?.runOnly ?? "newbro executor run --token pending"}</span>
+                          <span className="ob-connect-line">{commands?.runOnly ?? "Run command will appear after credentials are issued."}</span>
                           <button type="button" className="ob-connect-copy" aria-label="Copy connect command from terminal" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.runOnly, "run"); }}>
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                               <rect x="9" y="9" width="11" height="11" rx="2"/>
@@ -2234,7 +2247,7 @@ function CreateConnectSheet({
           <footer className="ob-sheet-foot">
             <span className="dt-modal-foot-status nb-create-connect-foot-status">
               <span className="dt-modal-foot-dot" />
-              {completed ? "Connected once · Bro ready" : commands ? "We’ll detect your computer automatically · link valid 9:46" : "Download link + connect command will be generated on demand"}
+              {completed ? "Connected once · Bro ready" : commands ? "We’ll detect your computer automatically · link valid 9:46" : "Download link + connect settings will be generated on demand"}
             </span>
             {commands && (completed || bro?.executorNodeId) ? (
               <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" onClick={() => { void onCreated().finally(onClose); }}>
