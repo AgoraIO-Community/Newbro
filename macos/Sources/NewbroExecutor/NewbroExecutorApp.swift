@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var cancellable: AnyCancellable?
     private var updates: UpdateService!
     private var updateTimer: Timer?
+    private var clipboardMonitor: ClipboardConnectMonitor?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -88,6 +89,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.updates.check() }
         }
+        let clipboardMonitor = ClipboardConnectMonitor { [weak model] text in
+            _ = try model?.addFromConnectSettings(text)
+        }
+        self.clipboardMonitor = clipboardMonitor
+        clipboardMonitor.start()
     }
 
     private func updatePip() {
@@ -102,8 +108,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func build(into menu: NSMenu) {
-        model.refreshCodexStatus()
-
         if !model.runtimeAvailable {
             menu.addItem(NSMenuItem(title: "Node runtime not found", action: nil, keyEquivalent: ""))
             if model.isInstallingRuntime {
@@ -116,11 +120,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             menu.addItem(.separator())
         }
-
-        let codexRow = NSMenuItem(title: model.codexStatus.menuTitle, action: nil, keyEquivalent: "")
-        codexRow.isEnabled = false
-        menu.addItem(codexRow)
-        menu.addItem(.separator())
 
         for profile in model.profiles {
             let status = model.status(of: profile)
@@ -153,52 +152,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !model.profiles.isEmpty {
             menu.addItem(.separator())
         }
-        menu.addItem(ActionMenuItem(title: "Paste connect command…") { [weak self] in self?.pasteConnectCommand() })
-        menu.addItem(ActionMenuItem(title: "Launch at login",
-                                    state: model.loginItemEnabled ? .on : .off) { [weak self] in
-            self?.model.toggleLoginItem()
+        menu.addItem(ActionMenuItem(title: "Settings…") { [weak self] in
+            guard let self else { return }
+            self.model.showSettings(updates: self.updates)
         })
-
-        menu.addItem(.separator())
-        let rows = updateMenuRows(installedCLI: updates.installedCLI,
-                                  installedApp: model.appVersion,
-                                  status: updates.status)
-        menu.addItem(disabledMenuItem(title: rows.cliVersionRow))
-        menu.addItem(disabledMenuItem(title: rows.appVersionRow))
-
-        if updates.isUpdating {
-            menu.addItem(disabledMenuItem(title: "Updating Newbro CLI…"))
-        } else if let cliUpdateRow = rows.cliUpdateRow {
-            menu.addItem(disabledMenuItem(title: cliUpdateRow))
-        }
-
-        if let appUpdateRow = rows.appUpdateRow {
-            menu.addItem(disabledMenuItem(title: appUpdateRow))
-        }
-
-        if let available = updates.status.cliUpdate, !updates.isUpdating {
-            menu.addItem(ActionMenuItem(title: "Update CLI to \(available)") { [weak self] in
-                self?.updates.updateCLI()
-            })
-        }
-        if updates.isChecking {
-            menu.addItem(disabledMenuItem(title: "Checking for updates…"))
-        } else {
-            menu.addItem(ActionMenuItem(title: "Check for Updates…") { [weak self] in
-                Task { @MainActor in await self?.updates.check() }
-            })
-        }
-        if let appAvailable = updates.status.appUpdate {
-            menu.addItem(ActionMenuItem(title: "Download menu bar app \(appAvailable)…") { [weak self] in
-                guard let url = self?.updates.releasePageURL else { return }
-                NSWorkspace.shared.open(url)
-            })
-        }
-        if let error = updates.lastError {
-            let errorRow = NSMenuItem(title: error, action: nil, keyEquivalent: "")
-            errorRow.isEnabled = false
-            menu.addItem(errorRow)
-        }
+        menu.addItem(ActionMenuItem(title: "Paste connect settings…") { [weak self] in self?.pasteConnectSettings() })
 
         menu.addItem(.separator())
         menu.addItem(ActionMenuItem(title: "Quit") { [weak self] in self?.model.quit() })
@@ -210,8 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    private func pasteConnectCommand() {
+    private func pasteConnectSettings() {
         guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        _ = try? model.addFromConnectCommand(text)
+        _ = try? model.addFromConnectSettings(text)
     }
 }

@@ -15,6 +15,10 @@ final class AppModel: ObservableObject {
     @Published var isInstallingRuntime: Bool = false
     @Published var runtimeInstallError: String?
     @Published var installLog: String = ""
+    @Published var executorProbe: ExecutorProbe?
+    @Published var executorSettingsError: String?
+    @Published var executorSettingsBusy: Bool = false
+    @Published var executorSettingsCanUpdateCLI: Bool = false
 
     private let supervisor: ProfileSupervisor
     private let notifier: AppNotifying
@@ -72,6 +76,7 @@ final class AppModel: ObservableObject {
             .store(in: &cancellables)
         // Start auto-activate profiles at launch (login-item or manual).
         autostart()
+        refreshExecutorProbe()
     }
 
     func refreshRuntime() {
@@ -173,6 +178,85 @@ final class AppModel: ObservableObject {
                                      codexRuntimeAvailable: codexRuntimeAvailable))
     }
 
+    func refreshExecutorProbe() {
+        guard let newbro = locator.resolveNewbro() else {
+            executorProbe = nil
+            executorSettingsError = "newbro CLI not found"
+            executorSettingsCanUpdateCLI = false
+            return
+        }
+        executorSettingsBusy = true
+        let client = ExecutorSettingsClient(newbroPath: newbro)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try client.probe() }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.executorSettingsBusy = false
+                switch result {
+                case .success(let probe):
+                    self.executorProbe = probe
+                    self.executorSettingsError = nil
+                    self.executorSettingsCanUpdateCLI = false
+                case .failure(let error):
+                    self.executorProbe = nil
+                    self.executorSettingsError = error.localizedDescription
+                    if case ExecutorSettingsClientError.runtimeTooOld = error {
+                        self.executorSettingsCanUpdateCLI = true
+                    } else {
+                        self.executorSettingsCanUpdateCLI = false
+                    }
+                }
+            }
+        }
+    }
+
+    func updateCLIFromExecutorSettings() {
+        guard !executorSettingsBusy else { return }
+        let activeIDs = self.activeProfileIDs()
+        executorSettingsBusy = true
+        for id in activeIDs { stop(profileID: id) }
+        runInstaller { [weak self] code in
+            guard let self else { return }
+            for id in activeIDs { self.start(profileID: id) }
+            if code == 0 {
+                self.refreshRuntime()
+                self.refreshExecutorProbe()
+            } else {
+                self.executorSettingsBusy = false
+                self.executorSettingsError = "Update failed (exit \(code)). Nodes restarted."
+                self.executorSettingsCanUpdateCLI = true
+            }
+        }
+    }
+
+    func useCodexCandidate(_ candidate: ExecutorCandidateProbe) {
+        guard candidate.ok, let newbro = locator.resolveNewbro() else { return }
+        let activeIDs = self.activeProfileIDs()
+        executorSettingsBusy = true
+        let client = ExecutorSettingsClient(newbroPath: newbro)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try client.useCodex(path: candidate.path) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.executorSettingsError = nil
+                    self.executorSettingsCanUpdateCLI = false
+                    self.refreshExecutorProbe()
+                    for id in activeIDs {
+                        if let profile = self.profiles.first(where: { $0.id == id }) {
+                            self.restart(profile)
+                        }
+                    }
+                case .failure(let error):
+                    self.executorSettingsBusy = false
+                    self.executorSettingsError = error.localizedDescription
+                    self.executorSettingsCanUpdateCLI = false
+                }
+            }
+        }
+    }
+
     func quit() {
         // Stop every node before exiting so no orphaned subprocess survives.
         supervisor.stopAll()
@@ -201,8 +285,8 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    func addFromConnectCommand(_ text: String) throws -> Profile {
-        let fields = try parseConnectCommand(text)
+    func addFromConnectSettings(_ text: String) throws -> Profile {
+        let fields = try parseConnectSettings(text)
         let matchingIndex = firstMatchingProfileIndex(in: profiles,
                                                       baseURL: fields.baseURL,
                                                       nodeID: fields.nodeID)
@@ -297,6 +381,14 @@ final class AppModel: ObservableObject {
         windows.show(id: "log-\(profileID)", title: "Recent Log",
                      size: NSSize(width: 560, height: 360)) { [self] in
             LogView(model: self, profileID: profileID)
+        }
+    }
+
+    func showSettings(updates: UpdateService) {
+        refreshExecutorProbe()
+        windows.show(id: "settings", title: "Settings",
+                     size: NSSize(width: 760, height: 480)) { [self] in
+            NewbroSettingsView(model: self, updates: updates)
         }
     }
 

@@ -31,7 +31,7 @@ final class UpdateStatusTests: XCTestCase {
     }
 
     func testComponentVersionRows() {
-        let rows = updateMenuRows(installedCLI: "0.1.0", installedApp: "0.1.0", status: UpdateStatus(cliUpdate: "v0.2.0", appUpdate: "v0.2.0"))
+        let rows = updateSettingsRows(installedCLI: "0.1.0", installedApp: "0.1.0", status: UpdateStatus(cliUpdate: "v0.2.0", appUpdate: "v0.2.0"))
         XCTAssertEqual(rows.cliVersionRow, "Newbro CLI: v0.1.0")
         XCTAssertEqual(rows.appVersionRow, "Menu bar app: v0.1.0")
         XCTAssertEqual(rows.cliUpdateRow, "Newbro CLI update: v0.2.0 available")
@@ -39,7 +39,7 @@ final class UpdateStatusTests: XCTestCase {
     }
 
     func testDevDefaultAppVersionRowExplainsLocalBuild() {
-        let rows = updateMenuRows(installedCLI: "0.1.2", installedApp: "1.0", status: UpdateStatus(cliUpdate: "v0.1.22"))
+        let rows = updateSettingsRows(installedCLI: "0.1.2", installedApp: "1.0", status: UpdateStatus(cliUpdate: "v0.1.22"))
         XCTAssertEqual(rows.cliVersionRow, "Newbro CLI: v0.1.2")
         XCTAssertEqual(rows.appVersionRow, "Menu bar app: local build (bundle v1.0)")
         XCTAssertEqual(rows.cliUpdateRow, "Newbro CLI update: v0.1.22 available")

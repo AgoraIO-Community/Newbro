@@ -15,7 +15,53 @@ public struct ConnectCommandFields: Equatable {
 }
 
 public enum ConnectCommandError: Error, Equatable {
+    case invalidConnectSettings
     case missingFields([String])
+}
+
+public func parseConnectSettings(_ text: String) throws -> ConnectCommandFields {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let components = URLComponents(string: trimmed),
+          components.scheme == "newbro",
+          components.host == "connect" else {
+        throw ConnectCommandError.invalidConnectSettings
+    }
+
+    var values: [String: [String]] = [:]
+    for (key, value) in parsePercentEncodedQuery(components.percentEncodedQuery ?? "") {
+        values[key, default: []].append(value)
+    }
+
+    let baseURL = values["base_url"]?.last ?? ""
+    let nodeID = values["node_id"]?.last ?? ""
+    let token = values["token"]?.last ?? ""
+    let enabled = values["enabled_executor"] ?? []
+
+    var missing: [String] = []
+    if baseURL.isEmpty { missing.append("base_url") }
+    if nodeID.isEmpty { missing.append("node_id") }
+    if token.isEmpty { missing.append("token") }
+    if !missing.isEmpty { throw ConnectCommandError.missingFields(missing) }
+
+    return ConnectCommandFields(
+        baseURL: baseURL,
+        nodeID: nodeID,
+        token: token,
+        enabledExecutors: enabled)
+}
+
+private func parsePercentEncodedQuery(_ query: String) -> [(String, String)] {
+    if query.isEmpty { return [] }
+    return query.split(separator: "&", omittingEmptySubsequences: false).map { pair in
+        let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        let key = decodeQueryComponent(String(parts.first ?? ""))
+        let value = parts.count > 1 ? decodeQueryComponent(String(parts[1])) : ""
+        return (key, value)
+    }
+}
+
+private func decodeQueryComponent(_ value: String) -> String {
+    value.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? value
 }
 
 /// Tokenize a shell-style command line, honoring single/double quotes so a

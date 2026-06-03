@@ -59,10 +59,10 @@ Bro Detail is node-gated for runtime Bros. If the active Bro has no
 `executor_node_id`, or its bound node has never connected successfully, the
 detail route shows an inline setup panel instead of the voice bar, draft
 controls, task controls, or normal workspace. The first-run Home setup creates a
-private executor node and shows a copyable install/update-and-connect command
-plus a run-only `newbro executor run ...` variant, but it does not create the Bro
-persona until the frontend refreshes state and observes `last_connected_at` on
-that node. API persona creation and node binding
+private executor node and shows copyable `newbro://connect?...` settings for
+the macOS app plus a terminal-only `newbro executor run ...` variant, but it
+does not create the Bro persona until the frontend refreshes state and observes
+`last_connected_at` on that node. API persona creation and node binding
 also reject user-owned nodes that have not connected successfully once. Creating
 a persona with an already-bound `executor_node_id` is idempotent for that user
 and returns the existing Bro instead of creating duplicates.
