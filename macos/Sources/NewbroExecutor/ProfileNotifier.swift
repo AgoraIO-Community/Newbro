@@ -2,12 +2,12 @@ import Foundation
 import UserNotifications
 
 @MainActor
-protocol ProfileNotifying {
+protocol AppNotifying {
     func notify(title: String, body: String)
 }
 
 @MainActor
-final class MacProfileNotifier: ProfileNotifying {
+final class MacAppNotifier: AppNotifying {
     private let center: UNUserNotificationCenter
 
     init(center: UNUserNotificationCenter = .current()) {
