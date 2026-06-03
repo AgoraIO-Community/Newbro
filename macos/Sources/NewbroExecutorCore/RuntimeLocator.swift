@@ -10,6 +10,7 @@ public struct CommandStatus: Equatable, Sendable {
 public struct RuntimeLocator {
     public static let installScriptURL =
         "https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh"
+    public static let runtimeProbeTimeout: TimeInterval = 2.0
 
     private let overridePath: String?
     private let homeDir: URL
@@ -100,21 +101,26 @@ public struct RuntimeLocator {
         } catch {
             return nil
         }
+        guard waitForProcess(proc, timeout: runtimeProbeTimeout) else { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
         let output = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return output.isEmpty ? nil : output
     }
 
     public static func extractVersion(_ output: String) -> String? {
-        output
-            .split(whereSeparator: { $0.isWhitespace })
-            .last
-            .map(String.init)
+        let pattern = #"(?<![A-Za-z0-9._-])\d+(?:\.\d+)+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?(?![A-Za-z0-9._-])"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        guard let match = regex.firstMatch(in: output, range: range),
+              let matchRange = Range(match.range, in: output) else {
+            return nil
+        }
+        return String(output[matchRange])
     }
 
     public static func loginShellWhichCommand(_ name: String) -> String? {
+        guard isSafeCommandName(name) else { return nil }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
         proc.arguments = ["-lc", "command -v \(name)"]
@@ -122,14 +128,20 @@ public struct RuntimeLocator {
         proc.standardOutput = pipe
         proc.standardError = FileHandle.nullDevice
         do { try proc.run() } catch { return nil }
+        guard waitForProcess(proc, timeout: runtimeProbeTimeout) else { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
         let output = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return output.isEmpty ? nil : output
     }
 
     public static func runCommandOutput(_ argv: [String], _ environment: [String: String]?) -> (Int32, String) {
+        runCommandOutput(argv, environment, timeout: runtimeProbeTimeout)
+    }
+
+    public static func runCommandOutput(_ argv: [String],
+                                        _ environment: [String: String]?,
+                                        timeout: TimeInterval) -> (Int32, String) {
         guard let executable = argv.first else { return (127, "") }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: executable)
@@ -139,9 +151,34 @@ public struct RuntimeLocator {
         proc.standardOutput = pipe
         proc.standardError = pipe
         do { try proc.run() } catch { return (127, "") }
+        guard waitForProcess(proc, timeout: timeout) else { return (124, "") }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
         return (proc.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+    }
+
+    private static func isSafeCommandName(_ name: String) -> Bool {
+        guard !name.isEmpty else { return false }
+        return name.utf8.allSatisfy { byte in
+            (65...90).contains(byte)
+                || (97...122).contains(byte)
+                || (48...57).contains(byte)
+                || byte == 95
+                || byte == 45
+                || byte == 46
+        }
+    }
+
+    private static func waitForProcess(_ proc: Process, timeout: TimeInterval) -> Bool {
+        let semaphore = DispatchSemaphore(value: 0)
+        proc.terminationHandler = { _ in semaphore.signal() }
+        if !proc.isRunning { return true }
+        let result = semaphore.wait(timeout: .now() + timeout)
+        guard result == .success else {
+            proc.terminate()
+            _ = semaphore.wait(timeout: .now() + 0.2)
+            return false
+        }
+        return true
     }
 
     /// The login shell's PATH. A menu-bar/login-item app inherits a minimal
@@ -159,8 +196,8 @@ public struct RuntimeLocator {
         } catch {
             return nil
         }
+        guard waitForProcess(proc, timeout: runtimeProbeTimeout) else { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
         let output = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return output.isEmpty ? nil : output

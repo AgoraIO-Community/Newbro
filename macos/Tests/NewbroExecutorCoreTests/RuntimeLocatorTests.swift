@@ -104,4 +104,45 @@ final class RuntimeLocatorTests: XCTestCase {
         XCTAssertEqual(locator.codexRuntimeStatus().menuTitle, "No Codex found. Newbro may not work properly.")
         XCTAssertFalse(locator.codexRuntimeStatus().isAvailable)
     }
+
+    func testExtractVersionIgnoresTrailingWarnings() {
+        XCTAssertEqual(
+            RuntimeLocator.extractVersion("""
+            warning: using fallback path
+            codex 1.2.3-beta
+            trailing junk after version
+            """),
+            "1.2.3-beta")
+    }
+
+    func testExtractVersionReturnsNilForMalformedOutput() {
+        XCTAssertNil(RuntimeLocator.extractVersion("warning: codex version unavailable"))
+    }
+
+    func testCodexStatusShowsDetectedWhenVersionOutputIsMalformed() {
+        let locator = RuntimeLocator(
+            overridePath: nil,
+            homeDir: home,
+            fileExists: { _ in false },
+            whichNewbro: { nil },
+            whichCommand: { name in name == "codex" ? "/opt/bin/codex" : nil },
+            runCommand: { _, _ in (0, "warning: codex version unavailable") })
+        let status = locator.codexRuntimeStatus()
+        XCTAssertEqual(status.menuTitle, "Codex detected")
+        XCTAssertTrue(status.isAvailable)
+        XCTAssertNil(status.version)
+    }
+
+    func testLoginShellWhichCommandRejectsInvalidNames() {
+        XCTAssertNil(RuntimeLocator.loginShellWhichCommand("definitely_missing_codex; echo injected"))
+    }
+
+    func testRunCommandOutputTimesOut() {
+        let result = RuntimeLocator.runCommandOutput(
+            ["/bin/sh", "-c", "sleep 1; echo late"],
+            nil,
+            timeout: 0.01)
+        XCTAssertEqual(result.0, 124)
+        XCTAssertEqual(result.1, "")
+    }
 }
