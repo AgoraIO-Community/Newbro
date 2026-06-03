@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -26,11 +28,24 @@ from newbro.runtime.config import Settings
 
 def create_app(*, settings: Settings | None = None) -> FastAPI:
     container = build_runtime_container(settings=settings)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        exporter = container.latency_exporter
+        if exporter is not None:
+            await exporter.start()
+        try:
+            yield
+        finally:
+            if exporter is not None:
+                await exporter.aclose()
+
     app = FastAPI(
         title="Newbro v2",
         openapi_url=api_path("/openapi.json"),
         docs_url=api_path("/docs"),
         redoc_url=api_path("/redoc"),
+        lifespan=lifespan,
     )
     app.state.runtime_container = container
     app.state.public_auth_store = PublicAuthStore()

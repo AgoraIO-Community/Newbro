@@ -15,6 +15,7 @@ from .emitters import (
     ExecutionDiagnosticEmitter,
     NotificationDiagnosticEmitter,
 )
+from .latency import LatencyTracker
 from .logger import DiagnosticLogger
 from .schema import DiagnosticLevel, LEVEL_PRIORITY
 from .sinks.pretty import PrettyDiagnosticSink
@@ -35,19 +36,41 @@ class SessionObservability:
     communication: CommunicationDiagnosticEmitter
     execution: ExecutionDiagnosticEmitter
     notification: NotificationDiagnosticEmitter
+    latency: LatencyTracker
 
 
-def build_session_observability(settings: "Settings") -> SessionObservability:
+def build_session_observability(
+    settings: "Settings",
+    *,
+    extra_sinks: list[DiagnosticSink] | None = None,
+) -> SessionObservability:
     store = InMemoryDiagnosticStore(max_events=settings.diagnostic_max_events)
+    sinks = [build_stdout_sink(settings)]
+    if extra_sinks:
+        sinks.extend(extra_sinks)
     logger = DiagnosticLogger(
         store=store,
-        sinks=[build_stdout_sink(settings)],
+        sinks=sinks,
         min_level=_normalize_log_level(settings.log_level),
         app_version=_app_version(),
         git_sha=settings.git_sha,
         model_name=settings.openai_model if settings.openai_api_key else settings.communication_backend,
         settings_fingerprint=_settings_fingerprint(settings),
     )
+
+    def _emit_turn_latency(*, request_id, outcome, model_name, total_ms, steps):
+        logger.emit_event(
+            level="INFO",
+            event_name=settings.latency_export_event_name,
+            component="runtime",
+            summary=f"turn latency {total_ms}ms",
+            outcome=outcome,
+            request_id=request_id,
+            details={"total_ms": total_ms, "steps": steps, "model_name": model_name},
+        )
+
+    latency = LatencyTracker(emit=_emit_turn_latency)
+
     return SessionObservability(
         store=store,
         logger=logger,
@@ -56,6 +79,7 @@ def build_session_observability(settings: "Settings") -> SessionObservability:
         communication=CommunicationDiagnosticEmitter(logger, llm_details=settings.log_llm_details),
         execution=ExecutionDiagnosticEmitter(logger),
         notification=NotificationDiagnosticEmitter(logger),
+        latency=latency,
     )
 
 
@@ -143,4 +167,24 @@ def _settings_fingerprint(settings: "Settings") -> str:
     return hashlib.sha1(encoded).hexdigest()[:12]
 
 
-__all__ = ["SessionObservability", "build_session_observability"]
+def build_latency_exporter(settings: "Settings"):
+    """Build a process-wide HttpExporterSink if latency export is enabled.
+
+    Returns None if export is disabled or no URL is configured.
+    """
+    from .sinks.http_exporter import HttpExporterSink
+
+    if not settings.latency_export_enabled or not settings.latency_export_url:
+        return None
+    return HttpExporterSink(
+        url=settings.latency_export_url,
+        headers=dict(settings.latency_export_headers),
+        post=None,
+        event_name=settings.latency_export_event_name,
+        batch_size=settings.latency_export_batch_size,
+        flush_seconds=settings.latency_export_flush_seconds,
+        queue_max=settings.latency_export_queue_max,
+    )
+
+
+__all__ = ["SessionObservability", "build_latency_exporter", "build_session_observability"]

@@ -1,0 +1,7 @@
+name = "newbro-latency"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[[analytics_engine_datasets]]
+binding = "LATENCY"
+dataset = "newbro_turn_latency"

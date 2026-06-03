@@ -37,6 +37,18 @@ def _get_csv(name: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+def _parse_headers(raw: str | None) -> tuple[tuple[str, str], ...]:
+    # "Authorization=Bearer x;X-Foo=bar" -> (("Authorization","Bearer x"),("X-Foo","bar"))
+    if not raw:
+        return ()
+    pairs = []
+    for part in raw.split(";"):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            pairs.append((k.strip(), v.strip()))
+    return tuple(pairs)
+
+
 @dataclass(slots=True)
 class Settings:
     app_name: str = "Newbro v2"
@@ -62,6 +74,13 @@ class Settings:
     quiet_diagnostics_access_logs: bool = True
     log_llm_details: bool = False
     diagnostic_max_events: int = 500
+    latency_export_enabled: bool = False
+    latency_export_url: str | None = None
+    latency_export_headers: tuple[tuple[str, str], ...] = ()
+    latency_export_event_name: str = "turn.latency"
+    latency_export_batch_size: int = 50
+    latency_export_flush_seconds: float = 5.0
+    latency_export_queue_max: int = 1000
     live_interaction_classifier_interval_seconds: float = 1.0
     cors_allowed_origins: tuple[str, ...] = ()
     git_sha: str | None = None
@@ -182,6 +201,13 @@ def load_settings() -> Settings:
         quiet_diagnostics_access_logs=_get_bool("SYNAPSE_QUIET_DIAGNOSTICS_ACCESS_LOGS", True),
         log_llm_details=_get_bool("SYNAPSE_LOG_LLM_DETAILS", False),
         diagnostic_max_events=int(os.getenv("SYNAPSE_DIAGNOSTIC_MAX_EVENTS", "500")),
+        latency_export_enabled=os.getenv("SYNAPSE_LATENCY_EXPORT_ENABLED", "false").lower() == "true",
+        latency_export_url=os.getenv("SYNAPSE_LATENCY_EXPORT_URL") or None,
+        latency_export_headers=_parse_headers(os.getenv("SYNAPSE_LATENCY_EXPORT_HEADERS")),
+        latency_export_event_name=os.getenv("SYNAPSE_LATENCY_EXPORT_EVENT_NAME", "turn.latency"),
+        latency_export_batch_size=int(os.getenv("SYNAPSE_LATENCY_EXPORT_BATCH_SIZE", "50")),
+        latency_export_flush_seconds=float(os.getenv("SYNAPSE_LATENCY_EXPORT_FLUSH_SECONDS", "5")),
+        latency_export_queue_max=int(os.getenv("SYNAPSE_LATENCY_EXPORT_QUEUE_MAX", "1000")),
         live_interaction_classifier_interval_seconds=float(
             os.getenv("SYNAPSE_LIVE_INTERACTION_CLASSIFIER_INTERVAL_SECONDS", "1.0")
         ),
