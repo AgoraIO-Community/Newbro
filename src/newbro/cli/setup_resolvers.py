@@ -253,15 +253,16 @@ def resolve_codex_auto_setup_values(
     command = callbacks.detected_codex_command()
     if not command or not callbacks.command_available(command):
         return None
+    configured_command = "codex" if Path(command).name == "codex" else command
 
     executors_block = callbacks.existing_executors_config(existing_config_yaml)
     codex_block = dict(executors_block.get("codex", {}))
-    codex_block["command"] = command
+    codex_block["command"] = configured_command
     codex_block.setdefault("blocked_wait_timeout_seconds", 900.0)
     executors_block["codex"] = codex_block
 
     return CodexAutoSetupResult(
-        command=command,
+        command=configured_command,
         setup=ConnectorSetupResult(
             env_values={},
             config_path=callbacks.connector_config_path(),

@@ -1466,15 +1466,21 @@ def test_executor_run_requires_tty_when_local_runtime_config_missing(monkeypatch
     assert "Local executor runtime config is incomplete." in capsys.readouterr().err
 
 
-def test_executor_run_auto_configures_detected_codex_without_tty(monkeypatch, tmp_path: Path):
+def test_executor_run_auto_configures_detected_codex_without_tty(
+    monkeypatch, tmp_path: Path, capsys
+):
     venv_python = tmp_path / ".venv" / "bin" / "python"
     venv_python.parent.mkdir(parents=True, exist_ok=True)
     venv_python.write_text("", encoding="utf-8")
 
     configure_repo_paths(monkeypatch, tmp_path)
     monkeypatch.setattr(cli_main, "setup_can_prompt", lambda: False)
-    monkeypatch.setattr(cli_main, "_detected_codex_command", lambda: "codex")
-    monkeypatch.setattr(cli_main, "_command_available", lambda command: command == "codex")
+    monkeypatch.setattr(cli_main, "_detected_codex_command", lambda: "/opt/homebrew/bin/codex")
+    monkeypatch.setattr(
+        cli_main,
+        "_command_available",
+        lambda command: command in {"/opt/homebrew/bin/codex", "codex"},
+    )
     monkeypatch.setattr(
         cli_main.subprocess,
         "run",
@@ -1505,6 +1511,7 @@ def test_executor_run_auto_configures_detected_codex_without_tty(monkeypatch, tm
     assert "executors:" in config_text
     assert "  codex:" in config_text
     assert "    command: codex" in config_text
+    assert "[setup] auto-configured codex executor command: codex" in capsys.readouterr().out
 
 
 def test_executor_run_does_not_auto_configure_missing_codex_without_tty(
