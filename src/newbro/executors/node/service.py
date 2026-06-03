@@ -138,6 +138,10 @@ class ExecutorNodeService:
         self._audio_transcriber = audio_transcriber or build_audio_transcriber(audio_config)
         self._live_sessions: dict[str, ExecutorSession] = {}
         self._thread_workspaces: dict[str, str] = {}
+        # Codex thread id -> its own cwd, learned from list_threads. Lets Gate 2
+        # resolve a workspace root for imported/history threads that were never
+        # subscribed with a workspace_id.
+        self._codex_thread_workspaces: dict[str, str] = {}
         self._active_runs: dict[str, LocalRunContext] = {}
         self._codex_thread_subscriptions: dict[str, CodexThreadSubscriptionContext] = {}
         self._background_commands: set[asyncio.Task[None]] = set()
@@ -362,6 +366,9 @@ class ExecutorNodeService:
         try:
             raw_threads = await list_threads(command.workspace_id)
             threads = [_codex_thread_list_item(item) for item in raw_threads]
+            for item in threads:
+                if item.cwd:
+                    self._codex_thread_workspaces[item.thread_id] = item.cwd
             await self._send_json(
                 websocket,
                 CodexThreadsListedMessage(
@@ -1084,6 +1091,10 @@ class ExecutorNodeService:
         self, websocket: Any, command: ReadWorkspaceFileCommand
     ) -> None:
         root = self._thread_workspaces.get(command.thread_id)
+        if root is None and command.executor_thread_id:
+            # Imported/history thread: resolve the workspace from the codex
+            # thread's own cwd learned during list_threads.
+            root = self._codex_thread_workspaces.get(command.executor_thread_id)
         if root is None:
             await self._send_json(
                 websocket,

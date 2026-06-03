@@ -15,6 +15,7 @@ class _Session:
         turn = SimpleNamespace(
             turn_id="turn-1",
             thread_id="t1",
+            executor_thread_id="codex-tid",
             assistant=SimpleNamespace(text="saved to /work/report.pdf"),
         )
         thread = SimpleNamespace(thread_id="t1", executor_node_id="node-1")
@@ -22,7 +23,16 @@ class _Session:
 
 
 class _Manager:
-    async def read_workspace_file(self, *, node_id, thread_id, path):
+    def __init__(self):
+        self.last_call = None
+
+    async def read_workspace_file(self, *, node_id, thread_id, path, executor_thread_id=None):
+        self.last_call = {
+            "node_id": node_id,
+            "thread_id": thread_id,
+            "path": path,
+            "executor_thread_id": executor_thread_id,
+        }
         for block in (b"hel", b"lo"):
             yield block
     node_id = "node-1"
@@ -53,6 +63,8 @@ async def test_downloads_in_message_in_workspace_file(app):
     assert resp.status_code == 200
     assert resp.content == b"hello"
     assert "attachment" in resp.headers["content-disposition"]
+    # the turn's codex thread id is forwarded so the node can resolve the workspace
+    assert app.state.runtime_container.executor_node_manager.last_call["executor_thread_id"] == "codex-tid"
 
 
 async def test_path_not_in_turn_is_forbidden(app):

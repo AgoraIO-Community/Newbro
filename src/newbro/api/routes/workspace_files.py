@@ -59,7 +59,10 @@ async def download_workspace_file(
         raise HTTPException(status_code=504, detail="node_offline")
 
     agen = container.executor_node_manager.read_workspace_file(
-        node_id=node_id, thread_id=thread_id, path=path
+        node_id=node_id,
+        thread_id=thread_id,
+        executor_thread_id=getattr(turn, "executor_thread_id", None),
+        path=path,
     )
     # Pull the first item so Gate-2 failures map to an HTTP status *before* the
     # response body (and its 200 + headers) is committed.

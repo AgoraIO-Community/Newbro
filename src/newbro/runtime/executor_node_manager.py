@@ -832,6 +832,7 @@ class ExecutorNodeManager:
         node_id: str,
         thread_id: str,
         path: str,
+        executor_thread_id: str | None = None,
         timeout: float = 30.0,
     ) -> AsyncIterator[bytes]:
         connection = self._connections_by_node.get(node_id)
@@ -841,7 +842,10 @@ class ExecutorNodeManager:
         queue: asyncio.Queue[WorkspaceFileChunk | WorkspaceFileEof | WorkspaceFileError] = asyncio.Queue()
         self._workspace_file_streams[request_id] = queue
         command = ReadWorkspaceFileCommand(
-            request_id=request_id, thread_id=thread_id, path=path
+            request_id=request_id,
+            thread_id=thread_id,
+            executor_thread_id=executor_thread_id,
+            path=path,
         )
         try:
             await self._send_json(connection, command.model_dump(mode="json"))

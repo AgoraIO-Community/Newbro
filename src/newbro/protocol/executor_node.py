@@ -348,6 +348,10 @@ class ReadWorkspaceFileCommand(BaseModel):
     type: Literal["read_workspace_file"] = "read_workspace_file"
     request_id: str
     thread_id: str
+    # Codex thread id used to resolve the workspace root for imported/history
+    # threads (whose public thread_id is a non-reversible hash). The node maps it
+    # to the thread's own cwd; it is a selector, not a path.
+    executor_thread_id: str | None = None
     path: str
 
 
