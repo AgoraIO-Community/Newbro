@@ -1558,6 +1558,7 @@ class SessionRuntime:
     _bro_thread_live_plan_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_live_plan_emitted_text: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_goals: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _latency_first_token_seen: set[str] = field(default_factory=set, init=False, repr=False)
 
     def _record_direct_executor_text_metric(
         self,
@@ -1597,6 +1598,7 @@ class SessionRuntime:
             executor_type="codex",
             details=metric_details,
         )
+        self.observability.latency.mark(client_request_id, step)
         LOGGER.info(
             "executor_text_metric step=%s session_id=%s client_request_id=%s instruction_id=%s target_persona_id=%s target_thread_id=%s task_id=%s run_id=%s execution_session_id=%s elapsed_ms=%s",
             step,
@@ -2236,6 +2238,19 @@ class SessionRuntime:
             outbound_request=updated_request,
             message=message,
         )
+        try:
+            crid = updated_request.client_request_id
+            if crid:
+                status = _timeline_status_from_codex_event(message)
+                if crid not in self._latency_first_token_seen:
+                    self._latency_first_token_seen.add(crid)
+                    self.observability.latency.mark(crid, "executor.first_token")
+                if status in {"completed", "failed"}:
+                    self.observability.latency.mark(crid, "executor.completed")
+                    self.observability.latency.finish(crid, outcome=status)
+                    self._latency_first_token_seen.discard(crid)
+        except Exception:  # latency is best-effort; never affect turn handling
+            pass
         await self.publish_snapshot(sync_imported_codex_threads=False)
 
     async def _attach_outbound_new_thread_resume_handle(
