@@ -1,5 +1,12 @@
 import Foundation
 
+public struct CommandStatus: Equatable, Sendable {
+    public let command: String?
+    public let version: String?
+    public let menuTitle: String
+    public let isAvailable: Bool
+}
+
 public struct RuntimeLocator {
     public static let installScriptURL =
         "https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh"
@@ -8,6 +15,8 @@ public struct RuntimeLocator {
     private let homeDir: URL
     private let fileExists: (String) -> Bool
     private let whichNewbro: () -> String?
+    private let whichCommand: (String) -> String?
+    private let runCommand: ([String], [String: String]?) -> (Int32, String)
 
     /// `overridePath` defaults to the `NEWBRO_BIN` environment variable, so a
     /// local dev build can point the app at a working-copy `newbro` (e.g. the
@@ -16,11 +25,15 @@ public struct RuntimeLocator {
     public init(overridePath: String? = ProcessInfo.processInfo.environment["NEWBRO_BIN"],
                 homeDir: URL = FileManager.default.homeDirectoryForCurrentUser,
                 fileExists: @escaping (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) },
-                whichNewbro: @escaping () -> String? = RuntimeLocator.loginShellWhich) {
+                whichNewbro: @escaping () -> String? = RuntimeLocator.loginShellWhich,
+                whichCommand: @escaping (String) -> String? = RuntimeLocator.loginShellWhichCommand,
+                runCommand: @escaping ([String], [String: String]?) -> (Int32, String) = RuntimeLocator.runCommandOutput) {
         self.overridePath = overridePath
         self.homeDir = homeDir
         self.fileExists = fileExists
         self.whichNewbro = whichNewbro
+        self.whichCommand = whichCommand
+        self.runCommand = runCommand
     }
 
     public func resolveNewbro() -> String? {
@@ -34,6 +47,23 @@ public struct RuntimeLocator {
     }
 
     public var isRuntimeAvailable: Bool { resolveNewbro() != nil }
+
+    public func codexRuntimeStatus() -> CommandStatus {
+        guard let command = whichCommand("codex") else {
+            return CommandStatus(
+                command: nil,
+                version: nil,
+                menuTitle: "No Codex found. Newbro may not work properly.",
+                isAvailable: false)
+        }
+        let result = runCommand([command, "--version"], RuntimeLocator.childEnvironment())
+        let version = result.0 == 0 ? RuntimeLocator.extractVersion(result.1) : nil
+        return CommandStatus(
+            command: command,
+            version: version,
+            menuTitle: version.map { "Codex v\($0)" } ?? "Codex detected",
+            isAvailable: true)
+    }
 
     public func candidatePaths() -> [String] {
         var paths: [String] = []
@@ -75,6 +105,43 @@ public struct RuntimeLocator {
         let output = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return output.isEmpty ? nil : output
+    }
+
+    public static func extractVersion(_ output: String) -> String? {
+        output
+            .split(whereSeparator: { $0.isWhitespace })
+            .last
+            .map(String.init)
+    }
+
+    public static func loginShellWhichCommand(_ name: String) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        proc.arguments = ["-lc", "command -v \(name)"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do { try proc.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        let output = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return output.isEmpty ? nil : output
+    }
+
+    public static func runCommandOutput(_ argv: [String], _ environment: [String: String]?) -> (Int32, String) {
+        guard let executable = argv.first else { return (127, "") }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: executable)
+        proc.arguments = Array(argv.dropFirst())
+        if let environment { proc.environment = environment }
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do { try proc.run() } catch { return (127, "") }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        return (proc.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 
     /// The login shell's PATH. A menu-bar/login-item app inherits a minimal

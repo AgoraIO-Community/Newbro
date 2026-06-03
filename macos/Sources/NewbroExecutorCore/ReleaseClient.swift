@@ -14,7 +14,7 @@ public struct ReleaseInfo: Equatable, Sendable {
 /// fetch is injected so decoding is unit-testable.
 public struct ReleaseClient {
     public static let latestURL = URL(string:
-        "https://api.github.com/repos/AgoraIO/Synopse/releases/latest")!
+        "https://api.github.com/repos/AgoraIO-Community/Newbro/releases/latest")!
 
     private let fetch: (URLRequest) async throws -> Data
 

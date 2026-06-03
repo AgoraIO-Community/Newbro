@@ -77,4 +77,31 @@ final class RuntimeLocatorTests: XCTestCase {
         XCTAssertTrue(argv[2].contains("install-newbro-cli.sh"))
         XCTAssertTrue(argv[2].contains("curl -fsSL"))
     }
+
+    func testCodexStatusReportsVersion() {
+        let locator = RuntimeLocator(
+            overridePath: nil,
+            homeDir: home,
+            fileExists: { _ in false },
+            whichNewbro: { nil },
+            whichCommand: { name in name == "codex" ? "/opt/bin/codex" : nil },
+            runCommand: { argv, _ in
+                XCTAssertEqual(argv, ["/opt/bin/codex", "--version"])
+                return (0, "codex 0.42.0\n")
+            })
+        XCTAssertEqual(locator.codexRuntimeStatus().menuTitle, "Codex v0.42.0")
+        XCTAssertTrue(locator.codexRuntimeStatus().isAvailable)
+    }
+
+    func testCodexStatusWarnsWhenMissing() {
+        let locator = RuntimeLocator(
+            overridePath: nil,
+            homeDir: home,
+            fileExists: { _ in false },
+            whichNewbro: { nil },
+            whichCommand: { _ in nil },
+            runCommand: { _, _ in (1, "") })
+        XCTAssertEqual(locator.codexRuntimeStatus().menuTitle, "No Codex found. Newbro may not work properly.")
+        XCTAssertFalse(locator.codexRuntimeStatus().isAvailable)
+    }
 }
