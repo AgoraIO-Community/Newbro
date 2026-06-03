@@ -48,9 +48,12 @@ final class ExecutorSettingsClientTests: XCTestCase {
     }
 
     func testClientInvokesProbeAndUseCommands() throws {
-        var calls: [[String]] = []
-        let client = ExecutorSettingsClient(newbroPath: "/usr/local/bin/newbro") { argv in
-            calls.append(argv)
+        var calls: [(argv: [String], environment: [String: String]?)] = []
+        let client = ExecutorSettingsClient(
+            newbroPath: "/usr/local/bin/newbro",
+            environment: ["PATH": "/login/bin", "HOME": "/Users/test"]
+        ) { argv, environment in
+            calls.append((argv, environment))
             if argv.contains("probe") {
                 return """
                 {
@@ -74,9 +77,13 @@ final class ExecutorSettingsClientTests: XCTestCase {
         try client.useCodex(path: "/Users/test/.bun/bin/codex")
 
         XCTAssertEqual(probe.current.version, "codex-cli 0.136.0")
-        XCTAssertEqual(calls, [
+        XCTAssertEqual(calls.map(\.argv), [
             ["/usr/local/bin/newbro", "executor", "probe", "--executor", "codex", "--json"],
             ["/usr/local/bin/newbro", "executor", "use", "--executor", "codex", "--command", "/Users/test/.bun/bin/codex"],
+        ])
+        XCTAssertEqual(calls.map(\.environment), [
+            ["PATH": "/login/bin", "HOME": "/Users/test"],
+            ["PATH": "/login/bin", "HOME": "/Users/test"],
         ])
     }
 
@@ -102,7 +109,7 @@ final class ExecutorSettingsClientTests: XCTestCase {
         usage: newbro executor [-h] {run} ...
         newbro executor: error: argument executor_command: invalid choice: 'probe' (choose from 'run')
         """
-        let client = ExecutorSettingsClient(newbroPath: "/usr/local/bin/newbro") { argv in
+        let client = ExecutorSettingsClient(newbroPath: "/usr/local/bin/newbro") { argv, _ in
             calls.append(argv)
             if argv == ["/usr/local/bin/newbro", "--version"] {
                 return "newbro 0.1.2\n"

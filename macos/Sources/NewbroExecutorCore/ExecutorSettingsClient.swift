@@ -66,20 +66,24 @@ extension ExecutorSettingsClientError: LocalizedError {
 }
 
 public final class ExecutorSettingsClient: @unchecked Sendable {
-    public typealias Runner = (_ argv: [String]) throws -> String
+    public typealias Runner = (_ argv: [String], _ environment: [String: String]?) throws -> String
 
     private let newbroPath: String
+    private let environment: [String: String]?
     private let runner: Runner
 
-    public init(newbroPath: String, runner: @escaping Runner = ExecutorSettingsClient.runProcess) {
+    public init(newbroPath: String,
+                environment: [String: String]? = RuntimeLocator.childEnvironment(),
+                runner: @escaping Runner = ExecutorSettingsClient.runProcess) {
         self.newbroPath = newbroPath
+        self.environment = environment
         self.runner = runner
     }
 
     public func probe() throws -> ExecutorProbe {
         let output: String
         do {
-            output = try runner([newbroPath, "executor", "probe", "--executor", "codex", "--json"])
+            output = try runner([newbroPath, "executor", "probe", "--executor", "codex", "--json"], environment)
         } catch let error as ExecutorSettingsClientError {
             if error.isUnsupportedProbeSubcommand {
                 throw ExecutorSettingsClientError.runtimeTooOld(installedVersion: installedVersion())
@@ -94,19 +98,20 @@ public final class ExecutorSettingsClient: @unchecked Sendable {
     }
 
     public func useCodex(path: String) throws {
-        _ = try runner([newbroPath, "executor", "use", "--executor", "codex", "--command", path])
+        _ = try runner([newbroPath, "executor", "use", "--executor", "codex", "--command", path], environment)
     }
 
     private func installedVersion() -> String? {
-        guard let output = try? runner([newbroPath, "--version"]) else { return nil }
+        guard let output = try? runner([newbroPath, "--version"], environment) else { return nil }
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.split(separator: " ").last.map(String.init)
     }
 
-    public static func runProcess(argv: [String]) throws -> String {
+    public static func runProcess(argv: [String], environment: [String: String]?) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: argv[0])
         process.arguments = Array(argv.dropFirst())
+        if let environment { process.environment = environment }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
