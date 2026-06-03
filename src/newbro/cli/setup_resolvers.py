@@ -271,11 +271,7 @@ def resolve_codex_auto_setup_values(
                 connector_host=callbacks.existing_connector_host_config(existing_config_yaml),
                 connectors=callbacks.existing_connectors_config(existing_config_yaml),
                 executor_node={"enabled_executors": ["codex"]},
-                executors={
-                    key: value
-                    for key, value in executors_block.items()
-                    if key == "codex"
-                },
+                executors=executors_block,
             ),
         ),
     )
@@ -314,6 +310,7 @@ def executor_runtime_ready(
         command = str(
             existing_block.get("command")
             or existing_values.get(CODEX_COMMAND_KEY)
+            or callbacks.detected_codex_command()
             or ""
         ).strip()
         return bool(command) and callbacks.command_available(command)

@@ -348,6 +348,16 @@ def _try_auto_configure_codex_executor_runtime(
     return True
 
 
+def _codex_executor_command_configured(
+    existing_config_yaml: dict[str, object],
+    existing_values: dict[str, str],
+) -> bool:
+    executors = config_files.existing_executors_config(existing_config_yaml)
+    codex_block = executors.get("codex", {})
+    command = codex_block.get("command") or existing_values.get(setup_resolvers.CODEX_COMMAND_KEY)
+    return bool(str(command or "").strip())
+
+
 def _ensure_executor_runtime_configured_for_run(
     *,
     enabled_executors_override: list[str] | None = None,
@@ -355,29 +365,36 @@ def _ensure_executor_runtime_configured_for_run(
     cli_invocation = executor_cli_invocation()
     existing_values, _ = config_files.load_env_assignments(ENV_LOCAL)
     existing_config_yaml = config_files.load_existing_connector_yaml(connector_config_path())
+    if not setup_can_prompt():
+        if (
+            _can_auto_configure_codex(
+                existing_config_yaml,
+                enabled_executors_override=enabled_executors_override,
+            )
+            and not _codex_executor_command_configured(existing_config_yaml, existing_values)
+            and _try_auto_configure_codex_executor_runtime(
+                existing_config_yaml,
+                enabled_executors_override=enabled_executors_override,
+            )
+        ):
+            existing_values, _ = config_files.load_env_assignments(ENV_LOCAL)
+            existing_config_yaml = config_files.load_existing_connector_yaml(connector_config_path())
+        if _executor_runtime_config_complete(
+            existing_config_yaml,
+            existing_values,
+            enabled_executors_override=enabled_executors_override,
+        ):
+            return
+        raise CliError(
+            f"Local executor runtime config is incomplete. Run `{cli_invocation} executor setup` "
+            f"or rerun `{cli_invocation} executor run ...` in a TTY."
+        )
     if _executor_runtime_config_complete(
         existing_config_yaml,
         existing_values,
         enabled_executors_override=enabled_executors_override,
     ):
         return
-    if not setup_can_prompt():
-        if _try_auto_configure_codex_executor_runtime(
-            existing_config_yaml,
-            enabled_executors_override=enabled_executors_override,
-        ):
-            refreshed_values, _ = config_files.load_env_assignments(ENV_LOCAL)
-            refreshed_config_yaml = config_files.load_existing_connector_yaml(connector_config_path())
-            if _executor_runtime_config_complete(
-                refreshed_config_yaml,
-                refreshed_values,
-                enabled_executors_override=enabled_executors_override,
-            ):
-                return
-        raise CliError(
-            f"Local executor runtime config is incomplete. Run `{cli_invocation} executor setup` "
-            f"or rerun `{cli_invocation} executor run ...` in a TTY."
-        )
     print("[setup] executor run is missing local executor runtime config; launching setup.")
     _run_executor_setup_flow()
     refreshed_values, _ = config_files.load_env_assignments(ENV_LOCAL)

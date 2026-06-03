@@ -1514,6 +1514,96 @@ def test_executor_run_auto_configures_detected_codex_without_tty(
     assert "[setup] auto-configured codex executor command: codex" in capsys.readouterr().out
 
 
+def test_executor_runtime_config_accepts_detected_codex_without_explicit_command(monkeypatch):
+    monkeypatch.setattr(cli_main, "_detected_codex_command", lambda: "/opt/homebrew/bin/codex")
+    monkeypatch.setattr(
+        cli_main,
+        "_command_available",
+        lambda command: command == "/opt/homebrew/bin/codex",
+    )
+
+    assert cli_main._executor_runtime_config_complete(
+        {
+            "executor_node": {"enabled_executors": ["codex"]},
+            "executors": {},
+        },
+        {},
+    )
+
+
+def test_executor_run_auto_config_preserves_existing_non_codex_executors(
+    monkeypatch, tmp_path: Path
+):
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True, exist_ok=True)
+    venv_python.write_text("", encoding="utf-8")
+    config_path = tmp_path / ".newbro" / "config.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "runtime: {}",
+                "connector_host:",
+                "  enabled: false",
+                "  host: 0.0.0.0",
+                "  port: 8010",
+                '  public_base_url: "http://127.0.0.1:8000"',
+                '  synapse_base_url: "http://127.0.0.1:8000"',
+                "  enabled_connectors: []",
+                "connectors: {}",
+                "executor_node:",
+                "  enabled_executors:",
+                "    - acpx",
+                "executors:",
+                "  acpx:",
+                "    command: /opt/acpx/bin/acpx",
+                "    agent: codex",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    configure_repo_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_main, "setup_can_prompt", lambda: False)
+    monkeypatch.setattr(cli_main, "_detected_codex_command", lambda: "/opt/homebrew/bin/codex")
+    monkeypatch.setattr(
+        cli_main,
+        "_command_available",
+        lambda command: command in {"/opt/homebrew/bin/codex", "codex"},
+    )
+    monkeypatch.setattr(
+        cli_main.subprocess,
+        "run",
+        lambda *_args, **_kwargs: FakeCompletedProcess(returncode=130),
+    )
+
+    assert (
+        cli_main.main(
+            [
+                "executor",
+                "run",
+                "--base-url",
+                "http://127.0.0.1:8000",
+                "--node-id",
+                "node-1",
+                "--token",
+                "token-1",
+                "--enabled-executor",
+                "codex",
+            ]
+        )
+        == 130
+    )
+
+    config_text = config_path.read_text(encoding="utf-8")
+    assert "  acpx:" in config_text
+    assert "    command: /opt/acpx/bin/acpx" in config_text
+    assert "  codex:" in config_text
+    assert "    command: codex" in config_text
+
+
 def test_executor_run_does_not_auto_configure_missing_codex_without_tty(
     monkeypatch, tmp_path: Path, capsys
 ):
@@ -1544,3 +1634,41 @@ def test_executor_run_does_not_auto_configure_missing_codex_without_tty(
         == 1
     )
     assert "Local executor runtime config is incomplete." in capsys.readouterr().err
+
+
+def test_executor_run_does_not_auto_configure_codex_for_acpx_override(
+    monkeypatch, tmp_path: Path, capsys
+):
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True, exist_ok=True)
+    venv_python.write_text("", encoding="utf-8")
+
+    configure_repo_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_main, "setup_can_prompt", lambda: False)
+    monkeypatch.setattr(cli_main, "_detected_codex_command", lambda: "/opt/homebrew/bin/codex")
+    monkeypatch.setattr(
+        cli_main,
+        "_command_available",
+        lambda command: command in {"/opt/homebrew/bin/codex", "codex"},
+    )
+
+    assert (
+        cli_main.main(
+            [
+                "executor",
+                "run",
+                "--base-url",
+                "http://127.0.0.1:8000",
+                "--node-id",
+                "node-1",
+                "--token",
+                "token-1",
+                "--enabled-executor",
+                "acpx",
+            ]
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert "[setup] auto-configured codex executor command" not in captured.out
+    assert "Local executor runtime config is incomplete." in captured.err
