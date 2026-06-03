@@ -28,3 +28,17 @@ def test_passwd_and_passwd_txt_are_distinct_tokens():
 def test_handles_none_and_empty():
     assert extract_path_tokens(None) == set()
     assert extract_path_tokens("") == set()
+
+
+def test_extracts_path_from_markdown_link():
+    assert extract_path_tokens("[report.md](/work/out/report.md)") == {"/work/out/report.md"}
+
+
+def test_extracts_path_from_markdown_link_in_prose():
+    text = "Created the report here:\n[2026-report.md](/work/DevX/2026-report.md)\nDone."
+    assert extract_path_tokens(text) == {"/work/DevX/2026-report.md"}
+
+
+def test_ignores_urls():
+    assert extract_path_tokens("see https://example.com/a/b here") == set()
+    assert extract_path_tokens("[doc](https://x.com/a)") == set()

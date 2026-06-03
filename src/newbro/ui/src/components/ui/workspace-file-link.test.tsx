@@ -18,4 +18,12 @@ describe("remarkWorkspacePaths", () => {
     const json = transform("see /etc/passwd now", "/work");
     expect(json).not.toContain(DOWNLOAD_SCHEME);
   });
+  it("rewrites a markdown link whose target is in-workspace", () => {
+    const json = transform("[report.md](/work/out/report.md)", "/work");
+    expect(json).toContain(`${DOWNLOAD_SCHEME}/work/out/report.md`);
+  });
+  it("leaves a markdown link whose target is out-of-workspace untouched", () => {
+    const json = transform("[passwd](/etc/passwd)", "/work");
+    expect(json).not.toContain(DOWNLOAD_SCHEME);
+  });
 });

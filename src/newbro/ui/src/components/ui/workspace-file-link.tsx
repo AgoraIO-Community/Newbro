@@ -19,6 +19,16 @@ function walk(node: MdNode, root: string): void {
   for (const child of node.children) {
     if (child.type === "text" && child.value) {
       next.push(...splitText(child.value, root));
+    } else if (
+      child.type === "link" &&
+      typeof child.url === "string" &&
+      child.url.startsWith("/") &&
+      isUnderWorkspace(child.url, root)
+    ) {
+      // A markdown link whose target is an in-workspace absolute path (the form
+      // assistants usually emit, e.g. `[name](/abs/path)`) becomes a download
+      // control. Keep the label as children; don't descend into it.
+      next.push({ ...child, url: `${DOWNLOAD_SCHEME}${child.url}` });
     } else {
       if (child.type !== "link") walk(child, root); // don't descend into existing links
       next.push(child);

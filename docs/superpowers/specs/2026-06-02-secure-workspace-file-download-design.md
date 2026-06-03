@@ -117,15 +117,20 @@ the workspace.
 
 ### 2. Path-Token Grammar (shared contract)
 
-"Part of the message content" means: a **whitespace-delimited absolute path** token
-in the turn's assistant text, after stripping surrounding markdown/punctuation.
+"Part of the message content" means: an **absolute path** that begins at a token
+boundary in the turn's assistant text.
 
-- Token candidates are maximal non-whitespace runs in the raw stored text.
-- Strip a leading/trailing backtick (`` ` ``) and trailing sentence punctuation
-  (`. , ; : ) ] } ! ?`) and matching wrapping quotes.
-- A token qualifies if, after stripping, it is an **absolute path**: starts with
-  `/` (POSIX) and contains no NUL. (The node is macOS/POSIX.)
-- V1 ignores relative paths and paths containing spaces.
+- A token begins at a **boundary** — string start, whitespace, or an opening
+  bracket/brace/angle/quote/backtick — so paths written bare, in backticks/quotes/
+  parentheses, **or as a markdown link target** `[label](/abs/path)` are all
+  detected. (Assistants commonly emit file references as markdown links, so this
+  case matters in practice.)
+- The path starts with `/` (POSIX) and runs until whitespace or a closing
+  bracket/brace/angle/quote/backtick; trailing sentence punctuation
+  (`. , ; : ! ?`) is then stripped; NUL-containing tokens are rejected.
+- A **relative** path (`out/x`) is not matched (its `/` follows a word char) and a
+  **URL** (`https://…`) is not matched (its `//` follows `:`).
+- V1 ignores paths containing spaces.
 
 The backend (Gate 1) and the client (affordance, §3) implement the **same grammar**
 so the set of clickable paths equals the set of accepted paths. The grammar is

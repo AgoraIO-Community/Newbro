@@ -19,6 +19,13 @@ describe("extractPathTokens", () => {
   it("keeps passwd and passwd.txt distinct", () => {
     expect(extractPathTokens("/etc/passwd.txt")).toEqual(["/etc/passwd.txt"]);
   });
+  it("extracts the target of a markdown link", () => {
+    expect(extractPathTokens("[report.md](/work/out/report.md)")).toEqual(["/work/out/report.md"]);
+  });
+  it("ignores urls (bare and in markdown links)", () => {
+    expect(extractPathTokens("see https://example.com/a/b here")).toEqual([]);
+    expect(extractPathTokens("[doc](https://x.com/a)")).toEqual([]);
+  });
 });
 
 describe("isUnderWorkspace", () => {
