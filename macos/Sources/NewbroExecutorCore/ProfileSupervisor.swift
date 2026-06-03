@@ -54,6 +54,50 @@ public final class ProfileLifecycleEventSuppression {
     }
 }
 
+public final class ProfileLifecycleEventRelay: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: [ProfileLifecycleEvent] = []
+    private var isDraining = false
+    private let handler: (ProfileLifecycleEvent) async -> Void
+
+    public init(handler: @escaping (ProfileLifecycleEvent) async -> Void) {
+        self.handler = handler
+    }
+
+    public func enqueue(_ event: ProfileLifecycleEvent) {
+        let shouldStartDrain: Bool
+        lock.lock()
+        pending.append(event)
+        if isDraining {
+            shouldStartDrain = false
+        } else {
+            isDraining = true
+            shouldStartDrain = true
+        }
+        lock.unlock()
+
+        if shouldStartDrain {
+            Task { await drain() }
+        }
+    }
+
+    private func drain() async {
+        while let event = nextEvent() {
+            await handler(event)
+        }
+    }
+
+    private func nextEvent() -> ProfileLifecycleEvent? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !pending.isEmpty else {
+            isDraining = false
+            return nil
+        }
+        return pending.removeFirst()
+    }
+}
+
 public final class ProfileSupervisor: ObservableObject {
     public struct ProcessFactory {
         public let make: (_ argv: [String],
@@ -111,9 +155,9 @@ public final class ProfileSupervisor: ObservableObject {
         record.process = process
         records[profile.id] = record
         lock.unlock()
-        process.start()
         notifyChange()
         onEvent?(.started(profileID: profile.id, label: profile.label))
+        process.start()
     }
 
     public func stop(_ profileID: String) {

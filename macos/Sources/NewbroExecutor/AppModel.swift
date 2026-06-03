@@ -12,6 +12,7 @@ final class AppModel: ObservableObject {
     private let supervisor: ProfileSupervisor
     private let notifier: ProfileNotifying
     private let notificationController: ProfileNotificationController
+    private let eventRelay: ProfileLifecycleEventRelay
     private let store = ProfileStore()
     private let locator = RuntimeLocator()
     private let loginItem: LoginItem
@@ -32,6 +33,12 @@ final class AppModel: ObservableObject {
         self.notifier = notifier
         let notificationController = ProfileNotificationController(notifier: notifier)
         self.notificationController = notificationController
+        let eventRelay = ProfileLifecycleEventRelay { event in
+            await MainActor.run {
+                notificationController.notify(event)
+            }
+        }
+        self.eventRelay = eventRelay
         let loc = locator
         let env = RuntimeLocator.childEnvironment()
         self.loginItem = LoginItem(appPath: Bundle.main.bundlePath)
@@ -46,9 +53,7 @@ final class AppModel: ObservableObject {
                 ProfileLog(path: ProfileLog.defaultPath(profileID: profile.id))
             },
             onEvent: { event in
-                Task { @MainActor in
-                    notificationController.notify(event)
-                }
+                eventRelay.enqueue(event)
             })
         self.profiles = store.load()
         self.runtimeAvailable = locator.isRuntimeAvailable
