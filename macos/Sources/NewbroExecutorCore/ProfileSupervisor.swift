@@ -8,26 +8,36 @@ public enum ProfileLifecycleEvent: Equatable, Sendable {
 }
 
 public final class ProfileLifecycleEventSuppression {
-    private var suppressedStartCounts: [String: Int] = [:]
-    private var suppressedStopCounts: [String: Int] = [:]
+    private var startOnlyCounts: [String: Int] = [:]
+    private var restartAwaitingStopAndStartCounts: [String: Int] = [:]
+    private var restartAwaitingStartCounts: [String: Int] = [:]
 
     public init() {}
 
     public func suppressNextStart(profileID: String) {
-        suppressedStartCounts[profileID, default: 0] += 1
+        startOnlyCounts[profileID, default: 0] += 1
     }
 
     public func suppressNextRestart(profileID: String) {
-        suppressedStopCounts[profileID, default: 0] += 1
-        suppressedStartCounts[profileID, default: 0] += 1
+        restartAwaitingStopAndStartCounts[profileID, default: 0] += 1
     }
 
     public func shouldSuppress(_ event: ProfileLifecycleEvent) -> Bool {
         switch event {
         case let .started(profileID, _):
-            return consume(&suppressedStartCounts, profileID: profileID)
+            if consume(&restartAwaitingStartCounts, profileID: profileID) {
+                return true
+            }
+            if consume(&restartAwaitingStopAndStartCounts, profileID: profileID) {
+                return true
+            }
+            return consume(&startOnlyCounts, profileID: profileID)
         case let .stopped(profileID, _):
-            return consume(&suppressedStopCounts, profileID: profileID)
+            if consume(&restartAwaitingStopAndStartCounts, profileID: profileID) {
+                restartAwaitingStartCounts[profileID, default: 0] += 1
+                return true
+            }
+            return false
         case .error:
             return false
         }

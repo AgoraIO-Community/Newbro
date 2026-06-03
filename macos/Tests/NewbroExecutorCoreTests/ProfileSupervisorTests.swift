@@ -143,4 +143,12 @@ final class ProfileSupervisorTests: XCTestCase {
         XCTAssertTrue(suppression.shouldSuppress(.stopped(profileID: "p1", label: "p1")))
         XCTAssertTrue(suppression.shouldSuppress(.started(profileID: "p1", label: "p1")))
     }
+
+    func testLifecycleEventSuppressionDoesNotLeakWhenRestartStopEventIsMissing() {
+        let suppression = ProfileLifecycleEventSuppression()
+        suppression.suppressNextRestart(profileID: "p1")
+
+        XCTAssertTrue(suppression.shouldSuppress(.started(profileID: "p1", label: "p1")))
+        XCTAssertFalse(suppression.shouldSuppress(.stopped(profileID: "p1", label: "p1")))
+    }
 }
