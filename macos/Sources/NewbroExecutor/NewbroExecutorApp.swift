@@ -183,6 +183,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func pasteConnectCommand() {
         guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        try? model.addFromConnectCommand(text)
+        _ = try? model.addFromConnectCommand(text)
     }
 }

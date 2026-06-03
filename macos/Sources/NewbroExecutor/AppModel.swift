@@ -53,9 +53,8 @@ final class AppModel: ObservableObject {
     func refreshRuntime() { runtimeAvailable = locator.isRuntimeAvailable }
 
     func autostart() {
-        guard runtimeAvailable else { return }
         for profile in profiles where profile.autoActivate && isComplete(profile) {
-            supervisor.start(profile)
+            start(profile)
         }
     }
 
@@ -75,8 +74,8 @@ final class AppModel: ObservableObject {
     func activeProfileIDs() -> [String] { Array(supervisor.activeIDs()) }
 
     func start(profileID id: String) {
-        guard runtimeAvailable, let profile = profiles.first(where: { $0.id == id }) else { return }
-        supervisor.start(profile)
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        start(profile)
     }
 
     func stop(profileID id: String) {
@@ -195,10 +194,7 @@ final class AppModel: ObservableObject {
     }
 
     func canStart(_ profile: Profile) -> Bool {
-        if profile.enabledExecutors.contains("codex") {
-            return locator.codexRuntimeStatus().isAvailable
-        }
-        return true
+        return profileCanStart(profile) { locator.codexRuntimeStatus().isAvailable }
     }
 
     func recentLog(_ profile: Profile) -> [String] {

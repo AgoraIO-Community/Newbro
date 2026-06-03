@@ -39,3 +39,10 @@ public struct Profile: Codable, Equatable, Identifiable {
         autoActivate = try c.decodeIfPresent(Bool.self, forKey: .autoActivate) ?? false
     }
 }
+
+public func profileCanStart(_ profile: Profile, codexRuntimeAvailable: () -> Bool) -> Bool {
+    if profile.enabledExecutors.contains("codex") {
+        return codexRuntimeAvailable()
+    }
+    return true
+}
