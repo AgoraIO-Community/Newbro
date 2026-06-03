@@ -7,6 +7,43 @@ public enum ProfileLifecycleEvent: Equatable, Sendable {
     case error(profileID: String, label: String, exitCode: Int32)
 }
 
+public final class ProfileLifecycleEventSuppression {
+    private var suppressedStartCounts: [String: Int] = [:]
+    private var suppressedStopCounts: [String: Int] = [:]
+
+    public init() {}
+
+    public func suppressNextStart(profileID: String) {
+        suppressedStartCounts[profileID, default: 0] += 1
+    }
+
+    public func suppressNextRestart(profileID: String) {
+        suppressedStopCounts[profileID, default: 0] += 1
+        suppressedStartCounts[profileID, default: 0] += 1
+    }
+
+    public func shouldSuppress(_ event: ProfileLifecycleEvent) -> Bool {
+        switch event {
+        case let .started(profileID, _):
+            return consume(&suppressedStartCounts, profileID: profileID)
+        case let .stopped(profileID, _):
+            return consume(&suppressedStopCounts, profileID: profileID)
+        case .error:
+            return false
+        }
+    }
+
+    private func consume(_ counts: inout [String: Int], profileID: String) -> Bool {
+        guard let count = counts[profileID], count > 0 else { return false }
+        if count == 1 {
+            counts.removeValue(forKey: profileID)
+        } else {
+            counts[profileID] = count - 1
+        }
+        return true
+    }
+}
+
 public final class ProfileSupervisor: ObservableObject {
     public struct ProcessFactory {
         public let make: (_ argv: [String],

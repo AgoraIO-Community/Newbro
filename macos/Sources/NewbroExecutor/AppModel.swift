@@ -212,8 +212,13 @@ final class AppModel: ObservableObject {
                                          runtimeAvailable: runtimeAvailable,
                                          isActive: isActive(profile),
                                          codexRuntimeAvailable: codexRuntimeAvailable)
-        if action != nil {
-            notificationController.suppressNextStarted(profileID: profile.id)
+        switch action {
+        case .start(let profile):
+            notificationController.suppressNextStart(profileID: profile.id)
+        case .restart(let profile):
+            notificationController.suppressNextRestart(profileID: profile.id)
+        case nil:
+            break
         }
         perform(action)
         return action != nil
@@ -312,20 +317,24 @@ final class AppModel: ObservableObject {
 @MainActor
 private final class ProfileNotificationController {
     private let notifier: ProfileNotifying
-    private var suppressedStartedProfileIDs: Set<String> = []
+    private let suppression = ProfileLifecycleEventSuppression()
 
     init(notifier: ProfileNotifying) {
         self.notifier = notifier
     }
 
-    func suppressNextStarted(profileID: String) {
-        suppressedStartedProfileIDs.insert(profileID)
+    func suppressNextStart(profileID: String) {
+        suppression.suppressNextStart(profileID: profileID)
+    }
+
+    func suppressNextRestart(profileID: String) {
+        suppression.suppressNextRestart(profileID: profileID)
     }
 
     func notify(_ event: ProfileLifecycleEvent) {
+        if suppression.shouldSuppress(event) { return }
         switch event {
-        case let .started(profileID, label):
-            if suppressedStartedProfileIDs.remove(profileID) != nil { return }
+        case let .started(_, label):
             notifier.notify(title: "Profile started", body: label)
         case let .stopped(_, label):
             notifier.notify(title: "Profile stopped", body: label)

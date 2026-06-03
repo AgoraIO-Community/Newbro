@@ -122,4 +122,25 @@ final class ProfileSupervisorTests: XCTestCase {
         created[1].onExit(1)
         XCTAssertEqual(events.last, .error(profileID: "p1", label: "p1", exitCode: 1))
     }
+
+    func testLifecycleEventSuppressionForPasteRestart() {
+        let suppression = ProfileLifecycleEventSuppression()
+        suppression.suppressNextRestart(profileID: "p1")
+
+        XCTAssertTrue(suppression.shouldSuppress(.stopped(profileID: "p1", label: "p1")))
+        XCTAssertTrue(suppression.shouldSuppress(.started(profileID: "p1", label: "p1")))
+
+        XCTAssertFalse(suppression.shouldSuppress(.stopped(profileID: "p1", label: "p1")))
+        XCTAssertFalse(suppression.shouldSuppress(.started(profileID: "p1", label: "p1")))
+    }
+
+    func testLifecycleEventSuppressionKeepsOtherLifecycleEvents() {
+        let suppression = ProfileLifecycleEventSuppression()
+        suppression.suppressNextRestart(profileID: "p1")
+
+        XCTAssertFalse(suppression.shouldSuppress(.stopped(profileID: "p2", label: "p2")))
+        XCTAssertFalse(suppression.shouldSuppress(.error(profileID: "p1", label: "p1", exitCode: 1)))
+        XCTAssertTrue(suppression.shouldSuppress(.stopped(profileID: "p1", label: "p1")))
+        XCTAssertTrue(suppression.shouldSuppress(.started(profileID: "p1", label: "p1")))
+    }
 }
