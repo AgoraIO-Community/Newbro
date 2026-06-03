@@ -53,6 +53,7 @@ export interface ExecutorConnectCommands {
   installOnly: string;
   installConnect: string;
   runOnly: string;
+  connectSettings: string;
 }
 
 function buildExecutorRunArgs(
@@ -93,6 +94,21 @@ export function buildExecutorRunCommand(
   return ["newbro", ...buildExecutorRunArgs(nodeId, token, options)].join(" ");
 }
 
+export function buildExecutorConnectSettingsURL(
+  nodeId: string,
+  token: string,
+  options?: ExecutorRunCommandOptions,
+): string {
+  const params = new URLSearchParams();
+  params.set("base_url", getEffectiveApiBaseUrl());
+  params.set("node_id", nodeId);
+  params.set("token", token);
+  for (const executorType of options?.enabledExecutors ?? []) {
+    params.append("enabled_executor", executorType);
+  }
+  return `newbro://connect?${params.toString()}`;
+}
+
 export function buildExecutorInstallOnlyCommand(): string {
   return ["curl", "-fsSL", NEWBRO_CLI_INSTALL_URL, "|", "sh"].join(" ");
 }
@@ -123,6 +139,7 @@ export function buildExecutorConnectCommands(
     installOnly: buildExecutorInstallOnlyCommand(),
     installConnect: buildExecutorInstallConnectCommand(nodeId, token, options),
     runOnly: buildExecutorRunCommand(nodeId, token, options),
+    connectSettings: buildExecutorConnectSettingsURL(nodeId, token, options),
   };
 }
 
