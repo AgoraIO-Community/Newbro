@@ -133,6 +133,8 @@ describe("session-client transport base URL handling", () => {
         "curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --base-url 'https://api.example.com/runtime' --node-id 'node-1' --token 'tok'\"'\"'en' --enabled-executor 'acpx' --acpx-agent 'openclaw' --audio-language 'zh' --whisper-model 'small'",
       runOnly:
         "newbro executor run --base-url 'https://api.example.com/runtime' --node-id 'node-1' --token 'tok'\"'\"'en' --enabled-executor 'acpx' --acpx-agent 'openclaw' --audio-language 'zh' --whisper-model 'small'",
+      connectSettings:
+        "newbro://connect?base_url=https%3A%2F%2Fapi.example.com%2Fruntime&node_id=node-1&token=tok%27en&enabled_executor=acpx",
     });
   });
 
@@ -478,7 +480,7 @@ describe("sendSocketCommand", () => {
 });
 
 describe("buildExecutorConnectCommands (installOnly field)", () => {
-  it("returns installOnly, installConnect, and runOnly", () => {
+  it("returns installOnly, installConnect, runOnly, and connectSettings", () => {
     const cmds = buildExecutorConnectCommands("node-id-1", "tok-abc");
     expect(cmds.installOnly).toMatch(/^curl -fsSL .+ \| sh$/);
     expect(cmds.installConnect).toContain("curl");
@@ -486,6 +488,16 @@ describe("buildExecutorConnectCommands (installOnly field)", () => {
     expect(cmds.installConnect).toContain("'tok-abc'");
     expect(cmds.runOnly.startsWith("newbro executor run")).toBe(true);
     expect(cmds.runOnly).toContain("'tok-abc'");
+    expect(cmds.connectSettings).toBe(
+      "newbro://connect?base_url=http%3A%2F%2Flocalhost%3A8000&node_id=node-id-1&token=tok-abc",
+    );
+  });
+
+  it("encodes enabled executors in connectSettings", () => {
+    const cmds = buildExecutorConnectCommands("node id", "tok/abc", { enabledExecutors: ["codex", "acpx"] });
+    expect(cmds.connectSettings).toBe(
+      "newbro://connect?base_url=http%3A%2F%2Flocalhost%3A8000&node_id=node+id&token=tok%2Fabc&enabled_executor=codex&enabled_executor=acpx",
+    );
   });
 });
 
