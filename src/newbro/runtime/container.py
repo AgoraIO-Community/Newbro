@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from newbro.communication.model import CommunicationModel
@@ -13,6 +14,9 @@ from .drafts import DraftRewriter
 from .executor_node_manager import ExecutorNodeManager
 from .session import SessionRuntime, create_session_runtime
 
+if TYPE_CHECKING:
+    from newbro.observability.sinks.http_exporter import HttpExporterSink
+
 
 @dataclass(slots=True)
 class RuntimeContainer:
@@ -21,6 +25,7 @@ class RuntimeContainer:
     draft_rewriter: DraftRewriter | None = None
     interaction_classifier: InteractionClassifier | None = None
     executor_node_manager: ExecutorNodeManager = field(init=False)
+    latency_exporter: HttpExporterSink | None = field(init=False)
     _sessions: dict[str, SessionRuntime] = field(default_factory=dict, init=False)
     _background_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False)
 
@@ -28,9 +33,13 @@ class RuntimeContainer:
         self.executor_node_manager = ExecutorNodeManager(
             detached_executor_types=self.settings.detached_executor_types,
         )
+        from newbro.observability.bootstrap import build_latency_exporter
+
+        self.latency_exporter = build_latency_exporter(self.settings)
 
     def create_session(self) -> SessionRuntime:
         session_id = f"session-{uuid4().hex[:8]}"
+        extra_sinks = [self.latency_exporter] if self.latency_exporter is not None else None
         session = create_session_runtime(
             session_id,
             model=self.communication_model,
@@ -38,6 +47,7 @@ class RuntimeContainer:
             executor_node_manager=self.executor_node_manager,
             draft_rewriter=self.draft_rewriter,
             interaction_classifier=self.interaction_classifier,
+            extra_sinks=extra_sinks,
         )
         self._sessions[session_id] = session
         return session

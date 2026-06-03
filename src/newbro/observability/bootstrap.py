@@ -167,4 +167,24 @@ def _settings_fingerprint(settings: "Settings") -> str:
     return hashlib.sha1(encoded).hexdigest()[:12]
 
 
-__all__ = ["SessionObservability", "build_session_observability"]
+def build_latency_exporter(settings: "Settings"):
+    """Build a process-wide HttpExporterSink if latency export is enabled.
+
+    Returns None if export is disabled or no URL is configured.
+    """
+    from .sinks.http_exporter import HttpExporterSink
+
+    if not settings.latency_export_enabled or not settings.latency_export_url:
+        return None
+    return HttpExporterSink(
+        url=settings.latency_export_url,
+        headers=dict(settings.latency_export_headers),
+        post=None,
+        event_name=settings.latency_export_event_name,
+        batch_size=settings.latency_export_batch_size,
+        flush_seconds=settings.latency_export_flush_seconds,
+        queue_max=settings.latency_export_queue_max,
+    )
+
+
+__all__ = ["SessionObservability", "build_latency_exporter", "build_session_observability"]

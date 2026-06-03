@@ -5553,6 +5553,7 @@ def create_session_runtime(
     executor_node_manager: ExecutorNodeManager | None = None,
     draft_rewriter: DraftRewriter | None = None,
     interaction_classifier: InteractionClassifier | None = None,
+    extra_sinks: list | None = None,
 ) -> SessionRuntime:
     executor_node_manager = executor_node_manager or ExecutorNodeManager(
         detached_executor_types=settings.detached_executor_types,
@@ -5560,7 +5561,7 @@ def create_session_runtime(
     blackboard = InMemoryBlackboard()
     history = InMemoryConversationHistory()
     registry = ExecutorRegistry()
-    observability = build_session_observability(settings)
+    observability = build_session_observability(settings, extra_sinks=extra_sinks)
     registry.register(MockExecutor())
     if settings.detached_executor_enabled:
         for executor_type in settings.detached_executor_types:
