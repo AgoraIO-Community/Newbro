@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import base64
-import hashlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
 from uuid import uuid4
 
 from newbro.blackboard import BlackboardStore
@@ -137,7 +134,7 @@ class DirectExecutorInteraction:
     executor_node_manager: ExecutorNodeManager
     imported_codex_threads: dict[str, BroThread]
     imported_codex_thread_resume_handles: dict[str, AgentResumeHandle]
-    publish_snapshot: Callable[[], Awaitable[None]]
+    publish_snapshot: Callable[[], Awaitable[object]]
     observability: object | None = None
 
     def _record_direct_executor_text_metric(
@@ -165,25 +162,22 @@ class DirectExecutorInteraction:
             metric_details["elapsed_ms"] = elapsed_ms
         if details:
             metric_details.update(details)
-        try:
-            logger = getattr(self.observability, "logger", None)
-            emit_event = getattr(logger, "emit_event", None)
-            if callable(emit_event):
-                emit_event(
-                    level="INFO",
-                    event_name=f"executor_text.{step}",
-                    component="runtime.direct_executor",
-                    summary="Executor text instruction timing",
-                    conversation_id=self.session_id,
-                    request_id=client_request_id,
-                    task_id=task_id,
-                    run_id=run_id,
-                    execution_session_id=execution_session_id,
-                    executor_type="codex",
-                    details=metric_details,
-                )
-        except Exception:
-            LOGGER.debug("Failed to emit executor text observability metric.", exc_info=True)
+        logger = getattr(self.observability, "logger", None)
+        emit_event = getattr(logger, "emit_event", None)
+        if callable(emit_event):
+            emit_event(
+                level="INFO",
+                event_name=f"executor_text.{step}",
+                component="runtime.direct_executor",
+                summary="Executor text instruction timing",
+                conversation_id=self.session_id,
+                request_id=client_request_id,
+                task_id=task_id,
+                run_id=run_id,
+                execution_session_id=execution_session_id,
+                executor_type="codex",
+                details=metric_details,
+            )
         LOGGER.info(
             "executor_text_metric step=%s session_id=%s client_request_id=%s instruction_id=%s target_persona_id=%s target_thread_id=%s task_id=%s run_id=%s execution_session_id=%s elapsed_ms=%s",
             step,

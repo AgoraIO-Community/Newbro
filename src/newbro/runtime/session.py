@@ -1624,8 +1624,6 @@ class SessionRuntime:
                 publish_snapshot=lambda: self.publish_snapshot(sync_imported_codex_threads=False),
                 observability=self.observability,
             )
-        self.direct_executor.imported_codex_threads = self._imported_codex_threads
-        self.direct_executor.imported_codex_thread_resume_handles = self._imported_codex_thread_resume_handles
         return self.direct_executor
 
     async def snapshot(self, *, sync_imported_codex_threads: bool = True) -> SessionSnapshot:
@@ -1736,8 +1734,8 @@ class SessionRuntime:
             and self.executor_node_manager.executor_supports_thread_list("codex", node_id=persona.executor_node_id)
         ]
         if not eligible_personas:
-            self._imported_codex_threads = {}
-            self._imported_codex_thread_resume_handles = {}
+            self._imported_codex_threads.clear()
+            self._imported_codex_thread_resume_handles.clear()
             return []
 
         now = time.monotonic()
@@ -1840,10 +1838,12 @@ class SessionRuntime:
                         "skipped_ephemeral_count": skipped_ephemeral_count,
                     },
                 )
-            self._imported_codex_threads = imported_threads
-            self._imported_codex_thread_resume_handles = imported_resume_handles
+            self._imported_codex_threads.clear()
+            self._imported_codex_threads.update(imported_threads)
+            self._imported_codex_thread_resume_handles.clear()
+            self._imported_codex_thread_resume_handles.update(imported_resume_handles)
             self._last_codex_thread_sync_monotonic = time.monotonic()
-            return list(imported_threads.values())
+            return list(self._imported_codex_threads.values())
 
     async def open_bro_thread(
         self,
