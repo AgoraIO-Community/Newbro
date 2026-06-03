@@ -86,6 +86,7 @@ from newbro.protocol import (
 )
 
 from .config import Settings
+from .direct_executor import DirectExecutorInteraction
 from .drafts import (
     DEFAULT_BRO_ID,
     DraftRewriter,
@@ -1611,6 +1612,17 @@ class SessionRuntime:
             elapsed_ms,
         )
 
+    def _direct_executor(self) -> DirectExecutorInteraction:
+        return DirectExecutorInteraction(
+            session_id=self.session_id,
+            blackboard=self.blackboard,
+            executor_node_manager=self.executor_node_manager,
+            imported_codex_threads=self._imported_codex_threads,
+            imported_codex_thread_resume_handles=self._imported_codex_thread_resume_handles,
+            publish_snapshot=lambda: self.publish_snapshot(sync_imported_codex_threads=False),
+            observability=self.observability,
+        )
+
     async def snapshot(self, *, sync_imported_codex_threads: bool = True) -> SessionSnapshot:
         tasks = await self.blackboard.list_tasks()
         sessions = await self.blackboard.list_sessions()
@@ -2747,249 +2759,15 @@ class SessionRuntime:
         client_request_id: str | None = None,
         plan_mode: bool = False,
     ) -> ExecutorTextInstruction:
-        started_at = time.perf_counter()
-        self._record_direct_executor_text_metric(
-            step="runtime.received",
-            client_request_id=client_request_id,
+        return await self._direct_executor().submit_text_instruction(
             target_persona_id=target_persona_id,
-            target_thread_id=target_thread_id,
-            details={
-                "create_new_thread": create_new_thread,
-                "workspace_id": workspace_id,
-                "text_length": len(text.strip()),
-                "plan_mode": plan_mode,
-            },
-        )
-        persona = await self.blackboard.get_persona(target_persona_id)
-        if persona is None:
-            raise ValueError("Selected Bro is not available.")
-        if not persona.executor_node_id:
-            raise ValueError("Selected Bro is not bound to an executor node.")
-        if not self.executor_node_manager.is_executor_connected(
-            "codex",
-            node_id=persona.executor_node_id,
-        ):
-            raise ValueError("Selected Bro's Codex executor node is not connected.")
-        if not self.executor_node_manager.executor_supports_follow_up(
-                "codex",
-                node_id=persona.executor_node_id,
-        ):
-            raise ValueError("Selected Bro's executor node does not support text follow-up instructions.")
-        self._record_direct_executor_text_metric(
-            step="runtime.executor_ready",
-            client_request_id=client_request_id,
-            target_persona_id=persona.persona_id,
-            target_thread_id=target_thread_id,
-            elapsed_ms=_elapsed_ms(started_at),
-            details={"executor_node_id": persona.executor_node_id},
-        )
-
-        resolved_workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
-        resolve_started_at = time.perf_counter()
-        thread_target_id, thread_continuity_key, thread_session, thread_resume_handle = await self._resolve_bro_thread_target(
-            persona=persona,
+            text=text,
             target_thread_id=target_thread_id,
             create_new_thread=create_new_thread,
-            workspace_id=resolved_workspace_id,
-        )
-        self._record_direct_executor_text_metric(
-            step="runtime.thread_resolved",
+            workspace_id=workspace_id,
             client_request_id=client_request_id,
-            target_persona_id=persona.persona_id,
-            target_thread_id=thread_target_id,
-            elapsed_ms=_elapsed_ms(resolve_started_at),
-            details={
-                "total_elapsed_ms": _elapsed_ms(started_at),
-                "thread_continuity_key": thread_continuity_key,
-                "resume_mode": thread_session is not None or thread_resume_handle is not None,
-            },
+            plan_mode=plan_mode,
         )
-        instruction = ExecutorTextInstruction(
-            instruction_id=f"txt-{uuid4().hex[:12]}",
-            target_persona_id=persona.persona_id,
-            target_thread_id=thread_target_id,
-            text=text.strip(),
-            metadata={
-                "source": "bro_detail_text",
-                "target_thread_id": thread_target_id,
-                "client_request_id": client_request_id,
-                "plan_mode": plan_mode,
-            },
-        )
-
-        lookup_started_at = time.perf_counter()
-        execution_session, run = await self._active_codex_execution_for_persona(
-            persona.persona_id,
-            target_thread_id=thread_target_id,
-        )
-        self._record_direct_executor_text_metric(
-            step="runtime.active_execution_checked",
-            client_request_id=client_request_id,
-            instruction_id=instruction.instruction_id,
-            target_persona_id=persona.persona_id,
-            target_thread_id=thread_target_id,
-            task_id=run.task_id if run is not None else None,
-            run_id=run.run_id if run is not None else None,
-            execution_session_id=execution_session.execution_session_id if execution_session is not None else None,
-            elapsed_ms=_elapsed_ms(lookup_started_at),
-            details={"total_elapsed_ms": _elapsed_ms(started_at)},
-        )
-        if execution_session is None or run is None:
-            request_id = f"out-turn-{uuid4().hex[:12]}"
-            requested_at = datetime.now(tz=UTC).isoformat()
-            latest_resume_handle: AgentResumeHandle | None = None
-            if thread_resume_handle is not None:
-                latest_resume_handle = thread_resume_handle
-            elif thread_session is not None and thread_session.latest_resume_handle is not None:
-                latest_resume_handle = thread_session.latest_resume_handle
-            if not create_new_thread and latest_resume_handle is None:
-                raise ValueError("Selected Bro has no active Codex execution session.")
-            outbound_metadata: dict[str, object] = {
-                "source": "bro_detail_text",
-                "instruction_id": instruction.instruction_id,
-                "thread_continuity_key": thread_continuity_key,
-                "thread_mode": "new_thread" if create_new_thread else "resume",
-                "resume": not create_new_thread,
-                "plan_mode": plan_mode,
-            }
-            if client_request_id is not None:
-                outbound_metadata["client_request_id"] = client_request_id
-            if thread_session is not None:
-                outbound_metadata["execution_session_id"] = thread_session.execution_session_id
-            if latest_resume_handle is not None:
-                outbound_metadata["latest_resume_handle"] = latest_resume_handle.model_dump(mode="json")
-                if latest_resume_handle.session_handle:
-                    outbound_metadata["codex_thread_id"] = latest_resume_handle.session_handle
-                cwd = latest_resume_handle.opaque.get("cwd")
-                if isinstance(cwd, str) and cwd:
-                    outbound_metadata["codex_import_cwd"] = cwd
-            if create_new_thread and resolved_workspace_id:
-                outbound_metadata["workspace_name"] = _workspace_name(resolved_workspace_id) or resolved_workspace_id
-            outbound_request = OutboundTurnRequest(
-                request_id=request_id,
-                persona_id=persona.persona_id,
-                executor_id="codex",
-                executor_node_id=persona.executor_node_id,
-                target_thread_id=thread_target_id,
-                create_new_thread=create_new_thread,
-                workspace_id=resolved_workspace_id if create_new_thread else None,
-                client_request_id=client_request_id,
-                input_modality="text",
-                text=instruction.text,
-                plan_mode=plan_mode,
-                status="pending",
-                created_at=requested_at,
-                updated_at=requested_at,
-                metadata=outbound_metadata,
-            )
-            await self.blackboard.put_outbound_turn_request(outbound_request)
-            start_started_at = time.perf_counter()
-            started = await self.executor_node_manager.start_codex_turn(
-                request_id=request_id,
-                node_id=persona.executor_node_id,
-                target_persona_id=persona.persona_id,
-                target_thread_id=thread_target_id,
-                instruction=instruction,
-                create_new_thread=create_new_thread,
-                workspace_id=resolved_workspace_id if create_new_thread else None,
-                latest_resume_handle=latest_resume_handle,
-                metadata=outbound_metadata,
-            )
-            self._record_direct_executor_text_metric(
-                step="runtime.outbound_turn_started",
-                client_request_id=client_request_id,
-                instruction_id=instruction.instruction_id,
-                target_persona_id=persona.persona_id,
-                target_thread_id=thread_target_id,
-                elapsed_ms=_elapsed_ms(start_started_at),
-                details={
-                    "total_elapsed_ms": _elapsed_ms(started_at),
-                    "outbound_turn_request_id": request_id,
-                    "started": started,
-                },
-            )
-            if not started:
-                failed_at = datetime.now(tz=UTC).isoformat()
-                await self.blackboard.put_outbound_turn_request(
-                    outbound_request.model_copy(
-                        update={
-                            "status": "failed",
-                            "error": "Selected Bro's Codex executor node is not ready for text.",
-                            "updated_at": failed_at,
-                        }
-                    )
-                )
-                await self.publish_snapshot()
-                raise ValueError("Selected Bro's Codex executor node is not ready for text.")
-            accepted_at = datetime.now(tz=UTC).isoformat()
-            await self.blackboard.put_outbound_turn_request(
-                outbound_request.model_copy(update={"status": "accepted", "updated_at": accepted_at})
-            )
-            publish_started_at = time.perf_counter()
-            await self.publish_snapshot()
-            self._record_direct_executor_text_metric(
-                step="runtime.snapshot_published",
-                client_request_id=client_request_id,
-                instruction_id=instruction.instruction_id,
-                target_persona_id=persona.persona_id,
-                target_thread_id=thread_target_id,
-                elapsed_ms=_elapsed_ms(publish_started_at),
-                details={
-                    "total_elapsed_ms": _elapsed_ms(started_at),
-                    "outbound_turn_request_id": request_id,
-                },
-            )
-            return instruction
-
-        task = await self.blackboard.get_task(run.task_id)
-        if task is not None:
-            task.metadata = _mark_direct_executor_input(task.metadata, "bro_detail_text")
-            task.metadata["client_request_id"] = client_request_id
-            task.metadata["plan_mode"] = plan_mode
-            task.metadata["mode"] = TaskMode.PROPOSAL_ONLY.value if plan_mode else TaskMode.MODIFY_ALLOWED.value
-            await self.blackboard.put_task(task)
-
-        dispatch_started_at = time.perf_counter()
-        dispatched = await self.executor_node_manager.dispatch_text_instruction(
-            run_id=run.run_id,
-            execution_session_id=execution_session.execution_session_id,
-            executor_type="codex",
-            task_id=run.task_id,
-            node_id=persona.executor_node_id,
-            instruction=instruction,
-        )
-        self._record_direct_executor_text_metric(
-            step="runtime.dispatch_completed",
-            client_request_id=client_request_id,
-            instruction_id=instruction.instruction_id,
-            target_persona_id=persona.persona_id,
-            target_thread_id=thread_target_id,
-            task_id=run.task_id,
-            run_id=run.run_id,
-            execution_session_id=execution_session.execution_session_id,
-            elapsed_ms=_elapsed_ms(dispatch_started_at),
-            details={
-                "total_elapsed_ms": _elapsed_ms(started_at),
-                "dispatched": dispatched,
-            },
-        )
-        if not dispatched:
-            raise ValueError("Selected Bro's Codex executor node is not ready for text.")
-        publish_started_at = time.perf_counter()
-        await self.publish_snapshot()
-        self._record_direct_executor_text_metric(
-            step="runtime.snapshot_published",
-            client_request_id=client_request_id,
-            instruction_id=instruction.instruction_id,
-            target_persona_id=persona.persona_id,
-            target_thread_id=thread_target_id,
-            task_id=run.task_id,
-            run_id=run.run_id,
-            execution_session_id=execution_session.execution_session_id,
-            elapsed_ms=_elapsed_ms(publish_started_at),
-            details={"total_elapsed_ms": _elapsed_ms(started_at)},
-        )
-        return instruction
 
     async def _start_executor_text_task(
         self,
@@ -3370,23 +3148,10 @@ class SessionRuntime:
         *,
         target_thread_id: str | None = None,
     ) -> tuple[ExecutionSession | None, ExecutionRun | None]:
-        persona = await self.blackboard.get_persona(persona_id)
-        if persona is None:
-            return None, None
-        if target_thread_id is None:
-            return None, None
-        for execution_session in await self.blackboard.list_sessions():
-            if execution_session.base_executor_id != "codex" or not execution_session.active_run_id:
-                continue
-            if not _session_matches_thread_id(execution_session, target_thread_id):
-                continue
-            run = await self.blackboard.get_run(execution_session.active_run_id or "")
-            if run is None:
-                continue
-            if run.executor_type != "codex" or run.status not in AUDIO_ACTIVE_RUN_STATUSES:
-                continue
-            return execution_session, run
-        return None, None
+        return await self._direct_executor()._active_codex_execution_for_persona(
+            persona_id,
+            target_thread_id=target_thread_id,
+        )
 
     async def _resolve_bro_thread_target(
         self,
