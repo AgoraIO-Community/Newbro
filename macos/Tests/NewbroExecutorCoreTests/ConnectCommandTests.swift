@@ -49,4 +49,29 @@ final class ConnectCommandTests: XCTestCase {
         ]
         XCTAssertEqual(conflictingProfileIDs(profiles), Set(["a", "b"]))
     }
+
+    func testNormalizedProfileIdentityTrimsTrailingSlash() {
+        XCTAssertEqual(
+            normalizedProfileIdentity(baseURL: " https://x.example/ ", nodeID: " node-1 "),
+            normalizedProfileIdentity(baseURL: "https://x.example", nodeID: "node-1"))
+    }
+
+    func testFirstMatchingProfileIndexUsesNormalizedIdentity() {
+        let profiles = [
+            Profile(id: "p1", label: "A", baseURL: "https://x.example/", nodeID: "node-1", token: "old"),
+            Profile(id: "p2", label: "B", baseURL: "https://x.example", nodeID: "node-2", token: "old"),
+        ]
+        XCTAssertEqual(firstMatchingProfileIndex(in: profiles, baseURL: "https://x.example", nodeID: "node-1"), 0)
+    }
+
+    func testGeneratedProfileIDSkipsExistingIDs() {
+        let profiles = [
+            Profile(id: "profile-a", label: "A", baseURL: "https://a", nodeID: "n", token: "t"),
+        ]
+        var values = ["profile-a", "profile-b"]
+        let generated = uniqueProfileID(existing: profiles) {
+            values.removeFirst()
+        }
+        XCTAssertEqual(generated, "profile-b")
+    }
 }

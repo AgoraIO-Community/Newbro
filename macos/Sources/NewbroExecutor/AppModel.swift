@@ -124,14 +124,14 @@ final class AppModel: ObservableObject {
     }
 
     func start(_ profile: Profile) {
-        guard runtimeAvailable else { return }
+        guard runtimeAvailable, canStart(profile) else { return }
         supervisor.start(profile)
     }
     func stop(_ profile: Profile) {
         controlQueue.async { [supervisor] in supervisor.stop(profile.id) }
     }
     func restart(_ profile: Profile) {
-        guard runtimeAvailable else { return }
+        guard runtimeAvailable, canStart(profile) else { return }
         controlQueue.async { [supervisor] in supervisor.restart(profile) }
     }
 
@@ -162,21 +162,43 @@ final class AppModel: ObservableObject {
         try? store.save(profiles)
     }
 
-    func addFromConnectCommand(_ text: String) throws {
+    @discardableResult
+    func addFromConnectCommand(_ text: String) throws -> Profile {
         let fields = try parseConnectCommand(text)
-        if let index = profiles.firstIndex(where: {
-            $0.nodeID == fields.nodeID && $0.baseURL == fields.baseURL
-        }) {
+        let profile: Profile
+        if let index = firstMatchingProfileIndex(in: profiles, baseURL: fields.baseURL, nodeID: fields.nodeID) {
             profiles[index].token = fields.token
             profiles[index].enabledExecutors = fields.enabledExecutors
+            profile = profiles[index]
         } else {
-            profiles.append(Profile(
-                id: "profile-\(UUID().uuidString.prefix(8))",
-                label: fields.baseURL, baseURL: fields.baseURL,
-                nodeID: fields.nodeID, token: fields.token,
-                enabledExecutors: fields.enabledExecutors))
+            profile = Profile(
+                id: uniqueProfileID(existing: profiles),
+                label: fields.baseURL,
+                baseURL: fields.baseURL,
+                nodeID: fields.nodeID,
+                token: fields.token,
+                enabledExecutors: fields.enabledExecutors)
+            profiles.append(profile)
         }
         try? store.save(profiles)
+        autoStartPastedProfile(profile)
+        return profile
+    }
+
+    private func autoStartPastedProfile(_ profile: Profile) {
+        guard runtimeAvailable, isComplete(profile), canStart(profile) else { return }
+        if isActive(profile) {
+            restart(profile)
+        } else {
+            start(profile)
+        }
+    }
+
+    func canStart(_ profile: Profile) -> Bool {
+        if profile.enabledExecutors.contains("codex") {
+            return locator.codexRuntimeStatus().isAvailable
+        }
+        return true
     }
 
     func recentLog(_ profile: Profile) -> [String] {

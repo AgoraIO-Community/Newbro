@@ -77,11 +77,37 @@ public func parseConnectCommand(_ text: String) throws -> ConnectCommandFields {
                                 enabledExecutors: enabled)
 }
 
+public func normalizedBaseURL(_ value: String) -> String {
+    var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    while text.hasSuffix("/") { text.removeLast() }
+    return text
+}
+
+public func normalizedProfileIdentity(baseURL: String, nodeID: String) -> String {
+    normalizedBaseURL(baseURL) + "\u{0}" + nodeID.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+public func firstMatchingProfileIndex(in profiles: [Profile], baseURL: String, nodeID: String) -> Int? {
+    let target = normalizedProfileIdentity(baseURL: baseURL, nodeID: nodeID)
+    return profiles.firstIndex {
+        normalizedProfileIdentity(baseURL: $0.baseURL, nodeID: $0.nodeID) == target
+    }
+}
+
+public func uniqueProfileID(existing profiles: [Profile],
+                            generate: () -> String = { "profile-\(UUID().uuidString.prefix(8))" }) -> String {
+    let existingIDs = Set(profiles.map(\.id))
+    while true {
+        let candidate = generate()
+        if !existingIDs.contains(candidate) { return candidate }
+    }
+}
+
 public func conflictingProfileIDs(_ profiles: [Profile]) -> Set<String> {
     var seen: [String: String] = [:]
     var conflicts: Set<String> = []
     for profile in profiles {
-        let key = profile.baseURL + "\u{0}" + profile.nodeID
+        let key = normalizedProfileIdentity(baseURL: profile.baseURL, nodeID: profile.nodeID)
         if let first = seen[key] {
             conflicts.insert(first)
             conflicts.insert(profile.id)
