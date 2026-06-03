@@ -89,6 +89,32 @@ def test_executor_node_command_passes_audio_overrides():
     ]
 
 
+def test_main_exports_repo_src_pythonpath_before_dispatch(monkeypatch, tmp_path: Path):
+    repo_src = tmp_path / "src"
+    (repo_src / "newbro").mkdir(parents=True)
+    (repo_src / "newbro" / "__main__.py").write_text("", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    (tmp_path / "install.sh").write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli_main, "ROOT", tmp_path)
+    monkeypatch.setattr(cli_main, "MODULE_ROOT", tmp_path)
+    monkeypatch.setenv("PYTHONPATH", "/already-there")
+    monkeypatch.setattr(
+        cli_main,
+        "ensure_newbro_home",
+        lambda **_kwargs: ConfigHomeMigrationResult(migrated=False),
+    )
+
+    captured_pythonpath: list[str | None] = []
+    monkeypatch.setattr(
+        cli_main.cli_dispatch,
+        "dispatch",
+        lambda _args, _app: captured_pythonpath.append(cli_main.os.environ.get("PYTHONPATH")) or 0,
+    )
+
+    assert cli_main.main(["status"]) == 0
+    assert captured_pythonpath == [f"{repo_src}{cli_main.os.pathsep}/already-there"]
+
+
 def test_backend_command_sets_executor_control_websocket_limit():
     assert cli_main.command_specs.backend_command(
         Path("/tmp/newbro/.venv/bin/python"),

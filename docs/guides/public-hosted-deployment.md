@@ -95,21 +95,22 @@ user because email is only a label in this first public path.
 Creating the first Bro requires a usable user-owned executor node. A node
 becomes usable only after it has connected successfully at least once. The
 first-run setup panel issues a user-owned node id and token, prints a copyable
-install/connect command, and creates the Bro persona only after the service
-observes the node's first successful connection. The default command
-installs/updates the CLI and then starts the node:
+`newbro://connect?...` settings URL for the macOS app, and creates the Bro
+persona only after the service observes the node's first successful connection.
+The terminal fallback still exposes an install/update-and-run command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh | sh -s -- executor run --base-url https://newbro.example.com --node-id node-1234 --token secret
 ```
 
-The same UI also exposes a run-only `newbro executor run ...` command for
-machines where the CLI is already installed.
+The same terminal fallback also exposes a run-only `newbro executor run ...`
+command for machines where the CLI is already installed.
 
 Already-bound Bros open into the normal Bro Detail workspace only after the
 bound node has connected at least once. If that usable node is currently
 offline, Bro Detail remains visible, voice/talk is blocked with a warning, and
-the page can reveal the local command again. If a task is already waiting for
+the page can reveal the connect settings or terminal command again. If a task is
+already waiting for
 execution, it stays in `waiting_executor` until the node reconnects.
 
 ## GitHub Actions Deployment

@@ -94,6 +94,23 @@ def build_parser(
     executor_parser = subparsers.add_parser("executor", help="Configure and run the detached executor node.")
     executor_subparsers = executor_parser.add_subparsers(dest="executor_command", required=True)
     executor_subparsers.add_parser("setup", help="Interactively configure the detached executor node.")
+    executor_probe_parser = executor_subparsers.add_parser(
+        "probe",
+        help="Probe local executor binaries.",
+    )
+    executor_probe_parser.add_argument("--executor", choices=["codex"], required=True)
+    executor_probe_parser.add_argument("--json", action="store_true", help="Print machine-readable probe JSON.")
+    executor_use_parser = executor_subparsers.add_parser(
+        "use",
+        help="Select a local executor binary.",
+    )
+    executor_use_parser.add_argument("--executor", choices=["codex"], required=True)
+    executor_use_parser.add_argument(
+        "--command",
+        dest="executor_binary_command",
+        required=True,
+        help="Absolute path to the executor binary.",
+    )
     executor_run_parser = executor_subparsers.add_parser(
         "run",
         help="Run the detached executor node. Requires --base-url, --node-id, and --token.",

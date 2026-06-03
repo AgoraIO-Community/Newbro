@@ -41,13 +41,16 @@ Executor-node note:
 - detached nodes authenticate to Newbro with `node_id` and `token` on
   `WS /api/executors/control`
 - the executor node's Newbro URL is a client-side runtime input passed through
-  the UI's install/update-and-connect command or run-only
-  `newbro executor run --base-url ...`, not server-owned node metadata
+  the UI's app-directed `newbro://connect?...` settings URL or terminal-only
+  `newbro executor run --base-url ...` command, not server-owned node metadata
 - a native macOS menu-bar app (SwiftUI, under `macos/`) supervises multiple
   executor-node profiles stored in `~/.newbro/menubar.json`. Each profile runs
   as an independent `newbro executor run` subprocess; several run concurrently.
   The app resolves the installed `newbro` CLI at runtime and only edits
-  connection profiles. The app probes Codex during launch, displays the
+  connection profiles. While running, it monitors the clipboard for
+  `newbro://connect?...` settings copied by the web UI and applies those
+  settings automatically; the manual paste action accepts the same settings URL
+  and not raw shell commands. The app probes Codex during launch, displays the
   detected Codex version or `No Codex found. Newbro may not work properly.`,
   and relies on the CLI to auto-configure the minimal Codex executor runtime
   when Codex is detectable. `newbro executor setup` remains the

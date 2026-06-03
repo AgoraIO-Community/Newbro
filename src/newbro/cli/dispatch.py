@@ -6,6 +6,7 @@ import secrets
 
 from newbro.cli import factories as cli_factories
 from newbro.cli.commands import doctor as doctor_command
+from newbro.cli.commands import executor_settings as executor_settings_command
 from newbro.cli.commands import run as run_command
 from newbro.cli.commands import service as service_command_impl
 from newbro.cli.commands import setup as setup_command
@@ -74,6 +75,10 @@ def cmd_connector(args: Any, app: Any) -> int:
 def cmd_executor(args: Any, app: Any) -> int:
     if args.executor_command == "setup":
         return setup_command.run_executor_setup(args, cli_factories.setup_context(app), cli_factories.setup_callbacks(app))
+    if args.executor_command == "probe":
+        return executor_settings_command.run_executor_probe(args, app)
+    if args.executor_command == "use":
+        return executor_settings_command.run_executor_use(args, app)
     if args.executor_command == "run":
         return run_command.run_executor(args, cli_factories.run_context(app), cli_factories.run_callbacks(args, app))
     raise app.CliError(f"Unknown executor command: {args.executor_command}")

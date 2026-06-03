@@ -10,15 +10,15 @@ public struct UpdateStatus: Equatable, Sendable {
     }
 }
 
-public struct UpdateMenuRows: Equatable, Sendable {
+public struct UpdateSettingsRows: Equatable, Sendable {
     public let cliVersionRow: String
     public let appVersionRow: String
     public let cliUpdateRow: String?
     public let appUpdateRow: String?
 }
 
-public func updateMenuRows(installedCLI: String?, installedApp: String?, status: UpdateStatus) -> UpdateMenuRows {
-    UpdateMenuRows(
+public func updateSettingsRows(installedCLI: String?, installedApp: String?, status: UpdateStatus) -> UpdateSettingsRows {
+    UpdateSettingsRows(
         cliVersionRow: installedCLI.map { "Newbro CLI: v\($0)" } ?? "Newbro CLI: version unknown",
         appVersionRow: appVersionMenuRow(installedApp),
         cliUpdateRow: status.cliUpdate.map { "Newbro CLI update: \($0) available" },

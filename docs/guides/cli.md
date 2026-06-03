@@ -125,6 +125,22 @@ newbro executor run \
 
 Repeat `--enabled-executor` to enable multiple executor families for one run.
 
+Codex executor nodes use a machine-local Codex CLI binary. If multiple `codex`
+commands are installed, inspect them with:
+
+```bash
+newbro executor probe --executor codex --json
+```
+
+To select the binary the executor node should use, pass an absolute path:
+
+```bash
+newbro executor use --executor codex --command /Users/me/.bun/bin/codex
+```
+
+The macOS executor menu app exposes the same probe and selection flow from
+Settings, and stores the selected path in `~/.newbro/config.yaml`.
+
 Composer push-to-talk audio uses local Whisper inside the executor node. The
 `newbro-cli` package includes the required Whisper runtime dependencies. By
 default the node auto-detects language and uses the configured/default model;

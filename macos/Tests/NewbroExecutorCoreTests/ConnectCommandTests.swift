@@ -2,6 +2,35 @@ import XCTest
 @testable import NewbroExecutorCore
 
 final class ConnectCommandTests: XCTestCase {
+    func testParsesConnectSettingsURL() throws {
+        let text = "newbro://connect?base_url=https%3A%2F%2Fx.example&node_id=node-1&token=tok-abc&enabled_executor=codex&enabled_executor=acpx"
+        let fields = try parseConnectSettings(text)
+        XCTAssertEqual(fields, ConnectCommandFields(
+            baseURL: "https://x.example", nodeID: "node-1", token: "tok-abc",
+            enabledExecutors: ["codex", "acpx"]))
+    }
+
+    func testConnectSettingsURLDecodesURLSearchParamsSpaces() throws {
+        let fields = try parseConnectSettings(
+            "newbro://connect?base_url=https%3A%2F%2Fx.example&node_id=node+one&token=tok%2Fabc")
+        XCTAssertEqual(fields.nodeID, "node one")
+        XCTAssertEqual(fields.token, "tok/abc")
+    }
+
+    func testConnectSettingsURLRejectsRawRunCommand() {
+        XCTAssertThrowsError(try parseConnectSettings(
+            "newbro executor run --base-url https://x --node-id n --token t")) { error in
+            XCTAssertEqual(error as? ConnectCommandError, .invalidConnectSettings)
+        }
+    }
+
+    func testConnectSettingsURLReportsMissingFields() {
+        XCTAssertThrowsError(try parseConnectSettings(
+            "newbro://connect?base_url=https%3A%2F%2Fx.example")) { error in
+            XCTAssertEqual(error as? ConnectCommandError, .missingFields(["node_id", "token"]))
+        }
+    }
+
     func testParsesAllFields() throws {
         let text = "newbro executor run --base-url https://x --node-id node-1 " +
                    "--token tok --enabled-executor codex --enabled-executor acpx"

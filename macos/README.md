@@ -15,13 +15,13 @@ The app resolves the `newbro` CLI at runtime (override → `~/.local/bin/newbro`
 "Node runtime not found" with an "Install runtime…" action that runs the public
 `install-newbro-cli.sh`.
 
-On launch the app probes `codex` through the login-shell PATH. If Codex is
-found, the menu shows its version and the CLI can auto-write the minimal Codex
-executor config on first run. If Codex is not found, the menu shows
-"No Codex found. Newbro may not work properly." Use `newbro executor setup`
-for custom Codex paths, ACPX, or recovery.
+On launch the app probes `codex` through the login-shell PATH. The menu stays
+focused on profile operations; Codex version, binary selection, and broken
+install diagnostics live in **Settings → Executors → Codex**. The CLI can
+auto-write the minimal Codex executor config on first run. Use
+`newbro executor setup` for custom Codex paths, ACPX, or recovery.
 
-The update section reports separate components:
+The **Settings → Updates** pane reports separate components:
 
 - `Newbro CLI: vX.Y.Z` is the installed `newbro` command that runs executor
   nodes.
@@ -30,8 +30,16 @@ The update section reports separate components:
 - CLI and app update rows name the component that is behind.
 
 Runtime install, CLI upgrade, and manual update checks show disabled in-progress
-rows while they run. Runtime install and CLI upgrade also send macOS
-notifications when they finish or fail.
+rows while they run. Runtime install remains in the menu only when `newbro` is
+missing; normal CLI upgrade and app update checks live in Settings. Runtime
+install and CLI upgrade also send macOS notifications when they finish or fail.
+
+The web UI's app handoff copies `newbro://connect?...` settings to the
+clipboard. While the app is running, it monitors clipboard changes and
+automatically creates or updates the matching profile from those settings. The
+manual **Paste connect settings...** menu action accepts the same
+`newbro://connect` payload. Raw `newbro executor run ...` commands are for the
+terminal fallback and are not accepted by the app paste path.
 
 Profiles are stored in `~/.newbro/menubar.json`; logs in
 `~/.newbro/logs/executor-ui-<id>.log`.

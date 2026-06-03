@@ -105,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
             raise CliError(str(exc)) from exc
         if migration_result.warning:
             print(f"[warn] {migration_result.warning}", file=sys.stderr)
+        ensure_repo_src_on_pythonpath()
         parser = build_parser()
         args = parser.parse_args(argv)
 
@@ -210,6 +211,17 @@ def venv_python_path() -> Path:
 
 def running_from_repo_checkout() -> bool:
     return cli_paths.running_from_repo_checkout(MODULE_ROOT)
+
+
+def ensure_repo_src_on_pythonpath() -> None:
+    if not running_from_repo_checkout():
+        return
+    src = str(ROOT / "src")
+    current = os.environ.get("PYTHONPATH", "")
+    parts = [part for part in current.split(os.pathsep) if part]
+    if src in parts:
+        return
+    os.environ["PYTHONPATH"] = os.pathsep.join([src, *parts])
 
 
 def executor_run_python_path() -> Path:
