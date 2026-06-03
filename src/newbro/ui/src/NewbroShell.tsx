@@ -22,6 +22,7 @@ import {
   openBroThread,
   openSessionStream,
   resolveInteractionRequest,
+  sendSocketCommand,
   sendSocketDraftAsrTurn,
   sendSocketMessage,
   setVoiceTarget,
@@ -620,6 +621,14 @@ function useNewbroShellState() {
     return true;
   }, []);
 
+  const cancelTask = useCallback((taskId: string): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    const requestId = `cancel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    sendSocketCommand(socket, requestId, "cancel_task", taskId);
+    return true;
+  }, []);
+
   const submitDraftAsrTurn = useCallback((payload: {
     raw_text: string;
     normalized_text?: string;
@@ -790,6 +799,7 @@ function useNewbroShellState() {
     startMobileVoiceSession,
     stopMobileVoiceSession,
     sendMessage,
+    cancelTask,
     submitDraftAsrTurn,
     resolveInteractionRequest: resolveShellInteractionRequest,
     signupWithCode,

@@ -342,3 +342,35 @@ class AckMessage(BaseModel):
     ok: bool = True
     run_id: str | None = None
     detail: str | None = None
+
+
+class ReadWorkspaceFileCommand(BaseModel):
+    type: Literal["read_workspace_file"] = "read_workspace_file"
+    request_id: str
+    thread_id: str
+    # Codex thread id used to resolve the workspace root for imported/history
+    # threads (whose public thread_id is a non-reversible hash). The node maps it
+    # to the thread's own cwd; it is a selector, not a path.
+    executor_thread_id: str | None = None
+    path: str
+
+
+class WorkspaceFileChunk(BaseModel):
+    type: Literal["workspace_file_chunk"] = "workspace_file_chunk"
+    request_id: str
+    seq: int
+    data: str  # base64-encoded bytes
+
+
+class WorkspaceFileEof(BaseModel):
+    type: Literal["workspace_file_eof"] = "workspace_file_eof"
+    request_id: str
+    total_bytes: int
+    sha256: str | None = None
+
+
+class WorkspaceFileError(BaseModel):
+    type: Literal["workspace_file_error"] = "workspace_file_error"
+    request_id: str
+    code: Literal["denied", "not_found", "too_large", "read_error"]
+    message: str

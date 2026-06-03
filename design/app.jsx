@@ -12,7 +12,10 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "mode": "auto",
   "inputMode": "ptt",
   "freeSubMode": "silent",
-  "showHints": true
+  "showHints": true,
+  "msgInstant": true,
+  "msgMarks": true,
+  "msgSteer": true
 }/*EDITMODE-END*/;
 
 const MODE_LABELS = {
@@ -28,7 +31,7 @@ const MODE_LABELS = {
 // Sync voice state with the tweak panel: when mode is anything other than
 // "auto", force the voice state into that mode. When it's "auto", leave the
 // simulator alone (so hold-space drives the flow normally).
-function TweakSync({ mode, inputMode, freeSubMode }) {
+function TweakSync({ mode, inputMode, freeSubMode, msgInstant, msgMarks, msgSteer }) {
   const v = useVoice();
   React.useEffect(() => {
     if (!v) return;
@@ -48,6 +51,9 @@ function TweakSync({ mode, inputMode, freeSubMode }) {
     if (!v) return;
     v.setFreeSubMode(freeSubMode);
   }, [freeSubMode, v]);
+  React.useEffect(() => { if (v) v.setMsgInstant(msgInstant); }, [msgInstant, v]);
+  React.useEffect(() => { if (v) v.setMsgMarks(msgMarks); }, [msgMarks, v]);
+  React.useEffect(() => { if (v) v.setMsgSteer(msgSteer); }, [msgSteer, v]);
   return null;
 }
 
@@ -92,7 +98,8 @@ function App() {
 
   return (
     <VoiceProvider>
-      <TweakSync mode={t.mode} inputMode={t.inputMode} freeSubMode={t.freeSubMode} />
+      <TweakSync mode={t.mode} inputMode={t.inputMode} freeSubMode={t.freeSubMode}
+        msgInstant={t.msgInstant} msgMarks={t.msgMarks} msgSteer={t.msgSteer} />
       <DesignCanvas>
         <DCSection
           id="voice-desktop"
@@ -254,6 +261,29 @@ function App() {
             background: "rgba(255,255,255,0.6)", fontFamily: "JetBrains Mono, monospace",
             fontSize: 10, letterSpacing: 0,
           }}>Space</kbd> to run the full turn.
+        </div>
+
+        <TweakSection label="Assistant message loading" />
+        <div style={{ fontSize: 10.5, color: "rgba(41,38,27,0.6)", lineHeight: 1.5, padding: "0 0 2px" }}>
+          How the bro's reply shows it's working, on the <span style={{ fontWeight: 600 }}>desktop active session</span> artboard. Toggling replays the stream.
+        </div>
+        <TweakToggle
+          label="Instant skeleton"
+          value={t.msgInstant}
+          onChange={(v) => setTweak("msgInstant", v)}
+        />
+        <TweakToggle
+          label="Mark tool actions"
+          value={t.msgMarks}
+          onChange={(v) => setTweak("msgMarks", v)}
+        />
+        <TweakToggle
+          label="Steer / interrupt control"
+          value={t.msgSteer}
+          onChange={(v) => setTweak("msgSteer", v)}
+        />
+        <div style={{ fontSize: 10.5, color: "rgba(41,38,27,0.6)", lineHeight: 1.5, padding: "2px 0" }}>
+          <span style={{ fontWeight: 600 }}>Skeleton</span> — bubble appears the instant you send · <span style={{ fontWeight: 600 }}>Tool marks</span> — separates "acting" lines from "thinking" · <span style={{ fontWeight: 600 }}>Steer</span> — cut in mid-turn
         </div>
       </TweaksPanel>
     </VoiceProvider>

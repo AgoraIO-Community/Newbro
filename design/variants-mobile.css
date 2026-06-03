@@ -1941,6 +1941,74 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* instant skeleton — bubble appears the moment you send, before lines land */
+.thr-reason-skeleton { display: flex; flex-direction: column; gap: 7px; padding: 3px 0 1px; }
+.thr-reason-skeleton span {
+  height: 9px; border-radius: 5px;
+  background: linear-gradient(100deg, rgba(59,130,246,0.08) 30%, rgba(59,130,246,0.20) 50%, rgba(59,130,246,0.08) 70%);
+  background-size: 220% 100%;
+  animation: thr-reason-shimmer 1.25s ease-in-out infinite;
+}
+@keyframes thr-reason-shimmer {
+  from { background-position: 180% 0; }
+  to   { background-position: -80% 0; }
+}
+
+/* tool-action lines — wrench mark + mono tool token, distinct from thinking */
+.thr-reason-mark-act {
+  display: inline-grid; place-items: center;
+  width: 16px; height: 13px; margin-top: 1px;
+  color: var(--nb-info-ink);
+}
+.thr-reason-mark-act::before { display: none; }
+.thr-reason-step:not(:last-child) .thr-reason-mark-act::after { top: 14px; bottom: -5px; }
+.thr-reason-step-done .thr-reason-mark-act { color: var(--nb-info); opacity: 0.6; }
+.thr-reason-tool {
+  display: inline-flex; align-items: center;
+  margin-right: 6px; padding: 1px 5px;
+  border-radius: var(--nb-radius-xs);
+  background: rgba(59,130,246,0.10);
+  border: 1px solid var(--nb-info-edge);
+  color: var(--nb-info-ink);
+  font-family: var(--nb-font-mono);
+  font-size: 10px; font-weight: 500; letter-spacing: 0;
+  vertical-align: 1px; white-space: nowrap;
+}
+
+/* steer — quiet Stop control on the live mobile reasoning bubble */
+.thr-reason-steer {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 3px; padding-top: 8px;
+  border-top: 1px solid var(--nb-info-edge);
+}
+.thr-reason-stop, .thr-reason-resume {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 999px;
+  font-family: var(--nb-font-sans);
+  font-size: 12px; font-weight: 600; letter-spacing: -0.01em;
+  cursor: pointer;
+}
+.thr-reason-stop {
+  color: var(--nb-danger-ink);
+  border: 1px solid var(--nb-danger-edge);
+  background: var(--nb-danger-soft);
+}
+.thr-reason-resume {
+  margin-left: auto; flex-shrink: 0;
+  color: var(--nb-live-ink);
+  border: 1px solid var(--nb-live-edge);
+  background: var(--nb-live-soft);
+}
+.thr-reason-steer-hint {
+  margin-left: auto;
+  font-size: 10.5px; color: var(--nb-ink-muted); letter-spacing: 0.01em;
+}
+.thr-reason-steer-stopped { gap: 9px; }
+.thr-reason-stoptag {
+  font-size: 11.5px; line-height: 1.4;
+  color: var(--nb-ink-soft); letter-spacing: -0.01em;
+}
+
 /* ── settled / history: collapsed "Reasoned" pill above the answer ── */
 .thr-reasoned { align-self: flex-start; max-width: 88%; }
 .thr-reasoned-toggle {

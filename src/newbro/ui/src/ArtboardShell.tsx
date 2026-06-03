@@ -15,11 +15,13 @@ import {
   updatePersona,
   type ExecutorConnectCommands,
 } from "./lib/session-client";
-import { readThreadIdFromUrl, replaceThreadIdInUrl } from "./lib/session-url";
+import { useThreadSelection } from "./lib/useThreadSelection";
 import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForNativeTurn, buildReasoningStepsForTurn, type ReasoningStep } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
+import { deriveReasoningPhase } from "./lib/reasoningPhase";
+import { ReasoningBubble } from "./ReasoningBubble";
 import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
@@ -1046,11 +1048,19 @@ function SettledAnswerBubble({
   steps,
   answer,
   mobile = false,
+  sessionId = null,
+  workspaceRoot = null,
+  threadId = null,
+  turnId = null,
 }: {
   bro: BroCardModel;
   steps: ReasoningStep[];
   answer: string;
   mobile?: boolean;
+  sessionId?: string | null;
+  workspaceRoot?: string | null;
+  threadId?: string | null;
+  turnId?: string | null;
 }) {
   const [showAll, setShowAll] = React.useState(false);
   const COLLAPSED = 3;
@@ -1103,7 +1113,13 @@ function SettledAnswerBubble({
         ) : null}
         {answer ? (
           <div className={answerClass}>
-            <MarkdownText>{answer}</MarkdownText>
+            <MarkdownText
+              downloadContext={
+                sessionId && threadId && turnId && workspaceRoot
+                  ? { sessionId, threadId, turnId, workspaceRoot }
+                  : undefined
+              }
+            >{answer}</MarkdownText>
           </div>
         ) : null}
       </div>
@@ -1178,11 +1194,15 @@ function TimelineTurnView({
   turn,
   mobile = false,
   onTextTurn,
+  sessionId = null,
+  workspaceRoot = null,
 }: {
   bro: BroCardModel;
   turn: BroTimelineTurn;
   mobile?: boolean;
   onTextTurn?: (turn: TextTurn) => void;
+  sessionId?: string | null;
+  workspaceRoot?: string | null;
 }) {
   const shell = useNewbroShell();
   const record = timelineTaskRecord(turn);
@@ -1205,7 +1225,6 @@ function TimelineTurnView({
     : activeRun
       ? []
       : buildReasoningStepsForTurn(anyRun, details);
-  const isTurnSettled = activeRun === null && !nativeInFlight;
   const answerText = timelineMessageText(turn.assistant) || record?.summary?.trim() || record?.description?.trim() || "";
   const rawAnswerItemId = turn.assistant?.metadata?.codex_item_id;
   const answerItemId = typeof rawAnswerItemId === "string" ? rawAnswerItemId : null;
@@ -1213,99 +1232,41 @@ function TimelineTurnView({
     ? settledReasoningSteps.filter((s) => s.id !== answerItemId)
     : settledReasoningSteps;
 
+  const phase = deriveReasoningPhase({
+    status: turn.status,
+    stepCount: reasoningSteps.length,
+    hasAnswer: answerText !== "",
+  });
+  const stopTaskId = turn.task?.task_id ?? null;
+  const canStop = phase !== "done" && stopTaskId !== null;
+  const onStop = () => { if (stopTaskId) shell.cancelTask(stopTaskId); };
+
   return (
     <>
       <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
-      {!mobile && reasoningSteps.length > 0 ? (
-        <div className="dt-turn dt-turn-bro">
-          <div className="dt-bubble dt-bubble-bro dt-bubble-reason">
-            <span className="dt-reason-kicker">
-              <span className="dt-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-              {bro.name} is working
-            </span>
-            <ol className="dt-reason-steps">
-              {(() => {
-                const upto = reasoningSteps.length;
-                const WINDOW = 3;
-                const startAt = Math.max(0, upto - WINDOW);
-                const vis = reasoningSteps.slice(startAt, upto);
-                const FADE = [1, 0.55, 0.26];
-                return vis.map((s, j) => {
-                  const dist = vis.length - 1 - j;
-                  const isLast = dist === 0;
-                  return (
-                    <li
-                      key={s.id}
-                      className={`dt-reason-step${isLast ? " dt-reason-step-active" : " dt-reason-step-done"}`}
-                      style={{ opacity: FADE[dist] ?? 0.26 }}
-                    >
-                      <span className="dt-reason-step-mark" aria-hidden="true" />
-                      <span className="dt-reason-step-text">{s.label}</span>
-                    </li>
-                  );
-                });
-              })()}
-            </ol>
-          </div>
-        </div>
-      ) : null}
-      {mobile && reasoningSteps.length > 0 ? (
-        <div className="thr-turn thr-turn-bro">
-          <div className="thr-bubble thr-bubble-bro thr-reason">
-            <span className="thr-reason-kicker">
-              <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-              {bro.name} is working
-            </span>
-            <ol className="thr-reason-steps">
-              {(() => {
-                const upto = reasoningSteps.length;
-                const WINDOW = 3;
-                const startAt = Math.max(0, upto - WINDOW);
-                const vis = reasoningSteps.slice(startAt, upto);
-                const FADE = [1, 0.55, 0.26];
-                return vis.map((s, j) => {
-                  const dist = vis.length - 1 - j;
-                  const isLast = dist === 0;
-                  return (
-                    <li
-                      key={s.id}
-                      className={`thr-reason-step${isLast ? " thr-reason-step-active" : " thr-reason-step-done"}`}
-                      style={{ opacity: FADE[dist] ?? 0.26 }}
-                    >
-                      <span className="thr-reason-mark" aria-hidden="true" />
-                      <span className="thr-reason-text">{s.label}</span>
-                    </li>
-                  );
-                });
-              })()}
-            </ol>
-          </div>
-          <div className="thr-meta">{bro.name} · updating live</div>
-        </div>
-      ) : null}
-      {isTurnSettled && (answerText || dedupedSettledSteps.length > 0) ? (
-        <SettledAnswerBubble bro={bro} steps={dedupedSettledSteps} answer={answerText} mobile={mobile} />
-      ) : null}
-      {!isTurnSettled && !mobile && reasoningSteps.length === 0 ? (
-        <div className="dt-turn dt-turn-bro">
-          <div className="dt-bubble dt-bubble-bro dt-bubble-reason" aria-live="polite">
-            <span className="dt-reason-kicker">
-              <span className="dt-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-              {bro.name} is working
-            </span>
-          </div>
-        </div>
-      ) : null}
-      {!isTurnSettled && mobile && reasoningSteps.length === 0 ? (
-        <div className="thr-turn thr-turn-bro">
-          <div className="thr-bubble thr-bubble-bro thr-reason" aria-live="polite">
-            <span className="thr-reason-kicker">
-              <span className="thr-reason-orb" aria-hidden="true"><span /><span /><span /></span>
-              {bro.name} is working
-            </span>
-          </div>
-        </div>
-      ) : null}
+      {phase === "done" ? (
+        (answerText || dedupedSettledSteps.length > 0) ? (
+          <SettledAnswerBubble
+            bro={bro}
+            steps={dedupedSettledSteps}
+            answer={answerText}
+            mobile={mobile}
+            sessionId={sessionId}
+            workspaceRoot={workspaceRoot}
+            threadId={turn.thread_id}
+            turnId={turn.turn_id}
+          />
+        ) : null
+      ) : (
+        <ReasoningBubble
+          broName={bro.name}
+          phase={phase}
+          steps={reasoningSteps}
+          mobile={Boolean(mobile)}
+          canStop={canStop}
+          onStop={onStop}
+        />
+      )}
       {proposalRequests.map((request) => (
         <PlanProposalCard
           key={request.request_id}
@@ -2470,7 +2431,14 @@ function ThreadPanel({
         </div>
       ) : null}
       {renderedTurns.map((turn) => (
-        <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} onTextTurn={onTextTurn} />
+        <TimelineTurnView
+          key={turn.turn_id}
+          bro={bro}
+          turn={turn}
+          onTextTurn={onTextTurn}
+          sessionId={shell.activeShellSessionId}
+          workspaceRoot={selectedThread?.workspaceId ?? null}
+        />
       ))}
       {fallbackProposalRequests.map((request) => (
         <PlanProposalCard
@@ -2716,7 +2684,15 @@ function MobileThreadSurface({
           </div>
         ) : null}
         {renderedTurns.map((turn) => (
-          <TimelineTurnView key={turn.turn_id} bro={bro} turn={turn} mobile onTextTurn={onTextTurn} />
+          <TimelineTurnView
+            key={turn.turn_id}
+            bro={bro}
+            turn={turn}
+            mobile
+            onTextTurn={onTextTurn}
+            sessionId={shell.activeShellSessionId}
+            workspaceRoot={selectedThread?.workspaceId ?? null}
+          />
         ))}
         {fallbackProposalRequests.map((request) => (
           <PlanProposalCard
@@ -3297,15 +3273,8 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const shell = useNewbroShell();
   const [textTurns, setTextTurns] = useState<TextTurn[]>([]);
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readThreadIdFromUrl());
-  const [pendingNewThread, setPendingNewThread] = useState(false);
-  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null);
-  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [threadVisibleCount, setThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const [connectOpen, setConnectOpen] = useState(false);
-  const openedThreadRef = useRef<string | null>(null);
-  const activeThreadRef = useRef<string | null>(null);
-  const recentResolveRef = useRef<string | null>(null);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
@@ -3318,20 +3287,28 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const persona = bro?.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
   const threads = bro?.source === "runtime" ? buildBroThreadRecords(bro.id, shell.broThreads) : [];
   const workspaceOptions = useMemo(() => buildWorkspaceOptions(threads), [threads]);
-  const matchedThread = threads.find((thread) => thread.threadId === selectedThreadId);
-  const isResolveLag =
-    !pendingNewThread
-    && selectedThreadId !== null
-    && !matchedThread
-    && recentResolveRef.current === selectedThreadId;
-  const selectedThread = pendingNewThread || isResolveLag
-    ? null
-    : matchedThread ?? threads[0] ?? null;
-  const activeThreadId = pendingNewThread
-    ? null
-    : isResolveLag
-      ? selectedThreadId
-      : selectedThread?.threadId ?? null;
+  const {
+    selectedThreadId,
+    pendingNewThread,
+    pendingWorkspaceId,
+    workspacePickerOpen,
+    setWorkspacePickerOpen,
+    selectedThread,
+    activeThreadId,
+    selectThread,
+    newThread,
+    selectWorkspace,
+    resolveThread,
+  } = useThreadSelection({
+    broId: bro?.id ?? null,
+    broSource: bro?.source ?? null,
+    threads,
+    workspaceOptions,
+    needsConnect,
+    openThread: (id, tid) => { void shell.openRuntimeBroThread(id, tid); },
+    closeThread: (id, tid) => { void shell.closeRuntimeBroThread(id, tid); },
+    onNoWorkspace: () => shell.setShellError("No Codex workspace is available for this Bro yet."),
+  });
   const visibleThreads = useMemo(
     () => threads.slice(0, threadVisibleCount),
     [threadVisibleCount, threads],
@@ -3351,22 +3328,6 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   ].join("::");
 
   useEffect(() => {
-    if (pendingNewThread || threads.length === 0) return;
-    const exists = selectedThreadId ? threads.some((thread) => thread.threadId === selectedThreadId) : false;
-    if (exists) {
-      if (recentResolveRef.current === selectedThreadId) {
-        recentResolveRef.current = null;
-      }
-      return;
-    }
-    if (recentResolveRef.current === selectedThreadId) {
-      return;
-    }
-    setSelectedThreadId(threads[0].threadId);
-    replaceThreadIdInUrl(threads[0].threadId);
-  }, [pendingNewThread, selectedThreadId, threads]);
-
-  useEffect(() => {
     setThreadVisibleCount(THREAD_LIST_PAGE_SIZE);
   }, [broId]);
 
@@ -3376,65 +3337,6 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     if (selectedIndex < threadVisibleCount) return;
     setThreadVisibleCount(Math.ceil((selectedIndex + 1) / THREAD_LIST_PAGE_SIZE) * THREAD_LIST_PAGE_SIZE);
   }, [activeThreadId, threadVisibleCount, threads]);
-
-  function selectThread(threadId: string) {
-    setPendingNewThread(false);
-    setPendingWorkspaceId(null);
-    setWorkspacePickerOpen(false);
-    setSelectedThreadId(threadId);
-    replaceThreadIdInUrl(threadId);
-    openedThreadRef.current = null;
-  }
-
-  function newThread() {
-    if (workspaceOptions.length === 0) {
-      shell.setShellError("No Codex workspace is available for this Bro yet.");
-      return;
-    }
-    setWorkspacePickerOpen(true);
-  }
-
-  function selectWorkspace(workspaceId: string) {
-    if (bro?.source === "runtime") {
-      void shell.closeRuntimeBroThread(bro.id, activeThreadId);
-    }
-    setPendingNewThread(true);
-    setPendingWorkspaceId(workspaceId);
-    setWorkspacePickerOpen(false);
-    setSelectedThreadId(null);
-    replaceThreadIdInUrl(null);
-  }
-
-  function resolveThread(threadId: string | null) {
-    if (!threadId) return;
-    recentResolveRef.current = threadId;
-    setPendingNewThread(false);
-    setPendingWorkspaceId(null);
-    setWorkspacePickerOpen(false);
-    setSelectedThreadId(threadId);
-    replaceThreadIdInUrl(threadId);
-    openedThreadRef.current = threadId;
-  }
-
-  useEffect(() => {
-    if (pendingNewThread || needsConnect || !bro || bro.source !== "runtime" || !activeThreadId) return;
-    if (recentResolveRef.current === activeThreadId) return;
-    if (openedThreadRef.current === activeThreadId) return;
-    openedThreadRef.current = activeThreadId;
-    void shell.openRuntimeBroThread(bro.id, activeThreadId);
-  }, [activeThreadId, bro?.id, bro?.source, needsConnect, pendingNewThread]);
-
-  useEffect(() => {
-    activeThreadRef.current = activeThreadId;
-  }, [activeThreadId]);
-
-  useEffect(() => {
-    return () => {
-      if (bro?.source === "runtime") {
-        void shell.closeRuntimeBroThread(bro.id, activeThreadRef.current);
-      }
-    };
-  }, [bro?.id, bro?.source]);
 
   useEffect(() => {
     const element = threadScrollRef.current;
@@ -4014,35 +3916,36 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
   const [pickerOpen, setPickerOpen] = useState(false);
   const [textTurns, setTextTurns] = useState<TextTurn[]>([]);
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readThreadIdFromUrl());
-  const [pendingNewThread, setPendingNewThread] = useState(false);
-  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null);
-  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [drawerThreadVisibleCount, setDrawerThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const [connectOpen, setConnectOpen] = useState(false);
-  const openedThreadRef = useRef<string | null>(null);
-  const activeThreadRef = useRef<string | null>(null);
-  const recentResolveRef = useRef<string | null>(null);
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
   const offline = nodeState.kind === "usable_disconnected" ? nodeState.node : null;
   const needsConnect = bro.source === "runtime" && nodeStateNeedsConnect(nodeState) && nodeState.kind !== "no_bound_node";
   const persona = bro.source === "runtime" ? shell.runtimePersonas.find((item) => item.persona_id === bro.id) ?? null : null;
   const threads = bro.source === "runtime" ? buildBroThreadRecords(bro.id, shell.broThreads) : [];
   const workspaceOptions = useMemo(() => buildWorkspaceOptions(threads), [threads]);
-  const matchedThread = threads.find((thread) => thread.threadId === selectedThreadId);
-  const isResolveLag =
-    !pendingNewThread
-    && selectedThreadId !== null
-    && !matchedThread
-    && recentResolveRef.current === selectedThreadId;
-  const selectedThread = pendingNewThread || isResolveLag
-    ? null
-    : matchedThread ?? threads[0] ?? null;
-  const activeThreadId = pendingNewThread
-    ? null
-    : isResolveLag
-      ? selectedThreadId
-      : selectedThread?.threadId ?? null;
+  const {
+    selectedThreadId,
+    pendingNewThread,
+    pendingWorkspaceId,
+    workspacePickerOpen,
+    setWorkspacePickerOpen,
+    selectedThread,
+    activeThreadId,
+    selectThread,
+    newThread,
+    selectWorkspace,
+    resolveThread,
+  } = useThreadSelection({
+    broId: bro?.id ?? null,
+    broSource: bro?.source ?? null,
+    threads,
+    workspaceOptions,
+    needsConnect,
+    openThread: (id, tid) => { void shell.openRuntimeBroThread(id, tid); },
+    closeThread: (id, tid) => { void shell.closeRuntimeBroThread(id, tid); },
+    onNoWorkspace: () => shell.setShellError("No Codex workspace is available for this Bro yet."),
+  });
   const visibleDrawerThreads = useMemo(
     () => threads.slice(0, drawerThreadVisibleCount),
     [drawerThreadVisibleCount, threads],
@@ -4065,21 +3968,6 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
     setAudioTurns((current) => applyAudioTranscripts(current, shell.executionRuns));
   }, [shell.executionRuns]);
   useEffect(() => {
-    if (pendingNewThread || threads.length === 0) return;
-    const exists = selectedThreadId ? threads.some((thread) => thread.threadId === selectedThreadId) : false;
-    if (exists) {
-      if (recentResolveRef.current === selectedThreadId) {
-        recentResolveRef.current = null;
-      }
-      return;
-    }
-    if (recentResolveRef.current === selectedThreadId) {
-      return;
-    }
-    setSelectedThreadId(threads[0].threadId);
-    replaceThreadIdInUrl(threads[0].threadId);
-  }, [pendingNewThread, selectedThreadId, threads]);
-  useEffect(() => {
     setDrawerThreadVisibleCount(THREAD_LIST_PAGE_SIZE);
   }, [bro.id]);
   useEffect(() => {
@@ -4088,62 +3976,6 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
     if (selectedIndex < drawerThreadVisibleCount) return;
     setDrawerThreadVisibleCount(Math.ceil((selectedIndex + 1) / THREAD_LIST_PAGE_SIZE) * THREAD_LIST_PAGE_SIZE);
   }, [activeThreadId, drawerThreadVisibleCount, threads]);
-  function selectThread(threadId: string) {
-    setPendingNewThread(false);
-    setPendingWorkspaceId(null);
-    setWorkspacePickerOpen(false);
-    setSelectedThreadId(threadId);
-    replaceThreadIdInUrl(threadId);
-    openedThreadRef.current = null;
-    setPickerOpen(false);
-  }
-  function newThread() {
-    if (workspaceOptions.length === 0) {
-      shell.setShellError("No Codex workspace is available for this Bro yet.");
-      setPickerOpen(false);
-      return;
-    }
-    setPickerOpen(false);
-    setWorkspacePickerOpen(true);
-  }
-  function selectWorkspace(workspaceId: string) {
-    if (bro.source === "runtime") {
-      void shell.closeRuntimeBroThread(bro.id, activeThreadId);
-    }
-    setPendingNewThread(true);
-    setPendingWorkspaceId(workspaceId);
-    setWorkspacePickerOpen(false);
-    setSelectedThreadId(null);
-    replaceThreadIdInUrl(null);
-    setPickerOpen(false);
-  }
-  function resolveThread(threadId: string | null) {
-    if (!threadId) return;
-    recentResolveRef.current = threadId;
-    setPendingNewThread(false);
-    setPendingWorkspaceId(null);
-    setWorkspacePickerOpen(false);
-    setSelectedThreadId(threadId);
-    replaceThreadIdInUrl(threadId);
-    openedThreadRef.current = threadId;
-  }
-  useEffect(() => {
-    if (pendingNewThread || needsConnect || bro.source !== "runtime" || !activeThreadId) return;
-    if (recentResolveRef.current === activeThreadId) return;
-    if (openedThreadRef.current === activeThreadId) return;
-    openedThreadRef.current = activeThreadId;
-    void shell.openRuntimeBroThread(bro.id, activeThreadId);
-  }, [activeThreadId, bro.id, bro.source, needsConnect, pendingNewThread]);
-  useEffect(() => {
-    activeThreadRef.current = activeThreadId;
-  }, [activeThreadId]);
-  useEffect(() => {
-    return () => {
-      if (bro.source === "runtime") {
-        void shell.closeRuntimeBroThread(bro.id, activeThreadRef.current);
-      }
-    };
-  }, [bro.id, bro.source]);
   const upsertAudioTurn = (turn: AudioTurn) => {
     setAudioTurns((current) => {
       const existing = current.findIndex((candidate) => candidate.id === turn.id);
@@ -4248,7 +4080,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
                 <button
                   type="button"
                   className={`thr-drawer-item ${thread.status === "running" ? "thr-drawer-item-working" : "thr-drawer-item-open"}${!pendingNewThread && activeThreadId === thread.threadId ? " thr-drawer-item-on" : ""}`}
-                  onClick={() => selectThread(thread.threadId)}
+                  onClick={() => { selectThread(thread.threadId); setPickerOpen(false); }}
                 >
                 <span className="thr-drawer-item-dot" aria-hidden="true" />
                 <span className="thr-drawer-item-body">
@@ -4288,7 +4120,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
               <span>Show {Math.min(THREAD_LIST_PAGE_SIZE, hiddenDrawerThreadCount)} more</span>
             </button>
           ) : null}
-          <button type="button" className="thr-drawer-new" onClick={newThread}>
+          <button type="button" className="thr-drawer-new" onClick={() => { newThread(); setPickerOpen(false); }}>
             <Plus size={14} strokeWidth={2.2} />
             <span>New thread with {bro.name}</span>
           </button>
@@ -4314,7 +4146,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
           open={workspacePickerOpen}
           broName={bro.name}
           workspaceOptions={workspaceOptions}
-          onSelectWorkspace={selectWorkspace}
+          onSelectWorkspace={(workspaceId) => { selectWorkspace(workspaceId); setPickerOpen(false); }}
           onClose={() => setWorkspacePickerOpen(false)}
         />
       </div>

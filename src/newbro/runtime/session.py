@@ -2215,6 +2215,14 @@ class SessionRuntime:
             }
         )
         await self.blackboard.put_outbound_turn_request(updated_request)
+        LOGGER.warning(
+            "[turn-reco] channelA request_id=%s client_request_id=%s exec_thread=%s exec_turn=%s status=%s",
+            message.request_id,
+            updated_request.client_request_id,
+            updated_request.executor_thread_id,
+            updated_request.executor_turn_id,
+            request_status,
+        )
         await self._attach_outbound_new_thread_resume_handle(updated_request, message)
         self._upsert_bro_thread_executor_turn(
             _bro_timeline_turn_from_codex_turn_event(
@@ -2303,6 +2311,10 @@ class SessionRuntime:
                 continue
             client_request_id = _task_metadata_string(task, "client_request_id")
             if client_request_id is not None:
+                LOGGER.warning(
+                    "[turn-reco] channelB resolve thread=%s exec_turn=%s exact=hit -> %s",
+                    public_thread_id, executor_turn_id, client_request_id,
+                )
                 return client_request_id
 
         direct_candidates: list[tuple[str, str]] = []
@@ -2326,15 +2338,25 @@ class SessionRuntime:
                 TaskStatus.WAITING_USER_INPUT,
             }:
                 pending_candidates.append(candidate)
-        unique_ids = {client_request_id for _, client_request_id in pending_candidates}
-        if len(unique_ids) != 1:
-            unique_ids = {client_request_id for _, client_request_id in direct_candidates}
-            if len(unique_ids) != 1:
-                return None
+        unique_pending = {client_request_id for _, client_request_id in pending_candidates}
+        unique_direct = {client_request_id for _, client_request_id in direct_candidates}
+        if len(unique_pending) == 1:
+            pending_candidates.sort()
+            result = pending_candidates[-1][1] if pending_candidates else None
+            branch = "pending-single"
+        elif len(unique_direct) == 1:
             direct_candidates.sort()
-            return direct_candidates[-1][1] if direct_candidates else None
-        pending_candidates.sort()
-        return pending_candidates[-1][1] if pending_candidates else None
+            result = direct_candidates[-1][1] if direct_candidates else None
+            branch = "direct-single"
+        else:
+            result = None
+            branch = "ambiguous-none"
+        LOGGER.warning(
+            "[turn-reco] channelB resolve thread=%s exec_turn=%s exact=miss branch=%s pending=%s direct=%s -> %s",
+            public_thread_id, executor_turn_id, branch,
+            sorted(unique_pending), sorted(unique_direct), result,
+        )
+        return result
 
     async def _apply_codex_thread_timeline_event(
         self,
@@ -2599,6 +2621,12 @@ class SessionRuntime:
                 )
             ),
             None,
+        )
+        LOGGER.warning(
+            "[turn-reco] upsert thread=%s turn_id=%s exec_turn=%s client_request_id=%s source=%s merged=%s",
+            turn.thread_id, turn.turn_id, turn.executor_turn_id,
+            turn.client_request_id, turn.metadata.get("source"),
+            existing_index is not None,
         )
         if existing_index is None:
             turns.append(turn)

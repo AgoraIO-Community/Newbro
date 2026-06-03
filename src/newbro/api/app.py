@@ -17,6 +17,7 @@ from newbro.api.routes.interaction_requests import router as interaction_request
 from newbro.api.routes.messages import router as messages_router
 from newbro.api.routes.personas import router as personas_router
 from newbro.api.routes.sessions import router as sessions_router
+from newbro.api.routes.workspace_files import router as workspace_files_router
 from newbro.api.ws.executors import router as executor_control_router
 from newbro.api.ws.stream import router as stream_router
 from newbro.runtime.bootstrap import build_runtime_container
@@ -55,6 +56,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(executor_text_router, prefix=API_PREFIX)
     app.include_router(stream_router, prefix=API_PREFIX)
     app.include_router(executor_control_router, prefix=API_PREFIX)
+    app.include_router(workspace_files_router, prefix=API_PREFIX)
 
     return app
 

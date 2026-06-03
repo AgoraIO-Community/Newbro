@@ -16,6 +16,9 @@ from newbro.protocol import (
     InteractionStateMessage,
     RegisterNodeMessage,
     RunEventMessage,
+    WorkspaceFileChunk,
+    WorkspaceFileEof,
+    WorkspaceFileError,
 )
 from newbro.runtime.executor_node_manager import ExecutorNodeAuthError
 
@@ -133,4 +136,22 @@ async def _handle_control_message(container, websocket: WebSocket, payload: obje
         except ValidationError:
             return AckMessage(message_type="audio_instruction_transcribed", ok=False, detail="invalid_payload")
         return container.executor_node_manager.publish_audio_instruction_transcribed(message)
+    if message_type == "workspace_file_chunk":
+        try:
+            message = WorkspaceFileChunk.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="workspace_file_chunk", ok=False, detail="invalid_payload")
+        return container.executor_node_manager.publish_workspace_file_chunk(message)
+    if message_type == "workspace_file_eof":
+        try:
+            message = WorkspaceFileEof.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="workspace_file_eof", ok=False, detail="invalid_payload")
+        return container.executor_node_manager.publish_workspace_file_eof(message)
+    if message_type == "workspace_file_error":
+        try:
+            message = WorkspaceFileError.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="workspace_file_error", ok=False, detail="invalid_payload")
+        return container.executor_node_manager.publish_workspace_file_error(message)
     return AckMessage(message_type=str(message_type or "unknown"), ok=False, detail="unknown_message_type")

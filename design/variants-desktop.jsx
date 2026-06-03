@@ -1204,8 +1204,11 @@ function DTBroCard({ bro }) {
     bro.state === "working" ? "info" :
     bro.state === "offline" ? "warn" :
     "calm";
+  const offline = bro.state === "offline";
+  const working = bro.state === "working";
+  const Tag = offline ? "div" : "button";
   return (
-    <button type="button" className={`dt-bro-card dt-bro-card-${tone}`}>
+    <Tag type={offline ? undefined : "button"} className={`dt-bro-card dt-bro-card-${tone}${offline ? " dt-bro-card-offline" : ""}`}>
       <div className={`dt-bro-card-avatar dt-bro-card-avatar-${tone}`}>
         <BroAvatar character={broChar(bro.name)} state={bro.state === "working" ? "working" : bro.state === "offline" ? "offline" : "idle"} size={42} />
         {bro.unread > 0 && <span className="dt-bro-card-badge">{bro.unread}</span>}
@@ -1213,36 +1216,46 @@ function DTBroCard({ bro }) {
       <div className="dt-bro-card-body">
         <div className="dt-bro-card-row">
           <span className="dt-bro-card-name">{bro.name}</span>
-          <DTHomeChip state={bro.state} />
+          {!working && <DTHomeChip state={bro.state} />}
         </div>
         <div className="dt-bro-card-meta">
           <span className="dt-bro-card-mono">on {bro.executor}</span>
           <span className="dt-bro-meta-sep">·</span>
           <span className="dt-bro-card-mono">{bro.node}</span>
-          <span className="dt-bro-meta-sep">·</span>
-          <span>{bro.lastTurn}</span>
-        </div>
-        <div className={`dt-bro-card-task${bro.state === "working" ? " dt-bro-card-task-running" : ""}`}>
-          {bro.state === "working" && <span className="dt-bro-card-spin" />}
-          <span className="dt-bro-card-task-text">{bro.task}</span>
-          {bro.state === "working" && (
-            <span className="dt-bro-card-pct">{bro.progress}%</span>
+          {!working && (
+            <React.Fragment>
+              <span className="dt-bro-meta-sep">·</span>
+              <span>{bro.lastTurn}</span>
+            </React.Fragment>
           )}
         </div>
-        {bro.state === "working" && (
-          <div className="dt-bro-card-bar">
-            <span className="dt-bro-card-bar-fill" style={{ width: `${bro.progress}%` }} />
-          </div>
-        )}
-        {bro.state === "working" && (
-          <div className="dt-bro-card-step">
-            <span className="ob-mono-tiny">step · {bro.step}</span>
-            <span className="ob-mono-tiny">running {bro.elapsed}</span>
+        {offline ? (
+          <React.Fragment>
+            <div className="dt-bro-card-task dt-bro-card-task-offline">
+              <span className="dt-bro-card-task-text">{bro.node} dropped its connection — reconnect to resume.</span>
+            </div>
+            <div className="dt-bro-card-actions">
+              <button type="button" className="dt-bro-card-connect" onClick={(e) => e.stopPropagation()}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14M13 6l6 6-6 6"/>
+                </svg>
+                <span>Install &amp; connect</span>
+              </button>
+              <button type="button" className="dt-bro-card-open" onClick={(e) => e.stopPropagation()}>Open</button>
+            </div>
+          </React.Fragment>
+        ) : (
+          <div className={`dt-bro-card-task${bro.state === "working" ? " dt-bro-card-task-running" : ""}`}>
+            {bro.state === "working" && <span className="dt-bro-card-spin" />}
+            <span className="dt-bro-card-task-text">{bro.task}</span>
+            {bro.state === "working" && (
+              <span className="dt-bro-card-pct">running {bro.elapsed}</span>
+            )}
           </div>
         )}
       </div>
-      <span className="dt-bro-card-arrow">›</span>
-    </button>
+      {!offline && <span className="dt-bro-card-arrow">›</span>}
+    </Tag>
   );
 }
 
@@ -1252,8 +1265,44 @@ const DT_RECENTS = [
   { title: "Pulled offsite venues",     bro: "Muse",  when: "Mon · 11:24" },
 ];
 
+function DTRosterOffline({ bro }) {
+  const INSTALL_CMD = `curl -fsSL newbro.dev/install.sh | sh -s -- --token MRElL_T251_gUOuC`;
+  const [copied, setCopied] = React.useState(false);
+  const t = React.useRef(0);
+  const copy = (e) => {
+    e.stopPropagation();
+    try { navigator.clipboard && navigator.clipboard.writeText(INSTALL_CMD); } catch (err) {}
+    setCopied(true);
+    window.clearTimeout(t.current);
+    t.current = window.setTimeout(() => setCopied(false), 1700);
+  };
+  return (
+    <div className="dt-roster-row dt-roster-row-offline">
+      <div className="dt-roster-avatar dt-roster-avatar-offline">
+        <BroAvatar character={broChar(bro.name)} state="offline" size={26} />
+      </div>
+      <span className="dt-roster-name">{bro.name}</span>
+      <span className="dt-roster-offline-note">{bro.node} offline · {bro.lastTurn}</span>
+      <button
+        type="button"
+        className={`dt-roster-connect${copied ? " dt-roster-connect-done" : ""}`}
+        onClick={copy}
+        title="Copy the install + connect command"
+      >
+        {copied ? (
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12.5L10 18L20 6"/></svg>
+        ) : (
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+        )}
+        <span>{copied ? "Copied" : "Copy install + connect"}</span>
+      </button>
+    </div>
+  );
+}
+
 function HomeDesktop() {
   const working = DT_HOME_BROS.filter((b) => b.state === "working");
+  const standby = DT_HOME_BROS.filter((b) => b.state !== "working");
   return (
     <div className="dt-frame dt-shell">
       <DesktopHeader statusPill={<HeaderStatusPill status="ready" label={`READY · ${working.length} of ${DT_HOME_BROS.length} working`} />} />
@@ -1292,18 +1341,22 @@ function HomeDesktop() {
 
               <section className="dt-home-section">
                 <div className="dt-home-section-head">
-                  <span className="ob-eyebrow">STANDING BY · {DT_HOME_BROS.length - working.length}</span>
+                  <span className="ob-eyebrow">STANDING BY · {standby.length}</span>
                   <span className="dt-home-section-sub">Quiet for now — hold space to wake one</span>
                 </div>
                 <div className="dt-bro-roster">
-                  {DT_HOME_BROS.filter((b) => b.state !== "working").map((b) => (
-                    <button key={b.id} type="button" className={`dt-roster-row dt-roster-row-${b.state}`}>
-                      <div className={`dt-roster-avatar dt-roster-avatar-${b.state}`}>
-                        <BroAvatar character={broChar(b.name)} state={b.state} size={26} />
-                      </div>
-                      <span className="dt-roster-name">{b.name}</span>
-                      <span className="dt-roster-last">{bro_last(b)}</span>
-                    </button>
+                  {standby.map((b) => (
+                    b.state === "offline" ? (
+                      <DTRosterOffline key={b.id} bro={b} />
+                    ) : (
+                      <button key={b.id} type="button" className={`dt-roster-row dt-roster-row-${b.state}`}>
+                        <div className={`dt-roster-avatar dt-roster-avatar-${b.state}`}>
+                          <BroAvatar character={broChar(b.name)} state={b.state} size={26} />
+                        </div>
+                        <span className="dt-roster-name">{b.name}</span>
+                        <span className="dt-roster-last">{bro_last(b)}</span>
+                      </button>
+                    )
                   ))}
                 </div>
               </section>
@@ -1592,11 +1645,11 @@ function DTAgentActivity({ state }) {
 // ─────────────────────────────────────────────────────────────
 const DT_REASONING = {
   steps: [
-    "Pulling Friday SFO → JFK fares from United, Delta, and JetBlue.",
-    "United — best red-eye is $452, 11:05p out, one stop via DEN.",
-    "Delta — non-stop $468, departs 9:40p, lands JFK 6:18a Sat.",
-    "JetBlue — $419, but the red-eye is basic-economy only. Flagging it for your veto.",
-    "Comparing the three on price against total door-to-door time…",
+    { kind: "act",   tool: "flights.search", text: "Querying Friday SFO → JFK fares across United, Delta, and JetBlue." },
+    { kind: "think", text: "United's best is a $452 red-eye — 11:05p out, one stop via DEN." },
+    { kind: "think", text: "Delta runs a $468 non-stop, 9:40p departure into JFK 6:18a Saturday." },
+    { kind: "act",   tool: "fares.rules", text: "Reading fare rules — JetBlue's $419 red-eye is basic-economy only. Flagging it for your veto." },
+    { kind: "think", text: "Ranking the three on price against total door-to-door time…" },
   ],
   answer:
     "Three solid options. Delta's $468 non-stop is the best balance — 9:40p out, into JFK 6:18a Saturday. United's $452 red-eye saves a little but adds a DEN stop, and JetBlue is cheapest at $419 yet basic-economy only. Want me to hold the Delta seat?",
@@ -1605,25 +1658,91 @@ const DT_REASONING = {
 // done=true renders straight to the settled state — used for history /
 // already-finished turns, which never replay the live reasoning stream.
 function DTReasoningBubble({ data = DT_REASONING, broName = "Atlas", done = false }) {
-  const steps = data.steps;
-  const [phase, setPhase] = React.useState(done ? "done" : "streaming");
-  const [shown, setShown] = React.useState(done ? steps.length : 1);
+  // normalize steps to objects so older string-based callers still work
+  const steps = data.steps.map((s) => (typeof s === "string" ? { kind: "think", text: s } : s));
+
+  // ── display tweaks (from shared voice context, defaulted on) ──
+  const v = (typeof useVoice === "function") ? useVoice() : null;
+  const instant = v ? v.msgInstant : true;  // instant skeleton before first line
+  const marks   = v ? v.msgMarks   : true;  // distinguish tool actions
+  const steer   = v ? v.msgSteer   : true;  // show Stop / Steer on live bubble
+
+  // phase: "ack" (instant skeleton) → "streaming" → "done"
+  const [phase, setPhase] = React.useState(done ? "done" : (instant ? "ack" : "streaming"));
+  const [shown, setShown] = React.useState(done ? steps.length : (instant ? 0 : 1));
   const [open, setOpen] = React.useState(false); // expand collapsed reasoning
+  const [stopped, setStopped] = React.useState(false);
+
+  // Replay the live stream whenever a treatment tweak flips, so toggling a
+  // control in the panel immediately shows its effect (demo affordance).
+  const firstRun = React.useRef(true);
+  React.useEffect(() => {
+    if (done) return;
+    if (firstRun.current) { firstRun.current = false; return; }
+    setStopped(false);
+    setOpen(false);
+    setPhase(instant ? "ack" : "streaming");
+    setShown(instant ? 0 : 1);
+  }, [instant, marks, steer, done]);
+
+  // brief acknowledged beat — the bubble is on screen instantly with a
+  // shimmer skeleton, then the first real line lands.
+  React.useEffect(() => {
+    if (phase !== "ack") return;
+    const id = setTimeout(() => { setPhase("streaming"); setShown(1); }, 780);
+    return () => clearTimeout(id);
+  }, [phase]);
 
   // Reveal one execution line at a time while streaming.
   React.useEffect(() => {
-    if (phase !== "streaming" || shown >= steps.length) return;
+    if (phase !== "streaming" || stopped || shown >= steps.length) return;
     const id = setTimeout(() => setShown((n) => Math.min(n + 1, steps.length)), 1900);
     return () => clearTimeout(id);
-  }, [phase, shown, steps.length]);
+  }, [phase, shown, steps.length, stopped]);
 
   // Once every line has streamed, settle into the done state and drop the
   // live progress entirely.
   React.useEffect(() => {
-    if (phase !== "streaming" || shown < steps.length) return;
+    if (phase !== "streaming" || stopped || shown < steps.length) return;
     const id = setTimeout(() => setPhase("done"), 1500);
     return () => clearTimeout(id);
-  }, [phase, shown, steps.length]);
+  }, [phase, shown, steps.length, stopped]);
+
+  // Demo loop: this is a review artboard, so the live loading status would
+  // otherwise only play once on mount and be gone before you look. After the
+  // bubble settles, dwell on the answer a beat, then replay the whole turn.
+  // (Skipped for history bubbles and when the user has stopped the stream.)
+  React.useEffect(() => {
+    if (done || phase !== "done" || stopped) return;
+    const id = setTimeout(() => {
+      setOpen(false);
+      setPhase(instant ? "ack" : "streaming");
+      setShown(instant ? 0 : 1);
+    }, 4200);
+    return () => clearTimeout(id);
+  }, [done, phase, stopped, instant]);
+
+  // shared renderer for a single step line (live + history)
+  const renderMark = (st) => {
+    if (marks && st.kind === "act") {
+      return (
+        <span className="dt-reason-step-mark dt-reason-step-mark-act" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6a1.5 1.5 0 0 0 2.1 2.1l6-6a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-2.1z"/>
+          </svg>
+        </span>
+      );
+    }
+    return <span className="dt-reason-step-mark" aria-hidden="true" />;
+  };
+  const renderText = (st) => (
+    <span className="dt-reason-step-text">
+      {marks && st.kind === "act" && st.tool && (
+        <span className="dt-reason-tool">{st.tool}</span>
+      )}
+      {st.text}
+    </span>
+  );
 
   // ── DONE / HISTORY ── no reasoning progress; final answer + a tucked-away
   // "Reasoned" toggle the user can expand on demand.
@@ -1649,8 +1768,8 @@ function DTReasoningBubble({ data = DT_REASONING, broName = "Atlas", done = fals
             <ol className="dt-reason-steps dt-reason-steps-static">
               {steps.map((s, i) => (
                 <li key={i} className="dt-reason-step dt-reason-step-done">
-                  <span className="dt-reason-step-mark" aria-hidden="true" />
-                  <span className="dt-reason-step-text">{s}</span>
+                  {renderMark(s)}
+                  {renderText(s)}
                 </li>
               ))}
             </ol>
@@ -1658,6 +1777,25 @@ function DTReasoningBubble({ data = DT_REASONING, broName = "Atlas", done = fals
           <span className="dt-answer-text">{data.answer}</span>
         </div>
         <div className="dt-bubble-meta">{broName} · 14:24</div>
+      </div>
+    );
+  }
+
+  // ── ACK ── bubble is on screen instantly; shimmer skeleton, no lines yet.
+  if (phase === "ack") {
+    return (
+      <div className="dt-turn dt-turn-bro">
+        <div className="dt-bubble dt-bubble-bro dt-bubble-reason">
+          <span className="dt-reason-kicker">
+            <span className="dt-reason-orb" aria-hidden="true"><span /><span /><span /></span>
+            {broName} is reasoning
+          </span>
+          <div className="dt-reason-skeleton" aria-hidden="true">
+            <span style={{ width: "82%" }} />
+            <span style={{ width: "61%" }} />
+          </div>
+        </div>
+        <div className="dt-bubble-meta">{broName} · starting up · 14:22</div>
       </div>
     );
   }
@@ -1675,7 +1813,7 @@ function DTReasoningBubble({ data = DT_REASONING, broName = "Atlas", done = fals
           <span className="dt-reason-orb" aria-hidden="true">
             <span /><span /><span />
           </span>
-          {broName} is reasoning
+          {stopped ? `${broName} stopped` : `${broName} is reasoning`}
         </span>
         <ol className="dt-reason-steps">
           {visible.map((s, j) => {
@@ -1685,17 +1823,35 @@ function DTReasoningBubble({ data = DT_REASONING, broName = "Atlas", done = fals
             return (
               <li
                 key={idx}
-                className={`dt-reason-step${isLast ? " dt-reason-step-active" : " dt-reason-step-done"}`}
+                className={`dt-reason-step${isLast && !stopped ? " dt-reason-step-active" : " dt-reason-step-done"}${marks && s.kind === "act" ? " dt-reason-step-act" : ""}`}
                 style={{ opacity: FADE[dist] ?? 0.2 }}
               >
-                <span className="dt-reason-step-mark" aria-hidden="true" />
-                <span className="dt-reason-step-text">{s}</span>
+                {renderMark(s)}
+                {renderText(s)}
               </li>
             );
           })}
         </ol>
+        {steer && !stopped && (
+          <div className="dt-reason-steer">
+            <button type="button" className="dt-reason-steer-btn dt-reason-steer-stop" onClick={() => setStopped(true)}>
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+              Stop
+            </button>
+            <span className="dt-reason-steer-hint">Hold <kbd className="dt-kbd">Space</kbd> to interrupt</span>
+          </div>
+        )}
+        {steer && stopped && (
+          <div className="dt-reason-steer dt-reason-steer-stopped">
+            <span className="dt-reason-steer-stoptag">Stopped — say what to change and {broName} picks back up.</span>
+            <button type="button" className="dt-reason-steer-btn dt-reason-steer-resume" onClick={() => setStopped(false)}>
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M7 5l11 7-11 7z"/></svg>
+              Resume
+            </button>
+          </div>
+        )}
       </div>
-      <div className="dt-bubble-meta">{broName} · updating live · 14:22</div>
+      <div className="dt-bubble-meta">{broName} · {stopped ? "paused by you" : "updating live"} · 14:22</div>
     </div>
   );
 }
