@@ -10,6 +10,8 @@ final class AppModel: ObservableObject {
     @Published var installLog: String = ""
 
     private let supervisor: ProfileSupervisor
+    private let notifier: ProfileNotifying
+    private let notificationController: ProfileNotificationController
     private let store = ProfileStore()
     private let locator = RuntimeLocator()
     private let loginItem: LoginItem
@@ -25,7 +27,11 @@ final class AppModel: ObservableObject {
     /// they exec) resolve under the app's otherwise-minimal launchd env.
     private let childEnv = RuntimeLocator.childEnvironment()
 
-    init() {
+    init(notifier: ProfileNotifying? = nil) {
+        let notifier = notifier ?? MacProfileNotifier()
+        self.notifier = notifier
+        let notificationController = ProfileNotificationController(notifier: notifier)
+        self.notificationController = notificationController
         let loc = locator
         let env = RuntimeLocator.childEnvironment()
         self.loginItem = LoginItem(appPath: Bundle.main.bundlePath)
@@ -38,6 +44,11 @@ final class AppModel: ObservableObject {
             },
             logFactory: { profile in
                 ProfileLog(path: ProfileLog.defaultPath(profileID: profile.id))
+            },
+            onEvent: { event in
+                Task { @MainActor in
+                    notificationController.notify(event)
+                }
             })
         self.profiles = store.load()
         self.runtimeAvailable = locator.isRuntimeAvailable
@@ -169,8 +180,12 @@ final class AppModel: ObservableObject {
     @discardableResult
     func addFromConnectCommand(_ text: String) throws -> Profile {
         let fields = try parseConnectCommand(text)
+        let matchingIndex = firstMatchingProfileIndex(in: profiles,
+                                                      baseURL: fields.baseURL,
+                                                      nodeID: fields.nodeID)
+        let wasUpdate = matchingIndex != nil
         let profile: Profile
-        if let index = firstMatchingProfileIndex(in: profiles, baseURL: fields.baseURL, nodeID: fields.nodeID) {
+        if let index = matchingIndex {
             profiles[index].token = fields.token
             profiles[index].enabledExecutors = fields.enabledExecutors
             profile = profiles[index]
@@ -185,15 +200,32 @@ final class AppModel: ObservableObject {
             profiles.append(profile)
         }
         try? store.save(profiles)
-        autoStartPastedProfile(profile)
+        let didRequestStart = autoStartPastedProfile(profile)
+        notifier.notify(
+            title: pasteNotificationTitle(wasUpdate: wasUpdate, started: didRequestStart),
+            body: profile.label)
         return profile
     }
 
-    private func autoStartPastedProfile(_ profile: Profile) {
-        perform(pastedProfileAction(for: profile,
-                                    runtimeAvailable: runtimeAvailable,
-                                    isActive: isActive(profile),
-                                    codexRuntimeAvailable: codexRuntimeAvailable))
+    private func autoStartPastedProfile(_ profile: Profile) -> Bool {
+        let action = pastedProfileAction(for: profile,
+                                         runtimeAvailable: runtimeAvailable,
+                                         isActive: isActive(profile),
+                                         codexRuntimeAvailable: codexRuntimeAvailable)
+        if action != nil {
+            notificationController.suppressNextStarted(profileID: profile.id)
+        }
+        perform(action)
+        return action != nil
+    }
+
+    private func pasteNotificationTitle(wasUpdate: Bool, started: Bool) -> String {
+        switch (wasUpdate, started) {
+        case (false, true): return "Profile created and started"
+        case (false, false): return "Profile created"
+        case (true, true): return "Profile updated and started"
+        case (true, false): return "Profile updated"
+        }
     }
 
     func canStart(_ profile: Profile) -> Bool {
@@ -274,5 +306,31 @@ final class AppModel: ObservableObject {
     func emptyProfile() -> Profile {
         Profile(id: "profile-\(UUID().uuidString.prefix(8))", label: "New profile",
                 baseURL: "", nodeID: "", token: "")
+    }
+}
+
+@MainActor
+private final class ProfileNotificationController {
+    private let notifier: ProfileNotifying
+    private var suppressedStartedProfileIDs: Set<String> = []
+
+    init(notifier: ProfileNotifying) {
+        self.notifier = notifier
+    }
+
+    func suppressNextStarted(profileID: String) {
+        suppressedStartedProfileIDs.insert(profileID)
+    }
+
+    func notify(_ event: ProfileLifecycleEvent) {
+        switch event {
+        case let .started(profileID, label):
+            if suppressedStartedProfileIDs.remove(profileID) != nil { return }
+            notifier.notify(title: "Profile started", body: label)
+        case let .stopped(_, label):
+            notifier.notify(title: "Profile stopped", body: label)
+        case let .error(_, label, _):
+            notifier.notify(title: "Profile error", body: label)
+        }
     }
 }

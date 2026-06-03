@@ -1,6 +1,12 @@
 import Foundation
 import Combine
 
+public enum ProfileLifecycleEvent: Equatable, Sendable {
+    case started(profileID: String, label: String)
+    case stopped(profileID: String, label: String)
+    case error(profileID: String, label: String, exitCode: Int32)
+}
+
 public final class ProfileSupervisor: ObservableObject {
     public struct ProcessFactory {
         public let make: (_ argv: [String],
@@ -29,15 +35,18 @@ public final class ProfileSupervisor: ObservableObject {
     private let processFactory: ProcessFactory
     private let argvBuilder: (Profile) -> [String]
     private let logFactory: ((Profile) -> ProfileLogging?)?
+    private let onEvent: ((ProfileLifecycleEvent) -> Void)?
     private var records: [String: Record] = [:]
     private let lock = NSRecursiveLock()
 
     public init(processFactory: ProcessFactory,
                 argvBuilder: @escaping (Profile) -> [String],
-                logFactory: ((Profile) -> ProfileLogging?)? = nil) {
+                logFactory: ((Profile) -> ProfileLogging?)? = nil,
+                onEvent: ((ProfileLifecycleEvent) -> Void)? = nil) {
         self.processFactory = processFactory
         self.argvBuilder = argvBuilder
         self.logFactory = logFactory
+        self.onEvent = onEvent
     }
 
     public func start(_ profile: Profile) {
@@ -57,6 +66,7 @@ public final class ProfileSupervisor: ObservableObject {
         lock.unlock()
         process.start()
         notifyChange()
+        onEvent?(.started(profileID: profile.id, label: profile.label))
     }
 
     public func stop(_ profileID: String) {
@@ -114,15 +124,19 @@ public final class ProfileSupervisor: ObservableObject {
     private func handleExit(_ profileID: String, _ code: Int32) {
         lock.lock()
         guard let record = records[profileID] else { lock.unlock(); return }
+        let event: ProfileLifecycleEvent
         if record.expectedStop {
             record.parser.onExit(code: code, expected: true)
             records.removeValue(forKey: profileID)
+            event = .stopped(profileID: profileID, label: record.profile.label)
         } else {
             record.parser.onExit(code: code, expected: false)
             record.exited = true
+            event = .error(profileID: profileID, label: record.profile.label, exitCode: code)
         }
         lock.unlock()
         notifyChange()
+        onEvent?(event)
     }
 
     private func notifyChange() {

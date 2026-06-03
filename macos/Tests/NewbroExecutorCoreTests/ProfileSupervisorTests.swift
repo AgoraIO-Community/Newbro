@@ -97,4 +97,29 @@ final class ProfileSupervisorTests: XCTestCase {
         created[0].onLine("[ready] go")
         XCTAssertEqual(sink.lines, ["[ready] go"])
     }
+
+    func testLifecycleEventsForStartStopAndError() {
+        var events: [ProfileLifecycleEvent] = []
+        created = []
+        let factory = ProfileSupervisor.ProcessFactory { _, onLine, onExit in
+            let fake = FakeProcess(onLine: onLine, onExit: onExit)
+            self.created.append(fake)
+            return fake
+        }
+        let sup = ProfileSupervisor(
+            processFactory: factory,
+            argvBuilder: { ["run", $0.nodeID] },
+            onEvent: { events.append($0) })
+
+        let p = profile()
+        sup.start(p)
+        XCTAssertEqual(events, [.started(profileID: "p1", label: "p1")])
+        sup.stop("p1")
+        created[0].onExit(0)
+        XCTAssertEqual(events.last, .stopped(profileID: "p1", label: "p1"))
+
+        sup.start(p)
+        created[1].onExit(1)
+        XCTAssertEqual(events.last, .error(profileID: "p1", label: "p1", exitCode: 1))
+    }
 }
