@@ -95,12 +95,15 @@ public func firstMatchingProfileIndex(in profiles: [Profile], baseURL: String, n
 }
 
 public func uniqueProfileID(existing profiles: [Profile],
+                            maxAttempts: Int = 100,
                             generate: () -> String = { "profile-\(UUID().uuidString.prefix(8))" }) -> String {
     let existingIDs = Set(profiles.map(\.id))
-    while true {
+    precondition(maxAttempts > 0, "maxAttempts must be positive")
+    for _ in 0..<maxAttempts {
         let candidate = generate()
         if !existingIDs.contains(candidate) { return candidate }
     }
+    preconditionFailure("Unable to generate a unique profile ID")
 }
 
 public func conflictingProfileIDs(_ profiles: [Profile]) -> Set<String> {

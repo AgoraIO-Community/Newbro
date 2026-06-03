@@ -53,14 +53,15 @@ final class AppModel: ObservableObject {
     func refreshRuntime() { runtimeAvailable = locator.isRuntimeAvailable }
 
     func autostart() {
-        for profile in profiles where profile.autoActivate && isComplete(profile) {
-            start(profile)
+        for action in autostartProfileActions(in: profiles,
+                                              runtimeAvailable: runtimeAvailable,
+                                              codexRuntimeAvailable: codexRuntimeAvailable) {
+            perform(action)
         }
     }
 
     func isComplete(_ profile: Profile) -> Bool {
-        !profile.baseURL.isEmpty && !profile.nodeID.isEmpty
-            && !profile.token.isEmpty && !profile.enabledExecutors.isEmpty
+        profileIsComplete(profile)
     }
 
     func status(of profile: Profile) -> NodeStatus { supervisor.status(of: profile.id) }
@@ -74,8 +75,10 @@ final class AppModel: ObservableObject {
     func activeProfileIDs() -> [String] { Array(supervisor.activeIDs()) }
 
     func start(profileID id: String) {
-        guard let profile = profiles.first(where: { $0.id == id }) else { return }
-        start(profile)
+        perform(startProfileAction(in: profiles,
+                                   profileID: id,
+                                   runtimeAvailable: runtimeAvailable,
+                                   codexRuntimeAvailable: codexRuntimeAvailable))
     }
 
     func stop(profileID id: String) {
@@ -123,15 +126,17 @@ final class AppModel: ObservableObject {
     }
 
     func start(_ profile: Profile) {
-        guard runtimeAvailable, canStart(profile) else { return }
-        supervisor.start(profile)
+        perform(startProfileAction(for: profile,
+                                   runtimeAvailable: runtimeAvailable,
+                                   codexRuntimeAvailable: codexRuntimeAvailable))
     }
     func stop(_ profile: Profile) {
         controlQueue.async { [supervisor] in supervisor.stop(profile.id) }
     }
     func restart(_ profile: Profile) {
-        guard runtimeAvailable, canStart(profile) else { return }
-        controlQueue.async { [supervisor] in supervisor.restart(profile) }
+        perform(restartProfileAction(for: profile,
+                                     runtimeAvailable: runtimeAvailable,
+                                     codexRuntimeAvailable: codexRuntimeAvailable))
     }
 
     func quit() {
@@ -185,16 +190,32 @@ final class AppModel: ObservableObject {
     }
 
     private func autoStartPastedProfile(_ profile: Profile) {
-        guard runtimeAvailable, isComplete(profile), canStart(profile) else { return }
-        if isActive(profile) {
-            restart(profile)
-        } else {
-            start(profile)
-        }
+        perform(pastedProfileAction(for: profile,
+                                    runtimeAvailable: runtimeAvailable,
+                                    isActive: isActive(profile),
+                                    codexRuntimeAvailable: codexRuntimeAvailable))
     }
 
     func canStart(_ profile: Profile) -> Bool {
-        return profileCanStart(profile) { locator.codexRuntimeStatus().isAvailable }
+        return profileCanStart(profile, codexRuntimeAvailable: codexRuntimeAvailable)
+    }
+
+    private func codexRuntimeAvailable() -> Bool {
+        locator.codexRuntimeStatus().isAvailable
+    }
+
+    private func perform(_ action: ProfileLifecycleAction?) {
+        guard let action else { return }
+        perform(action)
+    }
+
+    private func perform(_ action: ProfileLifecycleAction) {
+        switch action {
+        case .start(let profile):
+            supervisor.start(profile)
+        case .restart(let profile):
+            controlQueue.async { [supervisor] in supervisor.restart(profile) }
+        }
     }
 
     func recentLog(_ profile: Profile) -> [String] {
