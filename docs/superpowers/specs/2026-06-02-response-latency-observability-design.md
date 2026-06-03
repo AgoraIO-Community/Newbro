@@ -38,16 +38,29 @@ to send them off-box.
 - Exporting the full diagnostic event stream — the exporter ships only
   `turn.latency` events in V1 (configurable later).
 - UI timing panel (possible follow-up).
+- **Audio path** (`submit_executor_audio_instruction`) in V1 — it lacks the
+  equivalent `_record_direct_executor_text_metric` instrumentation. V1 targets the
+  **text path** (where the step metrics already exist and the executor-execution gap
+  matters); applying the same pattern to audio (incl. the `transcribe` step) is a
+  fast-follow.
 
 ## Context (current behavior)
 
 - Response pipeline entry points (`src/newbro/runtime/session.py`):
   `submit_executor_text_instruction`, `submit_executor_audio_instruction`,
   `submit_message`.
-- The runtime already emits domain events around the boundaries we need to time:
-  `interaction_classified`, `live_draft_stage`/`updated`, dispatch / `start_codex_turn`,
-  and `handle_codex_turn_event` (codex turn events correlated to a request via
-  `find_session_by_outbound_turn_request(message.request_id)`).
+- **The text path is already step-instrumented.** `_record_direct_executor_text_metric`
+  (`session.py:1562`) emits per-step `executor_text.{step}` events with `elapsed_ms`
+  (and cumulative `total_elapsed_ms`), keyed by `client_request_id`, at:
+  `runtime.received → runtime.executor_ready → runtime.thread_resolved →
+  runtime.active_execution_checked → runtime.outbound_turn_started →
+  runtime.dispatch_completed → runtime.snapshot_published`. These cover the
+  **send side** only — they stop at dispatch/publish and do **not** capture the
+  executor's actual execution time (the usual culprit), and they are **separate
+  events** (no consolidated per-turn waterfall).
+- The async executor side: codex turn events arrive later in `handle_codex_turn_event`,
+  correlated to a request via `find_session_by_outbound_turn_request(message.request_id)`.
+  This is where the missing TTFT/stream timing must be captured.
 - Observability: `DiagnosticEvent` (`observability/schema.py`) has `ts`, correlation
   ids, `event_name`, `details`; events flow through `observability.logger.emit_event`
   to a `store` and `sinks` (`stdout`, `pretty`). Some emitters already carry
@@ -65,47 +78,59 @@ to send them off-box.
 ```python
 class LatencyTracker:
     def __init__(self, *, emit, now=time.monotonic, ttl_seconds=120.0): ...
-    def mark(self, key: str, step: str, *, kind=None, model_name=None) -> None:
-        """Record a monotonic timestamp for `step` under turn `key`."""
+    def mark(self, key: str, step: str, *, model_name=None) -> None:
+        """Record now() for `step` under turn `key` (last write wins per step)."""
     def finish(self, key: str, *, outcome="completed") -> None:
-        """Compute consecutive deltas → {step: ms} + total_ms, emit a
-        turn.latency event, and evict the record."""
+        """Compute named spans from the recorded marks, emit a turn.latency event,
+        and evict the record."""
     def sweep(self) -> None:
-        """Emit a partial record (outcome='incomplete') for turns whose last mark
+        """Emit a partial record (outcome='incomplete') for turns whose first mark
         is older than ttl_seconds, then evict — so hangs still surface."""
 ```
 
-- Keyed by `client_request_id`. Stores only an ordered list of `(step, monotonic_ts)`
-  + small metadata (`kind`, `model_name`) — **no message content**.
-- `finish` computes `steps[name_i] = ts_i - ts_{i-1}` between consecutive recorded
-  marks and `total_ms = last - first`; missing steps are simply absent (robust to
-  turns that skip drafting, etc.).
+- Keyed by `client_request_id`. Stores `marks: dict[step -> monotonic_ts]` + small
+  metadata (`model_name`) — **no message content**.
+- `finish` computes a fixed set of **named spans from specific mark pairs** (not blind
+  consecutive deltas, because `snapshot_published` lands before the async
+  `first_token`). A span is included only when both its marks exist:
+  `SPANS = [("executor_ready","received"), ("thread_resolved","executor_ready"),
+  ("active_execution_checked","thread_resolved"),
+  ("outbound_turn_started","active_execution_checked"),
+  ("dispatch_completed","outbound_turn_started"),
+  ("ttft", "first_token" − "dispatch_completed"),
+  ("stream", "completed" − "first_token")]`, plus
+  `total_ms = completed − received` (falling back to the latest mark if no
+  `completed`). The exact step names are pinned in the plan.
 - Best-effort: every method is wrapped so a failure is logged and swallowed — it must
   never affect the response path.
-- `sweep()` is called opportunistically (e.g., on each `mark`/`finish`, cheap) and/or
-  on a periodic task.
+- `sweep()` is called opportunistically (cheap, on each `mark`/`finish`).
 
-### 2. Instrumentation points (backend only)
+### 2. Instrumentation points (build on the existing metrics)
 
-Call `tracker.mark(client_request_id, <step>)` at these existing boundaries:
+**Send side — reuse what exists.** `_record_direct_executor_text_metric` already
+fires at every send-side boundary. Add **one line inside that method** to forward
+each call to the tracker: `tracker.mark(client_request_id, step)` (the tracker
+timestamps the mark itself). That captures
+`runtime.received … runtime.dispatch_completed … runtime.snapshot_published` with
+zero new call sites scattered through `session.py`.
 
-| step (mark) | where |
-|---|---|
-| `received` | `submit_executor_text_instruction` / `submit_executor_audio_instruction` / `submit_message` entry |
-| `transcribed` | after STT, audio path only |
-| `classified` | after interaction classification (`interaction_classified`) |
-| `decided` | after the runtime decision / draft is ready |
-| `dispatched` | at `start_codex_turn` / dispatch to the node |
-| `first_token` | first `handle_codex_turn_event` for this request |
-| `completed` | terminal `handle_codex_turn_event` (completed/failed/cancelled) → then `finish` |
-| `published` | after the snapshot is published to the client |
+**Executor side — the new capture (the gap).** In `handle_codex_turn_event`, resolve
+the turn's `client_request_id` (via the existing
+`find_session_by_outbound_turn_request` / `_client_request_id_for_selected_thread_turn`
+path) and mark:
+- `executor.first_token` on the **first** codex turn event for that request, and
+- `executor.completed` on the **terminal** event (completed/failed/cancelled) → then
+  call `tracker.finish(client_request_id, outcome=<status>)`.
 
-Derived steps (consecutive deltas): `transcribe, classify, decide, dispatch, ttft,
-stream, publish`; `total_ms = published − received`. On a failed/cancelled terminal
-event, `finish(..., outcome=<status>)` still emits what was captured.
+Derived steps (consecutive deltas, in mark order): the send-side step durations
+already computed, then `ttft = first_token − dispatch_completed` and
+`stream = completed − first_token`; `total_ms = completed − received`.
 
-The `LatencyTracker` is owned by the session (`SessionObservability` already hangs
-off the session) so the marks share the session's `emit_event`.
+The `LatencyTracker` is owned by the session (`SessionObservability` hangs off the
+session) and shares the session's `emit_event`. Because the send-side marks carry
+their own `elapsed_ms` and the executor-side marks are timestamped, `finish`
+assembles the consolidated `{step: ms}` from whatever marks arrived (robust to
+missing steps).
 
 ### 3. `turn.latency` event
 
