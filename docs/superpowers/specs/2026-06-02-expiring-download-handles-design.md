@@ -27,8 +27,11 @@ window** (so a browser HEAD/range preflight doesn't consume them). The redeem
 endpoint still requires the session cookie — a leaked token is not a bearer
 capability.
 
-Gate 1 and Gate 2 semantics are unchanged; only the *addressing* of the download
-changes.
+Two changes ship together: (1) the **addressing** of the download (opaque expiring
+handle instead of a path-bearing URL), and (2) a **Gate-2 fix** so downloads work
+from imported codex *history* threads — the node had no workspace binding for them
+(the confirmed cause of the 403 seen in testing). Gate 1 and the Gate-2 containment
+*check* are unchanged.
 
 ## Goal / Success Criteria
 
@@ -43,9 +46,11 @@ changes.
 - Shareable / bearer links usable without login (redeem keeps session auth).
 - Persisting handles across backend restarts (in-memory; re-click re-mints).
 - Single-use tokens (reusable within the TTL — see Lifetime).
-- Any change to Gate 1 (path ∈ turn assistant text) or Gate 2 (node workspace
-  containment) **semantics**. (The markdown-link-aware grammar landed separately
-  in `55d05db`; this design keeps using it.)
+- Any change to Gate 1 (path ∈ turn assistant text) or Gate 2 **containment
+  semantics** (realpath-inside-workspace on the node). (The markdown-link-aware
+  grammar landed separately in `55d05db`; this design keeps using it.) Note: §6
+  *does* add how the node **resolves the workspace root for imported/history
+  threads** — the containment check itself is unchanged.
 
 ## Context (current behavior)
 
@@ -64,23 +69,32 @@ changes.
   (`{sessionId, threadId, turnId, workspaceRoot}`) and renders the control for
   in-workspace absolute paths (bare or markdown-link form).
 
-### Resolved: the observed 403 on a markdown-link download
+### Root-caused: the observed 403 was Gate 2 (no workspace binding for imported threads)
 
-The 403 seen during manual testing is Gate 1, and is consistent with the backend
-process still serving the **pre-`55d05db` grammar** (the old whitespace-split
-grammar returns ∅ for a markdown-link path). The frontend had been rebuilt (so the
-control appeared) but the backend module had not reloaded. **Restarting the backend
-loads the markdown-aware grammar and Gate 1 passes.** This redesign keeps Gate 1 at
-the mint step using that same grammar, so once the backend runs current code the
-403 is resolved.
+Diagnosed with logging on a live repro: **Gate 1 passes**; **Gate 2 denies** with
+`code='denied' message='no workspace binding for thread'` for a
+`codex-import-…` (imported codex *history*) thread. The node only records a
+thread→workspace binding inside `_subscribe_codex_thread`, and only when the
+subscribe carries a `workspace_id`. Imported history threads are viewed from the
+imported snapshot without a workspace-bearing subscription, so the node's Gate-2
+registry has nothing for them and every download from a history thread is denied.
 
-Contingency (only if a clean restart does not fix it): the UI's rendered answer
-text falls back to the task summary/description when `turn.assistant` is empty
-(`ArtboardShell.tsx:1228`), while Gate 1 reads only `turn.assistant.text`. If that
-divergence is the real cause, Gate 1 at mint should validate the path against the
-turn's **rendered** assistant text (assistant message, falling back to
-summary/description) so the UI and backend cannot disagree. This is a contingency,
-not part of V1 unless reproduced.
+The workspace is *known* to the backend (`BroThread.workspace_id = codex_thread.cwd`,
+`session.py:1798` — which is why the UI control appears and the file is under it),
+but it never reaches the node. The public thread id is
+`codex-import-{sha256(persona_id:codex_thread_id)[:16]}` (`session.py:161`) — a
+non-reversible hash that mixes in `persona_id`, so the node cannot derive the codex
+thread from the public id.
+
+**Fix (node-derived, keeps Gate 2 robust against a compromised backend):** see
+§6. The node caches each codex thread's `cwd` (already present on every
+`CodexThreadListItem` it returns from `list_threads`) and resolves the Gate-2 root
+for an imported thread from that cache, selected by the codex thread id
+(`executor_thread_id`) carried on the request. The workspace *root* stays
+node-derived from codex's own cwd; the backend only supplies the thread *selector*.
+
+This fix is part of this V1 (the temp-link redesign keeps Gate 2, so it would
+otherwise inherit the same bug).
 
 ## Design
 
@@ -93,13 +107,14 @@ A small, focused in-memory component owned by the runtime container.
 class WorkspaceFileHandle:
     session_id: str
     thread_id: str
+    executor_thread_id: str | None  # codex thread id; selects the Gate-2 workspace
     node_id: str
     path: str
     expires_at: float  # monotonic deadline
 
 class WorkspaceFileHandleStore:
     def __init__(self, *, ttl_seconds: float = 300.0, now=time.monotonic) -> None: ...
-    def mint(self, *, session_id, thread_id, node_id, path) -> str:
+    def mint(self, *, session_id, thread_id, executor_thread_id, node_id, path) -> str:
         """Store a new handle under a random token; return the token."""
     def resolve(self, token: str) -> WorkspaceFileHandle | None:
         """Return the live handle, or None if unknown/expired (evicting expired)."""
@@ -129,7 +144,9 @@ body: { "path": "/abs/path" }
   `path_not_in_turn`. (Same markdown-aware grammar as the current route.)
 - Resolve `node_id` from the matching thread's `executor_node_id`, falling back to
   `executor_node_manager.node_id`; 504 `node_offline` if none.
-- `token = store.mint(session_id=…, thread_id=…, node_id=…, path=path)`.
+- Read `executor_thread_id = turn.executor_thread_id` (the codex thread id; already
+  on the turn) — the Gate-2 workspace selector (§6).
+- `token = store.mint(session_id=…, thread_id=…, executor_thread_id=…, node_id=…, path=path)`.
 - Return `{ "url": f"{API_PREFIX}/files/{token}", "expires_at": <iso8601> }`.
 
 The path is only ever in the request body and the server-side store — never in a
@@ -146,9 +163,10 @@ GET /api/files/{token}
 - `await require_session_owner(request, handle.session_id)` — the authenticated
   user must own the bound session (404 if not). A stolen token is useless without
   that session's cookie.
-- **Gate 2 / stream:** identical to today —
+- **Gate 2 / stream:**
   `executor_node_manager.read_workspace_file(node_id=handle.node_id,
-  thread_id=handle.thread_id, path=handle.path)`, pull the first chunk to map
+  thread_id=handle.thread_id, executor_thread_id=handle.executor_thread_id,
+  path=handle.path)`, pull the first chunk to map
   `WorkspaceFileDenied`/`WorkspaceFileUnavailable` to HTTP status before headers
   commit (403/404/413/502/504), then `StreamingResponse` with
   `Content-Disposition: attachment; filename="<basename(handle.path)>"`,
@@ -173,6 +191,39 @@ Delete the path-bearing `GET …/turns/{turn_id}/file?path=` route and update it
 tests to the new mint+redeem shape. No other consumers exist (only
 `WorkspaceFileLink` called it).
 
+### 6. Gate 2 for imported/history threads (the 403 fix)
+
+The node must know an imported thread's workspace root for Gate 2, derived from
+codex's own per-thread `cwd` (never from the request path). Changes:
+
+- **Protocol:** `ReadWorkspaceFileCommand` gains
+  `executor_thread_id: str | None = None`. This is a thread *selector*, not a
+  path — the workspace root is still computed on the node.
+- **Node — cache codex thread cwds.** In `_list_codex_threads`
+  (`executors/node/service.py`), after building the `CodexThreadListItem` list,
+  record `self._codex_thread_workspaces[item.thread_id] = item.cwd` for every item
+  with a non-empty `cwd`. `list_threads` already runs during import sync, so the
+  cache covers all imported history threads. (Add the dict in `__init__`.)
+- **Node — resolve the Gate-2 root.** In `_read_workspace_file`, compute:
+  1. `root = self._thread_workspaces.get(command.thread_id)` (live/subscribed
+     threads — unchanged), else
+  2. if `command.executor_thread_id`:
+     `root = self._codex_thread_workspaces.get(command.executor_thread_id)`, else
+  3. `root is None` → `WorkspaceFileError(code="denied", message="no workspace
+     binding for thread")` (unchanged).
+  Then the existing `resolve_within_workspace(command.path, root)` containment +
+  streaming is unchanged.
+- **Node-manager:** `read_workspace_file(...)` gains an `executor_thread_id`
+  parameter and forwards it on the `ReadWorkspaceFileCommand`.
+- **Backend mint:** reads `turn.executor_thread_id` from the snapshot turn and
+  stores it on the handle (§2); redeem forwards it (§3).
+
+Security note: the workspace *root* is taken from codex's own thread cwd cached on
+the node — the backend/request can only *select which codex thread*, not supply an
+arbitrary root. A compromised backend can at most point at another real codex
+thread's cwd (still bounded; Gate 1 also still applies). This preserves Gate 2's
+"holds even if the backend is compromised" property for the root itself.
+
 ## Error Handling
 
 - **Mint:** 401 (no cookie) / 404 (`unknown_session` | `unknown_turn` | not owner)
@@ -192,10 +243,16 @@ tests to the new mint+redeem shape. No other consumers exist (only
   url whose token is **not** the path; path **not** in turn → 403; unknown turn →
   404; path travels in the body (assert the response url contains no path); auth
   required.
-- **Redeem route:** valid token streams the bytes (stub `read_workspace_file`);
-  expired token → 410; unknown token → 410; token bound to a session the caller
-  doesn't own → 404; Gate-2 `denied`/`not_found`/`too_large`/offline → 403/404/
-  413/504.
+- **Redeem route:** valid token streams the bytes (stub `read_workspace_file`,
+  asserting it is called with the handle's `executor_thread_id`); expired token →
+  410; unknown token → 410; token bound to a session the caller doesn't own → 404;
+  Gate-2 `denied`/`not_found`/`too_large`/offline → 403/404/413/504.
+- **Node Gate-2 binding** (`tests/executors/node/…`): after a
+  `_list_codex_threads` that returns an item with `thread_id`+`cwd`, a
+  `_read_workspace_file` for an in-`cwd` path with that `executor_thread_id`
+  streams; with no matching `executor_thread_id` and no subscribe binding → denied;
+  an item with empty `cwd` is not cached. Plus the existing containment matrix
+  still holds once a root is resolved.
 - **UI** (`workspace-file-link` / `markdown-text`): clicking mints (POST to the
   `file-handle` url with `{path}` body) then downloads the returned opaque url;
   mint failure and redeem failure each show the error state; no request URL
@@ -212,5 +269,13 @@ tests to the new mint+redeem shape. No other consumers exist (only
   routes reach it via `request.app.state.runtime_container.workspace_file_handles`.
 - Modify: `src/newbro/ui/src/components/ui/workspace-file-link.tsx` (mint→fetch),
   `src/newbro/ui/src/components/ui/markdown-text.tsx` (mintUrl context).
+- **Gate-2 fix:** `src/newbro/protocol/executor_node.py`
+  (`ReadWorkspaceFileCommand.executor_thread_id`);
+  `src/newbro/executors/node/service.py` (`_codex_thread_workspaces` cache in
+  `_list_codex_threads`; resolve it in `_read_workspace_file`);
+  `src/newbro/runtime/executor_node_manager.py`
+  (`read_workspace_file(..., executor_thread_id=…)` forwards it on the command).
 - Update: `tests/api/routes/test_workspace_files_route.py` and the UI tests to the
   new shape.
+- **Remove the temporary `[dl-gate1]`/`[dl-gate2]` diagnostics** added to
+  `workspace_files.py` during root-causing.
