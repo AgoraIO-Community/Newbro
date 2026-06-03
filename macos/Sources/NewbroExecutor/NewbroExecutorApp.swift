@@ -101,6 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func build(into menu: NSMenu) {
+        model.refreshCodexStatus()
+
         if !model.runtimeAvailable {
             menu.addItem(NSMenuItem(title: "Node runtime not found", action: nil, keyEquivalent: ""))
             menu.addItem(ActionMenuItem(title: "Install runtime…") { [weak self] in self?.model.installRuntime() })

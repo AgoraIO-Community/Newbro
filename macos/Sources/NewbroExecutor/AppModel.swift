@@ -74,7 +74,14 @@ final class AppModel: ObservableObject {
 
     func refreshRuntime() {
         runtimeAvailable = locator.isRuntimeAvailable
-        codexStatus = locator.codexRuntimeStatus()
+        refreshCodexStatus()
+    }
+
+    @discardableResult
+    func refreshCodexStatus() -> CommandStatus {
+        refreshCommandStatus(&codexStatus) {
+            locator.codexRuntimeStatus()
+        }
     }
 
     func autostart() {
@@ -252,7 +259,7 @@ final class AppModel: ObservableObject {
     }
 
     private func codexRuntimeAvailable() -> Bool {
-        codexStatus.isAvailable
+        refreshCodexStatus().isAvailable
     }
 
     private func perform(_ action: ProfileLifecycleAction?) {

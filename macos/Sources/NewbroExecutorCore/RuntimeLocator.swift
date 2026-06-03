@@ -14,6 +14,14 @@ public struct CommandStatus: Equatable, Sendable {
     }
 }
 
+@discardableResult
+public func refreshCommandStatus(_ status: inout CommandStatus,
+                                 probe: () -> CommandStatus) -> CommandStatus {
+    let refreshed = probe()
+    status = refreshed
+    return refreshed
+}
+
 public struct RuntimeLocator {
     public static let installScriptURL =
         "https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh"

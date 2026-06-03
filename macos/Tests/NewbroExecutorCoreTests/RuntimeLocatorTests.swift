@@ -105,6 +105,24 @@ final class RuntimeLocatorTests: XCTestCase {
         XCTAssertFalse(locator.codexRuntimeStatus().isAvailable)
     }
 
+    func testRefreshCommandStatusReplacesStaleCache() {
+        var cached = CommandStatus(
+            command: nil,
+            version: nil,
+            menuTitle: "No Codex found. Newbro may not work properly.",
+            isAvailable: false)
+        let refreshed = refreshCommandStatus(&cached) {
+            CommandStatus(command: "/opt/bin/codex",
+                          version: "0.42.0",
+                          menuTitle: "Codex v0.42.0",
+                          isAvailable: true)
+        }
+
+        XCTAssertEqual(refreshed.menuTitle, "Codex v0.42.0")
+        XCTAssertEqual(cached, refreshed)
+        XCTAssertTrue(cached.isAvailable)
+    }
+
     func testExtractVersionIgnoresTrailingWarnings() {
         XCTAssertEqual(
             RuntimeLocator.extractVersion("""
