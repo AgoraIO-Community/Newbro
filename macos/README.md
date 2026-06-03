@@ -29,6 +29,10 @@ The update section reports separate components:
   the default bundle version show as `Menu bar app: local build (bundle v1.0)`.
 - CLI and app update rows name the component that is behind.
 
+Runtime install, CLI upgrade, and manual update checks show disabled in-progress
+rows while they run. Runtime install and CLI upgrade also send macOS
+notifications when they finish or fail.
+
 Profiles are stored in `~/.newbro/menubar.json`; logs in
 `~/.newbro/logs/executor-ui-<id>.log`.
 

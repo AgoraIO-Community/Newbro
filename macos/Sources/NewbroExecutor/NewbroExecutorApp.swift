@@ -81,7 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             activeProfileIDs: { [weak model] in model?.activeProfileIDs() ?? [] },
             stopProfile: { [weak model] id in model?.stop(profileID: id) },
             startProfile: { [weak model] id in model?.start(profileID: id) },
-            runInstaller: { [weak model] completion in model?.runInstaller(completion) })
+            runInstaller: { [weak model] completion in model?.runInstaller(completion) },
+            onEvent: { [weak model] event in model?.notifyUpdateEvent(event) })
         self.updates = updates
         Task { await updates.check() }
         updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
@@ -105,7 +106,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if !model.runtimeAvailable {
             menu.addItem(NSMenuItem(title: "Node runtime not found", action: nil, keyEquivalent: ""))
-            menu.addItem(ActionMenuItem(title: "Install runtime…") { [weak self] in self?.model.installRuntime() })
+            if model.isInstallingRuntime {
+                menu.addItem(disabledMenuItem(title: "Installing runtime…"))
+            } else {
+                menu.addItem(ActionMenuItem(title: "Install runtime…") { [weak self] in self?.model.installRuntime() })
+            }
+            if let error = model.runtimeInstallError {
+                menu.addItem(disabledMenuItem(title: error))
+            }
             menu.addItem(.separator())
         }
 
@@ -159,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(disabledMenuItem(title: rows.appVersionRow))
 
         if updates.isUpdating {
-            menu.addItem(disabledMenuItem(title: "Updating CLI…"))
+            menu.addItem(disabledMenuItem(title: "Updating Newbro CLI…"))
         } else if let cliUpdateRow = rows.cliUpdateRow {
             menu.addItem(disabledMenuItem(title: cliUpdateRow))
         }
@@ -173,9 +181,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.updates.updateCLI()
             })
         }
-        menu.addItem(ActionMenuItem(title: "Check for Updates…") { [weak self] in
-            Task { @MainActor in await self?.updates.check() }
-        })
+        if updates.isChecking {
+            menu.addItem(disabledMenuItem(title: "Checking for updates…"))
+        } else {
+            menu.addItem(ActionMenuItem(title: "Check for Updates…") { [weak self] in
+                Task { @MainActor in await self?.updates.check() }
+            })
+        }
         if let appAvailable = updates.status.appUpdate {
             menu.addItem(ActionMenuItem(title: "Download menu bar app \(appAvailable)…") { [weak self] in
                 guard let url = self?.updates.releasePageURL else { return }

@@ -12,10 +12,12 @@ final class AppModel: ObservableObject {
         version: nil,
         menuTitle: "No Codex found. Newbro may not work properly.",
         isAvailable: false)
+    @Published var isInstallingRuntime: Bool = false
+    @Published var runtimeInstallError: String?
     @Published var installLog: String = ""
 
     private let supervisor: ProfileSupervisor
-    private let notifier: ProfileNotifying
+    private let notifier: AppNotifying
     private let notificationController: ProfileNotificationController
     private let eventRelay: ProfileLifecycleEventRelay
     private let store = ProfileStore()
@@ -33,8 +35,8 @@ final class AppModel: ObservableObject {
     /// they exec) resolve under the app's otherwise-minimal launchd env.
     private let childEnv = RuntimeLocator.childEnvironment()
 
-    init(notifier: ProfileNotifying? = nil) {
-        let notifier = notifier ?? MacProfileNotifier()
+    init(notifier: AppNotifying? = nil) {
+        let notifier = notifier ?? MacAppNotifier()
         self.notifier = notifier
         let notificationController = ProfileNotificationController(notifier: notifier)
         self.notificationController = notificationController
@@ -305,7 +307,10 @@ final class AppModel: ObservableObject {
     }
 
     func installRuntime() {
+        guard !isInstallingRuntime else { return }
         let argv = locator.installCommandArgv()
+        isInstallingRuntime = true
+        runtimeInstallError = nil
         installLog = "Installing…\n"
         // Retain the process; otherwise it is deallocated before it runs.
         installProcess = NodeProcess(
@@ -314,22 +319,40 @@ final class AppModel: ObservableObject {
             onLine: { [weak self] line in
                 Task { @MainActor in self?.installLog += line + "\n" }
             },
-            onExit: { [weak self] _ in
+            onExit: { [weak self] code in
                 Task { @MainActor in
-                    self?.refreshRuntime()
-                    self?.installProcess = nil
+                    guard let self else { return }
+                    self.refreshRuntime()
+                    let completion = runtimeInstallCompletion(
+                        exitCode: code,
+                        runtimeAvailable: self.runtimeAvailable)
+                    self.runtimeInstallError = completion.errorRow
+                    self.notifier.notify(
+                        title: completion.notificationTitle,
+                        body: completion.notificationBody)
+                    self.isInstallingRuntime = false
+                    self.installProcess = nil
                 }
             })
         installProcess?.start()
+    }
+
+    func notifyUpdateEvent(_ event: UpdateServiceEvent) {
+        switch event {
+        case .cliUpdateSucceeded:
+            notifier.notify(title: "Newbro CLI updated", body: "Executor nodes restarted.")
+        case let .cliUpdateFailed(code, _):
+            notifier.notify(title: "Newbro CLI update failed", body: "Exit \(code). Executor nodes restarted.")
+        }
     }
 }
 
 @MainActor
 private final class ProfileNotificationController {
-    private let notifier: ProfileNotifying
+    private let notifier: AppNotifying
     private let suppression = ProfileLifecycleEventSuppression()
 
-    init(notifier: ProfileNotifying) {
+    init(notifier: AppNotifying) {
         self.notifier = notifier
     }
 
