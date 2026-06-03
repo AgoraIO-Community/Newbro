@@ -1,6 +1,103 @@
 import Foundation
 import Combine
 
+public enum ProfileLifecycleEvent: Equatable, Sendable {
+    case started(profileID: String, label: String)
+    case stopped(profileID: String, label: String)
+    case error(profileID: String, label: String, exitCode: Int32)
+}
+
+public final class ProfileLifecycleEventSuppression {
+    private var startOnlyCounts: [String: Int] = [:]
+    private var restartAwaitingStopAndStartCounts: [String: Int] = [:]
+    private var restartAwaitingStartCounts: [String: Int] = [:]
+
+    public init() {}
+
+    public func suppressNextStart(profileID: String) {
+        startOnlyCounts[profileID, default: 0] += 1
+    }
+
+    public func suppressNextRestart(profileID: String) {
+        restartAwaitingStopAndStartCounts[profileID, default: 0] += 1
+    }
+
+    public func shouldSuppress(_ event: ProfileLifecycleEvent) -> Bool {
+        switch event {
+        case let .started(profileID, _):
+            if consume(&restartAwaitingStartCounts, profileID: profileID) {
+                return true
+            }
+            if consume(&restartAwaitingStopAndStartCounts, profileID: profileID) {
+                return true
+            }
+            return consume(&startOnlyCounts, profileID: profileID)
+        case let .stopped(profileID, _):
+            if consume(&restartAwaitingStopAndStartCounts, profileID: profileID) {
+                restartAwaitingStartCounts[profileID, default: 0] += 1
+                return true
+            }
+            return false
+        case .error:
+            return false
+        }
+    }
+
+    private func consume(_ counts: inout [String: Int], profileID: String) -> Bool {
+        guard let count = counts[profileID], count > 0 else { return false }
+        if count == 1 {
+            counts.removeValue(forKey: profileID)
+        } else {
+            counts[profileID] = count - 1
+        }
+        return true
+    }
+}
+
+public final class ProfileLifecycleEventRelay: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: [ProfileLifecycleEvent] = []
+    private var isDraining = false
+    private let handler: (ProfileLifecycleEvent) async -> Void
+
+    public init(handler: @escaping (ProfileLifecycleEvent) async -> Void) {
+        self.handler = handler
+    }
+
+    public func enqueue(_ event: ProfileLifecycleEvent) {
+        let shouldStartDrain: Bool
+        lock.lock()
+        pending.append(event)
+        if isDraining {
+            shouldStartDrain = false
+        } else {
+            isDraining = true
+            shouldStartDrain = true
+        }
+        lock.unlock()
+
+        if shouldStartDrain {
+            Task { await drain() }
+        }
+    }
+
+    private func drain() async {
+        while let event = nextEvent() {
+            await handler(event)
+        }
+    }
+
+    private func nextEvent() -> ProfileLifecycleEvent? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !pending.isEmpty else {
+            isDraining = false
+            return nil
+        }
+        return pending.removeFirst()
+    }
+}
+
 public final class ProfileSupervisor: ObservableObject {
     public struct ProcessFactory {
         public let make: (_ argv: [String],
@@ -29,15 +126,18 @@ public final class ProfileSupervisor: ObservableObject {
     private let processFactory: ProcessFactory
     private let argvBuilder: (Profile) -> [String]
     private let logFactory: ((Profile) -> ProfileLogging?)?
+    private let onEvent: ((ProfileLifecycleEvent) -> Void)?
     private var records: [String: Record] = [:]
     private let lock = NSRecursiveLock()
 
     public init(processFactory: ProcessFactory,
                 argvBuilder: @escaping (Profile) -> [String],
-                logFactory: ((Profile) -> ProfileLogging?)? = nil) {
+                logFactory: ((Profile) -> ProfileLogging?)? = nil,
+                onEvent: ((ProfileLifecycleEvent) -> Void)? = nil) {
         self.processFactory = processFactory
         self.argvBuilder = argvBuilder
         self.logFactory = logFactory
+        self.onEvent = onEvent
     }
 
     public func start(_ profile: Profile) {
@@ -55,8 +155,9 @@ public final class ProfileSupervisor: ObservableObject {
         record.process = process
         records[profile.id] = record
         lock.unlock()
-        process.start()
         notifyChange()
+        onEvent?(.started(profileID: profile.id, label: profile.label))
+        process.start()
     }
 
     public func stop(_ profileID: String) {
@@ -114,15 +215,19 @@ public final class ProfileSupervisor: ObservableObject {
     private func handleExit(_ profileID: String, _ code: Int32) {
         lock.lock()
         guard let record = records[profileID] else { lock.unlock(); return }
+        let event: ProfileLifecycleEvent
         if record.expectedStop {
             record.parser.onExit(code: code, expected: true)
             records.removeValue(forKey: profileID)
+            event = .stopped(profileID: profileID, label: record.profile.label)
         } else {
             record.parser.onExit(code: code, expected: false)
             record.exited = true
+            event = .error(profileID: profileID, label: record.profile.label, exitCode: code)
         }
         lock.unlock()
         notifyChange()
+        onEvent?(event)
     }
 
     private func notifyChange() {

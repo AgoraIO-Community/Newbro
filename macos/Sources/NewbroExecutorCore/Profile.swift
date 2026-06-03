@@ -39,3 +39,74 @@ public struct Profile: Codable, Equatable, Identifiable {
         autoActivate = try c.decodeIfPresent(Bool.self, forKey: .autoActivate) ?? false
     }
 }
+
+public func profileCanStart(_ profile: Profile, codexRuntimeAvailable: () -> Bool) -> Bool {
+    if profile.enabledExecutors.contains("codex") {
+        return codexRuntimeAvailable()
+    }
+    return true
+}
+
+public func profileIsComplete(_ profile: Profile) -> Bool {
+    !profile.baseURL.isEmpty && !profile.nodeID.isEmpty
+        && !profile.token.isEmpty && !profile.enabledExecutors.isEmpty
+}
+
+public enum ProfileLifecycleAction: Equatable {
+    case start(Profile)
+    case restart(Profile)
+}
+
+public func startProfileAction(for profile: Profile,
+                               runtimeAvailable: Bool,
+                               codexRuntimeAvailable: () -> Bool) -> ProfileLifecycleAction? {
+    guard runtimeAvailable, profileCanStart(profile, codexRuntimeAvailable: codexRuntimeAvailable) else {
+        return nil
+    }
+    return .start(profile)
+}
+
+public func startProfileAction(in profiles: [Profile],
+                               profileID: String,
+                               runtimeAvailable: Bool,
+                               codexRuntimeAvailable: () -> Bool) -> ProfileLifecycleAction? {
+    guard let profile = profiles.first(where: { $0.id == profileID }) else { return nil }
+    return startProfileAction(for: profile,
+                              runtimeAvailable: runtimeAvailable,
+                              codexRuntimeAvailable: codexRuntimeAvailable)
+}
+
+public func restartProfileAction(for profile: Profile,
+                                 runtimeAvailable: Bool,
+                                 codexRuntimeAvailable: () -> Bool) -> ProfileLifecycleAction? {
+    guard runtimeAvailable, profileCanStart(profile, codexRuntimeAvailable: codexRuntimeAvailable) else {
+        return nil
+    }
+    return .restart(profile)
+}
+
+public func autostartProfileActions(in profiles: [Profile],
+                                    runtimeAvailable: Bool,
+                                    codexRuntimeAvailable: () -> Bool) -> [ProfileLifecycleAction] {
+    profiles.compactMap { profile in
+        guard profile.autoActivate, profileIsComplete(profile) else { return nil }
+        return startProfileAction(for: profile,
+                                  runtimeAvailable: runtimeAvailable,
+                                  codexRuntimeAvailable: codexRuntimeAvailable)
+    }
+}
+
+public func pastedProfileAction(for profile: Profile,
+                                runtimeAvailable: Bool,
+                                isActive: Bool,
+                                codexRuntimeAvailable: () -> Bool) -> ProfileLifecycleAction? {
+    guard profileIsComplete(profile) else { return nil }
+    if isActive {
+        return restartProfileAction(for: profile,
+                                    runtimeAvailable: runtimeAvailable,
+                                    codexRuntimeAvailable: codexRuntimeAvailable)
+    }
+    return startProfileAction(for: profile,
+                              runtimeAvailable: runtimeAvailable,
+                              codexRuntimeAvailable: codexRuntimeAvailable)
+}

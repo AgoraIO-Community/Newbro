@@ -47,9 +47,13 @@ Executor-node note:
   executor-node profiles stored in `~/.newbro/menubar.json`. Each profile runs
   as an independent `newbro executor run` subprocess; several run concurrently.
   The app resolves the installed `newbro` CLI at runtime and only edits
-  connection profiles — deeper executor runtime config stays owned by
-  `newbro executor setup`. A rejected `node_id`/`token` shows as a continuous
-  connecting/retrying state because the node service reconnects unboundedly.
+  connection profiles. The app probes Codex during launch, displays the
+  detected Codex version or `No Codex found. Newbro may not work properly.`,
+  and relies on the CLI to auto-configure the minimal Codex executor runtime
+  when Codex is detectable. `newbro executor setup` remains the
+  advanced/recovery path for custom Codex paths, ACPX, and broken local config.
+  A rejected `node_id`/`token` shows as a continuous connecting/retrying state
+  because the node service reconnects unboundedly.
 - local executor-family/tool config no longer uses an `executor_node.enabled`
   toggle; `newbro executor run` may trigger the same local setup flow when
   executor commands or enabled families are missing
