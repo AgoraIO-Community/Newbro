@@ -7,6 +7,11 @@ import NewbroExecutorCore
 final class AppModel: ObservableObject {
     @Published var profiles: [Profile] = []
     @Published var runtimeAvailable: Bool = true
+    @Published var codexStatus = CommandStatus(
+        command: nil,
+        version: nil,
+        menuTitle: "No Codex found. Newbro may not work properly.",
+        isAvailable: false)
     @Published var installLog: String = ""
 
     private let supervisor: ProfileSupervisor
@@ -57,6 +62,7 @@ final class AppModel: ObservableObject {
             })
         self.profiles = store.load()
         self.runtimeAvailable = locator.isRuntimeAvailable
+        self.codexStatus = locator.codexRuntimeStatus()
         // Forward supervisor status changes so SwiftUI re-renders the menu/icon.
         supervisor.objectWillChange
             .receive(on: RunLoop.main)
@@ -66,7 +72,10 @@ final class AppModel: ObservableObject {
         autostart()
     }
 
-    func refreshRuntime() { runtimeAvailable = locator.isRuntimeAvailable }
+    func refreshRuntime() {
+        runtimeAvailable = locator.isRuntimeAvailable
+        codexStatus = locator.codexRuntimeStatus()
+    }
 
     func autostart() {
         for action in autostartProfileActions(in: profiles,
@@ -243,7 +252,7 @@ final class AppModel: ObservableObject {
     }
 
     private func codexRuntimeAvailable() -> Bool {
-        locator.codexRuntimeStatus().isAvailable
+        codexStatus.isAvailable
     }
 
     private func perform(_ action: ProfileLifecycleAction?) {
@@ -273,12 +282,6 @@ final class AppModel: ObservableObject {
             ProfileEditView(model: self, profileID: profileID,
                             onClose: { [weak self] in self?.windows.close(id: windowID) })
         }
-    }
-
-    func addProfile() {
-        let new = emptyProfile()
-        upsert(new)
-        editProfile(new.id)
     }
 
     func viewLog(_ profileID: String) {
@@ -311,11 +314,6 @@ final class AppModel: ObservableObject {
                 }
             })
         installProcess?.start()
-    }
-
-    func emptyProfile() -> Profile {
-        Profile(id: "profile-\(UUID().uuidString.prefix(8))", label: "New profile",
-                baseURL: "", nodeID: "", token: "")
     }
 }
 

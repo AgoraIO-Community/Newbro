@@ -107,6 +107,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        let codexRow = NSMenuItem(title: model.codexStatus.menuTitle, action: nil, keyEquivalent: "")
+        codexRow.isEnabled = false
+        menu.addItem(codexRow)
+        menu.addItem(.separator())
+
         for profile in model.profiles {
             let status = model.status(of: profile)
             let active = model.isActive(profile)
@@ -135,8 +140,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(row)
         }
 
-        menu.addItem(.separator())
-        menu.addItem(ActionMenuItem(title: "Add profile…") { [weak self] in self?.model.addProfile() })
+        if !model.profiles.isEmpty {
+            menu.addItem(.separator())
+        }
         menu.addItem(ActionMenuItem(title: "Paste connect command…") { [weak self] in self?.pasteConnectCommand() })
         menu.addItem(ActionMenuItem(title: "Launch at login",
                                     state: model.loginItemEnabled ? .on : .off) { [weak self] in
@@ -144,18 +150,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         })
 
         menu.addItem(.separator())
-        let cliLabel = updates.installedCLI.map { "newbro CLI v\($0)" } ?? "newbro CLI"
-        let statusTitle: String
+        let rows = updateMenuRows(installedCLI: updates.installedCLI,
+                                  installedApp: model.appVersion,
+                                  status: updates.status)
+        menu.addItem(disabledMenuItem(title: rows.cliVersionRow))
+        menu.addItem(disabledMenuItem(title: rows.appVersionRow))
+
         if updates.isUpdating {
-            statusTitle = "Updating CLI…"
-        } else if let available = updates.status.cliUpdate {
-            statusTitle = "Update available: \(available)"
-        } else {
-            statusTitle = "\(cliLabel) · up to date"
+            menu.addItem(disabledMenuItem(title: "Updating CLI…"))
+        } else if let cliUpdateRow = rows.cliUpdateRow {
+            menu.addItem(disabledMenuItem(title: cliUpdateRow))
         }
-        let statusRow = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
-        statusRow.isEnabled = false
-        menu.addItem(statusRow)
+
+        if let appUpdateRow = rows.appUpdateRow {
+            menu.addItem(disabledMenuItem(title: appUpdateRow))
+        }
 
         if let available = updates.status.cliUpdate, !updates.isUpdating {
             menu.addItem(ActionMenuItem(title: "Update CLI to \(available)") { [weak self] in
@@ -179,6 +188,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(ActionMenuItem(title: "Quit") { [weak self] in self?.model.quit() })
+    }
+
+    private func disabledMenuItem(title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
     }
 
     private func pasteConnectCommand() {

@@ -29,4 +29,12 @@ final class UpdateStatusTests: XCTestCase {
         XCTAssertEqual(updateStatus(installedCLI: nil, installedApp: nil, latestTag: nil), UpdateStatus())
         XCTAssertEqual(updateStatus(installedCLI: "abc", installedApp: "x", latestTag: "v0.2.0"), UpdateStatus())
     }
+
+    func testComponentVersionRows() {
+        let rows = updateMenuRows(installedCLI: "0.1.0", installedApp: "0.1.0", status: UpdateStatus(cliUpdate: "v0.2.0", appUpdate: "v0.2.0"))
+        XCTAssertEqual(rows.cliVersionRow, "newbro CLI v0.1.0")
+        XCTAssertEqual(rows.appVersionRow, "App v0.1.0")
+        XCTAssertEqual(rows.cliUpdateRow, "CLI update available: v0.2.0")
+        XCTAssertEqual(rows.appUpdateRow, "App update available: v0.2.0")
+    }
 }

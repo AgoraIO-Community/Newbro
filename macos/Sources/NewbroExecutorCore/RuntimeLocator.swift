@@ -5,6 +5,13 @@ public struct CommandStatus: Equatable, Sendable {
     public let version: String?
     public let menuTitle: String
     public let isAvailable: Bool
+
+    public init(command: String?, version: String?, menuTitle: String, isAvailable: Bool) {
+        self.command = command
+        self.version = version
+        self.menuTitle = menuTitle
+        self.isAvailable = isAvailable
+    }
 }
 
 public struct RuntimeLocator {
