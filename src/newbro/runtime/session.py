@@ -132,28 +132,6 @@ def _title_from_draft_text(text: str) -> str:
     return title or "Draft task"
 
 
-def _mark_direct_executor_input(
-    metadata: dict[str, object],
-    source: str,
-) -> dict[str, object]:
-    next_metadata = dict(metadata)
-    sources = next_metadata.get("direct_executor_input_sources")
-    if isinstance(sources, list):
-        direct_sources = [item for item in sources if isinstance(item, str)]
-    else:
-        direct_sources = []
-    if source not in direct_sources:
-        direct_sources.append(source)
-    next_metadata["direct_executor_input_sources"] = direct_sources
-    next_metadata["updated_at"] = datetime.now(tz=UTC).isoformat()
-    next_metadata["suppress_communication_notifications"] = True
-    return next_metadata
-
-
-def _elapsed_ms(started_at: float) -> int:
-    return int((time.perf_counter() - started_at) * 1000)
-
-
 def _new_bro_thread_id() -> str:
     return f"{BRO_THREAD_PREFIX}{uuid4().hex[:12]}"
 
