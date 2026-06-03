@@ -61,7 +61,7 @@ def build_session_observability(
     def _emit_turn_latency(*, request_id, outcome, model_name, total_ms, steps):
         logger.emit_event(
             level="INFO",
-            event_name="turn.latency",
+            event_name=settings.latency_export_event_name,
             component="runtime",
             summary=f"turn latency {total_ms}ms",
             outcome=outcome,

@@ -204,6 +204,7 @@ def load_settings() -> Settings:
         latency_export_enabled=os.getenv("SYNAPSE_LATENCY_EXPORT_ENABLED", "false").lower() == "true",
         latency_export_url=os.getenv("SYNAPSE_LATENCY_EXPORT_URL") or None,
         latency_export_headers=_parse_headers(os.getenv("SYNAPSE_LATENCY_EXPORT_HEADERS")),
+        latency_export_event_name=os.getenv("SYNAPSE_LATENCY_EXPORT_EVENT_NAME", "turn.latency"),
         latency_export_batch_size=int(os.getenv("SYNAPSE_LATENCY_EXPORT_BATCH_SIZE", "50")),
         latency_export_flush_seconds=float(os.getenv("SYNAPSE_LATENCY_EXPORT_FLUSH_SECONDS", "5")),
         latency_export_queue_max=int(os.getenv("SYNAPSE_LATENCY_EXPORT_QUEUE_MAX", "1000")),
