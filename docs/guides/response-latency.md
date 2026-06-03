@@ -46,5 +46,22 @@ Set these environment variables on the backend:
 Export is non-blocking and best-effort — it never slows or breaks a response, and if
 disabled (the default) everything still lands in stdout logs and the timeline.
 
+> **Keep `SYNAPSE_LOG_LEVEL` at `INFO` (or `DEBUG`).** `turn.latency` is an `INFO`
+> event, and both stdout logging and the HTTP exporter are gated by the log level.
+> If you raise the level to `WARNING` or above, latency events are **silently
+> dropped from stdout and the exporter** (they still land in the in-memory
+> diagnostics timeline). Export requires `INFO`.
+
+## Known limitations
+
+- **Follow-up while still running:** if a user sends another message *while the
+  executor is still actively working on that thread*, that turn currently records
+  only the send-side steps (no `ttft`/`stream`) and is reported with
+  `outcome: "incomplete"` after a timeout. Turns sent after the previous response
+  has completed get the full waterfall. (Capturing the active-execution follow-up
+  path is a planned enhancement.)
+- **Audio path** (`submit_executor_audio_instruction`) is not yet instrumented —
+  text responses only in this version.
+
 For Cloudflare Analytics Engine, deploy the Worker bridge in
 [`cloudflare/latency-worker/`](../../cloudflare/latency-worker/README.md).
