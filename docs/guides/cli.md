@@ -106,6 +106,12 @@ newbro executor run \
   --token secret
 ```
 
+For the macOS menu-bar app, `newbro executor setup` is not required on the
+happy path when Codex is already installed and discoverable. On first
+`newbro executor run`, a non-interactive app launch may auto-write the minimal
+Codex executor config. Use `newbro executor setup` for custom Codex paths,
+ACPX, or recovery when Codex is not on the app/login-shell PATH.
+
 The run command also accepts per-run executor overrides:
 
 ```bash
