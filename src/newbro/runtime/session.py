@@ -1559,6 +1559,7 @@ class SessionRuntime:
     _bro_thread_live_plan_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_live_plan_emitted_text: dict[tuple[str, str, str], str] = field(default_factory=dict, init=False, repr=False)
     _bro_thread_goals: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    direct_executor: DirectExecutorInteraction | None = field(default=None, init=False, repr=False)
 
     def _record_direct_executor_text_metric(
         self,
@@ -1613,15 +1614,19 @@ class SessionRuntime:
         )
 
     def _direct_executor(self) -> DirectExecutorInteraction:
-        return DirectExecutorInteraction(
-            session_id=self.session_id,
-            blackboard=self.blackboard,
-            executor_node_manager=self.executor_node_manager,
-            imported_codex_threads=self._imported_codex_threads,
-            imported_codex_thread_resume_handles=self._imported_codex_thread_resume_handles,
-            publish_snapshot=lambda: self.publish_snapshot(sync_imported_codex_threads=False),
-            observability=self.observability,
-        )
+        if self.direct_executor is None:
+            self.direct_executor = DirectExecutorInteraction(
+                session_id=self.session_id,
+                blackboard=self.blackboard,
+                executor_node_manager=self.executor_node_manager,
+                imported_codex_threads=self._imported_codex_threads,
+                imported_codex_thread_resume_handles=self._imported_codex_thread_resume_handles,
+                publish_snapshot=lambda: self.publish_snapshot(sync_imported_codex_threads=False),
+                observability=self.observability,
+            )
+        self.direct_executor.imported_codex_threads = self._imported_codex_threads
+        self.direct_executor.imported_codex_thread_resume_handles = self._imported_codex_thread_resume_handles
+        return self.direct_executor
 
     async def snapshot(self, *, sync_imported_codex_threads: bool = True) -> SessionSnapshot:
         tasks = await self.blackboard.list_tasks()
