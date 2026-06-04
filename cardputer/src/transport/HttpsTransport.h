@@ -12,6 +12,8 @@ class HttpsTransport : public Transport {
   HttpsTransport(std::string host, uint16_t port) : host_(std::move(host)), port_(port) {}
   HttpResponse request(const std::string &method, const std::string &path,
                        const std::string &body, const std::string &cookieToken) override;
+  HttpResponse postBytes(const std::string &path, const std::string &contentType,
+                         const uint8_t *body, size_t len, const std::string &cookieToken) override;
 
  private:
   std::string host_;
