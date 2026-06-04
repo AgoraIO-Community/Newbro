@@ -3347,3 +3347,36 @@
   border: 1px solid rgba(0,0,0,0.14); background: transparent; color: rgba(0,0,0,0.55);
 }
 .thr-reason-stop:focus-visible { outline: 2px solid rgba(59,130,246,0.6); outline-offset: 1px; }
+
+/* Live turn — streaming caret, divider, and smooth transitions (mobile). */
+.thr-reason-divider {
+  border-top: 1px solid var(--nb-info-edge);
+  margin: 9px 0 1px;
+}
+.thr-reason-caret {
+  display: inline-block;
+  width: 7px; height: 15px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  border-radius: 1px;
+  background: var(--nb-info);
+  animation: thr-reason-caret-blink 1s steps(2, start) infinite;
+}
+@keyframes thr-reason-caret-blink { 50% { opacity: 0; } }
+.thr-reason > *, .thr-bubble-answer > * {
+  animation: thr-reason-fade-in 0.18s var(--nb-ease-out, ease-out);
+}
+@keyframes thr-reason-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thr-reason-orb span,
+  .thr-reason-skeleton span,
+  .thr-reason-stream-progress span,
+  .thr-reason-step-active,
+  .thr-reason-caret,
+  .thr-reason > *, .thr-bubble-answer > * {
+    animation: none !important;
+  }
+}

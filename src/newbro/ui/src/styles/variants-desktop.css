@@ -4259,3 +4259,38 @@
 }
 .dt-reason-stop:hover { background: rgba(0,0,0,0.05); }
 .dt-reason-stop:focus-visible { outline: 2px solid rgba(59,130,246,0.6); outline-offset: 1px; }
+
+/* Live turn — streaming caret, divider, and smooth transitions. */
+.dt-reason-divider {
+  border-top: 1px solid var(--nb-info-edge);
+  margin: 9px 0 1px;
+}
+.dt-reason-caret {
+  display: inline-block;
+  width: 7px; height: 15px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  border-radius: 1px;
+  background: var(--nb-info);
+  animation: dt-reason-caret-blink 1s steps(2, start) infinite;
+}
+@keyframes dt-reason-caret-blink { 50% { opacity: 0; } }
+/* The bubble eases as content grows between sub-states. */
+.dt-bubble-reason, .dt-bubble-answer { transition: none; }
+.dt-bubble-reason > *, .dt-bubble-answer > * {
+  animation: dt-reason-fade-in 0.18s var(--nb-ease-out, ease-out);
+}
+@keyframes dt-reason-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dt-reason-orb span,
+  .dt-reason-skeleton span,
+  .dt-reason-stream-progress span,
+  .dt-reason-step-active,
+  .dt-reason-caret,
+  .dt-bubble-reason > *, .dt-bubble-answer > * {
+    animation: none !important;
+  }
+}
