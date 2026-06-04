@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEven
 import { ArrowUp, Check, ChevronLeft, Download, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Pencil, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorConnectCommands,
+  claimDevice,
   clearDraft,
   clearVoiceTarget,
   createExecutorNode,
@@ -18,6 +19,7 @@ import {
 import { useThreadSelection } from "./lib/useThreadSelection";
 import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForNativeTurn, buildReasoningStepsForTurn, type ReasoningStep } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
+import { DevicePairingForm } from "./components/newbro/DevicePairingForm";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
 import { deriveLiveTurnState } from "./lib/reasoningPhase";
@@ -3766,6 +3768,12 @@ function HomeAccountSheet({
           <span className="acct-row-chev">›</span>
         </button>
       </div>
+
+      <section className="acct-section nb-devices-section">
+        <div className="acct-section-eyebrow nb-eyebrow">DEVICES</div>
+        <p className="nb-body-soft">Pair a Cardputer or other device using the code shown on its screen.</p>
+        <DevicePairingForm onClaim={claimDevice} />
+      </section>
 
       <div className="acct-section">
         <div className="acct-section-eyebrow">APP</div>
