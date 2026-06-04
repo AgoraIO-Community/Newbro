@@ -47,6 +47,18 @@ void test_parse_personas_empty(void) {
   TEST_ASSERT_EQUAL_INT(0, (int)out.size());
 }
 
+void test_parse_personas_rejects_non_array(void) {
+  std::vector<Persona> out;
+  TEST_ASSERT_FALSE(parsePersonas(R"({"not":"an array"})", out));
+}
+
+void test_parse_personas_skips_malformed_entries(void) {
+  std::vector<Persona> out;
+  TEST_ASSERT_TRUE(parsePersonas(R"([{"persona_id":"p1","name":"Pixel","avatar":"rabbit","status":"idle"}, null, {"name":"no id"}])", out));
+  TEST_ASSERT_EQUAL_INT(1, (int)out.size());
+  TEST_ASSERT_EQUAL_STRING("p1", out[0].id.c_str());
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_parse_bootstrap);
@@ -54,5 +66,7 @@ int main(int, char **) {
   RUN_TEST(test_parse_bootstrap_rejects_no_session);
   RUN_TEST(test_parse_personas);
   RUN_TEST(test_parse_personas_empty);
+  RUN_TEST(test_parse_personas_rejects_non_array);
+  RUN_TEST(test_parse_personas_skips_malformed_entries);
   return UNITY_END();
 }

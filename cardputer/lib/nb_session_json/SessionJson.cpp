@@ -19,11 +19,12 @@ bool parsePersonas(const std::string &json, std::vector<Persona> &out) {
   if (!doc.is<JsonArray>()) return false;
   out.clear();
   for (JsonObject item : doc.as<JsonArray>()) {
+    if (!item["persona_id"].is<const char *>()) continue;  // skip malformed entries
     Persona p;
     p.id = item["persona_id"].as<std::string>();
-    p.name = item["name"].as<std::string>();
-    p.avatar = item["avatar"].as<std::string>();
-    p.busy = std::string("busy") == (item["status"].is<const char *>() ? item["status"].as<const char *>() : "");
+    p.name = item["name"].is<const char *>() ? item["name"].as<std::string>() : std::string();
+    p.avatar = item["avatar"].is<const char *>() ? item["avatar"].as<std::string>() : std::string();
+    p.busy = item["status"].as<std::string>() == "busy";
     out.push_back(p);
   }
   return true;
