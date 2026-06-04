@@ -3567,6 +3567,45 @@
   opacity: 0.6;
 }
 
+.home-edit-actions {
+  position: absolute;
+  left: -8px;
+  top: -8px;
+  z-index: 4;
+  display: flex;
+  gap: 6px;
+}
+
+.home-edit-rename,
+.home-edit-remove {
+  position: static;
+  inset: auto;
+  display: grid;
+  height: 25px;
+  width: 25px;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.2);
+}
+
+.home-edit-rename {
+  background: #111827;
+  color: #fff;
+}
+
+.home-edit-remove {
+  background: #ef4444;
+  color: #fff;
+}
+
+.nb-rename-dialog-mobile {
+  align-self: flex-end;
+  width: 100%;
+  max-width: 390px;
+  border-radius: 18px 18px 0 0;
+}
+
 @media (max-width: 1023px) {
   .nb-setup-gate {
     padding: 20px;

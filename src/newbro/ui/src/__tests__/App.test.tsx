@@ -680,6 +680,39 @@ describe("Newbro artboard shell", () => {
     expect(screen.queryByRole("button", { name: /Copy install command/i })).not.toBeInTheDocument();
   });
 
+  it("renames a Bro from mobile Manage bros", async () => {
+    window.history.replaceState({}, "", "/mobile?sid=session-existing");
+    clientMock.updatePersona.mockResolvedValue({
+      persona_id: "forge",
+      name: "Scout",
+      avatar: "bro",
+      base_prompt: "",
+      executor_node_id: "node-forge",
+      bro_detail_session_id: "detail-forge",
+      status: "idle",
+    });
+    clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
+      return clientMock.updatePersona.mock.calls.length > 0
+        ? renamedForgeSnapshot(sessionId, "Scout")
+        : forgeSnapshot(sessionId);
+    });
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Manage bros/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rename Forge" }));
+    const dialog = await screen.findByRole("dialog", { name: /Edit Forge/i });
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+    await waitFor(() => expect(within(screen.getByTestId("mobile-bro-row-forge")).getByText("Scout")).toBeInTheDocument());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
 
   it("creates the first Bro once after connection and shows a done action", async () => {
     let sessionOneSnapshots = 0;

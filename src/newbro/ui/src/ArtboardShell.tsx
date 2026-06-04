@@ -3651,6 +3651,7 @@ function HomeBroEditable({
   featured,
   editing,
   onRemove,
+  onRename,
   onOpen,
   onSetup,
 }: {
@@ -3658,6 +3659,7 @@ function HomeBroEditable({
   featured: boolean;
   editing: boolean;
   onRemove: (id: string) => void;
+  onRename: (bro: BroCardModel) => void;
   onOpen: (id: string) => void;
   onSetup: (bro: BroCardModel) => void;
 }) {
@@ -3665,16 +3667,26 @@ function HomeBroEditable({
     <div className={`home-edit-wrap${editing ? " home-edit-wrap-on" : ""}${featured ? " home-edit-wrap-card" : " home-edit-wrap-row"}`}>
       <MobileBroCard bro={bro} onOpen={editing ? () => {} : onOpen} onSetup={onSetup} />
       {editing && (
-        <button
-          type="button"
-          className="home-edit-remove"
-          aria-label={`Remove ${bro.name}`}
-          onClick={(e) => { e.stopPropagation(); onRemove(bro.id); }}
-        >
-          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-            <path d="M6 12h12" />
-          </svg>
-        </button>
+        <div className="home-edit-actions">
+          <button
+            type="button"
+            className="home-edit-rename"
+            aria-label={`Rename ${bro.name}`}
+            onClick={(e) => { e.stopPropagation(); onRename(bro); }}
+          >
+            <Pencil size={12} strokeWidth={2.4} />
+          </button>
+          <button
+            type="button"
+            className="home-edit-remove"
+            aria-label={`Remove ${bro.name}`}
+            onClick={(e) => { e.stopPropagation(); onRemove(bro.id); }}
+          >
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+              <path d="M6 12h12" />
+            </svg>
+          </button>
+        </div>
       )}
     </div>
   );
@@ -3859,16 +3871,17 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [signOutPending, setSignOutPending] = useState(false);
   const [setupBro, setSetupBro] = useState<BroCardModel | null>(null);
+  const [renameBro, setRenameBro] = useState<BroCardModel | null>(null);
 
   const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
   const working = homeBros.filter((bro) => homeBroState(bro) === "working");
   const standing = homeBros.filter((bro) => homeBroState(bro) !== "working");
   const recents = buildHomeRecents(shell.broThreads, shell.runtimePersonas);
-  const anyOverlay = accountOpen || addOpen || !!confirmId;
+  const anyOverlay = accountOpen || addOpen || !!confirmId || !!renameBro;
   const confirmBro = confirmId ? shell.bros.find((b) => b.id === confirmId) ?? null : null;
   const account = shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in";
 
-  const closeAll = () => { setAccountOpen(false); setAddOpen(false); setConfirmId(null); };
+  const closeAll = () => { setAccountOpen(false); setAddOpen(false); setConfirmId(null); setRenameBro(null); };
   const enterEdit = () => { setAccountOpen(false); setEditMode(true); };
 
   const handleSignOut = () => {
@@ -3962,7 +3975,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
                   </div>
                   <div className="home-flight">
                     {working.map((bro) => (
-                      <HomeBroEditable key={bro.id} bro={bro} featured editing={editMode} onRemove={setConfirmId} onOpen={onOpenBro} onSetup={setSetupBro} />
+                      <HomeBroEditable key={bro.id} bro={bro} featured editing={editMode} onRemove={setConfirmId} onRename={setRenameBro} onOpen={onOpenBro} onSetup={setSetupBro} />
                     ))}
                   </div>
                 </section>
@@ -3974,7 +3987,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
                 </div>
                 <div className="home-list">
                   {standing.map((bro) => (
-                    <HomeBroEditable key={bro.id} bro={bro} featured={false} editing={editMode} onRemove={setConfirmId} onOpen={onOpenBro} onSetup={setSetupBro} />
+                    <HomeBroEditable key={bro.id} bro={bro} featured={false} editing={editMode} onRemove={setConfirmId} onRename={setRenameBro} onOpen={onOpenBro} onSetup={setSetupBro} />
                   ))}
                   <AddBroTile editing={editMode} onClick={() => setAddOpen(true)} />
                 </div>
@@ -4019,6 +4032,15 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
             onConfirmed={() => { setConfirmId(null); void shell.refreshShellSession(); }}
           />
         )}
+        {renameBro && shell.activeShellSessionId ? (
+          <RenameBroDialog
+            bro={renameBro}
+            sessionId={shell.activeShellSessionId}
+            onClose={() => setRenameBro(null)}
+            onRenamed={shell.refreshShellSession}
+            mobile
+          />
+        ) : null}
       </div>
       {addOpen && shell.activeShellSessionId ? (
         <CreateConnectSheet
