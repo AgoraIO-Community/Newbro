@@ -736,7 +736,7 @@ describe("Newbro artboard shell", () => {
       expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
     });
     await waitFor(() => expect(screen.getByRole("heading", { name: "Scout" })).toBeInTheDocument());
-    expect(screen.queryByRole("dialog", { name: /Edit Forge/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("opens Bro detail from the desktop home card", async () => {
