@@ -14,6 +14,7 @@
 #include "store/ConfigStore.h"
 #include "transport/HttpsTransport.h"
 #include "ui/BroGlyph.h"
+#include "ui/Router.h"
 #include "ui/TextScreen.h"
 #include "ui/Theme.h"
 
@@ -149,6 +150,9 @@ void setup() {
   M5Cardputer.begin(cfg, true);  // enable keyboard
   (void)nb::theme::coral;
   nb::drawBroGlyph(M5Cardputer.Display, nb::GlyphKind::Rabbit, nb::GlyphState::Idle, 120, 67, 16, nb::theme::coral, 0);
+  static nb::Router router;
+  router.begin();
+  (void)router;
   M5Cardputer.Display.setRotation(1);
 
   nb::screen::title("newbro");
