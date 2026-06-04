@@ -364,6 +364,9 @@ function useNewbroShellState() {
   }
 
   const loadShellSession = useEffectEvent(async (sessionId: string) => {
+    if (!mountedRef.current) {
+      return;
+    }
     const loadSequence = ++shellLoadSequenceRef.current;
     setShellError(null);
     const [snapshot, conversation] = await Promise.all([
@@ -404,7 +407,7 @@ function useNewbroShellState() {
   });
 
   const openRuntimeBroThread = useEffectEvent(async (targetPersonaId: string, threadId: string) => {
-    if (!activeShellSessionId) {
+    if (!activeShellSessionId || !mountedRef.current) {
       return;
     }
     const openKey = threadOpenKey(targetPersonaId, threadId);
@@ -436,7 +439,7 @@ function useNewbroShellState() {
   });
 
   const closeRuntimeBroThread = useEffectEvent(async (targetPersonaId: string, threadId: string | null) => {
-    if (!activeShellSessionId || !threadId) {
+    if (!activeShellSessionId || !threadId || !mountedRef.current) {
       return;
     }
     try {

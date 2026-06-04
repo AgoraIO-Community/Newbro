@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import { ArrowUp, Check, ChevronLeft, Download, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
+import { ArrowUp, Check, ChevronLeft, Download, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Pencil, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorConnectCommands,
   clearDraft,
@@ -1691,9 +1691,26 @@ function StateChip({ state }: { state: HomeBroState }) {
   );
 }
 
-function DesktopBroCard({ bro, onOpen, onSetup, featured = false }: { bro: BroCardModel; onOpen: (id: string) => void; onSetup: (bro: BroCardModel) => void; featured?: boolean }) {
+function DesktopBroCard({
+  bro,
+  onOpen,
+  onSetup,
+  onRename,
+  featured = false,
+}: {
+  bro: BroCardModel;
+  onOpen: (id: string) => void;
+  onSetup: (bro: BroCardModel) => void;
+  onRename: (bro: BroCardModel) => void;
+  featured?: boolean;
+}) {
   const state = homeBroState(bro);
   const tone = homeBroTone(state);
+  const handleRename = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onRename(bro);
+  };
   return (
     <a data-testid={`bro-card-${bro.id}`} className={`dt-bro-card dt-bro-card-${tone}${featured ? " dt-bro-card-featured" : ""}`} href={broDetailHref(bro.id)} onClickCapture={(event) => { if (clickedInsideHomeCardAction(event)) event.preventDefault(); }} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
       <div className={`dt-bro-card-avatar dt-bro-card-avatar-${tone}`}>
@@ -1722,6 +1739,11 @@ function DesktopBroCard({ bro, onOpen, onSetup, featured = false }: { bro: BroCa
             <span className="dt-bro-card-reasoning-text">{bro.latestReasoningStep || bro.progressLabel}</span>
           </div>
         ) : null}
+        {bro.source === "runtime" ? (
+          <button type="button" data-home-card-action="rename" className="nb-bro-edit-button dt-bro-card-edit" aria-label={`Edit ${bro.name}`} onClick={handleRename}>
+            <Pencil size={13} strokeWidth={2.1} aria-hidden="true" />
+          </button>
+        ) : null}
         <HomeBroConnectAction bro={bro} variant="card" onSetup={onSetup} />
       </div>
       <span className="dt-bro-card-arrow">›</span>
@@ -1729,8 +1751,23 @@ function DesktopBroCard({ bro, onOpen, onSetup, featured = false }: { bro: BroCa
   );
 }
 
-function DesktopRosterRow({ bro, onOpen, onSetup }: { bro: BroCardModel; onOpen: (id: string) => void; onSetup: (bro: BroCardModel) => void }) {
+function DesktopRosterRow({
+  bro,
+  onOpen,
+  onSetup,
+  onRename,
+}: {
+  bro: BroCardModel;
+  onOpen: (id: string) => void;
+  onSetup: (bro: BroCardModel) => void;
+  onRename: (bro: BroCardModel) => void;
+}) {
   const state = homeBroState(bro);
+  const handleRename = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onRename(bro);
+  };
   return (
     <a data-testid={`bro-card-${bro.id}`} className={`dt-roster-row dt-roster-row-${state}`} href={broDetailHref(bro.id)} onClickCapture={(event) => { if (clickedInsideHomeCardAction(event)) event.preventDefault(); }} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
       <div className={`dt-roster-avatar dt-roster-avatar-${state}`}>
@@ -1738,6 +1775,11 @@ function DesktopRosterRow({ bro, onOpen, onSetup }: { bro: BroCardModel; onOpen:
       </div>
       <span className="dt-roster-name">{bro.name}</span>
       <span className="dt-roster-last">{homeBroLast(bro, state)}</span>
+      {bro.source === "runtime" ? (
+        <button type="button" data-home-card-action="rename" className="nb-bro-edit-button dt-roster-edit" aria-label={`Edit ${bro.name}`} onClick={handleRename}>
+          <Pencil size={13} strokeWidth={2.1} aria-hidden="true" />
+        </button>
+      ) : null}
       <HomeBroConnectAction bro={bro} variant="row" onSetup={onSetup} />
     </a>
   );
@@ -1774,10 +1816,107 @@ function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
   );
 }
 
+function RenameBroDialog({
+  bro,
+  sessionId,
+  onClose,
+  onRenamed,
+  mobile = false,
+}: {
+  bro: BroCardModel;
+  sessionId: string;
+  onClose: () => void;
+  onRenamed: () => Promise<void>;
+  mobile?: boolean;
+}) {
+  const [name, setName] = useState(bro.name);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const trimmedName = name.trim();
+  const unchanged = trimmedName === bro.name.trim();
+  const canSave = trimmedName.length > 0 && !unchanged && !pending;
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (pending) return;
+    if (!trimmedName) {
+      setError("Bro name is required.");
+      return;
+    }
+    if (unchanged) {
+      onClose();
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      await updatePersona(sessionId, bro.id, { name: trimmedName });
+      await onRenamed();
+      onClose();
+      return;
+    } catch (err) {
+      setError(describeError(err, "Could not rename this Bro."));
+      setPending(false);
+    }
+  };
+
+  return (
+    <div
+      className="nb-first-run-sheet-layer nb-rename-dialog-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Edit ${bro.name}`}
+      onMouseDown={(event) => {
+        if (!pending && event.target === event.currentTarget) onClose();
+      }}
+    >
+      <form className={`nb-rename-dialog${mobile ? " nb-rename-dialog-mobile" : ""}`} onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+        <header className="nb-rename-head">
+          <div>
+            <span className="ob-eyebrow ob-eyebrow-coral">BRO SETTINGS</span>
+            <h2 className="nb-rename-title">Edit {bro.name}</h2>
+          </div>
+          <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose} disabled={pending}>
+            <X size={16} strokeWidth={2.2} />
+          </button>
+        </header>
+        <label className="ob-field">
+          <span className="ob-field-eyebrow">BRO NAME</span>
+          <div className={`ob-input${trimmedName ? " ob-input-filled" : ""}`}>
+            <span className="ob-input-prefix">@</span>
+            <input
+              aria-label="Bro name"
+              type="text"
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                setError(null);
+              }}
+              autoFocus
+            />
+          </div>
+          <span className="ob-field-hint">Use a short name that is easy to say out loud.</span>
+        </label>
+        {error ? <div className="nb-status-banner nb-status-banner-error">{error}</div> : null}
+        <footer className="nb-rename-actions">
+          <button type="button" className="nb-rename-secondary" onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button type="submit" className={`ob-cta${!canSave ? " ob-cta-pending" : ""}`} disabled={!canSave}>
+            {pending ? <span className="ob-cta-spinner" aria-hidden="true" /> : null}
+            <span>{pending ? "Saving..." : "Save"}</span>
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) => void }) {
   const shell = useNewbroShell();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [setupBro, setSetupBro] = useState<BroCardModel | null>(null);
+  const [renameBro, setRenameBro] = useState<BroCardModel | null>(null);
   const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
   const workingBros = homeBros.filter((bro) => homeBroState(bro) === "working");
   const standingByBros = homeBros.filter((bro) => homeBroState(bro) !== "working");
@@ -1814,7 +1953,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
                       <span className="dt-home-section-sub">Sessions currently dispatched</span>
                     </div>
                     <div className="dt-bro-grid">
-                      {workingBros.map((bro) => <DesktopBroCard key={bro.id} bro={bro} featured onOpen={onOpenBro} onSetup={setSetupBro} />)}
+                      {workingBros.map((bro) => <DesktopBroCard key={bro.id} bro={bro} featured onOpen={onOpenBro} onSetup={setSetupBro} onRename={setRenameBro} />)}
                     </div>
                   </section>
                 ) : null}
@@ -1824,7 +1963,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
                     <span className="dt-home-section-sub">Quiet for now - hold space to wake one</span>
                   </div>
                   <div className="dt-bro-roster">
-                    {standingByBros.map((bro) => <DesktopRosterRow key={bro.id} bro={bro} onOpen={onOpenBro} onSetup={setSetupBro} />)}
+                    {standingByBros.map((bro) => <DesktopRosterRow key={bro.id} bro={bro} onOpen={onOpenBro} onSetup={setSetupBro} onRename={setRenameBro} />)}
                   </div>
                 </section>
               </>
@@ -1866,6 +2005,9 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
       {setupBro && shell.activeShellSessionId ? (
         <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setSetupBro(null)} onCreated={shell.refreshShellSession} bro={setupBro} />
       ) : null}
+      {renameBro && shell.activeShellSessionId ? (
+        <RenameBroDialog sessionId={shell.activeShellSessionId} bro={renameBro} onClose={() => setRenameBro(null)} onRenamed={shell.refreshShellSession} />
+      ) : null}
     </DesktopFrame>
   );
 }
@@ -1883,10 +2025,13 @@ function CreateConnectSheet({
   bro?: BroCardModel | null;
   mobile?: boolean;
 }) {
-  const [name, setName] = useState(bro?.name ?? "atlas");
+  const initialBroName = bro?.name ?? "atlas";
+  const [name, setName] = useState(initialBroName);
+  const [savedBroName, setSavedBroName] = useState(initialBroName);
   const [commands, setCommands] = useState<ExecutorConnectCommands | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [nameSaving, setNameSaving] = useState(false);
   const [copiedKind, setCopiedKind] = useState<"install" | "run" | "settings" | null>(null);
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
   const [pendingBroName, setPendingBroName] = useState<string | null>(null);
@@ -1895,7 +2040,11 @@ function CreateConnectSheet({
   const finalizingRef = useRef(false);
   const autoIssueStartedRef = useRef(false);
   const trimmedName = name.trim();
-  const canCreate = trimmedName.length > 0 && !busy && !commands && !pendingNodeId && !completed;
+  const existingBroNameDirty = Boolean(bro) && trimmedName !== savedBroName.trim();
+  const existingBroNameChanged = existingBroNameDirty && trimmedName.length > 0;
+  const connectActionsDisabled = existingBroNameDirty || nameSaving;
+  const canCreate = trimmedName.length > 0 && !busy && !nameSaving && !commands && !pendingNodeId && !completed;
+  const canSaveExistingBroName = Boolean(bro) && existingBroNameChanged && !busy && !nameSaving && !completed;
 
   // For an existing bro that already has a node, reveal its connect command as
   // soon as the dialog opens, so the command + copy work without a "create" click.
@@ -1917,6 +2066,31 @@ function CreateConnectSheet({
     })();
     return () => { cancelled = true; };
   }, [bro?.executorNodeId, commands, sessionId]);
+
+  async function saveExistingBroNameIfChanged(): Promise<boolean> {
+    if (!bro) return true;
+    if (nameSaving) return false;
+    if (!trimmedName) {
+      setError("Bro name is required.");
+      return false;
+    }
+    if (!existingBroNameChanged) {
+      return true;
+    }
+    setNameSaving(true);
+    setError(null);
+    try {
+      await updatePersona(sessionId, bro.id, { name: trimmedName });
+      await onCreated();
+      setSavedBroName(trimmedName);
+      return true;
+    } catch (err) {
+      setError(describeError(err, "Could not rename this Bro."));
+      return false;
+    } finally {
+      setNameSaving(false);
+    }
+  }
 
   async function copyCommand(value: string, kind: "install" | "run" | "settings") {
     await navigator.clipboard?.writeText(value).then(() => setCopiedKind(kind), () => setCopiedKind(null));
@@ -1951,6 +2125,9 @@ function CreateConnectSheet({
     setBusy(true);
     setError(null);
     try {
+      if (!(await saveExistingBroNameIfChanged())) {
+        return;
+      }
       const nextBroName = trimmedName;
       const issue = bro?.executorNodeId
         ? await revealExecutorNodeConnectCommand(sessionId, bro.executorNodeId)
@@ -1982,10 +2159,10 @@ function CreateConnectSheet({
   }
 
   useEffect(() => {
-    if (autoIssueStartedRef.current || bro?.executorNodeId || !canCreate) return;
+    if (autoIssueStartedRef.current || bro || !canCreate) return;
     autoIssueStartedRef.current = true;
     void issueConnectCredentials({ copyInstall: false });
-  }, [bro?.executorNodeId, canCreate]);
+  }, [bro, canCreate]);
 
   useEffect(() => {
     if (!pendingNodeId || !pendingBroName || completed) return;
@@ -2042,10 +2219,26 @@ function CreateConnectSheet({
                     <span className="ob-field-eyebrow">STEP 1 · NAME IT</span>
                     <div className="ob-input ob-input-filled">
                       <span className="ob-input-prefix">@</span>
-                      <input type="text" value={name} disabled={Boolean(bro) || Boolean(commands) || busy} onChange={(event) => setName(event.target.value)} />
+                      <input
+                        aria-label="Bro name"
+                        type="text"
+                        value={name}
+                        disabled={busy || nameSaving || completed}
+                        onChange={(event) => setName(event.target.value)}
+                      />
                     </div>
                     <span className="ob-field-hint">Pick one word that&rsquo;s easy to say out loud — you&rsquo;ll talk to it by name. e.g. atlas, scout, forge.</span>
                   </label>
+                  {bro ? (
+                    <button
+                      type="button"
+                      className="nb-inline-save-name"
+                      disabled={!canSaveExistingBroName}
+                      onClick={() => { void saveExistingBroNameIfChanged(); }}
+                    >
+                      {nameSaving ? "Saving..." : "Save name"}
+                    </button>
+                  ) : null}
                 </div>
                 <div className="ob-fieldset">
                   <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 2 · AGENT CLIENT</span>
@@ -2087,7 +2280,7 @@ function CreateConnectSheet({
                     <div className="ob-connect-cmd">
                       <span className="ob-connect-prompt">url</span>
                       <span className="ob-connect-line">{commands?.connectSettings ?? "Connect settings will appear after credentials are issued."}</span>
-                      <button type="button" className="ob-connect-copy" aria-label="Copy connect settings" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.connectSettings, "settings"); }}>
+                      <button type="button" className="ob-connect-copy" aria-label="Copy connect settings" disabled={!commands || connectActionsDisabled} onClick={() => { if (commands && !connectActionsDisabled) void copyCommand(commands.connectSettings, "settings"); }}>
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                           <rect x="9" y="9" width="11" height="11" rx="2"/>
                           <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
@@ -2114,7 +2307,7 @@ function CreateConnectSheet({
                         <div className="ob-connect-cmd">
                           <span className="ob-connect-prompt">$</span>
                           <span className="ob-connect-line">{commands?.installOnly ?? "curl -fsSL newbro.dev/install.sh | sh"}</span>
-                          <button type="button" className="ob-connect-copy" aria-label="Copy install command" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.installOnly, "install"); }}>
+                          <button type="button" className="ob-connect-copy" aria-label="Copy install command" disabled={!commands || connectActionsDisabled} onClick={() => { if (commands && !connectActionsDisabled) void copyCommand(commands.installOnly, "install"); }}>
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                               <rect x="9" y="9" width="11" height="11" rx="2"/>
                               <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
@@ -2127,7 +2320,7 @@ function CreateConnectSheet({
                         <div className="ob-connect-cmd">
                           <span className="ob-connect-prompt">$</span>
                           <span className="ob-connect-line">{commands?.runOnly ?? "Run command will appear after credentials are issued."}</span>
-                          <button type="button" className="ob-connect-copy" aria-label="Copy connect command from terminal" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.runOnly, "run"); }}>
+                          <button type="button" className="ob-connect-copy" aria-label="Copy connect command from terminal" disabled={!commands || connectActionsDisabled} onClick={() => { if (commands && !connectActionsDisabled) void copyCommand(commands.runOnly, "run"); }}>
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                               <rect x="9" y="9" width="11" height="11" rx="2"/>
                               <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
@@ -2157,7 +2350,7 @@ function CreateConnectSheet({
               {completed ? "Connected once · Bro ready" : commands ? "We’ll detect your computer automatically · link valid 9:46" : "Download link + connect settings will be generated on demand"}
             </span>
             {commands && (completed || bro?.executorNodeId) ? (
-              <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" onClick={() => { void onCreated().finally(onClose); }}>
+              <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" disabled={connectActionsDisabled} onClick={() => { if (!connectActionsDisabled) void onCreated().finally(onClose); }}>
                 Done
               </button>
             ) : (
@@ -3195,6 +3388,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
   const [threadVisibleCount, setThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
@@ -3334,6 +3528,13 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
             onShowMore={() => setThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE)}
           />
           <section className="dt-pane">
+            {bro.source === "runtime" ? (
+              <div className="nb-detail-edit-row">
+                <button type="button" className="nb-bro-edit-button" aria-label="Edit Bro" onClick={() => setRenameOpen(true)}>
+                  <Pencil size={14} strokeWidth={2.1} aria-hidden="true" />
+                </button>
+              </div>
+            ) : null}
             {offline ? (
               <div className="dt-pane-banner">
                 <OfflineBanner bro={bro} node={offline} neverConnected={nodeState.kind === "never_connected"} onConnect={() => setConnectOpen(true)} />
@@ -3381,6 +3582,9 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
       />
       {connectOpen && shell.activeShellSessionId ? (
         <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setConnectOpen(false)} onCreated={shell.refreshShellSession} bro={bro} />
+      ) : null}
+      {renameOpen && shell.activeShellSessionId && bro.source === "runtime" ? (
+        <RenameBroDialog sessionId={shell.activeShellSessionId} bro={bro} onClose={() => setRenameOpen(false)} onRenamed={shell.refreshShellSession} />
       ) : null}
     </DesktopFrame>
   );
@@ -3447,6 +3651,7 @@ function HomeBroEditable({
   featured,
   editing,
   onRemove,
+  onRename,
   onOpen,
   onSetup,
 }: {
@@ -3454,6 +3659,7 @@ function HomeBroEditable({
   featured: boolean;
   editing: boolean;
   onRemove: (id: string) => void;
+  onRename: (bro: BroCardModel) => void;
   onOpen: (id: string) => void;
   onSetup: (bro: BroCardModel) => void;
 }) {
@@ -3461,16 +3667,26 @@ function HomeBroEditable({
     <div className={`home-edit-wrap${editing ? " home-edit-wrap-on" : ""}${featured ? " home-edit-wrap-card" : " home-edit-wrap-row"}`}>
       <MobileBroCard bro={bro} onOpen={editing ? () => {} : onOpen} onSetup={onSetup} />
       {editing && (
-        <button
-          type="button"
-          className="home-edit-remove"
-          aria-label={`Remove ${bro.name}`}
-          onClick={(e) => { e.stopPropagation(); onRemove(bro.id); }}
-        >
-          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-            <path d="M6 12h12" />
-          </svg>
-        </button>
+        <div className="home-edit-actions">
+          <button
+            type="button"
+            className="home-edit-rename"
+            aria-label={`Rename ${bro.name}`}
+            onClick={(e) => { e.stopPropagation(); onRename(bro); }}
+          >
+            <Pencil size={12} strokeWidth={2.4} />
+          </button>
+          <button
+            type="button"
+            className="home-edit-remove"
+            aria-label={`Remove ${bro.name}`}
+            onClick={(e) => { e.stopPropagation(); onRemove(bro.id); }}
+          >
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+              <path d="M6 12h12" />
+            </svg>
+          </button>
+        </div>
       )}
     </div>
   );
@@ -3545,7 +3761,7 @@ function HomeAccountSheet({
           </span>
           <span className="acct-row-body">
             <span className="acct-row-title">Manage bros</span>
-            <span className="acct-row-meta">Rename, remove, reorder</span>
+            <span className="acct-row-meta">Rename or remove</span>
           </span>
           <span className="acct-row-chev">›</span>
         </button>
@@ -3655,16 +3871,17 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [signOutPending, setSignOutPending] = useState(false);
   const [setupBro, setSetupBro] = useState<BroCardModel | null>(null);
+  const [renameBro, setRenameBro] = useState<BroCardModel | null>(null);
 
   const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
   const working = homeBros.filter((bro) => homeBroState(bro) === "working");
   const standing = homeBros.filter((bro) => homeBroState(bro) !== "working");
   const recents = buildHomeRecents(shell.broThreads, shell.runtimePersonas);
-  const anyOverlay = accountOpen || addOpen || !!confirmId;
+  const anyOverlay = accountOpen || addOpen || !!confirmId || !!renameBro;
   const confirmBro = confirmId ? shell.bros.find((b) => b.id === confirmId) ?? null : null;
   const account = shell.currentUser?.email ?? shell.currentUser?.user_id ?? "Signed in";
 
-  const closeAll = () => { setAccountOpen(false); setAddOpen(false); setConfirmId(null); };
+  const closeAll = () => { setAccountOpen(false); setAddOpen(false); setConfirmId(null); setRenameBro(null); };
   const enterEdit = () => { setAccountOpen(false); setEditMode(true); };
 
   const handleSignOut = () => {
@@ -3685,7 +3902,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
               <div className="home-bar-l home-bar-l-edit">
                 <div className="home-bar-titles">
                   <div className="home-bar-greet">Edit bros</div>
-                  <div className="home-bar-meta">Tap − to remove</div>
+                  <div className="home-bar-meta">Rename or remove</div>
                 </div>
               </div>
               <button type="button" className="home-bar-done" onClick={() => setEditMode(false)}>Done</button>
@@ -3758,7 +3975,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
                   </div>
                   <div className="home-flight">
                     {working.map((bro) => (
-                      <HomeBroEditable key={bro.id} bro={bro} featured editing={editMode} onRemove={setConfirmId} onOpen={onOpenBro} onSetup={setSetupBro} />
+                      <HomeBroEditable key={bro.id} bro={bro} featured editing={editMode} onRemove={setConfirmId} onRename={setRenameBro} onOpen={onOpenBro} onSetup={setSetupBro} />
                     ))}
                   </div>
                 </section>
@@ -3770,7 +3987,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
                 </div>
                 <div className="home-list">
                   {standing.map((bro) => (
-                    <HomeBroEditable key={bro.id} bro={bro} featured={false} editing={editMode} onRemove={setConfirmId} onOpen={onOpenBro} onSetup={setSetupBro} />
+                    <HomeBroEditable key={bro.id} bro={bro} featured={false} editing={editMode} onRemove={setConfirmId} onRename={setRenameBro} onOpen={onOpenBro} onSetup={setSetupBro} />
                   ))}
                   <AddBroTile editing={editMode} onClick={() => setAddOpen(true)} />
                 </div>
@@ -3815,6 +4032,15 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
             onConfirmed={() => { setConfirmId(null); void shell.refreshShellSession(); }}
           />
         )}
+        {renameBro && shell.activeShellSessionId ? (
+          <RenameBroDialog
+            bro={renameBro}
+            sessionId={shell.activeShellSessionId}
+            onClose={() => setRenameBro(null)}
+            onRenamed={shell.refreshShellSession}
+            mobile
+          />
+        ) : null}
       </div>
       {addOpen && shell.activeShellSessionId ? (
         <CreateConnectSheet

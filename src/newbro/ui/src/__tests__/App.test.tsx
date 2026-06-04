@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { RouterProvider } from "@tanstack/react-router";
 import App from "../App";
 import { buildBroCardModels } from "../components/newbro";
@@ -294,6 +294,24 @@ function forgeSnapshot(sessionId: string, node = usableExecutorNode()) {
   };
 }
 
+function unboundForgeSnapshot(sessionId: string) {
+  return {
+    ...emptySessionSnapshot(sessionId),
+    personas: [
+      {
+        persona_id: "forge",
+        name: "Forge",
+        avatar: "bro",
+        base_prompt: "",
+        executor_node_id: null,
+        bro_detail_session_id: "detail-forge",
+        status: "idle",
+      },
+    ],
+    executor_nodes: [],
+  };
+}
+
 function withKnownWorkspaceThread<T extends ReturnType<typeof forgeSnapshot>>(snapshot: T): T {
   snapshot.bro_threads = [
     ...(snapshot.bro_threads as any[]),
@@ -320,6 +338,16 @@ function withKnownWorkspaceThread<T extends ReturnType<typeof forgeSnapshot>>(sn
       diagnostics: { codex_thread_id: "codex-workspace" },
     },
   ] as any;
+  return snapshot;
+}
+
+function renamedForgeSnapshot(sessionId: string, name: string) {
+  const snapshot = forgeSnapshot(sessionId);
+  snapshot.personas[0].name = name;
+  (snapshot as any).bro_threads = (snapshot.bro_threads as any[]).map((thread) => ({
+    ...thread,
+    persona_name: name,
+  }));
   return snapshot;
 }
 
@@ -505,6 +533,14 @@ function planProposalThreadSnapshot(
 }
 
 describe("Newbro artboard shell", () => {
+  afterEach(async () => {
+    cleanup();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     socketHarness.reset();
@@ -528,6 +564,12 @@ describe("Newbro artboard shell", () => {
     clientMock.getConversationSnapshot.mockReset();
     clientMock.openBroThread.mockReset();
     clientMock.submitExecutorAudioInstruction.mockReset();
+    clientMock.submitExecutorTextInstruction.mockReset();
+    clientMock.resolveInteractionRequest.mockReset();
+    clientMock.createPersona.mockReset();
+    clientMock.updatePersona.mockReset();
+    clientMock.createExecutorNode.mockReset();
+    clientMock.revealExecutorNodeConnectCommand.mockReset();
     clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => (
       sessionId === "session-existing" ? forgeSnapshot(sessionId) : emptySessionSnapshot(sessionId)
     ));
@@ -566,6 +608,15 @@ describe("Newbro artboard shell", () => {
       target_persona_id: "forge",
       target_thread_id: "exec-1",
       status: "accepted",
+    });
+    clientMock.submitExecutorAudioInstruction.mockResolvedValue({
+      audio_instruction_id: "aud-1",
+      target_persona_id: "forge",
+      target_thread_id: "exec-1",
+      status: "accepted",
+      duration_ms: 1,
+      size_bytes: 32,
+      transcript_text: "audio request",
     });
     clientMock.resolveInteractionRequest.mockResolvedValue({ request_id: "ireq-plan", affected_task_ids: ["task-plan"] });
     clientMock.updatePersona.mockResolvedValue({});
@@ -662,6 +713,51 @@ describe("Newbro artboard shell", () => {
     expect(screen.queryByRole("button", { name: /Copy install command/i })).not.toBeInTheDocument();
   });
 
+  it("renames a Bro from mobile Manage bros", async () => {
+    window.history.replaceState({}, "", "/mobile?sid=session-existing");
+    clientMock.updatePersona.mockResolvedValue({
+      persona_id: "forge",
+      name: "Scout",
+      avatar: "bro",
+      base_prompt: "",
+      executor_node_id: "node-forge",
+      bro_detail_session_id: "detail-forge",
+      status: "idle",
+    });
+    clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
+      return clientMock.updatePersona.mock.calls.length > 0
+        ? renamedForgeSnapshot(sessionId, "Scout")
+        : forgeSnapshot(sessionId);
+    });
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Manage bros/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rename Forge" }));
+    const dialog = await screen.findByRole("dialog", { name: /Edit Forge/i });
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+    await waitFor(() => expect(within(screen.getByTestId("mobile-bro-row-forge")).getByText("Scout")).toBeInTheDocument());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("opens the remove confirmation from mobile Manage bros", async () => {
+    window.history.replaceState({}, "", "/mobile?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Manage bros/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Forge" }));
+
+    expect(await screen.findByRole("alertdialog", { name: "Remove Forge" })).toHaveTextContent("Remove Forge?");
+  });
+
 
   it("creates the first Bro once after connection and shows a done action", async () => {
     let sessionOneSnapshots = 0;
@@ -709,6 +805,74 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByText("Current draft")).toBeInTheDocument();
     await waitFor(() => expect(clientMock.getSessionSnapshot).toHaveBeenCalledWith("session-existing"));
     await waitFor(() => expect(clientMock.setVoiceTarget).toHaveBeenCalledWith("session-existing", "forge"));
+  });
+
+  it("renames a Bro from desktop detail and refreshes the shell snapshot", async () => {
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+    clientMock.updatePersona.mockResolvedValue({
+      persona_id: "forge",
+      name: "Scout",
+      avatar: "bro",
+      base_prompt: "",
+      executor_node_id: "node-forge",
+      bro_detail_session_id: "detail-forge",
+      status: "idle",
+    });
+    clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
+      return clientMock.updatePersona.mock.calls.length > 0
+        ? renamedForgeSnapshot(sessionId, "Scout")
+        : forgeSnapshot(sessionId);
+    });
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByRole("heading", { name: "Forge" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit Bro" }));
+    const dialog = await screen.findByRole("dialog", { name: /Edit Forge/i });
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Scout" })).toBeInTheDocument());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("renames a Bro from desktop Home without navigating and refreshes the shell snapshot", async () => {
+    window.history.replaceState({}, "", "/?sid=session-existing");
+    clientMock.updatePersona.mockResolvedValue({
+      persona_id: "forge",
+      name: "Scout",
+      avatar: "bro",
+      base_prompt: "",
+      executor_node_id: "node-forge",
+      bro_detail_session_id: "detail-forge",
+      status: "idle",
+    });
+    clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
+      return clientMock.updatePersona.mock.calls.length > 0
+        ? renamedForgeSnapshot(sessionId, "Scout")
+        : forgeSnapshot(sessionId);
+    });
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByTestId("bro-card-forge")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
+    fireEvent.click(screen.getByRole("button", { name: "Edit Forge" }));
+
+    expect(window.location.pathname).toBe("/");
+    const dialog = await screen.findByRole("dialog", { name: /Edit Forge/i });
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+    await waitFor(() => expect(within(screen.getByTestId("bro-card-forge")).getByText("Scout")).toBeInTheDocument());
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("opens Bro detail from the desktop home card", async () => {
@@ -1617,34 +1781,39 @@ describe("Newbro artboard shell", () => {
         }),
       ],
     };
-    clientMock.getSessionSnapshot
-      .mockResolvedValueOnce(initial)
-      .mockResolvedValueOnce({
-        ...initial,
-        bro_threads: [
-          ...(initial.bro_threads as any[]),
-          {
-            ...(initial.bro_threads[0] as any),
-            thread_id: "thread-new",
-            execution_session_id: null,
-            status: "queued",
-            title: "Fresh audio thread",
-            task_ids: ["task-new"],
-            active_task_id: "task-new",
-            latest_task_id: "task-new",
-          },
-        ],
-        bro_timeline_turns: [],
-      });
+    const afterSubmit = {
+      ...initial,
+      bro_threads: [
+        ...(initial.bro_threads as any[]),
+        {
+          ...(initial.bro_threads[0] as any),
+          thread_id: "thread-new",
+          execution_session_id: null,
+          status: "queued",
+          title: "Fresh audio thread",
+          task_ids: ["task-new"],
+          active_task_id: "task-new",
+          latest_task_id: "task-new",
+        },
+      ],
+      bro_timeline_turns: [],
+    };
+    let audioSubmitted = false;
+    clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
+      return sessionId === "session-existing" && audioSubmitted ? afterSubmit : initial;
+    });
     clientMock.openBroThread.mockResolvedValue(initial);
-    clientMock.submitExecutorAudioInstruction.mockResolvedValueOnce({
-      audio_instruction_id: "aud-new",
-      target_persona_id: "forge",
-      target_thread_id: "thread-new",
-      status: "accepted",
-      duration_ms: 1,
-      size_bytes: 32,
-      transcript_text: "fresh audio request",
+    clientMock.submitExecutorAudioInstruction.mockImplementationOnce(async () => {
+      audioSubmitted = true;
+      return {
+        audio_instruction_id: "aud-new",
+        target_persona_id: "forge",
+        target_thread_id: "thread-new",
+        status: "accepted",
+        duration_ms: 1,
+        size_bytes: 32,
+        transcript_text: "fresh audio request",
+      };
     });
     const track = { stop: vi.fn() };
     Object.defineProperty(navigator, "mediaDevices", {
@@ -1695,6 +1864,12 @@ describe("Newbro artboard shell", () => {
     render(<RouterProvider router={getRouter()} />);
 
     expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(clientMock.openBroThread).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        threadId: "exec-1",
+      });
+    });
     fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
     selectWorkWorkspaceAndConfirm();
     expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
@@ -1782,6 +1957,7 @@ describe("Newbro artboard shell", () => {
       status: "queued",
     };
     clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
     clientMock.closeBroThread.mockResolvedValueOnce(snapshot);
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
@@ -1842,6 +2018,160 @@ describe("Newbro artboard shell", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /computer offline · set up/i }));
     expect(await screen.findByText(/Reconnect Forge|Reconnect forge/i)).toBeInTheDocument();
+  });
+
+  it("allows renaming an existing Bro from the create connect sheet", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
+    clientMock.updatePersona.mockResolvedValue({
+      persona_id: "forge",
+      name: "Scout",
+      avatar: "bro",
+      base_prompt: "",
+      executor_node_id: "node-forge",
+      bro_detail_session_id: "detail-forge",
+      status: "idle",
+    });
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /computer offline · set up/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Create and connect a Bro/i });
+    const nameInput = within(dialog).getByLabelText("Bro name");
+    expect(nameInput).toBeEnabled();
+    fireEvent.change(nameInput, { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save name" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+    await waitFor(() => {
+      expect(within(dialog).getByRole("button", { name: "Save name" })).toBeDisabled();
+    });
+  });
+
+  it("blocks auto-revealed connect actions while an existing Bro name is unsaved", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /computer offline · set up/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Create and connect a Bro/i });
+    expect(await within(dialog).findByText(/token=token-1/)).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+
+    expect(within(dialog).getByRole("button", { name: "Copy connect settings" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Copy connect settings" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: /Create and connect a Bro/i })).toBeInTheDocument();
+  });
+
+  it("blocks auto-revealed connect actions when an existing Bro name is cleared", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /computer offline · set up/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Create and connect a Bro/i });
+    expect(await within(dialog).findByText(/token=token-1/)).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "   " } });
+
+    expect(within(dialog).getByRole("button", { name: "Save name" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Copy connect settings" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Copy connect settings" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: /Create and connect a Bro/i })).toBeInTheDocument();
+  });
+
+  it("does not auto-issue credentials before renaming an unbound existing Bro", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(unboundForgeSnapshot("session-existing"));
+    window.history.replaceState({}, "", "/?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByTestId(/^home-bro-connect-/));
+    const dialog = await screen.findByRole("dialog", { name: /Create and connect a Bro/i });
+    expect(within(dialog).getByText(/Set up Forge/i)).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(clientMock.createExecutorNode).not.toHaveBeenCalled();
+
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create and connect" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+    await waitFor(() => {
+      expect(clientMock.createExecutorNode).toHaveBeenCalledWith("session-existing", {
+        name: "Scout local node",
+        enabled_executors: ["codex"],
+      });
+    });
+    expect(clientMock.updatePersona.mock.invocationCallOrder[0]).toBeLessThan(clientMock.createExecutorNode.mock.invocationCallOrder[0]);
+  });
+
+  it("keeps an existing Bro name dirty when rename refresh fails", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot
+      .mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode))
+      .mockRejectedValueOnce(new Error("refresh failed"));
+    clientMock.updatePersona.mockResolvedValue({
+      persona_id: "forge",
+      name: "Scout",
+      avatar: "bro",
+      base_prompt: "",
+      executor_node_id: "node-forge",
+      bro_detail_session_id: "detail-forge",
+      status: "idle",
+    });
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /computer offline · set up/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Create and connect a Bro/i });
+    await within(dialog).findByText(/token=token-1/);
+
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save name" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+    await waitFor(() => {
+      expect(within(dialog).getByRole("button", { name: "Save name" })).toBeEnabled();
+    });
+    expect(within(dialog).getByRole("button", { name: "Copy connect settings" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
   });
 
   it("clears the existing thread history when a new desktop thread workspace is selected", async () => {
@@ -1913,8 +2243,8 @@ describe("Newbro artboard shell", () => {
         }),
       ],
     };
-    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
     let resolveOpenThread: ((value: typeof snapshot) => void) | null = null;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
     clientMock.openBroThread.mockImplementationOnce(async () => {
       return await new Promise((resolve) => {
         resolveOpenThread = resolve;
@@ -1925,7 +2255,12 @@ describe("Newbro artboard shell", () => {
     render(<RouterProvider router={getRouter()} />);
 
     expect(await screen.findByText("Previous response body.")).toBeInTheDocument();
-
+    await waitFor(() => {
+      expect(clientMock.openBroThread).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        threadId: "thread-existing",
+      });
+    });
     fireEvent.click(screen.getByRole("button", { name: /New thread with Forge/i }));
     selectWorkWorkspaceAndConfirm();
     await act(async () => {
@@ -2060,19 +2395,49 @@ describe("Newbro artboard shell", () => {
         }),
       ],
     };
-    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
-    clientMock.openBroThread.mockResolvedValueOnce(snapshot);
-    clientMock.submitExecutorTextInstruction.mockResolvedValueOnce({
-      instruction_id: "txt-new",
-      target_persona_id: "forge",
-      target_thread_id: "thread-new",
-      status: "accepted",
+    const afterSubmit = {
+      ...snapshot,
+      bro_threads: [
+        ...(snapshot.bro_threads as any[]),
+        {
+          ...(snapshot.bro_threads[0] as any),
+          thread_id: "thread-new",
+          execution_session_id: null,
+          status: "queued",
+          title: "Fresh text thread",
+          task_ids: ["task-new"],
+          active_task_id: "task-new",
+          latest_task_id: "task-new",
+        },
+      ],
+      bro_timeline_turns: [],
+      summaries: [],
+    };
+    let textSubmitted = false;
+    clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
+      return sessionId === "session-existing" && textSubmitted ? afterSubmit : snapshot;
+    });
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    clientMock.submitExecutorTextInstruction.mockImplementationOnce(async () => {
+      textSubmitted = true;
+      return {
+        instruction_id: "txt-new",
+        target_persona_id: "forge",
+        target_thread_id: "thread-new",
+        status: "accepted",
+      };
     });
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
 
     expect(await screen.findByText("Previous response body.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(clientMock.openBroThread).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        threadId: "thread-existing",
+      });
+    });
     fireEvent.click(screen.getByRole("button", { name: /New thread with Forge/i }));
     selectWorkWorkspaceAndConfirm();
     expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
@@ -2121,14 +2486,21 @@ describe("Newbro artboard shell", () => {
         diagnostics: { codex_thread_id: "codex-native-loading" },
       },
     ] as any;
+    let resolveOpenThread: ((value: typeof snapshot) => void) | null = null;
     clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
-    clientMock.openBroThread.mockImplementation(() => new Promise(() => undefined));
+    clientMock.openBroThread.mockImplementation(() => new Promise((resolve) => {
+      resolveOpenThread = resolve;
+    }));
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-loading");
 
     render(<RouterProvider router={getRouter()} />);
 
     expect(await screen.findByText("Fetching thread history…")).toBeInTheDocument();
     expect(screen.queryByText("No messages with Forge yet")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveOpenThread?.(snapshot);
+    });
   });
 
   it("does not re-open the same selected thread when its loading snapshot settles", async () => {
@@ -2259,9 +2631,12 @@ describe("Newbro artboard shell", () => {
         { id: "full", label: "Detailed PDF", description: "Long form." },
       ],
     });
+    let resolveApproval: ((value: { request_id: string; affected_task_ids: string[] }) => void) | null = null;
     clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
     clientMock.openBroThread.mockResolvedValue(snapshot);
-    clientMock.resolveInteractionRequest.mockImplementationOnce(() => new Promise(() => undefined));
+    clientMock.resolveInteractionRequest.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveApproval = resolve;
+    }));
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=thread-plan");
 
     render(<RouterProvider router={getRouter()} />);
@@ -2286,6 +2661,10 @@ describe("Newbro artboard shell", () => {
     expect(screen.queryAllByText("Implement it").some((node) => node.closest(".dt-turn-you"))).toBe(false);
     expect(approve).toBeDisabled();
     expect(keepPlanning).toBeDisabled();
+
+    await act(async () => {
+      resolveApproval?.({ request_id: "ireq-plan", affected_task_ids: ["task-plan"] });
+    });
   });
 
   it("submits all Codex multi-question plan answers together", async () => {
