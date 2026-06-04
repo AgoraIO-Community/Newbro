@@ -315,7 +315,6 @@ function useNewbroShellState() {
   const [latestDraftOutputEvent, setLatestDraftOutputEvent] = useState<DraftOutputEvent | null>(null);
   const mountedRef = useRef(false);
   const shellLoadSequenceRef = useRef(0);
-  const threadOpenSequenceRef = useRef(0);
   const threadOpenInFlightRef = useRef(new Set<string>());
   const threadOpenLatestKeyRef = useRef<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -415,7 +414,6 @@ function useNewbroShellState() {
     if (beginThreadOpen(threadOpenInFlightRef.current, targetPersonaId, threadId) === null) {
       return;
     }
-    ++threadOpenSequenceRef.current;
     try {
       const snapshot = await openBroThread(activeShellSessionId, { targetPersonaId, threadId });
       if (!mountedRef.current || threadOpenLatestKeyRef.current !== openKey) {
