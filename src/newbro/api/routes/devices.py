@@ -50,12 +50,16 @@ async def device_pair_poll(body: DevicePairPollRequest, request: Request) -> Dev
     return DevicePairPollResponse(status=poll.status, token=poll.token)
 
 
-@router.post("/devices/pair/claim")
-async def device_pair_claim(body: DevicePairClaimRequest, request: Request) -> dict[str, bool]:
+class DevicePairClaimResponse(BaseModel):
+    ok: bool
+
+
+@router.post("/devices/pair/claim", response_model=DevicePairClaimResponse)
+async def device_pair_claim(body: DevicePairClaimRequest, request: Request) -> DevicePairClaimResponse:
     user = await require_public_user(request)
     store: PublicAuthStore = request.app.state.public_auth_store
     try:
         await store.claim_device_pairing(user_code=body.user_code, user_id=user.user_id)
     except PublicAuthError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"ok": True}
+    return DevicePairClaimResponse(ok=True)

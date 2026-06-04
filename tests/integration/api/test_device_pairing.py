@@ -51,6 +51,11 @@ async def test_device_pairing_full_flow(tmp_path):
         token = claimed.json()["token"]
         assert token
 
+        # Single delivery: a second poll no longer returns the token.
+        second = await client.post("/api/devices/pair/poll", json={"device_code": device_code})
+        assert second.json()["status"] == "claimed"
+        assert second.json()["token"] is None
+
         # The token authenticates as the user (bootstrap succeeds with the cookie).
         boot = await client.get("/api/me/bootstrap", cookies={"newbro_session": token})
         assert boot.status_code == 200
@@ -70,4 +75,14 @@ async def test_poll_unknown_code_is_404(tmp_path):
     app = _build_app(tmp_path)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         resp = await client.post("/api/devices/pair/poll", json={"device_code": "bogus"})
+        assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_claim_unknown_code_is_404(tmp_path):
+    app = _build_app(tmp_path)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await app.state.public_auth_store.create_invite("invite-1")
+        assert (await client.post("/api/auth/invites/redeem", json={"code": "invite-1"})).status_code == 200
+        resp = await client.post("/api/devices/pair/claim", json={"user_code": "ZZZZ"})
         assert resp.status_code == 404
