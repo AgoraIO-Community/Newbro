@@ -2867,6 +2867,28 @@
   opacity: 0.42;
 }
 
+.nb-inline-save-name {
+  align-self: flex-start;
+  min-height: 32px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.nb-inline-save-name:not(:disabled):hover {
+  border-color: rgba(244, 99, 76, 0.35);
+  color: #dc4b39;
+}
+
+.nb-inline-save-name:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .nb-detail-runtime .dt-activity {
   min-height: 0;
 }

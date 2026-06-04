@@ -1911,6 +1911,38 @@ describe("Newbro artboard shell", () => {
     expect(await screen.findByText(/Reconnect Forge|Reconnect forge/i)).toBeInTheDocument();
   });
 
+  it("allows renaming an existing Bro from the create connect sheet", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
+    clientMock.updatePersona.mockResolvedValue({
+      persona_id: "forge",
+      name: "Scout",
+      avatar: "bro",
+      base_prompt: "",
+      executor_node_id: "node-forge",
+      bro_detail_session_id: "detail-forge",
+      status: "idle",
+    });
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /computer offline · set up/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Create and connect a Bro/i });
+    const nameInput = within(dialog).getByLabelText("Bro name");
+    expect(nameInput).toBeEnabled();
+    fireEvent.change(nameInput, { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save name" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+  });
+
   it("clears the existing thread history when 'New thread' is clicked on the desktop detail page", async () => {
     const snapshot = {
       ...forgeSnapshot("session-existing"),

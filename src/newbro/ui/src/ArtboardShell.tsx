@@ -2029,6 +2029,7 @@ function CreateConnectSheet({
   const [commands, setCommands] = useState<ExecutorConnectCommands | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [nameSaving, setNameSaving] = useState(false);
   const [copiedKind, setCopiedKind] = useState<"install" | "run" | "settings" | null>(null);
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
   const [pendingBroName, setPendingBroName] = useState<string | null>(null);
@@ -2038,6 +2039,8 @@ function CreateConnectSheet({
   const autoIssueStartedRef = useRef(false);
   const trimmedName = name.trim();
   const canCreate = trimmedName.length > 0 && !busy && !commands && !pendingNodeId && !completed;
+  const existingBroNameChanged = Boolean(bro) && trimmedName.length > 0 && trimmedName !== (bro?.name.trim() ?? "");
+  const canSaveExistingBroName = Boolean(bro) && existingBroNameChanged && !busy && !nameSaving && !completed;
 
   // For an existing bro that already has a node, reveal its connect command as
   // soon as the dialog opens, so the command + copy work without a "create" click.
@@ -2059,6 +2062,27 @@ function CreateConnectSheet({
     })();
     return () => { cancelled = true; };
   }, [bro?.executorNodeId, commands, sessionId]);
+
+  async function saveExistingBroName() {
+    if (!bro || nameSaving) return;
+    if (!trimmedName) {
+      setError("Bro name is required.");
+      return;
+    }
+    if (!existingBroNameChanged) {
+      return;
+    }
+    setNameSaving(true);
+    setError(null);
+    try {
+      await updatePersona(sessionId, bro.id, { name: trimmedName });
+      await onCreated();
+    } catch (err) {
+      setError(describeError(err, "Could not rename this Bro."));
+    } finally {
+      setNameSaving(false);
+    }
+  }
 
   async function copyCommand(value: string, kind: "install" | "run" | "settings") {
     await navigator.clipboard?.writeText(value).then(() => setCopiedKind(kind), () => setCopiedKind(null));
@@ -2093,6 +2117,10 @@ function CreateConnectSheet({
     setBusy(true);
     setError(null);
     try {
+      if (bro && existingBroNameChanged) {
+        await updatePersona(sessionId, bro.id, { name: trimmedName });
+        await onCreated();
+      }
       const nextBroName = trimmedName;
       const issue = bro?.executorNodeId
         ? await revealExecutorNodeConnectCommand(sessionId, bro.executorNodeId)
@@ -2184,10 +2212,26 @@ function CreateConnectSheet({
                     <span className="ob-field-eyebrow">STEP 1 · NAME IT</span>
                     <div className="ob-input ob-input-filled">
                       <span className="ob-input-prefix">@</span>
-                      <input type="text" value={name} disabled={Boolean(bro) || Boolean(commands) || busy} onChange={(event) => setName(event.target.value)} />
+                      <input
+                        aria-label="Bro name"
+                        type="text"
+                        value={name}
+                        disabled={busy || nameSaving || completed}
+                        onChange={(event) => setName(event.target.value)}
+                      />
                     </div>
                     <span className="ob-field-hint">Pick one word that&rsquo;s easy to say out loud — you&rsquo;ll talk to it by name. e.g. atlas, scout, forge.</span>
                   </label>
+                  {bro ? (
+                    <button
+                      type="button"
+                      className="nb-inline-save-name"
+                      disabled={!canSaveExistingBroName}
+                      onClick={() => { void saveExistingBroName(); }}
+                    >
+                      {nameSaving ? "Saving..." : "Save name"}
+                    </button>
+                  ) : null}
                 </div>
                 <div className="ob-fieldset">
                   <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 2 · AGENT CLIENT</span>
