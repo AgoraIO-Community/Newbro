@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import sqlite3
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
-from newbro.api.public_auth import PublicAuthStore, PublicAuthError, USER_CODE_ALPHABET
+from newbro.api.public_auth import PublicAuthStore, PublicAuthError, USER_CODE_ALPHABET, _hash_secret
 
 
 def _store(tmp_path):
@@ -71,3 +74,20 @@ async def test_claim_twice_raises(tmp_path):
 
     with pytest.raises(PublicAuthError):
         await store.claim_device_pairing(user_code=pairing.user_code, user_id=user_id)
+
+
+@pytest.mark.anyio
+async def test_claim_expired_code_raises(tmp_path):
+    store = _store(tmp_path)
+    user_id = await _make_user(store)
+    past = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    # Insert an already-expired pending pairing directly.
+    with sqlite3.connect(tmp_path / "public_auth.sqlite3") as conn:
+        conn.execute(
+            "INSERT INTO device_pairings (device_code_hash, user_code, status, created_at, expires_at) "
+            "VALUES (?, ?, 'pending', ?, ?)",
+            (_hash_secret("dev-expired"), "EXPD", past, past),
+        )
+
+    with pytest.raises(PublicAuthError):
+        await store.claim_device_pairing(user_code="EXPD", user_id=user_id)

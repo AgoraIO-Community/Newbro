@@ -354,6 +354,7 @@ class PublicAuthStore:
                     "INSERT INTO browser_sessions (token_hash, user_id, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
                     (_hash_secret(raw_token), user_id, now, now),
                 )
+                # issued_token is stored in plaintext temporarily; poll_device_pairing delivers it exactly once and then clears it.
                 conn.execute(
                     """
                     UPDATE device_pairings
