@@ -4,8 +4,8 @@ namespace nb {
 
 uint32_t Backoff::next() {
   uint32_t value = cur_;
-  uint32_t doubled = cur_ >= max_ ? max_ : cur_ * 2;
-  cur_ = doubled > max_ ? max_ : doubled;
+  cur_ = cur_ > max_ / 2 ? max_ : cur_ * 2;
+  if (cur_ > max_) cur_ = max_;
   return value;
 }
 
