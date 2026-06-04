@@ -1941,6 +1941,35 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => {
       expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
     });
+    await waitFor(() => {
+      expect(within(dialog).getByRole("button", { name: "Save name" })).toBeDisabled();
+    });
+  });
+
+  it("blocks auto-revealed connect actions while an existing Bro name is unsaved", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /computer offline · set up/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Create and connect a Bro/i });
+    expect(await within(dialog).findByText(/token=token-1/)).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+
+    expect(within(dialog).getByRole("button", { name: "Copy connect settings" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Copy connect settings" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: /Create and connect a Bro/i })).toBeInTheDocument();
   });
 
   it("clears the existing thread history when 'New thread' is clicked on the desktop detail page", async () => {

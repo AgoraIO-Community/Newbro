@@ -2025,7 +2025,9 @@ function CreateConnectSheet({
   bro?: BroCardModel | null;
   mobile?: boolean;
 }) {
-  const [name, setName] = useState(bro?.name ?? "atlas");
+  const initialBroName = bro?.name ?? "atlas";
+  const [name, setName] = useState(initialBroName);
+  const [savedBroName, setSavedBroName] = useState(initialBroName);
   const [commands, setCommands] = useState<ExecutorConnectCommands | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -2038,8 +2040,9 @@ function CreateConnectSheet({
   const finalizingRef = useRef(false);
   const autoIssueStartedRef = useRef(false);
   const trimmedName = name.trim();
-  const canCreate = trimmedName.length > 0 && !busy && !commands && !pendingNodeId && !completed;
-  const existingBroNameChanged = Boolean(bro) && trimmedName.length > 0 && trimmedName !== (bro?.name.trim() ?? "");
+  const existingBroNameChanged = Boolean(bro) && trimmedName.length > 0 && trimmedName !== savedBroName.trim();
+  const connectActionsDisabled = existingBroNameChanged || nameSaving;
+  const canCreate = trimmedName.length > 0 && !busy && !nameSaving && !commands && !pendingNodeId && !completed;
   const canSaveExistingBroName = Boolean(bro) && existingBroNameChanged && !busy && !nameSaving && !completed;
 
   // For an existing bro that already has a node, reveal its connect command as
@@ -2063,22 +2066,26 @@ function CreateConnectSheet({
     return () => { cancelled = true; };
   }, [bro?.executorNodeId, commands, sessionId]);
 
-  async function saveExistingBroName() {
-    if (!bro || nameSaving) return;
+  async function saveExistingBroNameIfChanged(): Promise<boolean> {
+    if (!bro) return true;
+    if (nameSaving) return false;
     if (!trimmedName) {
       setError("Bro name is required.");
-      return;
+      return false;
     }
     if (!existingBroNameChanged) {
-      return;
+      return true;
     }
     setNameSaving(true);
     setError(null);
     try {
       await updatePersona(sessionId, bro.id, { name: trimmedName });
+      setSavedBroName(trimmedName);
       await onCreated();
+      return true;
     } catch (err) {
       setError(describeError(err, "Could not rename this Bro."));
+      return false;
     } finally {
       setNameSaving(false);
     }
@@ -2117,9 +2124,8 @@ function CreateConnectSheet({
     setBusy(true);
     setError(null);
     try {
-      if (bro && existingBroNameChanged) {
-        await updatePersona(sessionId, bro.id, { name: trimmedName });
-        await onCreated();
+      if (!(await saveExistingBroNameIfChanged())) {
+        return;
       }
       const nextBroName = trimmedName;
       const issue = bro?.executorNodeId
@@ -2227,7 +2233,7 @@ function CreateConnectSheet({
                       type="button"
                       className="nb-inline-save-name"
                       disabled={!canSaveExistingBroName}
-                      onClick={() => { void saveExistingBroName(); }}
+                      onClick={() => { void saveExistingBroNameIfChanged(); }}
                     >
                       {nameSaving ? "Saving..." : "Save name"}
                     </button>
@@ -2273,7 +2279,7 @@ function CreateConnectSheet({
                     <div className="ob-connect-cmd">
                       <span className="ob-connect-prompt">url</span>
                       <span className="ob-connect-line">{commands?.connectSettings ?? "Connect settings will appear after credentials are issued."}</span>
-                      <button type="button" className="ob-connect-copy" aria-label="Copy connect settings" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.connectSettings, "settings"); }}>
+                      <button type="button" className="ob-connect-copy" aria-label="Copy connect settings" disabled={!commands || connectActionsDisabled} onClick={() => { if (commands && !connectActionsDisabled) void copyCommand(commands.connectSettings, "settings"); }}>
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                           <rect x="9" y="9" width="11" height="11" rx="2"/>
                           <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
@@ -2300,7 +2306,7 @@ function CreateConnectSheet({
                         <div className="ob-connect-cmd">
                           <span className="ob-connect-prompt">$</span>
                           <span className="ob-connect-line">{commands?.installOnly ?? "curl -fsSL newbro.dev/install.sh | sh"}</span>
-                          <button type="button" className="ob-connect-copy" aria-label="Copy install command" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.installOnly, "install"); }}>
+                          <button type="button" className="ob-connect-copy" aria-label="Copy install command" disabled={!commands || connectActionsDisabled} onClick={() => { if (commands && !connectActionsDisabled) void copyCommand(commands.installOnly, "install"); }}>
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                               <rect x="9" y="9" width="11" height="11" rx="2"/>
                               <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
@@ -2313,7 +2319,7 @@ function CreateConnectSheet({
                         <div className="ob-connect-cmd">
                           <span className="ob-connect-prompt">$</span>
                           <span className="ob-connect-line">{commands?.runOnly ?? "Run command will appear after credentials are issued."}</span>
-                          <button type="button" className="ob-connect-copy" aria-label="Copy connect command from terminal" disabled={!commands} onClick={() => { if (commands) void copyCommand(commands.runOnly, "run"); }}>
+                          <button type="button" className="ob-connect-copy" aria-label="Copy connect command from terminal" disabled={!commands || connectActionsDisabled} onClick={() => { if (commands && !connectActionsDisabled) void copyCommand(commands.runOnly, "run"); }}>
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                               <rect x="9" y="9" width="11" height="11" rx="2"/>
                               <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
@@ -2343,7 +2349,7 @@ function CreateConnectSheet({
               {completed ? "Connected once · Bro ready" : commands ? "We’ll detect your computer automatically · link valid 9:46" : "Download link + connect settings will be generated on demand"}
             </span>
             {commands && (completed || bro?.executorNodeId) ? (
-              <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" onClick={() => { void onCreated().finally(onClose); }}>
+              <button type="button" data-testid="bro-setup-done" className="ob-cta ob-cta-block" disabled={connectActionsDisabled} onClick={() => { if (!connectActionsDisabled) void onCreated().finally(onClose); }}>
                 Done
               </button>
             ) : (
