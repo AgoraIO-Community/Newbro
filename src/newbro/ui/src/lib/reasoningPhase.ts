@@ -1,16 +1,25 @@
-export type ReasoningPhase = "ack" | "streaming" | "done";
+export type LiveTurnSubState = "connecting" | "reasoning" | "answering";
+
+export type LiveTurnState =
+  | { kind: "settled" }
+  | { kind: "live"; sub: LiveTurnSubState };
+
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 /**
- * Phase of the assistant's live turn. In-flight is keyed off the TURN STATUS
- * (not activeRun/steps) so the optimistic `pending` turn shown the instant a
- * message is sent resolves to `ack` and the skeleton appears immediately.
+ * State of the assistant's turn. "live" is the default; "settled" is the single
+ * explicit end state, reached ONLY at a terminal turn status — not when the
+ * first answer token arrives. This keeps the live cue visible while the answer
+ * streams, and guarantees that no intermediate or unknown status (created,
+ * queued, waiting_executor, …) can fall through to a blank render.
  */
-export function deriveReasoningPhase(input: {
-  status: string;       // BroTimelineTurn["status"]
-  stepCount: number;    // reasoningSteps.length
-  hasAnswer: boolean;   // answerText !== ""
-}): ReasoningPhase {
-  const inFlight = (input.status === "pending" || input.status === "running") && !input.hasAnswer;
-  if (!inFlight) return "done";
-  return input.stepCount > 0 ? "streaming" : "ack";
+export function deriveLiveTurnState(input: {
+  status: string;     // BroTimelineTurn["status"]
+  stepCount: number;  // reasoningSteps.length
+  hasAnswer: boolean; // answerText !== ""
+}): LiveTurnState {
+  if (TERMINAL_STATUSES.has(input.status)) return { kind: "settled" };
+  if (input.hasAnswer) return { kind: "live", sub: "answering" };
+  if (input.stepCount > 0) return { kind: "live", sub: "reasoning" };
+  return { kind: "live", sub: "connecting" };
 }

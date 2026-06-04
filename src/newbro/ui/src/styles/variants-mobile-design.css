@@ -3245,6 +3245,24 @@
 .thr-reason-step-active { animation: thr-reason-in 0.34s var(--nb-ease-out, ease-out); }
 .thr-reason-step-active .thr-reason-text { color: var(--nb-ink); font-weight: 500; }
 .thr-reason-step-active .thr-reason-mark::before { box-shadow: 0 0 0 3px rgba(59,130,246,0.16); }
+.thr-reason-stream-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(220px, 76%);
+  padding-top: 3px;
+}
+.thr-reason-stream-progress span {
+  height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(100deg, rgba(59,130,246,0.06) 30%, rgba(59,130,246,0.20) 50%, rgba(59,130,246,0.06) 70%);
+  background-size: 220% 100%;
+  animation: thr-reason-shimmer 1.25s ease-in-out infinite;
+}
+.thr-reason-stream-progress span:nth-child(2) {
+  width: 62%;
+  animation-delay: 0.18s;
+}
 @keyframes thr-reason-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -3329,3 +3347,36 @@
   border: 1px solid rgba(0,0,0,0.14); background: transparent; color: rgba(0,0,0,0.55);
 }
 .thr-reason-stop:focus-visible { outline: 2px solid rgba(59,130,246,0.6); outline-offset: 1px; }
+
+/* Live turn — streaming caret, divider, and smooth transitions (mobile). */
+.thr-reason-divider {
+  border-top: 1px solid var(--nb-info-edge);
+  margin: 9px 0 1px;
+}
+.thr-reason-caret {
+  display: inline-block;
+  width: 7px; height: 15px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  border-radius: 1px;
+  background: var(--nb-info);
+  animation: thr-reason-caret-blink 1s steps(2, start) infinite;
+}
+@keyframes thr-reason-caret-blink { 50% { opacity: 0; } }
+.thr-reason > *, .thr-bubble-answer > * {
+  animation: thr-reason-fade-in 0.18s var(--nb-ease-out, ease-out);
+}
+@keyframes thr-reason-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thr-reason-orb span,
+  .thr-reason-skeleton span,
+  .thr-reason-stream-progress span,
+  .thr-reason-step-active,
+  .thr-reason-caret,
+  .thr-reason > *, .thr-bubble-answer > * {
+    animation: none !important;
+  }
+}

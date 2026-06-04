@@ -319,6 +319,12 @@ def _bro_timeline_turn_from_codex_turn_event(
     client_request_id = request.client_request_id
     stable_turn_key = client_request_id or request.request_id
     timeline_status = _timeline_status_from_codex_event(message)
+    # Codex emits a premature "completed" turn-event (the dispatch ack) with no
+    # message text; the real answer streams in afterward via native thread sync.
+    # A contentless completion is not a finished answer — keep the turn live so
+    # the UI shows a working state instead of settling into a blank turn.
+    if timeline_status == "completed" and not (message.message and message.message.strip()):
+        timeline_status = "running"
     input_modality = request.input_modality
     user = None
     if request.text:
@@ -1286,6 +1292,18 @@ def _merge_timeline_turn(existing: BroTimelineTurn, incoming: BroTimelineTurn) -
     status = existing.status
     if existing.status in {"pending", "running"} and incoming.status in {"completed", "failed", "cancelled", "running"}:
         status = incoming.status
+        # A contentless "completed" is a premature / eventually-consistent signal
+        # (codex marks the thread turn completed before the answer streams). If no
+        # assistant answer exists yet, the turn is still in flight — keep it running.
+        if status == "completed" and assistant is None:
+            status = "running"
+    # A turn whose assistant message is still streaming is not done, even if an
+    # earlier (outbound) event reported "completed". Trust the streaming assistant
+    # so the live cue stays until the answer is actually complete.
+    if status not in {"failed", "cancelled"} and assistant is not None:
+        assistant_status = (assistant.status or "").lower()
+        if assistant_status in {"running", "in_progress", "inprogress", "pending", "streaming"}:
+            status = "running"
     metadata = {**existing.metadata}
     for key, value in incoming.metadata.items():
         if value is not None or key not in metadata:

@@ -34,11 +34,72 @@ from newbro.protocol import (
 from newbro.executors.core import ExecutorCapabilities, ExecutorEvent, ExecutorEventType, ExecutorSession
 from newbro.protocol import Task, TaskStatus
 from newbro.runtime import Settings
+from newbro.protocol.session import BroTimelineMessage, BroTimelineTurn
 from newbro.runtime.session import (
     SelectedCodexThreadSubscription,
+    _merge_timeline_turn,
     _timeline_turns_from_codex_thread,
     create_session_runtime,
 )
+
+
+def _executor_turn(status: str, *, assistant_status: str | None, text: str = "hi") -> BroTimelineTurn:
+    assistant = (
+        BroTimelineMessage(message_id="m-a", role="assistant", text=text, status=assistant_status)
+        if assistant_status is not None
+        else None
+    )
+    return BroTimelineTurn(
+        turn_id="t-1",
+        thread_id="thread-1",
+        persona_id="forge",
+        executor_id="codex",
+        owner="executor",
+        executor_thread_id="native-thread-1",
+        executor_turn_id="turn-1",
+        assistant=assistant,
+        status=status,  # type: ignore[arg-type]
+    )
+
+
+def test_merge_keeps_turn_running_while_assistant_is_streaming():
+    # The outbound turn-event reports "completed" prematurely; the native turn
+    # is still streaming its assistant message. The merged turn must stay live.
+    existing = _executor_turn("completed", assistant_status=None, text="")
+    incoming = _executor_turn("running", assistant_status="running", text="partial answer")
+    merged = _merge_timeline_turn(existing, incoming)
+    assert merged.status == "running"
+    assert merged.assistant is not None and merged.assistant.text == "partial answer"
+
+
+def test_merge_settles_when_assistant_is_complete():
+    existing = _executor_turn("completed", assistant_status=None, text="")
+    incoming = _executor_turn("completed", assistant_status="completed", text="final answer")
+    merged = _merge_timeline_turn(existing, incoming)
+    assert merged.status == "completed"
+
+
+def test_merge_does_not_resurrect_failed_turn():
+    existing = _executor_turn("failed", assistant_status=None, text="")
+    incoming = _executor_turn("running", assistant_status="running", text="partial")
+    merged = _merge_timeline_turn(existing, incoming)
+    assert merged.status == "failed"
+
+
+def test_merge_keeps_running_when_completion_has_no_answer_yet():
+    # The native thread-sync reports "completed" before the answer streams; a
+    # contentless completion must not settle a still-running turn (the blank gap).
+    existing = _executor_turn("running", assistant_status=None, text="")
+    incoming = _executor_turn("completed", assistant_status=None, text="")
+    merged = _merge_timeline_turn(existing, incoming)
+    assert merged.status == "running"
+
+
+def test_merge_settles_running_turn_once_answer_is_present():
+    existing = _executor_turn("running", assistant_status=None, text="")
+    incoming = _executor_turn("completed", assistant_status="completed", text="final answer")
+    merged = _merge_timeline_turn(existing, incoming)
+    assert merged.status == "completed"
 
 
 @pytest.mark.anyio
@@ -255,6 +316,92 @@ async def test_codex_turn_event_projects_without_task():
     assert turn.user.text == "continue directly"
     assert turn.status == "running"
     assert await session.blackboard.list_tasks() == []
+
+
+@pytest.mark.anyio
+async def test_codex_completed_event_without_message_keeps_turn_running():
+    # Codex emits a premature "completed" turn-event with no message text; the
+    # real answer streams in afterward. The projected turn must stay "running"
+    # (a live working state), not settle into an empty/blank completed turn.
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        client_request_id="client-text-1",
+        text="summary devx contents as a report",
+        status="accepted",
+        created_at="2026-06-04T08:00:00+00:00",
+    )
+    await session.blackboard.put_outbound_turn_request(request)
+
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-1",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-1",
+            event_type="completed",
+            message=None,
+            executor_thread_id="native-thread-1",
+            executor_turn_id="turn-1",
+        )
+    )
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    assert len(snapshot.bro_timeline_turns) == 1
+    turn = snapshot.bro_timeline_turns[0]
+    assert turn.assistant is None
+    assert turn.status == "running"
+
+
+@pytest.mark.anyio
+async def test_codex_completed_event_with_message_settles_turn():
+    # A "completed" event that DOES carry the answer (fast turns) settles immediately.
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    request = OutboundTurnRequest(
+        request_id="out-turn-1",
+        persona_id="forge",
+        executor_node_id="node-forge",
+        target_thread_id="thread-1",
+        client_request_id="client-text-1",
+        text="hi",
+        status="accepted",
+        created_at="2026-06-04T08:00:00+00:00",
+    )
+    await session.blackboard.put_outbound_turn_request(request)
+
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-turn-1",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-1",
+            event_type="completed",
+            message="Hi. What do you want to work on?",
+            executor_thread_id="native-thread-1",
+            executor_turn_id="turn-1",
+        )
+    )
+
+    snapshot = await session.snapshot(sync_imported_codex_threads=False)
+    turn = snapshot.bro_timeline_turns[0]
+    assert turn.assistant is not None
+    assert turn.assistant.text == "Hi. What do you want to work on?"
+    assert turn.status == "completed"
 
 
 @pytest.mark.anyio
