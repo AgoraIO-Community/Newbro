@@ -364,6 +364,28 @@ class PublicAuthStore:
                     (user_id, raw_token, now, normalized),
                 )
 
+    async def poll_device_pairing(self, *, device_code: str) -> DevicePairingPoll:
+        device_code_hash = _hash_secret(device_code)
+        async with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM device_pairings WHERE device_code_hash = ?",
+                    (device_code_hash,),
+                ).fetchone()
+                if row is None:
+                    raise PublicAuthError("Unknown pairing.")
+                if row["status"] == "pending":
+                    if _is_expired(row["expires_at"]):
+                        raise PublicAuthError("Pairing code expired.")
+                    return DevicePairingPoll(status="pending")
+                token = row["issued_token"]
+                if token is not None:
+                    conn.execute(
+                        "UPDATE device_pairings SET issued_token = NULL WHERE device_code_hash = ?",
+                        (device_code_hash,),
+                    )
+                return DevicePairingPoll(status="claimed", token=token)
+
     async def claim_session(self, *, user_id: str, session_id: str) -> None:
         async with self._lock:
             with self._connect() as conn:

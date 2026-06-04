@@ -91,3 +91,32 @@ async def test_claim_expired_code_raises(tmp_path):
 
     with pytest.raises(PublicAuthError):
         await store.claim_device_pairing(user_code="EXPD", user_id=user_id)
+
+
+@pytest.mark.anyio
+async def test_poll_pending_then_claimed_once(tmp_path):
+    store = _store(tmp_path)
+    user_id = await _make_user(store)
+    pairing = await store.create_device_pairing()
+
+    first = await store.poll_device_pairing(device_code=pairing.device_code)
+    assert first.status == "pending"
+    assert first.token is None
+
+    await store.claim_device_pairing(user_code=pairing.user_code, user_id=user_id)
+
+    claimed = await store.poll_device_pairing(device_code=pairing.device_code)
+    assert claimed.status == "claimed"
+    assert claimed.token
+
+    # Token is delivered exactly once; subsequent polls report claimed with no token.
+    again = await store.poll_device_pairing(device_code=pairing.device_code)
+    assert again.status == "claimed"
+    assert again.token is None
+
+
+@pytest.mark.anyio
+async def test_poll_unknown_device_code_raises(tmp_path):
+    store = _store(tmp_path)
+    with pytest.raises(PublicAuthError):
+        await store.poll_device_pairing(device_code="nope")
