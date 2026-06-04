@@ -334,6 +334,35 @@ class PublicAuthStore:
             expires_at=expires_at,
         )
 
+    async def claim_device_pairing(self, *, user_code: str, user_id: str) -> None:
+        normalized = user_code.strip().upper()
+        async with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM device_pairings WHERE user_code = ?",
+                    (normalized,),
+                ).fetchone()
+                if row is None:
+                    raise PublicAuthError("Invalid pairing code.")
+                if row["status"] != "pending":
+                    raise PublicAuthError("Pairing code already used.")
+                if _is_expired(row["expires_at"]):
+                    raise PublicAuthError("Pairing code expired.")
+                now = _timestamp()
+                raw_token = secrets.token_urlsafe(32)
+                conn.execute(
+                    "INSERT INTO browser_sessions (token_hash, user_id, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                    (_hash_secret(raw_token), user_id, now, now),
+                )
+                conn.execute(
+                    """
+                    UPDATE device_pairings
+                    SET status = 'claimed', user_id = ?, issued_token = ?, claimed_at = ?
+                    WHERE user_code = ?
+                    """,
+                    (user_id, raw_token, now, normalized),
+                )
+
     async def claim_session(self, *, user_id: str, session_id: str) -> None:
         async with self._lock:
             with self._connect() as conn:
@@ -589,6 +618,10 @@ def _cookie_secure() -> bool:
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _is_expired(expires_at: str) -> bool:
+    return datetime.fromisoformat(expires_at) <= datetime.now(UTC)
 
 
 def _normalize_email(value: str | None) -> str | None:
