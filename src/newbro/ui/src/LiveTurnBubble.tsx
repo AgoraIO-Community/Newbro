@@ -8,6 +8,7 @@ export interface ReasoningStepView {
 }
 
 const WINDOW = 3;
+// Opacity per step by distance from the newest: [newest, -1, -2]. Older steps fade out.
 const FADE = [1, 0.55, 0.26];
 const SETTLED_COLLAPSED = 3;
 
@@ -103,13 +104,12 @@ function StreamingProgress({ className }: { className: string }) {
   );
 }
 
-function LiveSteps({ c, steps }: { c: ClassMap; steps: ReasoningStepView[] }) {
-  const vis = windowed(steps);
-  if (vis.length === 0) return null;
+function LiveSteps({ c, visible }: { c: ClassMap; visible: ReasoningStepView[] }) {
+  if (visible.length === 0) return null;
   return (
     <ol className={c.steps}>
-      {vis.map((s, j) => {
-        const dist = vis.length - 1 - j;
+      {visible.map((s, j) => {
+        const dist = visible.length - 1 - j;
         const isLast = dist === 0;
         return (
           <li
@@ -161,8 +161,13 @@ function SettledSteps({ c, steps }: { c: ClassMap; steps: ReasoningStepView[] })
 /**
  * The assistant's turn bubble across its whole lifecycle. "live" (connecting →
  * reasoning → answering) carries a persistent alive cue (orb, and a caret while
- * answering); "settled" drops the cue and collapses steps. The answer markdown
- * lives in a stable slot so it is not remounted when the turn settles.
+ * answering); "settled" drops the cue and collapses steps.
+ *
+ * The answer markdown lives in a single stable slot (the `showAnswer` block) used
+ * by BOTH the answering and settled states, so it is NOT remounted when the turn
+ * settles. NOTE: this relies on `<MarkdownText>` staying the FIRST child of the
+ * answer div; the caret is rendered after it. Do not reorder them, or the markdown
+ * node will remount on settle.
  */
 export function LiveTurnBubble({
   broName,
@@ -186,6 +191,7 @@ export function LiveTurnBubble({
   const c = mobile ? MOBILE : DESKTOP;
   const settled = state.kind === "settled";
   const sub = state.kind === "live" ? state.sub : null;
+  const visibleSteps = windowed(steps);
 
   const header = settled ? null : (
     <div className={c.head}>
@@ -212,18 +218,18 @@ export function LiveTurnBubble({
   } else if (sub === "reasoning") {
     reasoningRegion = (
       <>
-        <LiveSteps c={c} steps={steps} />
+        <LiveSteps c={c} visible={visibleSteps} />
         <StreamingProgress className={c.streamProgress} />
       </>
     );
   } else if (sub === "answering") {
-    reasoningRegion = <LiveSteps c={c} steps={steps} />;
+    reasoningRegion = <LiveSteps c={c} visible={visibleSteps} />;
   } else if (settled) {
     reasoningRegion = <SettledSteps c={c} steps={steps} />;
   }
 
   const hasAnswer = answer !== "";
-  const showDivider = sub === "answering" && hasAnswer && windowed(steps).length > 0;
+  const showDivider = sub === "answering" && hasAnswer && visibleSteps.length > 0;
   const showAnswer = (sub === "answering" || settled) && hasAnswer;
 
   return (
@@ -242,7 +248,7 @@ export function LiveTurnBubble({
       {settled ? (
         <div className={c.meta}><span>{broName}</span></div>
       ) : mobile ? (
-        <div className="thr-meta">{broName} · updating live</div>
+        <div className={c.meta}>{broName} · updating live</div>
       ) : null}
     </div>
   );

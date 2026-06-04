@@ -76,4 +76,17 @@ describe("LiveTurnBubble", () => {
     );
     expect(screen.queryByRole("button", { name: /stop/i })).toBeNull();
   });
+
+  it("keeps the same answer DOM node across the answering→settled transition", () => {
+    const { container, rerender } = render(
+      <LiveTurnBubble broName="Atlas" state={{ kind: "live", sub: "answering" }} steps={steps} answer="Streaming answer" mobile={false} canStop={false} onStop={() => {}} />,
+    );
+    const before = container.querySelector(".dt-answer-text");
+    expect(before).not.toBeNull();
+    rerender(
+      <LiveTurnBubble broName="Atlas" state={{ kind: "settled" }} steps={steps} answer="Streaming answer" mobile={false} canStop={false} onStop={() => {}} />,
+    );
+    const after = container.querySelector(".dt-answer-text");
+    expect(after).toBe(before);
+  });
 });
