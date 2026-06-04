@@ -31,17 +31,19 @@ export function DevicePairingForm({ onClaim }: DevicePairingFormProps) {
   return (
     <form onSubmit={handleSubmit} className="nb-device-pairing">
       <label htmlFor="device-code">Device code</label>
-      <input
-        id="device-code"
-        value={code}
-        onChange={(event) => setCode(event.target.value)}
-        autoComplete="off"
-        maxLength={8}
-        placeholder="e.g. 7QF2"
-      />
-      <button type="submit" disabled={pending}>
-        {pending ? "Pairing…" : "Pair device"}
-      </button>
+      <div className="nb-device-pairing-row">
+        <input
+          id="device-code"
+          value={code}
+          onChange={(event) => setCode(event.target.value)}
+          autoComplete="off"
+          maxLength={8}
+          placeholder="e.g. 7QF2"
+        />
+        <button type="submit" disabled={pending}>
+          {pending ? "Pairing…" : "Pair device"}
+        </button>
+      </div>
       {status.kind === "ok" && <p role="status">Device paired.</p>}
       {status.kind === "error" && <p role="alert">{status.message}</p>}
     </form>
