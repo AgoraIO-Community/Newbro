@@ -2040,8 +2040,9 @@ function CreateConnectSheet({
   const finalizingRef = useRef(false);
   const autoIssueStartedRef = useRef(false);
   const trimmedName = name.trim();
-  const existingBroNameChanged = Boolean(bro) && trimmedName.length > 0 && trimmedName !== savedBroName.trim();
-  const connectActionsDisabled = existingBroNameChanged || nameSaving;
+  const existingBroNameDirty = Boolean(bro) && trimmedName !== savedBroName.trim();
+  const existingBroNameChanged = existingBroNameDirty && trimmedName.length > 0;
+  const connectActionsDisabled = existingBroNameDirty || nameSaving;
   const canCreate = trimmedName.length > 0 && !busy && !nameSaving && !commands && !pendingNodeId && !completed;
   const canSaveExistingBroName = Boolean(bro) && existingBroNameChanged && !busy && !nameSaving && !completed;
 
