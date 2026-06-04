@@ -70,6 +70,7 @@ class BroDetailThreadProjection:
     bro_thread_live_message_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict)
     timeline_status: dict[str, Literal["not_loaded", "loading", "loaded", "failed"]] = field(default_factory=dict)
     timeline_errors: dict[str, str] = field(default_factory=dict)
+    timeline_load_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     bro_thread_live_plan_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict)
     bro_thread_live_plan_emitted_text: dict[tuple[str, str, str], str] = field(default_factory=dict)
     bro_thread_goals: dict[str, str] = field(default_factory=dict)
@@ -396,6 +397,41 @@ class BroDetailThreadProjection:
         )
 
     async def load_bro_thread_timeline(
+        self,
+        *,
+        persona: Persona,
+        public_thread_id: str,
+        node_id: str,
+        resume_handle: AgentResumeHandle,
+    ) -> None:
+        if self.timeline_status.get(public_thread_id) == "loaded":
+            return
+
+        existing_task = self.timeline_load_tasks.get(public_thread_id)
+        if existing_task is not None:
+            if not existing_task.done():
+                await asyncio.shield(existing_task)
+                return
+            self.timeline_load_tasks.pop(public_thread_id, None)
+
+        load_task = asyncio.create_task(
+            self._load_bro_thread_timeline_once(
+                persona=persona,
+                public_thread_id=public_thread_id,
+                node_id=node_id,
+                resume_handle=resume_handle,
+            )
+        )
+        self.timeline_load_tasks[public_thread_id] = load_task
+
+        def clear_load_task(task: asyncio.Task[None]) -> None:
+            if self.timeline_load_tasks.get(public_thread_id) is task:
+                self.timeline_load_tasks.pop(public_thread_id, None)
+
+        load_task.add_done_callback(clear_load_task)
+        await asyncio.shield(load_task)
+
+    async def _load_bro_thread_timeline_once(
         self,
         *,
         persona: Persona,
