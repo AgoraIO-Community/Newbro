@@ -120,3 +120,17 @@ async def test_poll_unknown_device_code_raises(tmp_path):
     store = _store(tmp_path)
     with pytest.raises(PublicAuthError):
         await store.poll_device_pairing(device_code="nope")
+
+
+@pytest.mark.anyio
+async def test_poll_expired_pending_raises(tmp_path):
+    store = _store(tmp_path)
+    past = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    with sqlite3.connect(tmp_path / "public_auth.sqlite3") as conn:
+        conn.execute(
+            "INSERT INTO device_pairings (device_code_hash, user_code, status, created_at, expires_at) "
+            "VALUES (?, ?, 'pending', ?, ?)",
+            (_hash_secret("dev-expired-poll"), "EXPP", past, past),
+        )
+    with pytest.raises(PublicAuthError):
+        await store.poll_device_pairing(device_code="dev-expired-poll")
