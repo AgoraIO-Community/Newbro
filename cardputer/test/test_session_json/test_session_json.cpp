@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <vector>
 #include "SessionJson.h"
+#include "AudioMeta.h"
 
 using namespace nb;
 
@@ -59,6 +60,52 @@ void test_parse_personas_skips_malformed_entries(void) {
   TEST_ASSERT_EQUAL_STRING("p1", out[0].id.c_str());
 }
 
+static const char *kSnapshot = R"({
+  "session_id":"s",
+  "tasks":[],
+  "bro_timeline_turns":[
+    {"persona_id":"p1","status":"completed","user":{"transcript":"old"},"assistant":{"text":"old reply"},"created_at":"2026-06-04T00:00:01+00:00"},
+    {"persona_id":"p2","status":"running","user":{"transcript":"other"},"assistant":{"text":"nope"},"created_at":"2026-06-04T00:00:02+00:00"},
+    {"persona_id":"p1","status":"running","user":{"transcript":"ship it"},"assistant":{"text":"on it"},"created_at":"2026-06-04T00:00:03+00:00"}
+  ],
+  "personas":[]
+})";
+
+void test_extract_latest_turn_for_persona(void) {
+  TurnView t;
+  TEST_ASSERT_TRUE(extractLatestTurn(kSnapshot, "p1", t));
+  TEST_ASSERT_TRUE(t.found);
+  TEST_ASSERT_EQUAL_STRING("ship it", t.userText.c_str());
+  TEST_ASSERT_EQUAL_STRING("on it", t.assistantText.c_str());
+  TEST_ASSERT_EQUAL_STRING("running", t.status.c_str());
+}
+
+void test_extract_no_turn_for_unknown_persona(void) {
+  TurnView t;
+  TEST_ASSERT_TRUE(extractLatestTurn(kSnapshot, "pX", t));
+  TEST_ASSERT_FALSE(t.found);
+}
+
+void test_parse_audio_transcript(void) {
+  std::string tx = parseAudioTranscript(R"({"status":"accepted","transcript_text":"hello there"})");
+  TEST_ASSERT_EQUAL_STRING("hello there", tx.c_str());
+  TEST_ASSERT_EQUAL_STRING("", parseAudioTranscript(R"({"status":"accepted","transcript_text":null})").c_str());
+}
+
+void test_build_audio_query(void) {
+  AudioMeta m = computeAudioMeta(16000, 16000, 1);
+  std::string q = buildAudioQuery("p1", m);
+  TEST_ASSERT_EQUAL_STRING(
+      "target_persona_id=p1&duration_ms=1000&sample_rate=16000&num_channels=1&samples_per_channel=16000",
+      q.c_str());
+}
+
+void test_build_text_body(void) {
+  std::string b = buildTextBody("p1", "hi");
+  TEST_ASSERT_TRUE(b.find(R"("target_persona_id":"p1")") != std::string::npos);
+  TEST_ASSERT_TRUE(b.find(R"("text":"hi")") != std::string::npos);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_parse_bootstrap);
@@ -68,5 +115,10 @@ int main(int, char **) {
   RUN_TEST(test_parse_personas_empty);
   RUN_TEST(test_parse_personas_rejects_non_array);
   RUN_TEST(test_parse_personas_skips_malformed_entries);
+  RUN_TEST(test_extract_latest_turn_for_persona);
+  RUN_TEST(test_extract_no_turn_for_unknown_persona);
+  RUN_TEST(test_parse_audio_transcript);
+  RUN_TEST(test_build_audio_query);
+  RUN_TEST(test_build_text_body);
   return UNITY_END();
 }
