@@ -7,6 +7,7 @@ from newbro.api.logging import install_access_log_filters
 from newbro.api.paths import API_PREFIX, api_path
 from newbro.api.public_auth import PublicAuthStore
 from newbro.api.routes.auth import router as auth_router
+from newbro.api.routes.devices import router as devices_router
 from newbro.api.routes.commands import router as commands_router
 from newbro.api.routes.drafts import router as drafts_router
 from newbro.api.routes.executor_nodes import router as executor_nodes_router
@@ -45,6 +46,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
         )
     app.include_router(health_router, prefix=API_PREFIX)
     app.include_router(auth_router, prefix=API_PREFIX)
+    app.include_router(devices_router, prefix=API_PREFIX)
     app.include_router(sessions_router, prefix=API_PREFIX)
     app.include_router(messages_router, prefix=API_PREFIX)
     app.include_router(commands_router, prefix=API_PREFIX)
