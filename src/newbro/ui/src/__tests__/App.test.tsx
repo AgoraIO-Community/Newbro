@@ -323,6 +323,16 @@ function withKnownWorkspaceThread<T extends ReturnType<typeof forgeSnapshot>>(sn
   return snapshot;
 }
 
+function renamedForgeSnapshot(sessionId: string, name: string) {
+  const snapshot = forgeSnapshot(sessionId);
+  snapshot.personas[0].name = name;
+  (snapshot as any).bro_threads = (snapshot.bro_threads as any[]).map((thread) => ({
+    ...thread,
+    persona_name: name,
+  }));
+  return snapshot;
+}
+
 function selectWorkWorkspaceAndConfirm() {
   const dialog = screen.getByRole("dialog", { name: /Choose a workspace for Forge/i });
   const workspaceButton = within(dialog).getByRole("button", { name: /work workspace \/tmp\/work/i });
@@ -713,15 +723,9 @@ describe("Newbro artboard shell", () => {
       status: "idle",
     });
     clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
-      const snapshot = forgeSnapshot(sessionId);
-      if (clientMock.updatePersona.mock.calls.length > 0) {
-        snapshot.personas[0].name = "Scout";
-        snapshot.bro_threads = snapshot.bro_threads.map((thread: any) => ({
-          ...thread,
-          persona_name: "Scout",
-        }));
-      }
-      return snapshot;
+      return clientMock.updatePersona.mock.calls.length > 0
+        ? renamedForgeSnapshot(sessionId, "Scout")
+        : forgeSnapshot(sessionId);
     });
 
     render(<RouterProvider router={getRouter()} />);
@@ -736,6 +740,42 @@ describe("Newbro artboard shell", () => {
       expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
     });
     await waitFor(() => expect(screen.getByRole("heading", { name: "Scout" })).toBeInTheDocument());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("renames a Bro from desktop Home without navigating and refreshes the shell snapshot", async () => {
+    window.history.replaceState({}, "", "/?sid=session-existing");
+    clientMock.updatePersona.mockResolvedValue({
+      persona_id: "forge",
+      name: "Scout",
+      avatar: "bro",
+      base_prompt: "",
+      executor_node_id: "node-forge",
+      bro_detail_session_id: "detail-forge",
+      status: "idle",
+    });
+    clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
+      return clientMock.updatePersona.mock.calls.length > 0
+        ? renamedForgeSnapshot(sessionId, "Scout")
+        : forgeSnapshot(sessionId);
+    });
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByTestId("bro-card-forge")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
+    fireEvent.click(screen.getByRole("button", { name: "Edit Forge" }));
+
+    expect(window.location.pathname).toBe("/");
+    const dialog = await screen.findByRole("dialog", { name: /Edit Forge/i });
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+    await waitFor(() => expect(within(screen.getByTestId("bro-card-forge")).getByText("Scout")).toBeInTheDocument());
+    expect(window.location.pathname).toBe("/");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 

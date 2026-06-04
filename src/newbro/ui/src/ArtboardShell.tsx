@@ -1853,9 +1853,9 @@ function RenameBroDialog({
       await updatePersona(sessionId, bro.id, { name: trimmedName });
       await onRenamed();
       onClose();
+      return;
     } catch (err) {
       setError(describeError(err, "Could not rename this Bro."));
-    } finally {
       setPending(false);
     }
   };
@@ -1867,7 +1867,7 @@ function RenameBroDialog({
       aria-modal="true"
       aria-label={`Edit ${bro.name}`}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (!pending && event.target === event.currentTarget) onClose();
       }}
     >
       <form className={`nb-rename-dialog${mobile ? " nb-rename-dialog-mobile" : ""}`} onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
@@ -1876,7 +1876,7 @@ function RenameBroDialog({
             <span className="ob-eyebrow ob-eyebrow-coral">BRO SETTINGS</span>
             <h2 className="nb-rename-title">Edit {bro.name}</h2>
           </div>
-          <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}>
+          <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose} disabled={pending}>
             <X size={16} strokeWidth={2.2} />
           </button>
         </header>
