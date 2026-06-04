@@ -27,7 +27,7 @@ void ChatScreen::render(M5Canvas &canvas, uint32_t frame) {
                phase_ == Phase::Streaming ? theme::coralLight : theme::text, frame);
   canvas.setFont(theme::fontName());
   canvas.setTextColor(theme::text);
-  canvas.setCursor(34, 6);
+  canvas.setCursor(34, 16);
   canvas.print(truncate(bro_.name, 14).c_str());
   uint16_t dot = (phase_ == Phase::Idle) ? theme::muted : theme::greenLight;
   canvas.fillCircle(canvas.width() - 12, 12, 4, dot);

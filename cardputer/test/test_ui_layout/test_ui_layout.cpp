@@ -41,6 +41,13 @@ void test_wrap_lines_truncates_overflow(void) {
   TEST_ASSERT_TRUE(lines[1].size() >= 3 && lines[1].substr(lines[1].size() - 3) == "...");
 }
 
+void test_wrap_lines_truncates_long_word(void) {
+  std::vector<std::string> lines = wrapLines("supercalifragilisticexpialidocious", 10, 3);
+  TEST_ASSERT_EQUAL_INT(1, (int)lines.size());
+  TEST_ASSERT_EQUAL_INT(10, (int)lines[0].size());
+  TEST_ASSERT_TRUE(lines[0].substr(7) == "...");
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_scroll_top_keeps_selection_visible);
@@ -49,5 +56,6 @@ int main(int, char **) {
   RUN_TEST(test_truncate);
   RUN_TEST(test_wrap_lines);
   RUN_TEST(test_wrap_lines_truncates_overflow);
+  RUN_TEST(test_wrap_lines_truncates_long_word);
   return UNITY_END();
 }

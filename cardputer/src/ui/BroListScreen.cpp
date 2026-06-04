@@ -13,7 +13,7 @@ static constexpr int kHeaderH = 26;
 void BroListScreen::render(M5Canvas &canvas, uint32_t frame) {
   canvas.setFont(theme::fontName());
   canvas.setTextColor(theme::text);
-  canvas.setCursor(8, 6);
+  canvas.setCursor(8, 16);
   canvas.print("Your Bros");
   canvas.setFont(theme::fontSmall());
   canvas.setTextColor(theme::muted);

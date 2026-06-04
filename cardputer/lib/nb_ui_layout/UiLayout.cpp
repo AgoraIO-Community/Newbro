@@ -36,7 +36,9 @@ std::vector<std::string> wrapLines(const std::string &text, int maxChars, int ma
     std::string word = text.substr(start, i - start);
     if (word.empty()) continue;
     if (line.empty()) {
-      line = word;
+      line = (static_cast<int>(word.size()) > maxChars && maxChars > 3)
+                 ? word.substr(0, maxChars - 3) + "..."
+                 : word;
     } else if (static_cast<int>(line.size() + 1 + word.size()) <= maxChars) {
       line += " " + word;
     } else {
