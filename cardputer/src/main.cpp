@@ -14,6 +14,7 @@
 #include "store/ConfigStore.h"
 #include "transport/HttpsTransport.h"
 #include "ui/TextScreen.h"
+#include "ui/Theme.h"
 
 namespace {
 
@@ -145,6 +146,7 @@ void runVoiceTurn(nb::NewbroClient &client) {
 void setup() {
   auto cfg = M5.config();
   M5Cardputer.begin(cfg, true);  // enable keyboard
+  (void)nb::theme::coral;
   M5Cardputer.Display.setRotation(1);
 
   nb::screen::title("newbro");
