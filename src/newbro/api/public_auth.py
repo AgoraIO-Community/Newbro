@@ -9,7 +9,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -30,6 +30,11 @@ DEFAULT_BRO_BASE_PROMPT = (
     "or push-to-talk instructions in the connected workspace, and ask only when "
     "you need a concrete decision to continue."
 )
+
+USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+USER_CODE_LENGTH = 4
+DEVICE_PAIRING_TTL_SECONDS = 600
+DEVICE_PAIRING_POLL_INTERVAL_SECONDS = 2
 
 
 class PublicUser(BaseModel):
@@ -60,6 +65,20 @@ class PublicPersonaRecord(BaseModel):
 class RedeemedSession:
     user: PublicUser
     raw_token: str
+
+
+@dataclass(slots=True)
+class DevicePairingStart:
+    device_code: str
+    user_code: str
+    interval: int
+    expires_at: str
+
+
+@dataclass(slots=True)
+class DevicePairingPoll:
+    status: str  # "pending" | "claimed"
+    token: str | None = None
 
 
 class PublicAuthStore:
@@ -129,6 +148,16 @@ class PublicAuthStore:
                     node_id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
                     created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS device_pairings (
+                    device_code_hash TEXT PRIMARY KEY,
+                    user_code TEXT NOT NULL UNIQUE,
+                    user_id TEXT,
+                    issued_token TEXT,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    claimed_at TEXT
                 );
                 """
             )
@@ -275,6 +304,35 @@ class PublicAuthStore:
         async with self._lock:
             with self._connect() as conn:
                 conn.execute("DELETE FROM browser_sessions WHERE token_hash = ?", (_hash_secret(raw_token),))
+
+    async def create_device_pairing(self) -> DevicePairingStart:
+        async with self._lock:
+            with self._connect() as conn:
+                now = datetime.now(UTC)
+                expires_at = (now + timedelta(seconds=DEVICE_PAIRING_TTL_SECONDS)).isoformat()
+                device_code = secrets.token_urlsafe(32)
+                for _ in range(10):
+                    user_code = "".join(secrets.choice(USER_CODE_ALPHABET) for _ in range(USER_CODE_LENGTH))
+                    try:
+                        conn.execute(
+                            """
+                            INSERT INTO device_pairings
+                                (device_code_hash, user_code, status, created_at, expires_at)
+                            VALUES (?, ?, 'pending', ?, ?)
+                            """,
+                            (_hash_secret(device_code), user_code, now.isoformat(), expires_at),
+                        )
+                        break
+                    except sqlite3.IntegrityError:
+                        continue
+                else:
+                    raise PublicAuthError("Could not allocate a pairing code.")
+        return DevicePairingStart(
+            device_code=device_code,
+            user_code=user_code,
+            interval=DEVICE_PAIRING_POLL_INTERVAL_SECONDS,
+            expires_at=expires_at,
+        )
 
     async def claim_session(self, *, user_id: str, session_id: str) -> None:
         async with self._lock:
