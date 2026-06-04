@@ -1,4 +1,5 @@
 #include <M5Cardputer.h>
+#include "store/ConfigStore.h"
 #include "transport/HttpsTransport.h"
 
 void setup() {
@@ -8,6 +9,8 @@ void setup() {
   M5Cardputer.Display.print("newbro");
   static nb::HttpsTransport probe("example.com", 443);
   (void)probe;
+  static nb::ConfigStore store;
+  (void)store;
 }
 
 void loop() {
