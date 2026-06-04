@@ -713,6 +713,18 @@ describe("Newbro artboard shell", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("opens the remove confirmation from mobile Manage bros", async () => {
+    window.history.replaceState({}, "", "/mobile?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Manage bros/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Forge" }));
+
+    expect(await screen.findByRole("alertdialog", { name: "Remove Forge" })).toHaveTextContent("Remove Forge?");
+  });
+
 
   it("creates the first Bro once after connection and shows a done action", async () => {
     let sessionOneSnapshots = 0;

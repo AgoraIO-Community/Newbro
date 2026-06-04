@@ -3902,7 +3902,7 @@ function MobileHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) 
               <div className="home-bar-l home-bar-l-edit">
                 <div className="home-bar-titles">
                   <div className="home-bar-greet">Edit bros</div>
-                  <div className="home-bar-meta">Tap − to remove</div>
+                  <div className="home-bar-meta">Rename or remove</div>
                 </div>
               </div>
               <button type="button" className="home-bar-done" onClick={() => setEditMode(false)}>Done</button>

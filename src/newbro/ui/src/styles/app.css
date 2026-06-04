@@ -3573,30 +3573,88 @@
   top: -8px;
   z-index: 4;
   display: flex;
-  gap: 6px;
+  gap: 0;
 }
 
 .home-edit-rename,
 .home-edit-remove {
-  position: static;
+  position: relative;
   inset: auto;
   display: grid;
+  height: 40px;
+  width: 40px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.home-edit-rename::before,
+.home-edit-remove::before {
+  content: "";
+  position: absolute;
   height: 25px;
   width: 25px;
-  place-items: center;
   border: 2px solid #fff;
   border-radius: 999px;
   box-shadow: 0 8px 18px rgba(17, 24, 39, 0.2);
+  transition: transform 0.12s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .home-edit-rename {
-  background: #111827;
   color: #fff;
 }
 
+.home-edit-rename::before {
+  background: #111827;
+}
+
 .home-edit-remove {
-  background: #ef4444;
   color: #fff;
+}
+
+.home-edit-remove::before {
+  background: #ef4444;
+}
+
+.home-edit-rename > svg,
+.home-edit-remove > svg {
+  position: relative;
+  z-index: 1;
+}
+
+.home-edit-rename:hover,
+.home-edit-remove:hover {
+  background: transparent;
+}
+
+.home-edit-rename:hover::before,
+.home-edit-remove:hover::before {
+  transform: scale(1.08);
+}
+
+.home-edit-rename:active,
+.home-edit-remove:active {
+  transform: none;
+}
+
+.home-edit-rename:active::before,
+.home-edit-remove:active::before {
+  transform: scale(0.92);
+}
+
+.home-edit-rename:focus-visible,
+.home-edit-remove:focus-visible {
+  outline: 0;
+}
+
+.home-edit-rename:focus-visible::before,
+.home-edit-remove:focus-visible::before {
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.2), 0 0 0 3px rgba(255, 106, 69, 0.38);
 }
 
 .nb-rename-dialog-mobile {
