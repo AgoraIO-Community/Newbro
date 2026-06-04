@@ -47,4 +47,26 @@ bool NewbroClient::sendText(const std::string &sessionId, const std::string &per
   return true;
 }
 
+bool NewbroClient::sendAudio(const std::string &sessionId, const std::string &personaId, const AudioMeta &meta,
+                             const uint8_t *pcm, size_t len, std::string &transcriptOut) {
+  lastError_.clear();
+  transcriptOut.clear();
+  std::string path =
+      "/api/sessions/" + sessionId + "/executor-audio-instructions?" + buildAudioQuery(personaId, meta);
+  HttpResponse r = t_.postBytes(path, "audio/pcm", pcm, len, token_);
+  if (!r.transportOk) { lastError_ = "network error"; return false; }
+  if (r.status != 200) { lastError_ = "audio failed: HTTP " + std::to_string(r.status); return false; }
+  transcriptOut = parseAudioTranscript(r.body);
+  return true;
+}
+
+bool NewbroClient::getReply(const std::string &sessionId, const std::string &personaId, TurnView &out) {
+  lastError_.clear();
+  HttpResponse r = t_.request("GET", "/api/sessions/" + sessionId, "", token_);
+  if (!r.transportOk) { lastError_ = "network error"; return false; }
+  if (r.status != 200) { lastError_ = "snapshot failed: HTTP " + std::to_string(r.status); return false; }
+  if (!extractLatestTurn(r.body, personaId, out)) { lastError_ = "bad snapshot"; return false; }
+  return true;
+}
+
 }  // namespace nb
