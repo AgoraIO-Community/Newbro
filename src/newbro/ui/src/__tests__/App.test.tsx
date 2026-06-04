@@ -527,6 +527,7 @@ describe("Newbro artboard shell", () => {
     clientMock.closeBroThread.mockReset();
     clientMock.getConversationSnapshot.mockReset();
     clientMock.openBroThread.mockReset();
+    clientMock.submitExecutorAudioInstruction.mockReset();
     clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => (
       sessionId === "session-existing" ? forgeSnapshot(sessionId) : emptySessionSnapshot(sessionId)
     ));
@@ -536,6 +537,15 @@ describe("Newbro artboard shell", () => {
       conversation_history: [],
     }));
     clientMock.openBroThread.mockImplementation(async () => activeForgeSnapshot("session-existing"));
+    clientMock.submitExecutorAudioInstruction.mockResolvedValue({
+      audio_instruction_id: "aud-default",
+      target_persona_id: "forge",
+      target_thread_id: "exec-1",
+      status: "accepted",
+      duration_ms: 1,
+      size_bytes: 32,
+      transcript_text: "audio request",
+    });
     clientMock.createExecutorNode.mockResolvedValue({
       node: usableExecutorNode({
         node_id: "node-1",
@@ -1626,6 +1636,7 @@ describe("Newbro artboard shell", () => {
         ],
         bro_timeline_turns: [],
       });
+    clientMock.openBroThread.mockResolvedValue(initial);
     clientMock.submitExecutorAudioInstruction.mockResolvedValueOnce({
       audio_instruction_id: "aud-new",
       target_persona_id: "forge",
@@ -1833,7 +1844,7 @@ describe("Newbro artboard shell", () => {
     expect(await screen.findByText(/Reconnect Forge|Reconnect forge/i)).toBeInTheDocument();
   });
 
-  it("clears the existing thread history when 'New thread' is clicked on the desktop detail page", async () => {
+  it("clears the existing thread history when a new desktop thread workspace is selected", async () => {
     const snapshot = {
       ...forgeSnapshot("session-existing"),
       tasks: [
@@ -1903,6 +1914,12 @@ describe("Newbro artboard shell", () => {
       ],
     };
     clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    let resolveOpenThread: ((value: typeof snapshot) => void) | null = null;
+    clientMock.openBroThread.mockImplementationOnce(async () => {
+      return await new Promise((resolve) => {
+        resolveOpenThread = resolve;
+      });
+    });
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
@@ -1910,6 +1927,10 @@ describe("Newbro artboard shell", () => {
     expect(await screen.findByText("Previous response body.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /New thread with Forge/i }));
+    selectWorkWorkspaceAndConfirm();
+    await act(async () => {
+      resolveOpenThread?.(snapshot);
+    });
 
     await waitFor(() => expect(screen.queryByText("Previous response body.")).not.toBeInTheDocument());
     expect(screen.getByText("No messages with Forge yet")).toBeInTheDocument();
@@ -2040,6 +2061,7 @@ describe("Newbro artboard shell", () => {
       ],
     };
     clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValueOnce(snapshot);
     clientMock.submitExecutorTextInstruction.mockResolvedValueOnce({
       instruction_id: "txt-new",
       target_persona_id: "forge",
