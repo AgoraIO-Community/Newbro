@@ -30,6 +30,11 @@ Default policy:
   and ask the executor node to start a Codex turn without creating a task first.
   Idle push-to-talk transcribes through the executor node before that outbound
   turn starts.
+- `BroDetailThreadProjection` owns the runtime projection from tasks, execution
+  sessions, imported Codex threads, selected-thread subscriptions, and Codex
+  turn/thread events into `BroThread` and `BroTimelineTurn` snapshot state.
+  `SessionRuntime` keeps route-facing compatibility methods and delegates this
+  projection work to that module.
 - retries append new runs
 - completed tasks can be reopened without creating duplicate tasks
 - executor-family handoff creates a new execution session under the same task

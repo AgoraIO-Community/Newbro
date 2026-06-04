@@ -29,6 +29,7 @@ import {
   signupPublicUser,
   type PublicUser,
 } from "./lib/session-client";
+import { beginThreadOpen, finishThreadOpen, threadOpenKey } from "./lib/thread-open-dedupe";
 import { readSessionIdFromUrl, replaceSessionIdInUrl } from "./lib/session-url";
 import { buildBroCardModels } from "./components/newbro/adapters";
 import { useVoiceSession } from "./components/newbro/useVoiceSession";
@@ -314,7 +315,8 @@ function useNewbroShellState() {
   const [latestDraftOutputEvent, setLatestDraftOutputEvent] = useState<DraftOutputEvent | null>(null);
   const mountedRef = useRef(false);
   const shellLoadSequenceRef = useRef(0);
-  const threadOpenSequenceRef = useRef(0);
+  const threadOpenInFlightRef = useRef(new Set<string>());
+  const threadOpenLatestKeyRef = useRef<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
   function applySnapshot(snapshot: SessionSnapshot) {
@@ -408,23 +410,28 @@ function useNewbroShellState() {
     if (!activeShellSessionId || !mountedRef.current) {
       return;
     }
-    const openSequence = ++threadOpenSequenceRef.current;
+    const openKey = threadOpenKey(targetPersonaId, threadId);
+    threadOpenLatestKeyRef.current = openKey;
     setOpeningThreadId(threadId);
     setThreadOpenError(null);
+    if (beginThreadOpen(threadOpenInFlightRef.current, targetPersonaId, threadId) === null) {
+      return;
+    }
     try {
       const snapshot = await openBroThread(activeShellSessionId, { targetPersonaId, threadId });
-      if (!mountedRef.current || threadOpenSequenceRef.current !== openSequence) {
+      if (!mountedRef.current || threadOpenLatestKeyRef.current !== openKey) {
         return;
       }
       startTransition(() => {
         applySnapshot(snapshot);
       });
     } catch (error) {
-      if (!mountedRef.current || threadOpenSequenceRef.current !== openSequence) {
+      if (!mountedRef.current || threadOpenLatestKeyRef.current !== openKey) {
         return;
       }
       setThreadOpenError(describeApiFailure(error, "Thread history could not be fetched. Try selecting the thread again."));
     } finally {
+      finishThreadOpen(threadOpenInFlightRef.current, openKey);
       if (mountedRef.current) {
         setOpeningThreadId((current) => (current === threadId ? null : current));
       }
