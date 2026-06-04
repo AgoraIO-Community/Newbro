@@ -3769,11 +3769,11 @@ function HomeAccountSheet({
         </button>
       </div>
 
-      <section className="acct-section nb-devices-section">
-        <div className="acct-section-eyebrow nb-eyebrow">DEVICES</div>
-        <p className="nb-body-soft">Pair a Cardputer or other device using the code shown on its screen.</p>
+      <div className="acct-section">
+        <div className="acct-section-eyebrow">DEVICES</div>
+        <p className="acct-row-meta">Pair a Cardputer or other device using the code shown on its screen.</p>
         <DevicePairingForm onClaim={claimDevice} />
-      </section>
+      </div>
 
       <div className="acct-section">
         <div className="acct-section-eyebrow">APP</div>
