@@ -3761,7 +3761,7 @@ function HomeAccountSheet({
           </span>
           <span className="acct-row-body">
             <span className="acct-row-title">Manage bros</span>
-            <span className="acct-row-meta">Rename, remove, reorder</span>
+            <span className="acct-row-meta">Rename or remove</span>
           </span>
           <span className="acct-row-chev">›</span>
         </button>
