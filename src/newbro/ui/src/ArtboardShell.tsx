@@ -20,8 +20,9 @@ import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForNative
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
-import { deriveReasoningPhase } from "./lib/reasoningPhase";
-import { ReasoningBubble } from "./ReasoningBubble";
+import { deriveLiveTurnState } from "./lib/reasoningPhase";
+import { LiveTurnBubble } from "./LiveTurnBubble";
+import { timelineRowKey } from "./lib/timelineRowKey";
 import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
@@ -1040,96 +1041,6 @@ function timelinePlan(value: unknown): BroTaskRecord["plan"] | undefined {
   return { text, explanation, steps };
 }
 
-// Settled bro turn (desktop + mobile) — the agent's progress messages shown as
-// compact steps (last 3 by default, with a "Show all N steps" toggle) followed
-// by the final answer. Class names switch between dt-/thr- via the mobile flag.
-function SettledAnswerBubble({
-  bro,
-  steps,
-  answer,
-  mobile = false,
-  sessionId = null,
-  workspaceRoot = null,
-  threadId = null,
-  turnId = null,
-}: {
-  bro: BroCardModel;
-  steps: ReasoningStep[];
-  answer: string;
-  mobile?: boolean;
-  sessionId?: string | null;
-  workspaceRoot?: string | null;
-  threadId?: string | null;
-  turnId?: string | null;
-}) {
-  const [showAll, setShowAll] = React.useState(false);
-  const COLLAPSED = 3;
-  const hasMore = steps.length > COLLAPSED;
-  const visible = showAll ? steps : steps.slice(-COLLAPSED);
-
-  const turnClass = mobile ? "thr-turn thr-turn-bro" : "dt-turn dt-turn-bro";
-  const bubbleClass = mobile
-    ? "thr-bubble thr-bubble-bro thr-bubble-answer"
-    : "dt-bubble dt-bubble-bro dt-bubble-answer";
-  const collapsedClass = mobile ? "thr-reason-collapsed" : "dt-reason-collapsed";
-  const collapsedOpenClass = mobile ? "thr-reason-collapsed-open" : "dt-reason-collapsed-open";
-  const chevClass = mobile ? "thr-reason-collapsed-chev" : "dt-reason-collapsed-chev";
-  const stepsOlClass = mobile
-    ? "thr-reason-steps thr-reason-steps-static"
-    : "dt-reason-steps dt-reason-steps-static";
-  const stepLiClass = mobile ? "thr-reason-step thr-reason-step-done" : "dt-reason-step dt-reason-step-done";
-  const markClass = mobile ? "thr-reason-mark" : "dt-reason-step-mark";
-  const textClass = mobile ? "thr-reason-text" : "dt-reason-step-text";
-  const answerClass = mobile ? "thr-answer-text" : "dt-answer-text";
-  const metaClass = mobile ? "thr-meta" : "dt-bubble-meta";
-
-  return (
-    <div className={turnClass}>
-      <div className={bubbleClass}>
-        {steps.length > 0 ? (
-          <>
-            {hasMore ? (
-              <button
-                type="button"
-                className={`${collapsedClass}${showAll ? ` ${collapsedOpenClass}` : ""}`}
-                onClick={() => setShowAll((v) => !v)}
-                aria-expanded={showAll}
-              >
-                <span>{showAll ? "Hide steps" : `Show all ${steps.length} steps`}</span>
-                <svg className={chevClass} viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M6 9l6 6 6-6"/>
-                </svg>
-              </button>
-            ) : null}
-            <ol className={stepsOlClass}>
-              {visible.map((s) => (
-                <li key={s.id} className={stepLiClass}>
-                  <span className={markClass} aria-hidden="true" />
-                  <span className={textClass}>{s.label}</span>
-                </li>
-              ))}
-            </ol>
-          </>
-        ) : null}
-        {answer ? (
-          <div className={answerClass}>
-            <MarkdownText
-              downloadContext={
-                sessionId && threadId && turnId && workspaceRoot
-                  ? { sessionId, threadId, turnId, workspaceRoot }
-                  : undefined
-              }
-            >{answer}</MarkdownText>
-          </div>
-        ) : null}
-      </div>
-      <div className={metaClass}>
-        <MessageMeta label={bro.name} />
-      </div>
-    </div>
-  );
-}
-
 function TimelineUserMessage({ bro, turn, mobile = false }: { bro: BroCardModel; turn: BroTimelineTurn; mobile?: boolean }) {
   const message = turn.user;
   if (!message) return null;
@@ -1232,39 +1143,35 @@ function TimelineTurnView({
     ? settledReasoningSteps.filter((s) => s.id !== answerItemId)
     : settledReasoningSteps;
 
-  const phase = deriveReasoningPhase({
+  const liveState = deriveLiveTurnState({
     status: turn.status,
     stepCount: reasoningSteps.length,
     hasAnswer: answerText !== "",
   });
   const stopTaskId = turn.task?.task_id ?? null;
-  const canStop = phase !== "done" && stopTaskId !== null;
+  const canStop = liveState.kind !== "settled" && stopTaskId !== null;
   const onStop = () => { if (stopTaskId) shell.cancelTask(stopTaskId); };
+
+  const downloadContext =
+    sessionId && turn.thread_id && turn.turn_id && workspaceRoot
+      ? { sessionId, threadId: turn.thread_id, turnId: turn.turn_id, workspaceRoot }
+      : undefined;
+  const settledHasNothing =
+    liveState.kind === "settled" && answerText === "" && dedupedSettledSteps.length === 0;
 
   return (
     <>
       <TimelineUserMessage bro={bro} turn={turn} mobile={mobile} />
-      {phase === "done" ? (
-        (answerText || dedupedSettledSteps.length > 0) ? (
-          <SettledAnswerBubble
-            bro={bro}
-            steps={dedupedSettledSteps}
-            answer={answerText}
-            mobile={mobile}
-            sessionId={sessionId}
-            workspaceRoot={workspaceRoot}
-            threadId={turn.thread_id}
-            turnId={turn.turn_id}
-          />
-        ) : null
-      ) : (
-        <ReasoningBubble
+      {settledHasNothing ? null : (
+        <LiveTurnBubble
           broName={bro.name}
-          phase={phase}
-          steps={reasoningSteps}
+          state={liveState}
+          steps={liveState.kind === "settled" ? dedupedSettledSteps : reasoningSteps}
+          answer={answerText}
           mobile={Boolean(mobile)}
           canStop={canStop}
           onStop={onStop}
+          downloadContext={downloadContext}
         />
       )}
       {proposalRequests.map((request) => (
@@ -2445,7 +2352,7 @@ function ThreadPanel({
       ) : null}
       {renderedTurns.map((turn) => (
         <TimelineTurnView
-          key={turn.turn_id}
+          key={timelineRowKey(turn)}
           bro={bro}
           turn={turn}
           onTextTurn={onTextTurn}
@@ -2698,7 +2605,7 @@ function MobileThreadSurface({
         ) : null}
         {renderedTurns.map((turn) => (
           <TimelineTurnView
-            key={turn.turn_id}
+            key={timelineRowKey(turn)}
             bro={bro}
             turn={turn}
             mobile

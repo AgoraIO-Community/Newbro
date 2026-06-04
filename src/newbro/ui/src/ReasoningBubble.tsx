@@ -1,4 +1,7 @@
-import type { ReasoningPhase } from "./lib/reasoningPhase";
+// ReasoningPhase is no longer exported from lib/reasoningPhase (superseded by
+// LiveTurnState). Keep the type local so the component compiles until Task 5
+// removes this file entirely.
+type ReasoningPhase = "ack" | "streaming" | "done";
 
 export interface ReasoningStepView {
   id: string;
