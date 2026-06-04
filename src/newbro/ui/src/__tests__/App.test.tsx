@@ -2109,6 +2109,58 @@ describe("Newbro artboard shell", () => {
     expect(screen.queryByText("No messages with Forge yet")).not.toBeInTheDocument();
   });
 
+  it("does not re-open the same selected thread when its loading snapshot settles", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    const loadingThread = {
+      thread_id: "codex-import-dedupe",
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: null,
+      status: "completed",
+      title: "Dedupe imported thread",
+      preview: "Remote history",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loading",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-native-dedupe" },
+    };
+    const loadedSnapshot = {
+      ...snapshot,
+      bro_threads: [
+        {
+          ...loadingThread,
+          timeline_status: "loaded",
+          timeline_error: null,
+        },
+      ],
+      bro_timeline_turns: [
+        timelineTurn({
+          thread_id: "codex-import-dedupe",
+          executor_turn_id: "turn-dedupe",
+          assistantText: "Loaded once.",
+        }),
+      ],
+    };
+    snapshot.bro_threads = [loadingThread] as any;
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValueOnce(loadedSnapshot);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=codex-import-dedupe");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Loaded once.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(clientMock.openBroThread).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("renders an active-thread plan proposal even without a matching timeline turn", async () => {
     const snapshot = forgeSnapshot("session-existing");
     snapshot.bro_threads = [
