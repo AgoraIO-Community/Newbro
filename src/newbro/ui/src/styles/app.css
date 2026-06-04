@@ -3424,6 +3424,127 @@
   cursor: pointer;
 }
 
+.nb-detail-edit-row {
+  position: absolute;
+  top: 12px;
+  right: 18px;
+  z-index: 4;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.nb-bro-edit-button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--nb-line);
+  border-radius: 999px;
+  background: var(--nb-paper);
+  color: var(--nb-ink-soft);
+  font-family: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.nb-bro-edit-button:hover {
+  border-color: var(--nb-line-hover);
+  background: var(--nb-wash-alt);
+  color: var(--nb-ink);
+}
+
+.nb-bro-edit-button:active {
+  transform: scale(0.96);
+}
+
+.nb-bro-edit-button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--nb-info-edge);
+}
+
+.dt-bro-card-edit {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.dt-roster-row:has(.dt-roster-edit) {
+  grid-template-columns: 32px minmax(0, 1fr) auto auto auto;
+}
+
+.dt-roster-edit {
+  width: 28px;
+  height: 28px;
+}
+
+.nb-rename-dialog-layer {
+  z-index: 80;
+  align-items: center;
+  padding: 24px;
+}
+
+.nb-rename-dialog {
+  width: min(390px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--nb-line);
+  border-radius: 22px;
+  background: var(--nb-paper);
+  box-shadow: var(--nb-shadow-lift);
+}
+
+.nb-rename-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.nb-rename-title {
+  margin: 4px 0 0;
+  color: var(--nb-ink);
+  font-size: 21px;
+  font-weight: 750;
+  line-height: 1.12;
+  letter-spacing: 0;
+}
+
+.nb-rename-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.nb-rename-secondary {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--nb-line);
+  border-radius: 999px;
+  background: var(--nb-paper-sub);
+  color: var(--nb-ink-soft);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.nb-rename-secondary:hover {
+  border-color: var(--nb-line-hover);
+  background: var(--nb-wash-alt);
+  color: var(--nb-ink);
+}
+
+.nb-rename-secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 @media (max-width: 1023px) {
   .nb-setup-gate {
     padding: 20px;

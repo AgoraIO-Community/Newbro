@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import { ArrowUp, Check, ChevronLeft, Download, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
+import { ArrowUp, Check, ChevronLeft, Download, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Pencil, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorConnectCommands,
   clearDraft,
@@ -1691,9 +1691,26 @@ function StateChip({ state }: { state: HomeBroState }) {
   );
 }
 
-function DesktopBroCard({ bro, onOpen, onSetup, featured = false }: { bro: BroCardModel; onOpen: (id: string) => void; onSetup: (bro: BroCardModel) => void; featured?: boolean }) {
+function DesktopBroCard({
+  bro,
+  onOpen,
+  onSetup,
+  onRename,
+  featured = false,
+}: {
+  bro: BroCardModel;
+  onOpen: (id: string) => void;
+  onSetup: (bro: BroCardModel) => void;
+  onRename: (bro: BroCardModel) => void;
+  featured?: boolean;
+}) {
   const state = homeBroState(bro);
   const tone = homeBroTone(state);
+  const handleRename = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onRename(bro);
+  };
   return (
     <a data-testid={`bro-card-${bro.id}`} className={`dt-bro-card dt-bro-card-${tone}${featured ? " dt-bro-card-featured" : ""}`} href={broDetailHref(bro.id)} onClickCapture={(event) => { if (clickedInsideHomeCardAction(event)) event.preventDefault(); }} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
       <div className={`dt-bro-card-avatar dt-bro-card-avatar-${tone}`}>
@@ -1722,6 +1739,11 @@ function DesktopBroCard({ bro, onOpen, onSetup, featured = false }: { bro: BroCa
             <span className="dt-bro-card-reasoning-text">{bro.latestReasoningStep || bro.progressLabel}</span>
           </div>
         ) : null}
+        {bro.source === "runtime" ? (
+          <button type="button" data-home-card-action="rename" className="nb-bro-edit-button dt-bro-card-edit" aria-label={`Edit ${bro.name}`} onClick={handleRename}>
+            <Pencil size={13} strokeWidth={2.1} aria-hidden="true" />
+          </button>
+        ) : null}
         <HomeBroConnectAction bro={bro} variant="card" onSetup={onSetup} />
       </div>
       <span className="dt-bro-card-arrow">›</span>
@@ -1729,8 +1751,23 @@ function DesktopBroCard({ bro, onOpen, onSetup, featured = false }: { bro: BroCa
   );
 }
 
-function DesktopRosterRow({ bro, onOpen, onSetup }: { bro: BroCardModel; onOpen: (id: string) => void; onSetup: (bro: BroCardModel) => void }) {
+function DesktopRosterRow({
+  bro,
+  onOpen,
+  onSetup,
+  onRename,
+}: {
+  bro: BroCardModel;
+  onOpen: (id: string) => void;
+  onSetup: (bro: BroCardModel) => void;
+  onRename: (bro: BroCardModel) => void;
+}) {
   const state = homeBroState(bro);
+  const handleRename = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onRename(bro);
+  };
   return (
     <a data-testid={`bro-card-${bro.id}`} className={`dt-roster-row dt-roster-row-${state}`} href={broDetailHref(bro.id)} onClickCapture={(event) => { if (clickedInsideHomeCardAction(event)) event.preventDefault(); }} onClick={(event) => openBroFromHome(event, bro.id, onOpen)}>
       <div className={`dt-roster-avatar dt-roster-avatar-${state}`}>
@@ -1738,6 +1775,11 @@ function DesktopRosterRow({ bro, onOpen, onSetup }: { bro: BroCardModel; onOpen:
       </div>
       <span className="dt-roster-name">{bro.name}</span>
       <span className="dt-roster-last">{homeBroLast(bro, state)}</span>
+      {bro.source === "runtime" ? (
+        <button type="button" data-home-card-action="rename" className="nb-bro-edit-button dt-roster-edit" aria-label={`Edit ${bro.name}`} onClick={handleRename}>
+          <Pencil size={13} strokeWidth={2.1} aria-hidden="true" />
+        </button>
+      ) : null}
       <HomeBroConnectAction bro={bro} variant="row" onSetup={onSetup} />
     </a>
   );
@@ -1774,10 +1816,107 @@ function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
   );
 }
 
+function RenameBroDialog({
+  bro,
+  sessionId,
+  onClose,
+  onRenamed,
+  mobile = false,
+}: {
+  bro: BroCardModel;
+  sessionId: string;
+  onClose: () => void;
+  onRenamed: () => Promise<void>;
+  mobile?: boolean;
+}) {
+  const [name, setName] = useState(bro.name);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const trimmedName = name.trim();
+  const unchanged = trimmedName === bro.name.trim();
+  const canSave = trimmedName.length > 0 && !unchanged && !pending;
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (pending) return;
+    if (!trimmedName) {
+      setError("Bro name is required.");
+      return;
+    }
+    if (unchanged) {
+      onClose();
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      await updatePersona(sessionId, bro.id, { name: trimmedName });
+      await onRenamed();
+      onClose();
+    } catch (err) {
+      setError(describeError(err, "Could not rename this Bro."));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <div
+      className="nb-first-run-sheet-layer nb-rename-dialog-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Edit ${bro.name}`}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <form className={`nb-rename-dialog${mobile ? " nb-rename-dialog-mobile" : ""}`} onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+        <header className="nb-rename-head">
+          <div>
+            <span className="ob-eyebrow ob-eyebrow-coral">BRO SETTINGS</span>
+            <h2 className="nb-rename-title">Edit {bro.name}</h2>
+          </div>
+          <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}>
+            <X size={16} strokeWidth={2.2} />
+          </button>
+        </header>
+        <label className="ob-field">
+          <span className="ob-field-eyebrow">BRO NAME</span>
+          <div className={`ob-input${trimmedName ? " ob-input-filled" : ""}`}>
+            <span className="ob-input-prefix">@</span>
+            <input
+              aria-label="Bro name"
+              type="text"
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                setError(null);
+              }}
+              autoFocus
+            />
+          </div>
+          <span className="ob-field-hint">Use a short name that is easy to say out loud.</span>
+        </label>
+        {error ? <div className="nb-status-banner nb-status-banner-error">{error}</div> : null}
+        <footer className="nb-rename-actions">
+          <button type="button" className="nb-rename-secondary" onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button type="submit" className={`ob-cta${!canSave ? " ob-cta-pending" : ""}`} disabled={!canSave}>
+            {pending ? <span className="ob-cta-spinner" aria-hidden="true" /> : null}
+            <span>{pending ? "Saving..." : "Save"}</span>
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string) => void }) {
   const shell = useNewbroShell();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [setupBro, setSetupBro] = useState<BroCardModel | null>(null);
+  const [renameBro, setRenameBro] = useState<BroCardModel | null>(null);
   const homeBros = useMemo(() => [...shell.bros].sort(compareHomeBros), [shell.bros]);
   const workingBros = homeBros.filter((bro) => homeBroState(bro) === "working");
   const standingByBros = homeBros.filter((bro) => homeBroState(bro) !== "working");
@@ -1814,7 +1953,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
                       <span className="dt-home-section-sub">Sessions currently dispatched</span>
                     </div>
                     <div className="dt-bro-grid">
-                      {workingBros.map((bro) => <DesktopBroCard key={bro.id} bro={bro} featured onOpen={onOpenBro} onSetup={setSetupBro} />)}
+                      {workingBros.map((bro) => <DesktopBroCard key={bro.id} bro={bro} featured onOpen={onOpenBro} onSetup={setSetupBro} onRename={setRenameBro} />)}
                     </div>
                   </section>
                 ) : null}
@@ -1824,7 +1963,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
                     <span className="dt-home-section-sub">Quiet for now - hold space to wake one</span>
                   </div>
                   <div className="dt-bro-roster">
-                    {standingByBros.map((bro) => <DesktopRosterRow key={bro.id} bro={bro} onOpen={onOpenBro} onSetup={setSetupBro} />)}
+                    {standingByBros.map((bro) => <DesktopRosterRow key={bro.id} bro={bro} onOpen={onOpenBro} onSetup={setSetupBro} onRename={setRenameBro} />)}
                   </div>
                 </section>
               </>
@@ -1865,6 +2004,9 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
       ) : null}
       {setupBro && shell.activeShellSessionId ? (
         <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setSetupBro(null)} onCreated={shell.refreshShellSession} bro={setupBro} />
+      ) : null}
+      {renameBro && shell.activeShellSessionId ? (
+        <RenameBroDialog sessionId={shell.activeShellSessionId} bro={renameBro} onClose={() => setRenameBro(null)} onRenamed={shell.refreshShellSession} />
       ) : null}
     </DesktopFrame>
   );
@@ -3195,6 +3337,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
   const [audioTurns, setAudioTurns] = useState<AudioTurn[]>([]);
   const [threadVisibleCount, setThreadVisibleCount] = useState(THREAD_LIST_PAGE_SIZE);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bro = shell.bros.find((candidate) => candidate.id === broId) ?? null;
   const nodeState = deriveBroNodeState(bro, shell.executorNodes);
@@ -3334,6 +3477,13 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
             onShowMore={() => setThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE)}
           />
           <section className="dt-pane">
+            {bro.source === "runtime" ? (
+              <div className="nb-detail-edit-row">
+                <button type="button" className="nb-bro-edit-button" aria-label="Edit Bro" onClick={() => setRenameOpen(true)}>
+                  <Pencil size={14} strokeWidth={2.1} aria-hidden="true" />
+                </button>
+              </div>
+            ) : null}
             {offline ? (
               <div className="dt-pane-banner">
                 <OfflineBanner bro={bro} node={offline} neverConnected={nodeState.kind === "never_connected"} onConnect={() => setConnectOpen(true)} />
@@ -3381,6 +3531,9 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
       />
       {connectOpen && shell.activeShellSessionId ? (
         <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setConnectOpen(false)} onCreated={shell.refreshShellSession} bro={bro} />
+      ) : null}
+      {renameOpen && shell.activeShellSessionId && bro.source === "runtime" ? (
+        <RenameBroDialog sessionId={shell.activeShellSessionId} bro={bro} onClose={() => setRenameOpen(false)} onRenamed={shell.refreshShellSession} />
       ) : null}
     </DesktopFrame>
   );
