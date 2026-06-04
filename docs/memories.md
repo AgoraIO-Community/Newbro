@@ -315,3 +315,4 @@ Short log of important design decisions and changes for Newbro.
 
 - Moved macOS executor app Codex status and CLI/app update controls out of the menu and into Settings, with Codex under `Executors` and updates in a dedicated Settings pane.
 - Changed the macOS executor app handoff to use `newbro://connect?...` clipboard settings: the web UI copies settings for the app, the app auto-applies those settings while running, and raw `newbro executor run ...` remains terminal-only.
+- Extracted Bro Detail thread and timeline projection into `BroDetailThreadProjection`; `SessionRuntime` now delegates imported Codex thread projection, selected-thread subscription state, and Codex thread/turn event projection.
