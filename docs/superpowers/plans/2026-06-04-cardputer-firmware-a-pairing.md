@@ -1032,9 +1032,29 @@ HttpResponse HttpsTransport::request(const std::string &method, const std::strin
 }  // namespace nb
 ```
 
-- [ ] **Step 3: Add an include path build flag so `src/` can include the `nb_transport` header**
+- [ ] **Step 3: Embed the CA bundle and wire `board_build.embed_files`**
 
-The transport header is already found via the library (LDF). No platformio.ini change is needed — `#include "Transport.h"` resolves through the `nb_transport` library. (`HttpsTransport.h` includes `"Transport.h"`.)
+The `setCACertBundle` symbol `_binary_data_cert_x509_crt_bundle_bin_start` is **not** auto-provided by the Arduino-ESP32 core (verified against `framework-arduinoespressif32 @ 3.20017`). It is emitted by the build only when the project embeds a binary at the matching path. We vendor a compact Mozilla CA bundle at `cardputer/data/cert/x509_crt_bundle.bin` (committed; 150 roots) and embed it.
+
+The bundle is generated from the ESP-IDF-shipped assets (no network):
+
+```bash
+# one-time regeneration (requires the `cryptography` python package):
+GEN="$HOME/.platformio/packages/framework-espidf*/components/mbedtls/esp_crt_bundle/gen_crt_bundle.py"
+PEM="$HOME/.platformio/packages/framework-espidf*/components/mbedtls/esp_crt_bundle/cacrt_all.pem"
+python3 $GEN -i $PEM            # writes ./x509_crt_bundle (compact format)
+cp x509_crt_bundle cardputer/data/cert/x509_crt_bundle.bin
+```
+
+Add a `cardputer/data/cert/README.md` documenting that command. Then add to `[env:device]` in `cardputer/platformio.ini`:
+
+```ini
+board_build.embed_files = data/cert/x509_crt_bundle.bin
+```
+
+The embedded-file path `data/cert/x509_crt_bundle.bin` maps to the linker symbol `_binary_data_cert_x509_crt_bundle_bin_start` (path separators/dots → `_`), which matches the `asm(...)` name in `HttpsTransport.cpp`.
+
+The `#include "transport/HttpsTransport.h"` resolves through PlatformIO's include path for `src/`; `#include "Transport.h"` resolves through the `nb_transport` library (LDF). No further include changes are needed.
 
 - [ ] **Step 4: Verify device compile**
 
@@ -1046,14 +1066,14 @@ First, temporarily reference the class so it is compiled: in `cardputer/src/main
 ```
 
 Run: `cd cardputer && pio run -e device`
-Expected: compiles successfully (the cert-bundle symbol resolves against the ESP32 core).
+Expected: compiles **and links** successfully (the embedded bundle defines the symbol).
 
-> If the linker reports the symbol `_binary_data_cert_x509_crt_bundle_bin_start` is undefined for your core version, that means the bundle isn't auto-included; report this as a BLOCKED finding so the controller can switch the plan to the `bblanchon`/`tanakamasayuki` ESP32CertBundle approach. Do not silently fall back to `client.setInsecure()`.
+> If the link still fails with the symbol undefined, the embed path→symbol mangling differs on this toolchain. Find the real symbol with `nm -g .pio/build/device/*/x509_crt_bundle.bin.o 2>/dev/null | grep _start` (or grep the map file) and update the `asm("...")` name in `HttpsTransport.cpp` to match. Do NOT fall back to `client.setInsecure()`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add cardputer/src/transport cardputer/src/main.cpp
+git add cardputer/src/transport cardputer/src/main.cpp cardputer/platformio.ini cardputer/data/cert
 git commit -m "feat(cardputer): add HTTPS transport with CA-bundle verification"
 ```
 
