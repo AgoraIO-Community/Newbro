@@ -294,6 +294,24 @@ function forgeSnapshot(sessionId: string, node = usableExecutorNode()) {
   };
 }
 
+function unboundForgeSnapshot(sessionId: string) {
+  return {
+    ...emptySessionSnapshot(sessionId),
+    personas: [
+      {
+        persona_id: "forge",
+        name: "Forge",
+        avatar: "bro",
+        base_prompt: "",
+        executor_node_id: null,
+        bro_detail_session_id: "detail-forge",
+        status: "idle",
+      },
+    ],
+    executor_nodes: [],
+  };
+}
+
 function withKnownWorkspaceThread<T extends ReturnType<typeof forgeSnapshot>>(snapshot: T): T {
   snapshot.bro_threads = [
     ...(snapshot.bro_threads as any[]),
@@ -1997,6 +2015,72 @@ describe("Newbro artboard shell", () => {
 
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: /Create and connect a Bro/i })).toBeInTheDocument();
+  });
+
+  it("does not auto-issue credentials before renaming an unbound existing Bro", async () => {
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(unboundForgeSnapshot("session-existing"));
+    window.history.replaceState({}, "", "/?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByTestId(/^home-bro-connect-/));
+    const dialog = await screen.findByRole("dialog", { name: /Create and connect a Bro/i });
+    expect(within(dialog).getByText(/Set up Forge/i)).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(clientMock.createExecutorNode).not.toHaveBeenCalled();
+
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create and connect" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+    await waitFor(() => {
+      expect(clientMock.createExecutorNode).toHaveBeenCalledWith("session-existing", {
+        name: "Scout local node",
+        enabled_executors: ["codex"],
+      });
+    });
+    expect(clientMock.updatePersona.mock.invocationCallOrder[0]).toBeLessThan(clientMock.createExecutorNode.mock.invocationCallOrder[0]);
+  });
+
+  it("keeps an existing Bro name dirty when rename refresh fails", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot
+      .mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode))
+      .mockRejectedValueOnce(new Error("refresh failed"));
+    clientMock.updatePersona.mockResolvedValue({
+      persona_id: "forge",
+      name: "Scout",
+      avatar: "bro",
+      base_prompt: "",
+      executor_node_id: "node-forge",
+      bro_detail_session_id: "detail-forge",
+      status: "idle",
+    });
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /computer offline · set up/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Create and connect a Bro/i });
+    await within(dialog).findByText(/token=token-1/);
+
+    fireEvent.change(within(dialog).getByLabelText("Bro name"), { target: { value: "Scout" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save name" }));
+
+    await waitFor(() => {
+      expect(clientMock.updatePersona).toHaveBeenCalledWith("session-existing", "forge", { name: "Scout" });
+    });
+    await waitFor(() => {
+      expect(within(dialog).getByRole("button", { name: "Save name" })).toBeEnabled();
+    });
+    expect(within(dialog).getByRole("button", { name: "Copy connect settings" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
   });
 
   it("clears the existing thread history when 'New thread' is clicked on the desktop detail page", async () => {

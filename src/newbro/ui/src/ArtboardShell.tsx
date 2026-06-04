@@ -2081,8 +2081,8 @@ function CreateConnectSheet({
     setError(null);
     try {
       await updatePersona(sessionId, bro.id, { name: trimmedName });
-      setSavedBroName(trimmedName);
       await onCreated();
+      setSavedBroName(trimmedName);
       return true;
     } catch (err) {
       setError(describeError(err, "Could not rename this Bro."));
@@ -2159,10 +2159,10 @@ function CreateConnectSheet({
   }
 
   useEffect(() => {
-    if (autoIssueStartedRef.current || bro?.executorNodeId || !canCreate) return;
+    if (autoIssueStartedRef.current || bro || !canCreate) return;
     autoIssueStartedRef.current = true;
     void issueConnectCredentials({ copyInstall: false });
-  }, [bro?.executorNodeId, canCreate]);
+  }, [bro, canCreate]);
 
   useEffect(() => {
     if (!pendingNodeId || !pendingBroName || completed) return;
