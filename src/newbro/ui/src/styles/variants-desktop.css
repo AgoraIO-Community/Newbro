@@ -4173,6 +4173,24 @@
 .dt-reason-step-active .dt-reason-step-mark::before {
   box-shadow: 0 0 0 3px rgba(59,130,246,0.16);
 }
+.dt-reason-stream-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(260px, 72%);
+  padding-top: 3px;
+}
+.dt-reason-stream-progress span {
+  height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(100deg, rgba(59,130,246,0.06) 30%, rgba(59,130,246,0.20) 50%, rgba(59,130,246,0.06) 70%);
+  background-size: 220% 100%;
+  animation: dt-reason-shimmer 1.25s ease-in-out infinite;
+}
+.dt-reason-stream-progress span:nth-child(2) {
+  width: 62%;
+  animation-delay: 0.18s;
+}
 @keyframes dt-reason-in {
   from { opacity: 0; transform: translateY(5px); }
   to   { opacity: 1; transform: translateY(0); }

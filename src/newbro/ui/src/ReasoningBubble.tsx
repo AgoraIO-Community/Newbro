@@ -13,6 +13,17 @@ function windowed(steps: ReasoningStepView[]) {
   return steps.slice(startAt, steps.length);
 }
 
+function StreamingProgress({ mobile }: { mobile: boolean }) {
+  const prefix = mobile ? "thr" : "dt";
+
+  return (
+    <div className={`${prefix}-reason-stream-progress`} aria-hidden="true">
+      <span />
+      <span />
+    </div>
+  );
+}
+
 /**
  * The assistant's live reasoning bubble for the `ack` and `streaming` phases.
  * (The `done` phase is rendered by SettledAnswerBubble.)
@@ -60,22 +71,25 @@ export function ReasoningBubble({
               <span style={{ width: "61%" }} />
             </div>
           ) : (
-            <ol className="thr-reason-steps">
-              {windowed(steps).map((s, j, vis) => {
-                const dist = vis.length - 1 - j;
-                const isLast = dist === 0;
-                return (
-                  <li
-                    key={s.id}
-                    className={`thr-reason-step${isLast ? " thr-reason-step-active" : " thr-reason-step-done"}`}
-                    style={{ opacity: FADE[dist] ?? 0.26 }}
-                  >
-                    <span className="thr-reason-mark" aria-hidden="true" />
-                    <span className="thr-reason-text">{s.label}</span>
-                  </li>
-                );
-              })}
-            </ol>
+            <>
+              <ol className="thr-reason-steps">
+                {windowed(steps).map((s, j, vis) => {
+                  const dist = vis.length - 1 - j;
+                  const isLast = dist === 0;
+                  return (
+                    <li
+                      key={s.id}
+                      className={`thr-reason-step${isLast ? " thr-reason-step-active" : " thr-reason-step-done"}`}
+                      style={{ opacity: FADE[dist] ?? 0.26 }}
+                    >
+                      <span className="thr-reason-mark" aria-hidden="true" />
+                      <span className="thr-reason-text">{s.label}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+              <StreamingProgress mobile />
+            </>
           )}
         </div>
         <div className="thr-meta">{broName} · updating live</div>
@@ -99,22 +113,25 @@ export function ReasoningBubble({
             <span style={{ width: "61%" }} />
           </div>
         ) : (
-          <ol className="dt-reason-steps">
-            {windowed(steps).map((s, j, vis) => {
-              const dist = vis.length - 1 - j;
-              const isLast = dist === 0;
-              return (
-                <li
-                  key={s.id}
-                  className={`dt-reason-step${isLast ? " dt-reason-step-active" : " dt-reason-step-done"}`}
-                  style={{ opacity: FADE[dist] ?? 0.26 }}
-                >
-                  <span className="dt-reason-step-mark" aria-hidden="true" />
-                  <span className="dt-reason-step-text">{s.label}</span>
-                </li>
-              );
-            })}
-          </ol>
+          <>
+            <ol className="dt-reason-steps">
+              {windowed(steps).map((s, j, vis) => {
+                const dist = vis.length - 1 - j;
+                const isLast = dist === 0;
+                return (
+                  <li
+                    key={s.id}
+                    className={`dt-reason-step${isLast ? " dt-reason-step-active" : " dt-reason-step-done"}`}
+                    style={{ opacity: FADE[dist] ?? 0.26 }}
+                  >
+                    <span className="dt-reason-step-mark" aria-hidden="true" />
+                    <span className="dt-reason-step-text">{s.label}</span>
+                  </li>
+                );
+              })}
+            </ol>
+            <StreamingProgress mobile={false} />
+          </>
         )}
       </div>
     </div>

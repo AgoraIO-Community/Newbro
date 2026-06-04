@@ -14,19 +14,21 @@ describe("ReasoningBubble", () => {
     expect(screen.getByText(/Atlas is working/)).toBeTruthy();
   });
 
-  it("streaming renders the windowed step list and no skeleton", () => {
+  it("streaming renders the windowed step list with persistent progress", () => {
     const { container } = render(
       <ReasoningBubble broName="Atlas" phase="streaming" steps={steps} mobile={false} canStop={false} onStop={() => {}} />,
     );
     expect(container.querySelector(".dt-reason-skeleton")).toBeNull();
     expect(container.querySelectorAll(".dt-reason-step").length).toBe(2);
+    expect(container.querySelector(".dt-reason-stream-progress")).not.toBeNull();
   });
 
   it("uses thr- classes on mobile", () => {
     const { container } = render(
-      <ReasoningBubble broName="Atlas" phase="ack" steps={[]} mobile canStop={false} onStop={() => {}} />,
+      <ReasoningBubble broName="Atlas" phase="streaming" steps={steps} mobile canStop={false} onStop={() => {}} />,
     );
-    expect(container.querySelector(".thr-reason-skeleton")).not.toBeNull();
+    expect(container.querySelector(".thr-reason-stream-progress")).not.toBeNull();
+    expect(container.querySelectorAll(".thr-reason-step").length).toBe(2);
   });
 
   it("shows Stop when canStop and fires onStop on click; hidden when !canStop", () => {
