@@ -1,26 +1,32 @@
 import { describe, it, expect } from "vitest";
-import { deriveReasoningPhase } from "./reasoningPhase";
+import { deriveLiveTurnState } from "./reasoningPhase";
 
-describe("deriveReasoningPhase", () => {
-  it("pending with no steps → ack (the just-sent optimistic turn)", () => {
-    expect(deriveReasoningPhase({ status: "pending", stepCount: 0, hasAnswer: false })).toBe("ack");
+describe("deriveLiveTurnState", () => {
+  it("terminal statuses settle", () => {
+    for (const status of ["completed", "failed", "cancelled"]) {
+      expect(deriveLiveTurnState({ status, stepCount: 0, hasAnswer: false })).toEqual({ kind: "settled" });
+    }
   });
-  it("running with no steps → ack", () => {
-    expect(deriveReasoningPhase({ status: "running", stepCount: 0, hasAnswer: false })).toBe("ack");
+
+  it("a settled turn stays settled even with steps and an answer", () => {
+    expect(deriveLiveTurnState({ status: "completed", stepCount: 3, hasAnswer: true })).toEqual({ kind: "settled" });
   });
-  it("running with steps → streaming", () => {
-    expect(deriveReasoningPhase({ status: "running", stepCount: 3, hasAnswer: false })).toBe("streaming");
+
+  it("optimistic/pending with nothing yet is live:connecting", () => {
+    expect(deriveLiveTurnState({ status: "pending", stepCount: 0, hasAnswer: false })).toEqual({ kind: "live", sub: "connecting" });
   });
-  it("pending but answer already present → done", () => {
-    expect(deriveReasoningPhase({ status: "pending", stepCount: 0, hasAnswer: true })).toBe("done");
+
+  it("every non-terminal status stays live (never blank) during executor spin-up", () => {
+    for (const status of ["created", "queued", "waiting_executor", "running", "anything-unexpected"]) {
+      expect(deriveLiveTurnState({ status, stepCount: 0, hasAnswer: false })).toEqual({ kind: "live", sub: "connecting" });
+    }
   });
-  it("completed → done", () => {
-    expect(deriveReasoningPhase({ status: "completed", stepCount: 5, hasAnswer: true })).toBe("done");
+
+  it("steps but no answer is live:reasoning", () => {
+    expect(deriveLiveTurnState({ status: "running", stepCount: 2, hasAnswer: false })).toEqual({ kind: "live", sub: "reasoning" });
   });
-  it("failed → done", () => {
-    expect(deriveReasoningPhase({ status: "failed", stepCount: 0, hasAnswer: false })).toBe("done");
-  });
-  it("cancelled → done", () => {
-    expect(deriveReasoningPhase({ status: "cancelled", stepCount: 2, hasAnswer: false })).toBe("done");
+
+  it("an answer while still non-terminal is live:answering (cue must stay)", () => {
+    expect(deriveLiveTurnState({ status: "running", stepCount: 2, hasAnswer: true })).toEqual({ kind: "live", sub: "answering" });
   });
 });
