@@ -136,24 +136,24 @@ Bro detail continuity:
   Newbro stores the returned native thread id as the selected thread's resume
   handle so later direct sends can continue the same thread.
 - Newbro imports global Codex threads through the detached executor node's
-  Codex app-server `thread/list` capability. Imported threads become typed
+  Codex app-server `thread/list` capability. Codex executor nodes require
+  `codex-cli >= 0.135.0`; older Codex commands are reported as unavailable
+  instead of using compatibility request retries. Imported threads become typed
   `BroThread` projections with Newbro-owned public ids and diagnostic raw
   Codex ids; when the user sends direct text into an imported thread with no
   active run, the outbound turn request carries the imported Codex resume
   handle and the executor node continues that native thread through
   `start_codex_turn`. Idle push-to-talk follows the same resume-handle path
-  after executor-node transcription. Thread
-  import should page through Codex `thread/list` using
-  `nextCursor` where the app-server supports pagination, should ask for
-  updated-time descending order where supported, and must sort the imported
-  result locally by Codex `updatedAt`/`createdAt` so recent resumed dialogs are
-  not hidden behind the first default page. If a newer request shape is not
-  accepted by the installed Codex app-server, Newbro retries with older
-  compatible request shapes instead of projecting an empty thread list.
-  When a detached executor node connects, Newbro first publishes a cheap
-  connectivity snapshot, then schedules a post-ack imported-thread refresh for
-  active subscribed sessions so Bro Detail can show native Codex threads
-  without requiring a browser refresh.
+  after executor-node transcription. Thread import uses Codex `thread/list`
+  with `limit`, `cursor`, `sortKey = "updated_at"`, and
+  `sortDirection = "desc"`. `SessionSnapshot` includes only the bounded first
+  imported-thread page for each eligible Bro plus selected/open thread
+  projections; clients load older imported threads through Newbro's Bro-thread
+  page API, which preserves Codex `nextCursor`/backwards cursor metadata as
+  `bro_thread_pages`. When a detached executor node connects, Newbro first
+  publishes a cheap connectivity snapshot, then schedules a post-ack first-page
+  imported-thread refresh for active subscribed sessions so Bro Detail can show
+  native Codex threads without requiring a browser refresh.
 - Opening a `BroThread` resolves the public thread id to a Codex resume handle,
   starts selected-thread event interest, and, for imported native Codex threads,
   loads native thread history into executor-owned `BroTimelineTurn` records for
@@ -167,10 +167,17 @@ Bro detail continuity:
   event interest and must not spawn a separate app-server process. The executor
   node forwards selected-thread events back to Newbro. Ordinary text/PTT sends
   and session snapshot publishes must not block on Codex `thread/list`,
-  `thread/read`, or `thread/turns/list`; imported-thread open may read history,
-  but history-read failures are represented as per-thread `timeline_status =
-  failed` and `timeline_error`, not as open-request conflicts. `SessionSnapshot`
-  exposes `bro_timeline_turns` as the Bro Detail rendering contract.
+  `thread/read`, or `thread/turns/list`; imported-thread open may read a
+  bounded history page, but history-read failures are represented as per-thread
+  `timeline_status = failed` and `timeline_error`, not as open-request
+  conflicts. Selected imported-thread history uses Codex `thread/read` for
+  compact metadata/status without full turns, `thread/goal/get` for goal state,
+  and `thread/turns/list` with `limit`, `cursor`, `sortDirection = "desc"`,
+  and `itemsView = "full"` for turn pages. `SessionSnapshot` exposes
+  `bro_timeline_turns` as the Bro Detail rendering contract and
+  `bro_timeline_pages` as per-thread cursor metadata; clients load older
+  selected-thread turns through Newbro's Bro-timeline page API instead of
+  receiving unbounded native history in snapshot broadcasts.
   Newbro-owned turns are projected from typed `Task`, `ExecutionRun`, and
   `TaskSummary` state; executor-owned turns are projected from imported native
   history and selected-thread live events. The projection is a read model, not a
