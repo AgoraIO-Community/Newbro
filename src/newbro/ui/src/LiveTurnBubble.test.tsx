@@ -25,6 +25,29 @@ describe("LiveTurnBubble", () => {
     expect(container.querySelector(".dt-reason-orb")).not.toBeNull();
   });
 
+  it("reasoning streams the commentary prominently with a caret, above compact steps", () => {
+    const { container } = render(
+      <LiveTurnBubble
+        broName="Atlas"
+        state={{ kind: "live", sub: "reasoning" }}
+        steps={steps}
+        activeCommentary="Looking through the devx docs"
+        answer=""
+        mobile={false}
+        canStop={false}
+        onStop={() => {}}
+      />,
+    );
+    // The streaming commentary is a prominent line with a caret (not the shimmer).
+    expect(container.querySelector(".dt-commentary-text")?.textContent).toBe("Looking through the devx docs");
+    expect(container.querySelector(".dt-reason-caret")).not.toBeNull();
+    expect(container.querySelector(".dt-reason-stream-progress")).toBeNull();
+    // The completed steps render compactly and do NOT duplicate the live commentary.
+    expect(container.querySelectorAll(".dt-reason-step").length).toBe(2);
+    const stepTexts = Array.from(container.querySelectorAll(".dt-reason-step-text")).map((n) => n.textContent);
+    expect(stepTexts).not.toContain("Looking through the devx docs");
+  });
+
   it("answering streams the answer while keeping steps, the alive orb, and a caret", () => {
     const { container } = render(
       <LiveTurnBubble broName="Atlas" state={{ kind: "live", sub: "answering" }} steps={steps} answer="Here is the answer" mobile={false} canStop={false} onStop={() => {}} />,

@@ -23,6 +23,7 @@ import { DevicePairingForm } from "./components/newbro/DevicePairingForm";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
 import { deriveLiveTurnState } from "./lib/reasoningPhase";
+import { splitLiveSteps } from "./lib/splitLiveSteps";
 import { LiveTurnBubble } from "./LiveTurnBubble";
 import { timelineRowKey } from "./lib/timelineRowKey";
 import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
@@ -1141,14 +1142,21 @@ function TimelineTurnView({
   const answerText = timelineMessageText(turn.assistant) || record?.summary?.trim() || record?.description?.trim() || "";
   const rawAnswerItemId = turn.assistant?.metadata?.codex_item_id;
   const answerItemId = typeof rawAnswerItemId === "string" ? rawAnswerItemId : null;
-  const dedupedSettledSteps = answerItemId
-    ? settledReasoningSteps.filter((s) => s.id !== answerItemId)
-    : settledReasoningSteps;
 
   const liveState = deriveLiveTurnState({
     status: turn.status,
     stepCount: reasoningSteps.length,
     hasAnswer: answerText !== "",
+  });
+  // Codex multi-message turn split: while reasoning the latest step is the
+  // prominent streaming commentary line and the rest are compact steps; on
+  // answering/settled commentary collapses into the (deduped) step list and the
+  // final answer is the answer. See lib/splitLiveSteps for the contract.
+  const { activeCommentary, stepsForBubble, dedupedSettledSteps } = splitLiveSteps({
+    liveState,
+    reasoningSteps,
+    settledReasoningSteps,
+    answerItemId,
   });
   const stopTaskId = turn.task?.task_id ?? null;
   const canStop = liveState.kind !== "settled" && stopTaskId !== null;
@@ -1168,7 +1176,8 @@ function TimelineTurnView({
         <LiveTurnBubble
           broName={bro.name}
           state={liveState}
-          steps={liveState.kind === "settled" ? dedupedSettledSteps : reasoningSteps}
+          steps={stepsForBubble}
+          activeCommentary={activeCommentary}
           answer={answerText}
           mobile={Boolean(mobile)}
           canStop={canStop}

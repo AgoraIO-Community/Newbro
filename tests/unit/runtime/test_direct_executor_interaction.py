@@ -47,6 +47,16 @@ def test_direct_executor_does_not_duplicate_projection_thread_targeting():
         assert f"async def {name}" not in source
 
 
+def test_direct_turn_lifecycle_is_owned_by_direct_turn_starter():
+    direct_source = Path("src/newbro/runtime/direct_executor.py").read_text()
+    starter_source = Path("src/newbro/runtime/direct_turn_starter.py").read_text()
+
+    assert "class DirectTurnStarter" in starter_source
+    assert "OutboundTurnRequest" not in direct_source
+    assert "put_outbound_turn_request" not in direct_source
+    assert ".start_codex_turn(" not in direct_source
+
+
 @dataclass(slots=True)
 class Harness:
     store: InMemoryBlackboard

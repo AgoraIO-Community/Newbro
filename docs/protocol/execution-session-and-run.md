@@ -109,8 +109,9 @@ Bro detail continuity:
   active run store an `OutboundTurnRequest` and send executor-node
   `start_codex_turn` with the selected Codex resume handle or explicit
   new-thread workspace; they do not create/update a `Task` or schedule
-  Execution Brain work before node acceptance. Idle push-to-talk transcribes
-  through the executor node before creating the outbound turn request.
+  Execution Brain work before node acceptance. `DirectTurnStarter` owns that
+  task-free outbound request lifecycle. Idle push-to-talk transcribes through
+  the executor node before creating the outbound turn request.
   `Persona` status is not a routing source for selected-thread sends.
 - when creating a new Codex Bro Detail thread, direct text and push-to-talk
   inputs must also provide a `workspace_id` selected from workspaces already

@@ -37,6 +37,8 @@ interface ClassMap {
   divider: string;
   answer: string;
   caret: string;
+  commentary: string;
+  commentaryText: string;
   collapsed: string;
   collapsedOpen: string;
   chev: string;
@@ -63,6 +65,8 @@ const DESKTOP: ClassMap = {
   divider: "dt-reason-divider",
   answer: "dt-answer-text",
   caret: "dt-reason-caret",
+  commentary: "dt-commentary",
+  commentaryText: "dt-commentary-text",
   collapsed: "dt-reason-collapsed",
   collapsedOpen: "dt-reason-collapsed-open",
   chev: "dt-reason-collapsed-chev",
@@ -89,6 +93,8 @@ const MOBILE: ClassMap = {
   divider: "thr-reason-divider",
   answer: "thr-answer-text",
   caret: "thr-reason-caret",
+  commentary: "thr-commentary",
+  commentaryText: "thr-commentary-text",
   collapsed: "thr-reason-collapsed",
   collapsedOpen: "thr-reason-collapsed-open",
   chev: "thr-reason-collapsed-chev",
@@ -174,6 +180,7 @@ export function LiveTurnBubble({
   state,
   steps,
   answer,
+  activeCommentary = null,
   mobile,
   canStop,
   onStop,
@@ -183,6 +190,9 @@ export function LiveTurnBubble({
   state: LiveTurnState;
   steps: ReasoningStepView[];
   answer: string;
+  /** The currently-streaming commentary line, shown prominently above the
+   * compact step list while reasoning; it collapses into `steps` once done. */
+  activeCommentary?: string | null;
   mobile: boolean;
   canStop: boolean;
   onStop: () => void;
@@ -218,8 +228,15 @@ export function LiveTurnBubble({
   } else if (sub === "reasoning") {
     reasoningRegion = (
       <>
+        {activeCommentary ? (
+          <div className={c.commentary}>
+            <span className={c.commentaryText}>{activeCommentary}</span>
+            <span className={c.caret} aria-hidden="true" />
+          </div>
+        ) : (
+          <StreamingProgress className={c.streamProgress} />
+        )}
         <LiveSteps c={c} visible={visibleSteps} />
-        <StreamingProgress className={c.streamProgress} />
       </>
     );
   } else if (sub === "answering") {

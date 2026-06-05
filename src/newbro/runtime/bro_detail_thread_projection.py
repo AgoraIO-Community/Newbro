@@ -106,6 +106,7 @@ class BroDetailThreadProjection:
     open_bro_thread_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     bro_thread_executor_turns: dict[str, list[BroTimelineTurn]] = field(default_factory=dict)
     bro_thread_live_message_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict)
+    bro_thread_live_item_phase: dict[tuple[str, str, str], str] = field(default_factory=dict)
     timeline_status: dict[str, Literal["not_loaded", "loading", "loaded", "failed"]] = field(default_factory=dict)
     timeline_errors: dict[str, str] = field(default_factory=dict)
     timeline_load_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
@@ -679,6 +680,7 @@ class BroDetailThreadProjection:
             return
         if message.method not in {
             "turn/completed",
+            "item/started",
             "item/agentMessage/delta",
             "item/plan/delta",
             "item/completed",
@@ -689,9 +691,11 @@ class BroDetailThreadProjection:
         }:
             return
         if message.method in {
+            "item/started",
             "item/agentMessage/delta",
             "item/plan/delta",
             "item/completed",
+            "turn/completed",
             "thread/goal/updated",
             "thread/goal/cleared",
         }:
@@ -898,6 +902,18 @@ class BroDetailThreadProjection:
             if updated:
                 self.bro_thread_executor_turns[subscription.public_thread_id] = updated
             return bool(updated)
+        if message.method == "turn/completed":
+            # Turn-level completion is the authoritative settle signal. Commentary
+            # item completions keep the turn live, so the turn settles here (or via
+            # the outbound codex_turn_event 'completed') rather than per message.
+            turn = params.get("turn")
+            completed_turn_id = turn.get("id") if isinstance(turn, dict) else None
+            if not isinstance(completed_turn_id, str) or not completed_turn_id:
+                return False
+            return self.settle_selected_thread_turn(
+                public_thread_id=subscription.public_thread_id,
+                executor_turn_id=completed_turn_id,
+            )
         turn_id = params.get("turnId") or params.get("turn_id")
         if not isinstance(turn_id, str) or not turn_id:
             return False
@@ -950,23 +966,57 @@ class BroDetailThreadProjection:
                 )
                 return True
             role = _codex_item_role(item)
-            text = _extract_codex_item_text(item)
-            if role is None or not text:
-                return False
             item_id = item.get("id")
             item_id_text = str(item_id) if isinstance(item_id, str) and item_id else "completed"
+            phase = item.get("phase")
+            # Record the agentMessage phase as soon as it is known (item/started,
+            # then item/completed) so streaming deltas — which carry no phase — can
+            # be routed: 'commentary' is intermediate working narration shown as a
+            # reasoning step, only 'final_answer' (or a phase-less native answer) is
+            # the settled answer.
+            if role == "assistant" and isinstance(item_id, str) and item_id and isinstance(phase, str) and phase:
+                self.bro_thread_live_item_phase[(subscription.public_thread_id, turn_id, item_id)] = phase
+            text = _extract_codex_item_text(item)
+            if role is None:
+                return False
+            # Commentary is surfaced via the channel-A reasoning step stream; keep
+            # the turn live but never place it in the answer slot, which would
+            # double-render the message (once as a step, once as the answer).
+            if role == "assistant" and self._selected_thread_item_is_commentary(
+                subscription.public_thread_id, turn_id, item_id if isinstance(item_id, str) else None
+            ):
+                return self._keep_selected_thread_turn_live(
+                    subscription=subscription,
+                    turn_id=turn_id,
+                    client_request_id=client_request_id,
+                    codex_goal=codex_goal,
+                    timestamp=timestamp,
+                )
+            if not text:
+                return False
             status = item.get("status")
+            default_status = status if isinstance(status, str) and status else "completed"
+            if role == "user":
+                # The echoed user message completing does not finish the turn; the
+                # assistant answer is still pending, so keep the turn live (the
+                # message itself keeps its own reported status).
+                message_status = default_status
+                turn_status = "running"
+            else:
+                message_status = default_status
+                turn_status = "running" if message_status in {"running", "inProgress"} else "completed"
             timeline_message = BroTimelineMessage(
                 message_id=f"{subscription.public_thread_id}:{turn_id}:{role}",
                 role=role,
                 kind="text",
                 text=text,
                 created_at=timestamp,
-                status=status if isinstance(status, str) and status else "completed",
+                status=message_status,
                 metadata={
                     "executor_turn_id": turn_id,
                     "codex_item_id": item_id_text,
                     "codex_item_type": item.get("type") if isinstance(item.get("type"), str) else None,
+                    "codex_agent_message_phase": phase if isinstance(phase, str) else None,
                     "source": "selected_thread_event",
                 },
             )
@@ -983,7 +1033,7 @@ class BroDetailThreadProjection:
                     input_modality="text" if role == "user" else "unknown",
                     user=timeline_message if role == "user" else None,
                     assistant=timeline_message if role == "assistant" else None,
-                    status="running" if timeline_message.status in {"running", "inProgress"} else "completed",
+                    status=turn_status,
                     created_at=timestamp,
                     updated_at=timestamp,
                     metadata={
@@ -1041,6 +1091,15 @@ class BroDetailThreadProjection:
         delta = params.get("delta")
         if not isinstance(item_id, str) or not item_id or not isinstance(delta, str) or not delta:
             return False
+        if self._selected_thread_item_is_commentary(subscription.public_thread_id, turn_id, item_id):
+            # Commentary streams as a reasoning step (channel-A), not the answer.
+            return self._keep_selected_thread_turn_live(
+                subscription=subscription,
+                turn_id=turn_id,
+                client_request_id=client_request_id,
+                codex_goal=codex_goal,
+                timestamp=timestamp,
+            )
         key = (subscription.public_thread_id, turn_id, item_id)
         text = f"{self.bro_thread_live_message_deltas.get(key, '')}{delta}"
         self.bro_thread_live_message_deltas[key] = text
@@ -1117,6 +1176,74 @@ class BroDetailThreadProjection:
                 self.bro_thread_executor_turns.pop(public_thread_id, None)
             return candidate.user, candidate.executor_turn_id
         return None, None
+
+    def _selected_thread_item_is_commentary(
+        self, public_thread_id: str, turn_id: str, item_id: str | None
+    ) -> bool:
+        if not isinstance(item_id, str) or not item_id:
+            return False
+        return self.bro_thread_live_item_phase.get((public_thread_id, turn_id, item_id)) == "commentary"
+
+    def _keep_selected_thread_turn_live(
+        self,
+        *,
+        subscription: "SelectedCodexThreadSubscription",
+        turn_id: str,
+        client_request_id: str | None,
+        codex_goal: str | None,
+        timestamp: str,
+    ) -> bool:
+        # Commentary agentMessages are intermediate working narration surfaced as
+        # reasoning steps (via the channel-A progress stream); keep the turn live
+        # without placing the streaming text in the answer slot, which would
+        # double-render it (once as a step, once as the answer).
+        self.upsert_bro_thread_executor_turn(
+            BroTimelineTurn(
+                turn_id=f"{subscription.public_thread_id}:codex:{turn_id}",
+                thread_id=subscription.public_thread_id,
+                persona_id=subscription.persona_id,
+                executor_id="codex",
+                owner="executor",
+                client_request_id=client_request_id,
+                executor_thread_id=subscription.codex_thread_id,
+                executor_turn_id=turn_id,
+                input_modality="unknown",
+                status="running",
+                created_at=timestamp,
+                updated_at=timestamp,
+                metadata={
+                    "source": "selected_thread_event",
+                    "executor_thread_id": subscription.codex_thread_id,
+                    "executor_turn_id": turn_id,
+                    "client_request_id": client_request_id,
+                    "codex_goal": codex_goal,
+                },
+            )
+        )
+        return True
+
+    def settle_selected_thread_turn(self, *, public_thread_id: str, executor_turn_id: str) -> bool:
+        turns = self.bro_thread_executor_turns.get(public_thread_id)
+        if not turns:
+            return False
+        changed = False
+        updated: list[BroTimelineTurn] = []
+        for turn in turns:
+            if (
+                turn.executor_turn_id == executor_turn_id
+                and turn.status not in {"completed", "failed", "cancelled"}
+            ):
+                assistant = turn.assistant
+                if assistant is not None and (assistant.status or "").lower() in {
+                    "running", "in_progress", "inprogress", "pending", "streaming"
+                }:
+                    assistant = assistant.model_copy(update={"status": "completed"})
+                turn = turn.model_copy(update={"status": "completed", "assistant": assistant})
+                changed = True
+            updated.append(turn)
+        if changed:
+            self.bro_thread_executor_turns[public_thread_id] = updated
+        return changed
 
     def upsert_bro_thread_executor_turn(self, turn: BroTimelineTurn) -> None:
         turns = list(self.bro_thread_executor_turns.get(turn.thread_id, []))

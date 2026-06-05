@@ -1180,9 +1180,30 @@ def _timeline_identity(turn: BroTimelineTurn) -> tuple[str, str, str] | None:
     return (turn.executor_id, turn.executor_thread_id, turn.executor_turn_id)
 
 
+_STREAMING_MESSAGE_STATUSES = {"running", "in_progress", "inprogress", "pending", "streaming"}
+
+
+def _message_status(message: BroTimelineMessage | None) -> str:
+    return (message.status or "").lower() if message is not None else ""
+
+
 def _merge_timeline_turn(existing: BroTimelineTurn, incoming: BroTimelineTurn) -> BroTimelineTurn:
     user = existing.user or incoming.user
-    assistant = incoming.assistant or existing.assistant
+    # A turn is "truly settled" only when it failed/cancelled, or completed with a
+    # real final answer already present. A contentless "completed" (premature
+    # dispatch ack) is NOT settled — the answer is still streaming.
+    existing_settled = existing.status in {"failed", "cancelled"} or (
+        existing.status == "completed"
+        and existing.assistant is not None
+        and _message_status(existing.assistant) not in _STREAMING_MESSAGE_STATUSES
+    )
+    # Once a turn has truly settled (a final answer / turn-level completion),
+    # later still-streaming echoes for the SAME turn are stale and must not
+    # overwrite the final answer or un-settle the bubble.
+    if existing_settled and _message_status(incoming.assistant) in _STREAMING_MESSAGE_STATUSES:
+        assistant = existing.assistant
+    else:
+        assistant = incoming.assistant or existing.assistant
     task = existing.task or incoming.task
     if existing.task is not None and incoming.task is not None:
         task = existing.task.model_copy(
@@ -1203,10 +1224,10 @@ def _merge_timeline_turn(existing: BroTimelineTurn, incoming: BroTimelineTurn) -
             status = "running"
     # A turn whose assistant message is still streaming is not done, even if an
     # earlier (outbound) event reported "completed". Trust the streaming assistant
-    # so the live cue stays until the answer is actually complete.
-    if status not in {"failed", "cancelled"} and assistant is not None:
-        assistant_status = (assistant.status or "").lower()
-        if assistant_status in {"running", "in_progress", "inprogress", "pending", "streaming"}:
+    # so the live cue stays until the answer is actually complete — but never
+    # un-settle a turn that already reached a terminal turn-level completion.
+    if not existing_settled and status not in {"failed", "cancelled"} and assistant is not None:
+        if _message_status(assistant) in _STREAMING_MESSAGE_STATUSES:
             status = "running"
     metadata = {**existing.metadata}
     for key, value in incoming.metadata.items():

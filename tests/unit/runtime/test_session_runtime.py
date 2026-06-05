@@ -1654,6 +1654,219 @@ async def test_selected_codex_thread_late_event_merges_with_completed_direct_tur
 
 
 @pytest.mark.anyio
+async def test_completed_turn_is_not_unsettled_by_late_streaming_delta():
+    """A finished turn must not flip back to running on a stale streaming echo.
+
+    Channel A (codex turn-event 'completed' with the real final answer) settles
+    the turn. Codex then re-streams the same answer over the thread subscription
+    (channel B item/agentMessage/delta, still 'running') for the SAME executor
+    turn. That late delta must not replace the final answer or un-settle the
+    turn, otherwise the bubble settles to the final text and then jumps back to
+    a partial streaming state (the second-turn settle -> un-settle flicker).
+    """
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    projection = session._bro_detail_thread_projection()
+    projection.selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+    await session.blackboard.put_outbound_turn_request(
+        OutboundTurnRequest(
+            request_id="out-1",
+            persona_id="forge",
+            executor_id="codex",
+            executor_node_id="node-forge",
+            target_thread_id="thread-public",
+            client_request_id="cr-1",
+            input_modality="text",
+            text="summary devx contents as a report",
+            status="accepted",
+            created_at="2026-06-04T07:48:26+00:00",
+            updated_at="2026-06-04T07:48:26+00:00",
+            metadata={"source": "bro_detail_text", "client_request_id": "cr-1"},
+        )
+    )
+
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-1",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            event_type="completed",
+            message="Here is the full devx report. [final]",
+            executor_thread_id="codex-thread-1",
+            executor_turn_id="turn-1",
+            ok=True,
+        )
+    )
+
+    turns = projection.bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].status == "completed"
+    assert turns[0].assistant is not None
+    assert turns[0].assistant.text == "Here is the full devx report. [final]"
+
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/agentMessage/delta",
+            params={"turnId": "turn-1", "itemId": "msg-1", "delta": "Here is the full"},
+        )
+    )
+
+    turns = projection.bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].status == "completed", f"turn flipped back to {turns[0].status!r}"
+    assert turns[0].assistant is not None
+    assert turns[0].assistant.text == "Here is the full devx report. [final]"
+
+
+@pytest.mark.anyio
+async def test_commentary_phases_keep_turn_live_until_final_answer():
+    """Codex streams several agentMessage items per turn: 'commentary' phases are
+    intermediate narration, only 'final_answer' is the answer. Each commentary
+    completion must keep the turn live; settling per commentary is the visible
+    "settle then jump back to working" flicker, and only the final answer settles.
+    """
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    projection = session._bro_detail_thread_projection()
+    projection.selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    async def thread_event(method, params):
+        await session.handle_codex_thread_event(
+            CodexThreadEventMessage(
+                subscription_id="codex-sub-1",
+                node_id="node-forge",
+                session_id="session-1",
+                target_persona_id="forge",
+                target_thread_id="thread-public",
+                thread_id="codex-thread-1",
+                method=method,
+                params=params,
+            )
+        )
+
+    def turn():
+        return projection.bro_thread_executor_turns["thread-public"][0]
+
+    for cid, ctext in [("c1", "Working on it."), ("c2", "Still working.")]:
+        await thread_event(
+            "item/started",
+            {"turnId": "turn-1", "item": {"type": "agentMessage", "id": cid, "text": "", "phase": "commentary"}},
+        )
+        await thread_event("item/agentMessage/delta", {"turnId": "turn-1", "itemId": cid, "delta": ctext})
+        assert turn().status == "running"
+        assert turn().assistant is None, "commentary must not fill the answer slot (it is a step)"
+        await thread_event(
+            "item/completed",
+            {"turnId": "turn-1", "item": {"type": "agentMessage", "id": cid, "text": ctext, "phase": "commentary"}},
+        )
+        assert turn().status == "running", "commentary completion must not settle the turn"
+        assert turn().assistant is None
+
+    # The final answer streams into the answer slot and settles the turn.
+    await thread_event(
+        "item/started",
+        {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "final", "text": "", "phase": "final_answer"}},
+    )
+    await thread_event("item/agentMessage/delta", {"turnId": "turn-1", "itemId": "final", "delta": "The report"})
+    assert turn().status == "running"
+    assert turn().assistant is not None and turn().assistant.text == "The report"
+    await thread_event(
+        "item/completed",
+        {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "final", "text": "The full report.", "phase": "final_answer"}},
+    )
+
+    turns = projection.bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].status == "completed"
+    assert turns[0].assistant is not None
+    assert turns[0].assistant.text == "The full report."
+
+
+@pytest.mark.anyio
+async def test_turn_completed_event_settles_turn_without_final_answer_phase():
+    """A turn-level completion settles the turn even if no item carried a
+    'final_answer' phase, so a commentary-only turn does not hang on 'working'.
+    """
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    projection = session._bro_detail_thread_projection()
+    projection.selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    async def thread_event(method, params):
+        await session.handle_codex_thread_event(
+            CodexThreadEventMessage(
+                subscription_id="codex-sub-1",
+                node_id="node-forge",
+                session_id="session-1",
+                target_persona_id="forge",
+                target_thread_id="thread-public",
+                thread_id="codex-thread-1",
+                method=method,
+                params=params,
+            )
+        )
+
+    await thread_event(
+        "item/started",
+        {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "c1", "text": "", "phase": "commentary"}},
+    )
+    await thread_event("item/agentMessage/delta", {"turnId": "turn-1", "itemId": "c1", "delta": "Narrating."})
+    assert projection.bro_thread_executor_turns["thread-public"][0].status == "running"
+
+    await thread_event("turn/completed", {"turn": {"id": "turn-1", "status": "completed"}})
+
+    turns = projection.bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].status == "completed"
+
+
+@pytest.mark.anyio
 async def test_session_runtime_registers_codex_when_enabled(tmp_path):
     fake_codex = tmp_path / "codex"
     fake_codex.write_text("#!/bin/sh\nexit 0\n")
