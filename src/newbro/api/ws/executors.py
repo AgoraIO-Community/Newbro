@@ -9,6 +9,7 @@ from newbro.protocol import (
     CodexThreadEventMessage,
     CodexThreadReadMessage,
     CodexThreadSubscribedMessage,
+    CodexThreadTurnsListedMessage,
     CodexThreadsListedMessage,
     CodexThreadUnsubscribedMessage,
     CodexTurnEventMessage,
@@ -93,6 +94,12 @@ async def _handle_control_message(container, websocket: WebSocket, payload: obje
         except ValidationError:
             return AckMessage(message_type="codex_thread_read", ok=False, detail="invalid_payload")
         return container.executor_node_manager.publish_codex_thread_read(message)
+    if message_type == "codex_thread_turns_listed":
+        try:
+            message = CodexThreadTurnsListedMessage.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="codex_thread_turns_listed", ok=False, detail="invalid_payload")
+        return container.executor_node_manager.publish_codex_thread_turns_listed(message)
     if message_type == "codex_thread_subscribed":
         try:
             message = CodexThreadSubscribedMessage.model_validate(payload)

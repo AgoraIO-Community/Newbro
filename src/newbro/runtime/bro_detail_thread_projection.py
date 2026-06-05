@@ -216,7 +216,8 @@ class BroDetailThreadProjection:
             imported_resume_handles: dict[str, AgentResumeHandle] = {}
             for node_id, node_personas in personas_by_node.items():
                 try:
-                    codex_threads = await self.executor_node_manager.request_codex_threads(node_id=node_id)
+                    codex_page = await self.executor_node_manager.request_codex_threads(node_id=node_id)
+                    codex_threads = codex_page.threads
                 except Exception as exc:
                     self.observability.logger.emit_event(
                         level="WARNING",

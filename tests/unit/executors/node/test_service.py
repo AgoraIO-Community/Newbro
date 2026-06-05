@@ -5,6 +5,7 @@ import base64
 import io
 import json
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -70,6 +71,32 @@ class FakeExecutor:
                 "source": "vscode",
             }
         ]
+
+    async def list_threads_page(self, workspace_id, *, limit=100, cursor=None):
+        assert workspace_id == "ws-forge"
+        assert limit == 100
+        assert cursor is None
+        return SimpleNamespace(
+            items=await self.list_threads(workspace_id),
+            next_cursor=None,
+            previous_cursor=None,
+        )
+
+    async def list_thread_turns_page(self, *, thread_id, limit=100, cursor=None):
+        assert thread_id == "codex-native-thread-1"
+        assert limit == 100
+        assert cursor is None
+        return SimpleNamespace(
+            turns=[
+                {
+                    "id": "turn-new",
+                    "items": [{"type": "agentMessage", "text": "New response"}],
+                }
+            ],
+            goal="Imported thread goal",
+            next_cursor=None,
+            previous_cursor=None,
+        )
 
 
 class FakeUnsupportedCodexExecutor(FakeExecutor):
@@ -733,6 +760,34 @@ async def test_list_codex_threads_returns_normalized_thread_list(monkeypatch: py
             "previous_cursor": None,
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_list_codex_thread_turns_returns_page(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+    websocket = FakeWebSocket([])
+
+    await service._list_codex_thread_turns(
+        websocket,
+        service_module.ListCodexThreadTurnsCommand(
+            request_id="req-turns-1",
+            thread_id="codex-native-thread-1",
+            cursor=None,
+            limit=100,
+        ),
+    )
+
+    assert websocket.sent[0]["type"] == "codex_thread_turns_listed"
+    assert websocket.sent[0]["request_id"] == "req-turns-1"
+    assert websocket.sent[0]["thread_id"] == "codex-native-thread-1"
+    assert websocket.sent[0]["ok"] is True
+    assert websocket.sent[0]["turns"] == [
+        {"id": "turn-new", "items": [{"type": "agentMessage", "text": "New response"}]}
+    ]
+    assert websocket.sent[0]["goal"] == "Imported thread goal"
+    assert websocket.sent[0]["next_cursor"] is None
 
 
 @pytest.mark.anyio

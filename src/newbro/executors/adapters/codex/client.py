@@ -107,11 +107,14 @@ class CodexAppServerClient:
         self,
         *,
         thread_id: str,
+        cursor: str | None = None,
         limit: int | None = None,
         sort_direction: str | None = None,
         items_view: str | None = None,
     ) -> dict[str, object]:
         params: dict[str, object] = {"threadId": thread_id}
+        if cursor is not None:
+            params["cursor"] = cursor
         if limit is not None:
             params["limit"] = limit
         if sort_direction is not None:
