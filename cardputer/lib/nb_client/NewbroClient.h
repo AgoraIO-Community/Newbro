@@ -21,10 +21,14 @@ class NewbroClient {
   // Conversation (Plan B)
   bool bootstrap(Bootstrap &out);
   bool listPersonas(const std::string &sessionId, std::vector<Persona> &out);
-  bool sendText(const std::string &sessionId, const std::string &personaId, const std::string &text);
-  bool sendAudio(const std::string &sessionId, const std::string &personaId, const AudioMeta &meta,
+  bool sendText(const std::string &sessionId, const std::string &personaId,
+                const std::string &targetThreadId, const std::string &text);
+  bool sendAudio(const std::string &sessionId, const std::string &personaId,
+                 const std::string &targetThreadId, const AudioMeta &meta,
                  const uint8_t *pcm, size_t len, std::string &transcriptOut);
   bool getReply(const std::string &sessionId, const std::string &personaId, TurnView &out);
+  bool getThreads(const std::string &sessionId, const std::string &personaId,
+                  std::vector<ThreadInfo> &out);
 
   const std::string &lastError() const { return lastError_; }
 

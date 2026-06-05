@@ -57,10 +57,11 @@ void test_send_text(void) {
   t.responses.push_back(HttpResponse{true, 200, R"({"instruction_id":"i1"})"});
   NewbroClient client(t);
   client.setAuthToken("tok");
-  TEST_ASSERT_TRUE(client.sendText("s1", "p1", "ship it"));
+  TEST_ASSERT_TRUE(client.sendText("s1", "p1", "t-7", "ship it"));
   TEST_ASSERT_EQUAL_STRING("POST", t.calls[0].method.c_str());
   TEST_ASSERT_EQUAL_STRING("/api/sessions/s1/executor-text-instructions", t.calls[0].path.c_str());
   TEST_ASSERT_TRUE(t.calls[0].body.find("ship it") != std::string::npos);
+  TEST_ASSERT_TRUE(t.calls[0].body.find("t-7") != std::string::npos);
 }
 
 void test_send_audio_posts_pcm_and_returns_transcript(void) {
@@ -72,13 +73,14 @@ void test_send_audio_posts_pcm_and_returns_transcript(void) {
   uint8_t pcm[4] = {1, 2, 3, 4};
   AudioMeta m = computeAudioMeta(/*samplesPerChannel=*/2, /*sampleRate=*/16000, /*numChannels=*/1);  // byteLen=4
   std::string transcript;
-  TEST_ASSERT_TRUE(client.sendAudio("s1", "p1", m, pcm, 4, transcript));
+  TEST_ASSERT_TRUE(client.sendAudio("s1", "p1", "t-7", m, pcm, 4, transcript));
   TEST_ASSERT_EQUAL_STRING("ship it", transcript.c_str());
   TEST_ASSERT_TRUE(t.calls[0].binary);
   TEST_ASSERT_EQUAL_STRING("audio/pcm", t.calls[0].contentType.c_str());
   TEST_ASSERT_TRUE(t.calls[0].path.find("/api/sessions/s1/executor-audio-instructions?") != std::string::npos);
   TEST_ASSERT_TRUE(t.calls[0].path.find("target_persona_id=p1") != std::string::npos);
   TEST_ASSERT_TRUE(t.calls[0].path.find("samples_per_channel=2") != std::string::npos);
+  TEST_ASSERT_TRUE(t.calls[0].path.find("target_thread_id=t-7") != std::string::npos);
   TEST_ASSERT_EQUAL_STRING("tok", t.calls[0].cookie.c_str());
 }
 
@@ -97,6 +99,23 @@ void test_get_reply_extracts_turn(void) {
   TEST_ASSERT_EQUAL_STRING("/api/sessions/s1", t.calls[0].path.c_str());
 }
 
+void test_get_threads(void) {
+  FakeTransport t;
+  t.responses.push_back(HttpResponse{true, 200, R"({
+    "bro_threads":[
+      {"thread_id":"t-new","persona_id":"p1","title":"Ship it","preview":null,"status":"running","updated_at":"2026-06-04T00:00:05+00:00"}
+    ]})"});
+  NewbroClient client(t);
+  client.setAuthToken("tok");
+  std::vector<ThreadInfo> out;
+  TEST_ASSERT_TRUE(client.getThreads("s1", "p1", out));
+  TEST_ASSERT_EQUAL_INT(1, (int)out.size());
+  TEST_ASSERT_EQUAL_STRING("t-new", out[0].id.c_str());
+  TEST_ASSERT_EQUAL_STRING("GET", t.calls[0].method.c_str());
+  TEST_ASSERT_EQUAL_STRING("/api/sessions/s1", t.calls[0].path.c_str());
+  TEST_ASSERT_EQUAL_STRING("tok", t.calls[0].cookie.c_str());
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_bootstrap_sends_cookie_and_parses);
@@ -104,5 +123,6 @@ int main(int, char **) {
   RUN_TEST(test_send_text);
   RUN_TEST(test_send_audio_posts_pcm_and_returns_transcript);
   RUN_TEST(test_get_reply_extracts_turn);
+  RUN_TEST(test_get_threads);
   return UNITY_END();
 }

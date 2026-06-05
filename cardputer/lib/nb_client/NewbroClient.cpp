@@ -38,21 +38,23 @@ bool NewbroClient::listPersonas(const std::string &sessionId, std::vector<Person
   return true;
 }
 
-bool NewbroClient::sendText(const std::string &sessionId, const std::string &personaId, const std::string &text) {
+bool NewbroClient::sendText(const std::string &sessionId, const std::string &personaId,
+                            const std::string &targetThreadId, const std::string &text) {
   lastError_.clear();
   HttpResponse r = t_.request("POST", "/api/sessions/" + sessionId + "/executor-text-instructions",
-                              buildTextBody(personaId, text), token_);
+                              buildTextBody(personaId, text, targetThreadId), token_);
   if (!r.transportOk) { lastError_ = "network error"; return false; }
-  if (r.status != 200) { lastError_ = "text failed: HTTP " + std::to_string(r.status); return false; }
+  if (r.status != 200) { lastError_ = "text HTTP " + std::to_string(r.status) + ": " + r.body; return false; }
   return true;
 }
 
-bool NewbroClient::sendAudio(const std::string &sessionId, const std::string &personaId, const AudioMeta &meta,
+bool NewbroClient::sendAudio(const std::string &sessionId, const std::string &personaId,
+                             const std::string &targetThreadId, const AudioMeta &meta,
                              const uint8_t *pcm, size_t len, std::string &transcriptOut) {
   lastError_.clear();
   transcriptOut.clear();
-  std::string path =
-      "/api/sessions/" + sessionId + "/executor-audio-instructions?" + buildAudioQuery(personaId, meta);
+  std::string path = "/api/sessions/" + sessionId + "/executor-audio-instructions?" +
+                     buildAudioQuery(personaId, meta, targetThreadId);
   HttpResponse r = t_.postBytes(path, "audio/pcm", pcm, len, token_);
   if (!r.transportOk) { lastError_ = "network error"; return false; }
   if (r.status != 200) {
@@ -69,6 +71,16 @@ bool NewbroClient::getReply(const std::string &sessionId, const std::string &per
   if (!r.transportOk) { lastError_ = "network error"; return false; }
   if (r.status != 200) { lastError_ = "snapshot failed: HTTP " + std::to_string(r.status); return false; }
   if (!extractLatestTurn(r.body, personaId, out)) { lastError_ = "bad snapshot"; return false; }
+  return true;
+}
+
+bool NewbroClient::getThreads(const std::string &sessionId, const std::string &personaId,
+                              std::vector<ThreadInfo> &out) {
+  lastError_.clear();
+  HttpResponse r = t_.request("GET", "/api/sessions/" + sessionId, "", token_);
+  if (!r.transportOk) { lastError_ = "network error"; return false; }
+  if (r.status != 200) { lastError_ = "threads HTTP " + std::to_string(r.status); return false; }
+  if (!parseBroThreads(r.body, personaId, out)) { lastError_ = "bad snapshot"; return false; }
   return true;
 }
 
