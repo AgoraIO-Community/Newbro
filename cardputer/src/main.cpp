@@ -1,11 +1,15 @@
 #include <M5Cardputer.h>
 
 #include <string>
+#include <vector>
 
+#include "AudioMeta.h"
 #include "Backoff.h"
 #include "Config.h"
 #include "NewbroClient.h"
 #include "Pairing.h"
+#include "SessionJson.h"
+#include "audio/MicRecorder.h"
 #include "net/WifiManager.h"
 #include "store/ConfigStore.h"
 #include "transport/HttpsTransport.h"
@@ -16,6 +20,11 @@ namespace {
 nb::ConfigStore g_store;
 nb::WifiManager g_wifi;
 nb::DeviceConfig g_config;
+nb::MicRecorder g_mic;
+nb::NewbroClient *g_clientPtr = nullptr;
+std::string g_sessionId;
+std::string g_personaId;
+std::string g_personaName;
 
 // Blocking on-keyboard line entry. `mask` hides characters (for passwords).
 std::string promptLine(const std::string &label, bool mask) {
@@ -85,6 +94,52 @@ bool runPairing() {
   return false;
 }
 
+// One push-to-talk turn: record while a key is held, upload, then poll the reply.
+void runVoiceTurn(nb::NewbroClient &client) {
+  nb::screen::status(g_personaName, "recording...");
+  if (!g_mic.beginRecording()) {
+    nb::screen::status(g_personaName, "mic unavailable");
+    return;
+  }
+  while (true) {
+    M5Cardputer.update();
+    g_mic.poll();
+    if (!M5Cardputer.Keyboard.isPressed()) break;
+    delay(5);
+  }
+  g_mic.endRecording();
+
+  if (g_mic.sampleCount() == 0) {
+    nb::screen::status(g_personaName, "nothing recorded");
+    return;
+  }
+
+  nb::AudioMeta meta = nb::computeAudioMeta(g_mic.sampleCount(), nb::MicRecorder::kSampleRate, 1);
+  nb::screen::status(g_personaName, "transcribing...");
+  std::string transcript;
+  if (!client.sendAudio(g_sessionId, g_personaId, meta,
+                        reinterpret_cast<const uint8_t *>(g_mic.data()), meta.byteLen, transcript)) {
+    nb::screen::status("Send failed", client.lastError());
+    return;
+  }
+  Serial.printf("you: %s\n", transcript.c_str());
+
+  std::string lastShown;
+  for (int i = 0; i < 60; ++i) {  // ~60s max at 1s intervals
+    delay(1000);
+    M5Cardputer.update();
+    nb::TurnView v;
+    if (client.getReply(g_sessionId, g_personaId, v) && v.found) {
+      if (v.assistantText != lastShown) {
+        lastShown = v.assistantText;
+        nb::screen::status(g_personaName, v.assistantText);
+        Serial.printf("%s: %s [%s]\n", g_personaName.c_str(), v.assistantText.c_str(), v.status.c_str());
+      }
+      if (v.status == "completed" || v.status == "failed" || v.status == "cancelled") break;
+    }
+  }
+}
+
 }  // namespace
 
 void setup() {
@@ -95,7 +150,7 @@ void setup() {
   nb::screen::title("newbro");
   delay(600);
 
-  g_store.load(g_config);  // populates g_config if present
+  g_store.load(g_config);
   runFirstRunSetupIfNeeded();
 
   nb::screen::status("Connecting", g_config.wifiSsid);
@@ -112,10 +167,36 @@ void setup() {
     }
   }
 
-  nb::screen::status("Ready", "paired - conversation UI coming in Plan B/C");
+  // --- Conversation bootstrap (Plan B) ---
+  static nb::HttpsTransport g_transport(g_config.serverHost, g_config.serverPort);
+  static nb::NewbroClient g_client(g_transport);
+  g_client.setAuthToken(g_config.deviceToken);
+
+  nb::Bootstrap boot;
+  if (!g_client.bootstrap(boot)) {
+    nb::screen::status("Bootstrap failed", g_client.lastError());
+    return;
+  }
+  g_sessionId = boot.sessionId;
+
+  std::vector<nb::Persona> personas;
+  if (!g_client.listPersonas(g_sessionId, personas) || personas.empty()) {
+    nb::screen::status("No bros yet", "add a bro in the newbro app, then reboot");
+    return;
+  }
+  g_personaId = personas[0].id;
+  g_personaName = personas[0].name;
+
+  g_clientPtr = &g_client;
+  nb::screen::status(g_personaName, "hold a key to talk");
 }
 
 void loop() {
   M5Cardputer.update();
+  if (g_clientPtr && !g_sessionId.empty() && !g_personaId.empty() &&
+      M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+    runVoiceTurn(*g_clientPtr);
+    nb::screen::status(g_personaName, "hold a key to talk");
+  }
   delay(5);
 }

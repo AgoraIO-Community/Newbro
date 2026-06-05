@@ -1,4 +1,6 @@
 #pragma once
+#include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace nb {
@@ -17,6 +19,11 @@ class Transport {
   // as the header "Cookie: newbro_session=<cookieToken>".
   virtual HttpResponse request(const std::string &method, const std::string &path,
                                const std::string &body, const std::string &cookieToken) = 0;
+
+  // POST raw bytes with an explicit Content-Type (e.g. "audio/pcm").
+  // cookieToken, when non-empty, is sent as "Cookie: newbro_session=<cookieToken>".
+  virtual HttpResponse postBytes(const std::string &path, const std::string &contentType,
+                                 const uint8_t *body, size_t len, const std::string &cookieToken) = 0;
 };
 
 }  // namespace nb

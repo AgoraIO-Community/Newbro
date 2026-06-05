@@ -19,6 +19,11 @@ class FakeTransport : public Transport {
     if (idx < responses.size()) return responses[idx++];
     return HttpResponse{};  // transportOk=false
   }
+
+  HttpResponse postBytes(const std::string &, const std::string &, const uint8_t *, size_t,
+                         const std::string &) override {
+    return HttpResponse{};  // not exercised by the pairing tests
+  }
 };
 
 void test_start_pairing_success(void) {

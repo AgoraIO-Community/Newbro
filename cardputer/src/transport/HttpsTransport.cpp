@@ -43,4 +43,32 @@ HttpResponse HttpsTransport::request(const std::string &method, const std::strin
   return out;
 }
 
+HttpResponse HttpsTransport::postBytes(const std::string &path, const std::string &contentType,
+                                       const uint8_t *body, size_t len, const std::string &cookieToken) {
+  HttpResponse out;
+  WiFiClientSecure client;
+  client.setCACertBundle(rootca_crt_bundle_start);
+
+  HTTPClient https;
+  std::string url = "https://" + host_ + ":" + std::to_string(port_) + path;
+  if (!https.begin(client, url.c_str())) {
+    out.transportOk = false;
+    return out;
+  }
+  https.addHeader("Content-Type", contentType.c_str());
+  if (!cookieToken.empty()) {
+    https.addHeader("Cookie", ("newbro_session=" + cookieToken).c_str());
+  }
+  int code = https.POST(const_cast<uint8_t *>(body), len);
+  if (code <= 0) {
+    out.transportOk = false;
+  } else {
+    out.transportOk = true;
+    out.status = code;
+    out.body = std::string(https.getString().c_str());
+  }
+  https.end();
+  return out;
+}
+
 }  // namespace nb
