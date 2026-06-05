@@ -102,6 +102,12 @@ from .models import (
     AssistantResponseDeltaStreamEvent,
     AssistantResponseFailedStreamEvent,
     AssistantResponseStartedStreamEvent,
+    BroListInvalidatedStreamEvent,
+    BroExecutorCapabilitySummary,
+    BroExecutorNodeSummary,
+    BroListResponse,
+    BroSummary,
+    BroThreadSubscriptionResponse,
     ConversationAppendedStreamEvent,
     ConversationHistoryEntryModel,
     ConversationSnapshot,
@@ -341,7 +347,7 @@ class SessionRuntime:
             )
         return self.bro_detail_thread_projection
 
-    async def snapshot(self, *, sync_imported_codex_threads: bool = True) -> SessionSnapshot:
+    async def snapshot(self, *, sync_imported_codex_threads: bool = False) -> SessionSnapshot:
         tasks = await self.blackboard.list_tasks()
         sessions = await self.blackboard.list_sessions()
         runs = await self.blackboard.list_runs()
@@ -391,35 +397,124 @@ class SessionRuntime:
             outbound_turn_requests=outbound_turn_requests,
             bro_threads=bro_detail_projection.bro_threads,
             bro_timeline_turns=bro_detail_projection.bro_timeline_turns,
-            personas=personas,
+            bro_thread_pages={},
+            bro_timeline_pages={},
+            personas=[],
             interaction_requests=sanitized_interaction_requests,
             attention_items=attention_items,
             agent_events=await self.blackboard.list_agent_events(),
             executor_capabilities=self._executor_capabilities_snapshot(),
-            executor_nodes=await self.executor_node_manager.list_nodes(),
+            executor_nodes=[],
             recent_execution_details=recent_execution_details,
             recent_native_turn_reasoning=self._recent_native_turn_reasoning(),
             draft_session=self.draft_manager.active_session,
         )
 
-    async def open_bro_thread(
+    async def bro_list(self, *, allowed_executor_node_ids: set[str] | None = None) -> BroListResponse:
+        personas = await self.blackboard.list_personas()
+        nodes = {node.node_id: node for node in await self.executor_node_manager.list_nodes()}
+        bros: list[BroSummary] = []
+        for persona in personas:
+            node_summary = None
+            if persona.executor_node_id and (
+                allowed_executor_node_ids is None or persona.executor_node_id in allowed_executor_node_ids
+            ):
+                node = nodes.get(persona.executor_node_id)
+                if node is not None:
+                    codex_capability = next(
+                        (
+                            capability
+                            for capability in node.connected_executor_capabilities
+                            if capability.executor_type == "codex"
+                        ),
+                        None,
+                    )
+                    node_summary = BroExecutorNodeSummary(
+                        node_id=node.node_id,
+                        name=node.name,
+                        connection_status=node.connection_status,
+                        enabled_executors=list(node.enabled_executors),
+                        last_connected_at=node.last_connected_at,
+                        codex=(
+                            BroExecutorCapabilitySummary(
+                                version=codex_capability.version,
+                                minimum_version=codex_capability.minimum_version,
+                                availability_reason=codex_capability.availability_reason,
+                                supports_thread_list=codex_capability.supports_thread_list,
+                                supports_audio_instruction=codex_capability.supports_audio_instruction,
+                            )
+                            if codex_capability is not None
+                            else None
+                        ),
+                    )
+            bros.append(
+                BroSummary(
+                    persona_id=persona.persona_id,
+                    name=persona.name,
+                    avatar=persona.avatar,
+                    status=persona.status,
+                    executor_node=node_summary,
+                )
+            )
+        return BroListResponse(bros=bros)
+
+    async def list_bro_thread_page(
+        self,
+        *,
+        target_persona_id: str,
+        limit: int = 15,
+        cursor: str | None = None,
+    ):
+        persona = await self.blackboard.get_persona(target_persona_id)
+        if persona is None:
+            raise ValueError("Selected Bro is not available.")
+        return await self._bro_detail_thread_projection().list_bro_thread_page(
+            persona=persona,
+            sessions=await self.blackboard.list_sessions(),
+            limit=limit,
+            cursor=cursor,
+        )
+
+    async def list_bro_timeline_page(
         self,
         *,
         target_persona_id: str,
         thread_id: str,
-    ) -> SessionSnapshot:
-        return await self._bro_detail_thread_projection().open_bro_thread(
+        limit: int = 15,
+        cursor: str | None = None,
+    ):
+        persona = await self.blackboard.get_persona(target_persona_id)
+        if persona is None:
+            raise ValueError("Selected Bro is not available.")
+        node_id = persona.executor_node_id
+        if not node_id:
+            raise ValueError("Selected Bro is not bound to an executor node.")
+        return await self._bro_detail_thread_projection().list_bro_timeline_page(
+            persona=persona,
+            public_thread_id=thread_id,
+            node_id=node_id,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    async def subscribe_bro_thread(
+        self,
+        *,
+        target_persona_id: str,
+        thread_id: str,
+    ) -> BroThreadSubscriptionResponse:
+        return await self._bro_detail_thread_projection().subscribe_bro_thread(
             target_persona_id=target_persona_id,
             thread_id=thread_id,
         )
 
-    async def close_bro_thread(
+    async def unsubscribe_bro_thread(
         self,
         *,
         target_persona_id: str,
         thread_id: str | None = None,
-    ) -> SessionSnapshot:
-        return await self._bro_detail_thread_projection().close_bro_thread(
+    ) -> BroThreadSubscriptionResponse:
+        return await self._bro_detail_thread_projection().unsubscribe_bro_thread(
             target_persona_id=target_persona_id,
             thread_id=thread_id,
         )
@@ -653,6 +748,25 @@ class SessionRuntime:
         snapshot = await self.snapshot(sync_imported_codex_threads=sync_imported_codex_threads)
         await self._broadcast_event(self._snapshot_event(snapshot))
         return snapshot
+
+    async def publish_bro_list_invalidated(
+        self,
+        *,
+        reason: Literal[
+            "executor_node_connected",
+            "executor_node_disconnected",
+            "executor_node_changed",
+            "persona_changed",
+        ],
+        node_id: str | None = None,
+    ) -> None:
+        await self._broadcast_event(
+            BroListInvalidatedStreamEvent(
+                sequence=self._next_event_sequence(),
+                reason=reason,
+                node_id=node_id,
+            )
+        )
 
     async def initial_snapshot_event(self) -> SnapshotStreamEvent:
         return self._snapshot_event(await self.snapshot(sync_imported_codex_threads=False))

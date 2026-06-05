@@ -14,8 +14,8 @@ Current visible structure:
 
 - compact top header with session-aware route navigation, account, and logout
 - top voice summary bar with the existing connector-backed session controls
-- runtime Home regions sourced from `personas`, `tasks`, and
-  `executor_nodes`: `IN FLIGHT`, `STANDING BY`, and `RECENT`
+- runtime Home regions sourced from compact `/bros` Bro/node bootstrap plus
+  durable task/thread projections: `IN FLIGHT`, `STANDING BY`, and `RECENT`
 - explicit empty workspace state when the session has no Bros
 - Bro Detail with local-node setup gate, disconnected-node warning, Draft/STT,
   send, and hold-to-talk controls
@@ -36,8 +36,9 @@ Current behavior:
 - it writes the active session id back to the URL as `sid`
 - if that `sid` cannot be resumed, it opens a fresh session, replaces the URL,
   and shows a non-blocking warning
-- it fetches that session snapshot for personas
-- if `personas` exist, it maps them into `Bro` cards
+- it fetches the lightweight session snapshot, durable conversation history,
+  compact `/bros` Bro/node bootstrap, and explicit Bro-thread pages
+- if compact Bro rows exist, it maps them into `Bro` cards
 - the `Home` route presents runtime Bros through the design's in-flight,
   standing-by, and recent-work regions rather than one generic crew grid
 - if not, it renders the empty workspace card rather than seeded active data

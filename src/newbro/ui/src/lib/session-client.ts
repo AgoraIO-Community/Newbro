@@ -1,6 +1,10 @@
 import { ensureOk } from "./http-errors";
 import type {
+  BroListResponse,
   ConversationSnapshot,
+  BroThreadPageResponse,
+  BroThreadSubscriptionResponse,
+  BroTimelineTurnPageResponse,
   DiagnosticTimelineResponse,
   ExecutorNodeCredentialIssue,
   ExecutorNodeRecord,
@@ -245,14 +249,54 @@ export async function getSessionSnapshot(sessionId: string): Promise<SessionSnap
   return (await ensureOk(response)).json();
 }
 
-export async function openBroThread(
+export async function listBros(sessionId: string): Promise<BroListResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bros`));
+  return (await ensureOk(response)).json();
+}
+
+export async function listBroThreadsPage(
+  sessionId: string,
+  payload: {
+    targetPersonaId: string;
+    limit?: number;
+    cursor?: string | null;
+  },
+): Promise<BroThreadPageResponse> {
+  const params = new URLSearchParams();
+  params.set("target_persona_id", payload.targetPersonaId);
+  params.set("limit", String(payload.limit ?? 25));
+  if (payload.cursor) params.set("cursor", payload.cursor);
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads?${params.toString()}`));
+  return (await ensureOk(response)).json();
+}
+
+export async function listBroTimelinePage(
+  sessionId: string,
+  payload: {
+    targetPersonaId: string;
+    threadId: string;
+    limit?: number;
+    cursor?: string | null;
+  },
+): Promise<BroTimelineTurnPageResponse> {
+  const params = new URLSearchParams();
+  params.set("target_persona_id", payload.targetPersonaId);
+  params.set("limit", String(payload.limit ?? 15));
+  if (payload.cursor) params.set("cursor", payload.cursor);
+  const response = await fetch(
+    buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/timeline?${params.toString()}`),
+  );
+  return (await ensureOk(response)).json();
+}
+
+export async function subscribeBroThread(
   sessionId: string,
   payload: {
     targetPersonaId: string;
     threadId: string;
   },
-): Promise<SessionSnapshot> {
-  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/open`), {
+): Promise<BroThreadSubscriptionResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/subscribe`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target_persona_id: payload.targetPersonaId }),
@@ -260,14 +304,14 @@ export async function openBroThread(
   return (await ensureOk(response)).json();
 }
 
-export async function closeBroThread(
+export async function unsubscribeBroThread(
   sessionId: string,
   payload: {
     targetPersonaId: string;
     threadId: string;
   },
-): Promise<SessionSnapshot> {
-  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/open`), {
+): Promise<BroThreadSubscriptionResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/subscribe`), {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target_persona_id: payload.targetPersonaId }),

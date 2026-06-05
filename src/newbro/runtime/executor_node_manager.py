@@ -6,7 +6,7 @@ import contextlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from newbro.executors.core import ExecutorEvent, ExecutorEventType
@@ -19,6 +19,7 @@ from newbro.protocol import (
     CodexThreadListItem,
     CodexThreadReadMessage,
     CodexThreadSubscribedMessage,
+    CodexThreadTurnsListedMessage,
     CodexThreadsListedMessage,
     CodexThreadUnsubscribedMessage,
     CodexTurnEventMessage,
@@ -30,6 +31,7 @@ from newbro.protocol import (
     ExecutorNodeExecutor,
     ExecutorNodeRecord,
     InteractionRequest,
+    ListCodexThreadTurnsCommand,
     ListCodexThreadsCommand,
     ReadCodexThreadCommand,
     ReadWorkspaceFileCommand,
@@ -72,6 +74,22 @@ class NodeConnectionState:
     metadata: dict[str, object] = field(default_factory=dict)
     executors: dict[str, ExecutorNodeExecutor] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexThreadListPage:
+    threads: list[CodexThreadListItem]
+    next_cursor: str | None = None
+    previous_cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CodexThreadTurnPage:
+    thread_id: str
+    turns: list[dict[str, object]]
+    goal: str | None = None
+    next_cursor: str | None = None
+    previous_cursor: str | None = None
 
 
 class ExecutorNodeAuthError(RuntimeError):
@@ -118,6 +136,7 @@ class ExecutorNodeManager:
         self._workspace_file_streams: dict[
             str, asyncio.Queue[WorkspaceFileChunk | WorkspaceFileEof | WorkspaceFileError]
         ] = {}
+        self._codex_thread_turn_list_requests: dict[str, asyncio.Future[CodexThreadTurnsListedMessage]] = {}
 
     @property
     def detached_executor_types(self) -> tuple[str, ...]:
@@ -164,7 +183,11 @@ class ExecutorNodeManager:
         if state is None:
             return False
         executor = state.executors.get(executor_type)
-        return executor is not None and executor.supports_thread_list
+        return (
+            executor is not None
+            and executor.supports_thread_list
+            and executor.availability_reason is None
+        )
 
     def codex_thread_events(self) -> asyncio.Queue[CodexThreadEventMessage]:
         return self._codex_thread_event_queue
@@ -507,19 +530,30 @@ class ExecutorNodeManager:
         *,
         node_id: str,
         workspace_id: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+        sort_key: Literal["created_at", "updated_at"] = "updated_at",
+        sort_direction: Literal["asc", "desc"] = "desc",
         timeout_seconds: float = 8.0,
-    ) -> list[CodexThreadListItem]:
+    ) -> CodexThreadListPage:
         connection = await self._connection_for_node(node_id)
         if connection is None or "codex" not in connection.executors:
-            return []
+            return CodexThreadListPage(threads=[])
         executor = connection.executors["codex"]
         if not executor.supports_thread_list:
-            return []
+            return CodexThreadListPage(threads=[])
         request_id = f"codex-thread-list-{uuid4().hex[:12]}"
         loop = asyncio.get_running_loop()
         future: asyncio.Future[CodexThreadsListedMessage] = loop.create_future()
         self._codex_thread_list_requests[request_id] = future
-        command = ListCodexThreadsCommand(request_id=request_id, workspace_id=workspace_id)
+        command = ListCodexThreadsCommand(
+            request_id=request_id,
+            workspace_id=workspace_id,
+            limit=limit,
+            cursor=cursor,
+            sort_key=sort_key,
+            sort_direction=sort_direction,
+        )
         try:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
@@ -531,10 +565,63 @@ class ExecutorNodeManager:
             raise
         if not response.ok:
             raise RuntimeError(response.error or "Codex thread/list failed.")
-        return response.threads
+        return CodexThreadListPage(
+            threads=response.threads,
+            next_cursor=response.next_cursor,
+            previous_cursor=response.previous_cursor,
+        )
 
     def publish_codex_threads_listed(self, message: CodexThreadsListedMessage) -> AckMessage:
         future = self._codex_thread_list_requests.pop(message.request_id, None)
+        if future is None:
+            return AckMessage(message_type=message.type, ok=False, detail="unknown_request")
+        if not future.done():
+            future.set_result(message)
+        return AckMessage(message_type=message.type, detail="queued")
+
+    async def request_codex_thread_turns(
+        self,
+        *,
+        node_id: str,
+        thread_id: str,
+        limit: int = 100,
+        cursor: str | None = None,
+        timeout_seconds: float = 8.0,
+    ) -> CodexThreadTurnPage:
+        connection = await self._connection_for_node(node_id)
+        if connection is None or "codex" not in connection.executors:
+            raise RuntimeError("Codex executor node is not connected.")
+        request_id = f"codex-thread-turns-{uuid4().hex[:12]}"
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[CodexThreadTurnsListedMessage] = loop.create_future()
+        self._codex_thread_turn_list_requests[request_id] = future
+        command = ListCodexThreadTurnsCommand(
+            request_id=request_id,
+            thread_id=thread_id,
+            limit=limit,
+            cursor=cursor,
+        )
+        try:
+            await self._send_json(connection, command.model_dump(mode="json"))
+            response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except TimeoutError as exc:
+            self._codex_thread_turn_list_requests.pop(request_id, None)
+            raise TimeoutError("Timed out listing Codex thread turns.") from exc
+        except Exception:
+            self._codex_thread_turn_list_requests.pop(request_id, None)
+            raise
+        if not response.ok:
+            raise RuntimeError(response.error or "Codex thread/turns/list failed.")
+        return CodexThreadTurnPage(
+            thread_id=response.thread_id,
+            turns=response.turns,
+            goal=response.goal,
+            next_cursor=response.next_cursor,
+            previous_cursor=response.previous_cursor,
+        )
+
+    def publish_codex_thread_turns_listed(self, message: CodexThreadTurnsListedMessage) -> AckMessage:
+        future = self._codex_thread_turn_list_requests.pop(message.request_id, None)
         if future is None:
             return AckMessage(message_type=message.type, ok=False, detail="unknown_request")
         if not future.done():
@@ -608,6 +695,9 @@ class ExecutorNodeManager:
         try:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except asyncio.CancelledError:
+            self._codex_thread_subscribe_requests.pop(request_id, None)
+            raise
         except TimeoutError as exc:
             self._codex_thread_subscribe_requests.pop(request_id, None)
             raise TimeoutError("Timed out subscribing to Codex thread updates.") from exc
@@ -649,6 +739,9 @@ class ExecutorNodeManager:
         try:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except asyncio.CancelledError:
+            self._codex_thread_unsubscribe_requests.pop(request_id, None)
+            raise
         except TimeoutError as exc:
             self._codex_thread_unsubscribe_requests.pop(request_id, None)
             raise TimeoutError("Timed out unsubscribing from Codex thread updates.") from exc

@@ -33,6 +33,14 @@ Server events:
 - `snapshot`
   - carries the durable `SessionSnapshot`
   - this is the stable session-state projection, not the generic debugger dump
+- `bro_list_invalidated`
+  - signals that compact Bro/node rows may have changed
+  - fields:
+    - `reason`: `executor_node_connected`, `executor_node_disconnected`,
+      `executor_node_changed`, or `persona_changed`
+    - optional `node_id`
+  - clients should refetch `GET /api/sessions/{session_id}/bros`; this event
+    does not carry Bro/persona/node rows
 - `action_accepted`
   - acknowledges a valid client action by `request_id`
 - `action_rejected`
@@ -72,3 +80,6 @@ Projection rules:
   dedicated conversation projection
 - debugger/audit payloads should not be packed into `snapshot`; read them
   through the diagnostics timeline API
+- compact Bro/persona/node rows should not be packed into `snapshot`; read them
+  through `GET /api/sessions/{session_id}/bros`, and use
+  `bro_list_invalidated` as the live refresh signal

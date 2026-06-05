@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -53,15 +55,55 @@ async def test_persona_changes_sync_into_active_sessions(monkeypatch, tmp_path):
         assert list_response.status_code == 200
         assert len(list_response.json()) == 1
 
+        first_bros = (await client.get(f"/api/sessions/{first_session_id}/bros")).json()
+        assert len(first_bros["bros"]) == 1
+        assert first_bros["bros"][0]["name"] == "Alex"
         first_snapshot = (await client.get(f"/api/sessions/{first_session_id}")).json()
-        assert len(first_snapshot["personas"]) == 1
-        assert first_snapshot["personas"][0]["name"] == "Alex"
+        assert first_snapshot["personas"] == []
 
         second_session_id = (await client.post("/api/sessions")).json()["session_id"]
+        second_bros = (await client.get(f"/api/sessions/{second_session_id}/bros")).json()
         second_snapshot = (await client.get(f"/api/sessions/{second_session_id}")).json()
 
-        assert len(second_snapshot["personas"]) == 1
-        assert second_snapshot["personas"][0]["name"] == "Alex"
+        assert len(second_bros["bros"]) == 1
+        assert second_bros["bros"][0]["name"] == "Alex"
+        assert second_snapshot["personas"] == []
+
+
+@pytest.mark.anyio
+async def test_persona_change_invalidates_bro_list_for_subscribers(monkeypatch, tmp_path):
+    monkeypatch.setattr(persona_pool, "PERSONAS_FILE", tmp_path / "personas.yaml")
+    app = _build_app(tmp_path)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app)
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        session = app.state.runtime_container.get_session(session_id)
+        subscriber = session.subscribe()
+        try:
+            create_response = await client.post(
+                f"/api/sessions/{session_id}/personas",
+                json={
+                    "name": "Alex",
+                    "avatar": "A",
+                    "base_prompt": "Be direct.",
+                },
+            )
+
+            assert create_response.status_code == 201
+            deadline = asyncio.get_running_loop().time() + 1.0
+            while asyncio.get_running_loop().time() < deadline:
+                event = await asyncio.wait_for(
+                    subscriber.get(),
+                    timeout=max(0.01, deadline - asyncio.get_running_loop().time()),
+                )
+                if event.type == "bro_list_invalidated":
+                    assert event.reason == "persona_changed"
+                    assert event.node_id is None
+                    return
+            raise AssertionError("Timed out waiting for persona Bro-list invalidation.")
+        finally:
+            session.unsubscribe(subscriber)
 
 
 @pytest.mark.anyio

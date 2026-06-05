@@ -136,41 +136,53 @@ Bro detail continuity:
   Newbro stores the returned native thread id as the selected thread's resume
   handle so later direct sends can continue the same thread.
 - Newbro imports global Codex threads through the detached executor node's
-  Codex app-server `thread/list` capability. Imported threads become typed
+  Codex app-server `thread/list` capability. Codex executor nodes require
+  `codex-cli >= 0.135.0`; older Codex commands are reported as unavailable
+  instead of using compatibility request retries. Imported threads become typed
   `BroThread` projections with Newbro-owned public ids and diagnostic raw
   Codex ids; when the user sends direct text into an imported thread with no
   active run, the outbound turn request carries the imported Codex resume
   handle and the executor node continues that native thread through
   `start_codex_turn`. Idle push-to-talk follows the same resume-handle path
-  after executor-node transcription. Thread
-  import should page through Codex `thread/list` using
-  `nextCursor` where the app-server supports pagination, should ask for
-  updated-time descending order where supported, and must sort the imported
-  result locally by Codex `updatedAt`/`createdAt` so recent resumed dialogs are
-  not hidden behind the first default page. If a newer request shape is not
-  accepted by the installed Codex app-server, Newbro retries with older
-  compatible request shapes instead of projecting an empty thread list.
-  When a detached executor node connects, Newbro first publishes a cheap
-  connectivity snapshot, then schedules a post-ack imported-thread refresh for
-  active subscribed sessions so Bro Detail can show native Codex threads
-  without requiring a browser refresh.
-- Opening a `BroThread` resolves the public thread id to a Codex resume handle,
-  starts selected-thread event interest, and, for imported native Codex threads,
-  loads native thread history into executor-owned `BroTimelineTurn` records for
-  display in Bro Detail. For a known imported Codex thread, opening uses the
-  cached `thread/list` projection and resume handle instead of refreshing the
-  global Codex thread list on the open request path. Newbro must not project
+  after executor-node transcription. Thread import uses Codex `thread/list`
+  with `limit`, `cursor`, `sortKey = "updated_at"`, and
+  `sortDirection = "desc"`. `SessionSnapshot` does not perform Codex thread
+  import, does not expose thread-page cursor metadata, and does not carry
+  persona/executor-node bootstrap rows. Clients load compact Bro/node bootstrap
+  through `GET /api/sessions/{session_id}/bros`; that response includes only
+  the Bro identity, compact bound-node fields, Codex availability summary, and
+  `last_connected_at` for first-time setup state. It intentionally excludes
+  node tokens and `last_seen_at`. Clients load imported thread list pages
+  through Newbro's Bro-thread page API, which preserves Codex
+  `nextCursor`/backwards cursor metadata as response-local `page` data. When a
+  detached executor node connects, Newbro first publishes a cheap connectivity
+  snapshot; browser clients then refresh explicit Bro/thread projections rather
+  than relying on snapshot broadcasts to carry Codex list data.
+- Subscribing to a `BroThread` resolves the public thread id to a Codex resume
+  handle and starts selected-thread event interest, but the subscribe response
+  is only a live-interest acknowledgement. It does not refresh the global Codex
+  thread list and does not hydrate selected-thread history. Clients call the
+  Bro-timeline page API after subscription to load the first selected-thread
+  turn page. For a known imported Codex thread, subscription uses the cached
+  `thread/list` projection and resume handle instead of refreshing the global
+  Codex thread list on the subscribe request path. Newbro must not project
   native Codex history into Newbro `Task`, `ExecutionRun`, or `TaskSummary`
   records just because a thread was selected. The detached executor node keeps
   one shared Codex app-server process for list/start/resume/history read and
   selected-thread event routing; selected-thread subscription records local
   event interest and must not spawn a separate app-server process. The executor
-  node forwards selected-thread events back to Newbro. Ordinary text/PTT sends
-  and session snapshot publishes must not block on Codex `thread/list`,
-  `thread/read`, or `thread/turns/list`; imported-thread open may read history,
-  but history-read failures are represented as per-thread `timeline_status =
-  failed` and `timeline_error`, not as open-request conflicts. `SessionSnapshot`
-  exposes `bro_timeline_turns` as the Bro Detail rendering contract.
+  node forwards selected-thread events back to Newbro. Ordinary text/PTT sends,
+  session snapshot publishes, and subscribe requests must not block on Codex
+  `thread/list`, `thread/read`, or `thread/turns/list`; timeline page requests
+  may read bounded native history, and history-read failures are represented as
+  per-thread `timeline_status = failed` and `timeline_error`. Selected imported
+  thread history uses Codex `thread/read` for compact metadata/status without
+  full turns, `thread/goal/get` for goal state, and `thread/turns/list` with
+  `limit`, `cursor`, `sortDirection = "desc"`, and `itemsView = "full"` for
+  turn pages. `SessionSnapshot` exposes the cached/live
+  `bro_timeline_turns` read model for event reconciliation; clients load
+  selected-thread turns through Newbro's Bro-timeline page API instead of
+  receiving unbounded native history or page metadata in snapshot broadcasts.
   Newbro-owned turns are projected from typed `Task`, `ExecutionRun`, and
   `TaskSummary` state; executor-owned turns are projected from imported native
   history and selected-thread live events. The projection is a read model, not a
@@ -198,9 +210,10 @@ Bro detail continuity:
   text, titles, or keyword inference.
   Codex `reasoning` items and reasoning deltas remain internal and must not
   become goal, plan, or progress text.
-  Leaving or replacing the selected thread must call the node's selected-thread
-  close path, which in turn calls Codex `thread/unsubscribe`; stale events from
-  older subscription ids are ignored. Clients must render Bro Detail from the
+  Leaving or replacing the selected thread must call Newbro's unsubscribe path,
+  which in turn calls the node's selected-thread close path and Codex
+  `thread/unsubscribe`; stale events from older subscription ids are ignored.
+  Clients must render Bro Detail from the
   selected thread's canonical `bro_timeline_turns`, plus only timeline-shaped
   optimistic placeholders that are replaced by canonical turns through
   `client_request_id`; they must not infer the selected timeline by merging

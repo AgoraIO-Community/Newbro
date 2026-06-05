@@ -33,6 +33,64 @@ class ConversationHistoryEntryModel(BaseModel):
     created_at: str
 
 
+class CursorPageInfo(BaseModel):
+    next_cursor: str | None = None
+    previous_cursor: str | None = None
+    has_more: bool = False
+    status: Literal["not_loaded", "loading", "loaded", "failed"] = "not_loaded"
+    error: str | None = None
+
+
+class BroThreadPageResponse(BaseModel):
+    persona_id: str
+    threads: list[BroThread] = Field(default_factory=list)
+    page: CursorPageInfo = Field(default_factory=CursorPageInfo)
+
+
+class BroTimelineTurnPageResponse(BaseModel):
+    thread_id: str
+    thread: BroThread
+    turns: list[BroTimelineTurn] = Field(default_factory=list)
+    page: CursorPageInfo = Field(default_factory=CursorPageInfo)
+
+
+class BroExecutorCapabilitySummary(BaseModel):
+    version: str | None = None
+    minimum_version: str | None = None
+    availability_reason: str | None = None
+    supports_thread_list: bool = False
+    supports_audio_instruction: bool = False
+
+
+class BroExecutorNodeSummary(BaseModel):
+    node_id: str
+    name: str
+    connection_status: Literal["connected", "disconnected"] = "disconnected"
+    enabled_executors: list[str] = Field(default_factory=list)
+    last_connected_at: str | None = None
+    codex: BroExecutorCapabilitySummary | None = None
+
+
+class BroSummary(BaseModel):
+    persona_id: str
+    name: str
+    avatar: str = ""
+    status: str = "idle"
+    executor_node: BroExecutorNodeSummary | None = None
+
+
+class BroListResponse(BaseModel):
+    bros: list[BroSummary] = Field(default_factory=list)
+
+
+class BroThreadSubscriptionResponse(BaseModel):
+    thread_id: str
+    persona_id: str
+    subscribed: bool
+    timeline_status: Literal["not_loaded", "loading", "loaded", "failed"] = "not_loaded"
+    timeline_error: str | None = None
+
+
 class SessionSnapshot(BaseModel):
     session_id: str
     voice_target_persona_id: str | None = None
@@ -46,6 +104,8 @@ class SessionSnapshot(BaseModel):
     outbound_turn_requests: list[OutboundTurnRequest] = Field(default_factory=list)
     bro_threads: list[BroThread] = Field(default_factory=list)
     bro_timeline_turns: list[BroTimelineTurn] = Field(default_factory=list)
+    bro_thread_pages: dict[str, CursorPageInfo] = Field(default_factory=dict)
+    bro_timeline_pages: dict[str, CursorPageInfo] = Field(default_factory=dict)
     personas: list[Persona] = Field(default_factory=list)
     interaction_requests: list[InteractionRequest] = Field(default_factory=list)
     attention_items: list[AttentionItem] = Field(default_factory=list)
@@ -69,6 +129,17 @@ class SessionStreamEventBase(BaseModel):
 class SnapshotStreamEvent(SessionStreamEventBase):
     type: Literal["snapshot"] = "snapshot"
     snapshot: SessionSnapshot
+
+
+class BroListInvalidatedStreamEvent(SessionStreamEventBase):
+    type: Literal["bro_list_invalidated"] = "bro_list_invalidated"
+    reason: Literal[
+        "executor_node_connected",
+        "executor_node_disconnected",
+        "executor_node_changed",
+        "persona_changed",
+    ]
+    node_id: str | None = None
 
 
 class ActionAcceptedStreamEvent(SessionStreamEventBase):

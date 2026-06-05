@@ -177,7 +177,8 @@ async def test_send_draft_assigns_runtime_bro_and_exposes_progress_state():
         assert response.status_code == 200
         task_id = response.json()["task_id"]
         snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
-        persona = next(item for item in snapshot["personas"] if item["persona_id"] == "persona-rook")
+        bros = (await client.get(f"/api/sessions/{session_id}/bros")).json()
+        persona = next(item for item in bros["bros"] if item["persona_id"] == "persona-rook")
         task = next(item for item in snapshot["tasks"] if item["task_id"] == task_id)
         assert persona["status"] == "busy"
         assert "current_task_id" not in persona
@@ -280,8 +281,7 @@ async def test_rebinding_bro_rotates_detail_session_without_deleting_old_tasks(m
         assert len(snapshot["tasks"]) == 1
         old_task = snapshot["tasks"][0]
         assert old_task["metadata"]["bro_detail_session_id"] == original_detail_session_id
-        current_persona = next(item for item in snapshot["personas"] if item["persona_id"] == persona["persona_id"])
-        assert current_persona["bro_detail_session_id"] == updated_persona["bro_detail_session_id"]
+        assert updated_persona["bro_detail_session_id"] != original_detail_session_id
 
 
 @pytest.mark.anyio

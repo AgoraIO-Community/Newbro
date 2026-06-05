@@ -7,9 +7,19 @@ Preferred direction:
 - derive shared schema from protocol models
 - consume stable task/session/run/summary projections
 - avoid depending on low-level executor events
-- use `GET /api/sessions/{session_id}` for durable task/session state reads
-  including `personas`, `executor_capabilities`, and `executor_nodes`
+- use `GET /api/sessions/{session_id}` for durable task/session state reads;
+  this snapshot is not the Bro/node bootstrap contract and does not run Codex
+  thread/timeline paging
 - use `GET /api/sessions/{session_id}/conversation` for durable conversation history reads
+- use `GET /api/sessions/{session_id}/bros` for compact Bro/node bootstrap;
+  compact node rows include identity, connection status, enabled executors,
+  Codex availability, and `last_connected_at`, but exclude token hints and
+  `last_seen_at`
+- use the Bro-thread page API for thread lists and the Bro-timeline page API
+  for selected-thread turns; clients should preserve the returned cursor
+  metadata locally instead of expecting page metadata in `SessionSnapshot`
+- use Bro-thread subscribe/unsubscribe endpoints only for selected-thread live
+  event interest; subscribe is not a history hydration endpoint
 - use `GET /api/sessions/{session_id}/diagnostics/timeline` for debugger-oriented
   inspection data
 - use `GET /api/sessions/{session_id}/executor-nodes` plus the related
@@ -40,8 +50,9 @@ Preferred direction:
   using browser transcript
 - voice mode attaches its connector binding to that already-active shell
   session instead of switching the shell to a connector-created session
-- Bro liveness is derived in the frontend from `persona.executor_node_id`
-  plus the matching `executor_nodes[*].connection_status`
+- Bro liveness is derived in the frontend from compact `/bros` data and live
+  executor-node updates; first-time setup state depends on the real
+  `last_connected_at` signal, not a synthesized timestamp
 - voice mode may also exist without an active session binding before the user
   presses `Start`
 - left-sidebar route navigation should preserve the current `sid`

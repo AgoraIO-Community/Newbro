@@ -121,6 +121,10 @@ def _write_fake_codex(
             import json
             import sys
 
+            if "--version" in sys.argv:
+                print("codex-cli 0.137.0")
+                sys.exit(0)
+
             thread_counter = 0
             turn_counter = 0
             auth_ok = {str(auth_ok)}
@@ -682,6 +686,8 @@ def _write_thread_turns_list_fake_codex(tmp_path):
                     send({{"id": request_id, "result": {{"goal": "Open thread goal"}}}})
                 elif method == "thread/turns/list":
                     assert params.get("threadId") == "thread-open"
+                    if params.get("cursor") is not None:
+                        assert params.get("cursor") == "older-turns"
                     assert params.get("limit") == 100
                     assert params.get("sortDirection") == "desc"
                     assert params.get("itemsView") == "full"
@@ -1483,6 +1489,22 @@ async def test_codex_executor_reads_thread_history_with_bounded_turns_list(tmp_p
 
 
 @pytest.mark.anyio
+async def test_codex_list_thread_turns_page_sends_cursor(tmp_path):
+    command = _write_thread_turns_list_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+
+    page = await executor.list_thread_turns_page(
+        thread_id="thread-open",
+        limit=100,
+        cursor="older-turns",
+    )
+
+    assert [turn["id"] for turn in page.turns] == ["turn-new", "turn-old"]
+    assert page.goal == "Open thread goal"
+    assert page.next_cursor == "older-turns"
+
+
+@pytest.mark.anyio
 async def test_codex_executor_reuses_one_app_server_for_thread_operations(tmp_path):
     command, launches = _write_counting_fake_codex(tmp_path)
     executor = CodexExecutor(command=str(command))
@@ -1690,21 +1712,34 @@ async def test_codex_executor_lists_threads_from_app_server(tmp_path):
     command = _write_fake_codex(tmp_path)
     executor = CodexExecutor(command=str(command))
 
-    threads = await executor.list_threads(str(tmp_path))
+    page = await executor.list_threads_page(str(tmp_path), limit=100, cursor=None)
 
-    assert threads == [
+    assert page.items == [
         {
-            "id": "import-thread-2",
-            "sessionId": "import-thread-2",
-            "preview": "Task: Imported follow-up",
-            "createdAt": 1779850200,
-            "updatedAt": 1779850300,
+            "id": "import-thread-1",
+            "sessionId": "import-thread-1",
+            "preview": "Task: Imported work",
+            "createdAt": 1779850000,
+            "updatedAt": 1779850100,
             "status": {"type": "notLoaded"},
             "cwd": "/tmp/imported-workspace",
-            "path": "/tmp/import-thread-2.jsonl",
+            "path": "/tmp/import-thread-1.jsonl",
             "cliVersion": "0.133.0",
             "source": "vscode",
         },
+    ]
+    assert page.next_cursor == "page-2"
+    assert page.previous_cursor is None
+
+
+@pytest.mark.anyio
+async def test_codex_list_threads_compatibility_wrapper_returns_first_native_page(tmp_path):
+    command = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+
+    threads = await executor.list_threads(str(tmp_path))
+
+    assert threads == [
         {
             "id": "import-thread-1",
             "sessionId": "import-thread-1",
@@ -1721,10 +1756,33 @@ async def test_codex_executor_lists_threads_from_app_server(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_codex_executor_falls_back_when_sorted_thread_list_is_unsupported(tmp_path):
+async def test_codex_list_threads_page_uses_cursor(tmp_path):
+    command = _write_fake_codex(tmp_path)
+    executor = CodexExecutor(command=str(command))
+
+    page = await executor.list_threads_page(str(tmp_path), limit=100, cursor="page-2")
+
+    assert page.items == [
+        {
+            "id": "import-thread-2",
+            "sessionId": "import-thread-2",
+            "preview": "Task: Imported follow-up",
+            "createdAt": 1779850200,
+            "updatedAt": 1779850300,
+            "status": {"type": "notLoaded"},
+            "cwd": "/tmp/imported-workspace",
+            "path": "/tmp/import-thread-2.jsonl",
+            "cliVersion": "0.133.0",
+            "source": "vscode",
+        },
+    ]
+    assert page.next_cursor is None
+
+
+@pytest.mark.anyio
+async def test_codex_executor_surfaces_unsupported_sorted_thread_list(tmp_path):
     command = _write_fake_codex(tmp_path, reject_sorted_thread_list=True)
     executor = CodexExecutor(command=str(command))
 
-    threads = await executor.list_threads(str(tmp_path))
-
-    assert [thread["id"] for thread in threads] == ["import-thread-2", "import-thread-1"]
+    with pytest.raises(RuntimeError, match="unsupported sort"):
+        await executor.list_threads_page(str(tmp_path), limit=100, cursor=None)

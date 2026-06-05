@@ -79,6 +79,16 @@ describe("useThreadSelection", () => {
     expect(threadParam()).toBe("b");
   });
 
+  it("selectThread closes the previously active runtime thread before switching", () => {
+    const closeThread = vi.fn();
+    const threads: T[] = [{ threadId: "a" }, { threadId: "b" }];
+    setUrl("thread=a");
+    const { result } = renderHook(() => useThreadSelection<T>(defaults({ threads, closeThread })));
+    act(() => result.current.selectThread("b"));
+    expect(closeThread).toHaveBeenCalledWith("bro-1", "a");
+    expect(closeThread).toHaveBeenCalledTimes(1);
+  });
+
   it("newThread with no workspaces calls onNoWorkspace and does not open the picker", () => {
     const onNoWorkspace = vi.fn();
     const { result } = renderHook(() => useThreadSelection<T>(defaults({ workspaceOptions: [], onNoWorkspace })));

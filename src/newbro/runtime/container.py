@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import Literal
 from uuid import uuid4
 
 from newbro.communication.model import CommunicationModel
@@ -82,22 +83,60 @@ class RuntimeContainer:
                 session.schedule_execution()
                 updated_task_ids.extend(changed)
         await self.publish_session_snapshots()
+        await self.publish_bro_list_invalidations(
+            reason="executor_node_connected",
+            node_id=node_id,
+        )
         if node_id is not None:
             self._schedule_imported_thread_refresh(node_id)
         return updated_task_ids
 
-    async def handle_executor_node_disconnected(self) -> None:
+    async def handle_executor_node_disconnected(self, node_id: str | None = None) -> None:
         await self.publish_session_snapshots()
+        await self.publish_bro_list_invalidations(
+            reason="executor_node_disconnected",
+            node_id=node_id,
+        )
 
     async def publish_session_snapshots(self) -> None:
         for session in self._sessions.values():
             if session.subscribers:
                 await session.publish_snapshot()
 
+    async def publish_bro_list_invalidations(
+        self,
+        *,
+        reason: Literal[
+            "executor_node_connected",
+            "executor_node_disconnected",
+            "executor_node_changed",
+            "persona_changed",
+        ],
+        node_id: str | None = None,
+    ) -> None:
+        for session in self._sessions.values():
+            if session.subscribers:
+                if node_id is not None and not await self._session_references_executor_node(
+                    session,
+                    node_id,
+                ):
+                    continue
+                await session.publish_bro_list_invalidated(reason=reason, node_id=node_id)
+
     async def publish_imported_thread_snapshots(self, *, node_id: str | None = None) -> None:
         for session in self._sessions.values():
             if session.subscribers:
                 await session.publish_snapshot(sync_imported_codex_threads=True)
+
+    async def _session_references_executor_node(
+        self,
+        session: SessionRuntime,
+        node_id: str,
+    ) -> bool:
+        for persona in await session.blackboard.list_personas():
+            if persona.executor_node_id == node_id:
+                return True
+        return False
 
     def _schedule_imported_thread_refresh(self, node_id: str) -> None:
         task = asyncio.create_task(self.publish_imported_thread_snapshots(node_id=node_id))
@@ -121,6 +160,7 @@ class RuntimeContainer:
 
     async def sync_persisted_personas(self, personas: list[Persona]) -> None:
         persisted_by_id = {persona.persona_id: persona for persona in personas}
+        changed = False
         for session in self._sessions.values():
             current_personas = {
                 persona.persona_id: persona
@@ -130,25 +170,31 @@ class RuntimeContainer:
                 current = current_personas.get(persona_id)
                 if current is None:
                     await session.blackboard.put_persona(persisted)
+                    changed = True
                     continue
-                await session.blackboard.put_persona(
-                    persisted.model_copy(
-                        update={
-                            "status": current.status,
-                        }
-                    )
+                next_persona = persisted.model_copy(
+                    update={
+                        "status": current.status,
+                    }
                 )
+                if current != next_persona:
+                    await session.blackboard.put_persona(next_persona)
+                    changed = True
             for persona_id, current in current_personas.items():
                 if persona_id in persisted_by_id:
                     continue
                 if current.status == "busy":
                     continue
                 await session.blackboard.delete_persona(persona_id)
+                changed = True
         await self.publish_session_snapshots()
+        if changed:
+            await self.publish_bro_list_invalidations(reason="persona_changed")
 
     async def sync_user_personas(self, *, session_id: str, personas: list[Persona]) -> None:
         session = self.get_session(session_id)
         persisted_by_id = {persona.persona_id: persona for persona in personas}
+        changed = False
         current_personas = {
             persona.persona_id: persona
             for persona in await session.blackboard.list_personas()
@@ -157,18 +203,23 @@ class RuntimeContainer:
             current = current_personas.get(persona_id)
             if current is None:
                 await session.blackboard.put_persona(persisted)
+                changed = True
                 continue
-            await session.blackboard.put_persona(
-                persisted.model_copy(
-                    update={
-                        "status": current.status,
-                    }
-                )
+            next_persona = persisted.model_copy(
+                update={
+                    "status": current.status,
+                }
             )
+            if current != next_persona:
+                await session.blackboard.put_persona(next_persona)
+                changed = True
         for persona_id, current in current_personas.items():
             if persona_id in persisted_by_id:
                 continue
             if current.status == "busy":
                 continue
             await session.blackboard.delete_persona(persona_id)
+            changed = True
         await session.publish_snapshot()
+        if changed:
+            await session.publish_bro_list_invalidated(reason="persona_changed")
