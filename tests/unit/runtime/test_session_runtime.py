@@ -35,10 +35,12 @@ from newbro.executors.core import ExecutorCapabilities, ExecutorEvent, ExecutorE
 from newbro.protocol import Task, TaskStatus
 from newbro.runtime import Settings
 from newbro.protocol.session import BroTimelineMessage, BroTimelineTurn
-from newbro.runtime.session import (
-    SelectedCodexThreadSubscription,
+from newbro.runtime.bro_detail_thread_helpers import (
     _merge_timeline_turn,
     _timeline_turns_from_codex_thread,
+)
+from newbro.runtime.bro_detail_thread_projection import SelectedCodexThreadSubscription
+from newbro.runtime.session import (
     create_session_runtime,
 )
 
@@ -136,12 +138,14 @@ async def test_session_runtime_publish_snapshot_uses_cached_codex_threads_by_def
     )
     calls = 0
 
-    async def fail_if_synced(self, *args, **kwargs):
+    projection = session._bro_detail_thread_projection()
+
+    async def fail_if_synced(*args, **kwargs):
         nonlocal calls
         calls += 1
         raise AssertionError("publish_snapshot must not refresh Codex threads")
 
-    monkeypatch.setattr(type(session), "_sync_imported_codex_threads", fail_if_synced)
+    monkeypatch.setattr(projection, "sync_imported_codex_threads", fail_if_synced)
     queue = session.subscribe()
 
     snapshot = await session.publish_snapshot()
@@ -996,7 +1000,7 @@ async def test_selected_codex_thread_events_do_not_read_history_on_control_path(
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1028,7 +1032,7 @@ async def test_selected_codex_thread_events_do_not_read_history_on_control_path(
     )
 
     assert calls == 0
-    assert "forge" in session._selected_codex_thread_subscriptions
+    assert "forge" in session._bro_detail_thread_projection().selected_codex_thread_subscriptions
 
 
 @pytest.mark.anyio
@@ -1040,7 +1044,7 @@ async def test_selected_codex_thread_message_events_replace_latest_assistant_tur
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1089,7 +1093,7 @@ async def test_selected_codex_thread_message_events_replace_latest_assistant_tur
         )
     )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].turn_id == "thread-public:codex:turn-1"
     assert turns[0].assistant is not None
@@ -1106,7 +1110,7 @@ async def test_selected_codex_thread_delta_events_replace_previous_turn_item():
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1135,7 +1139,7 @@ async def test_selected_codex_thread_delta_events_replace_previous_turn_item():
             )
         )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].turn_id == "thread-public:codex:turn-1"
     assert turns[0].assistant is not None
@@ -1153,7 +1157,7 @@ async def test_selected_codex_thread_projects_plan_and_goal_without_reasoning():
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1213,7 +1217,7 @@ async def test_selected_codex_thread_projects_plan_and_goal_without_reasoning():
         )
     )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].metadata["codex_goal"] == "Ship plan projection"
     assert turns[0].metadata["codex_plan"] == {"text": "Use documented plan events.", "steps": []}
@@ -1261,7 +1265,7 @@ async def test_selected_codex_thread_events_merge_with_newbro_owned_task_timelin
             },
         )
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1291,7 +1295,7 @@ async def test_selected_codex_thread_events_merge_with_newbro_owned_task_timelin
         )
     )
 
-    assert len(session._bro_thread_executor_turns["thread-public"]) == 1
+    assert len(session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]) == 1
     snapshot = await session.snapshot()
     timeline_turns = [turn for turn in snapshot.bro_timeline_turns if turn.thread_id == "thread-public"]
     assert len(timeline_turns) == 1
@@ -1326,7 +1330,7 @@ async def test_selected_codex_thread_events_merge_with_pending_newbro_turn_by_cl
             },
         )
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1356,7 +1360,7 @@ async def test_selected_codex_thread_events_merge_with_pending_newbro_turn_by_cl
         )
     )
 
-    executor_turns = session._bro_thread_executor_turns["thread-public"]
+    executor_turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(executor_turns) == 1
     assert executor_turns[0].client_request_id == "text-client-1"
     snapshot = await session.snapshot()
@@ -1376,7 +1380,7 @@ async def test_selected_codex_thread_plan_deltas_are_coalesced_but_final_plan_is
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1404,7 +1408,7 @@ async def test_selected_codex_thread_plan_deltas_are_coalesced_but_final_plan_is
             )
         )
 
-    assert session._bro_thread_executor_turns.get("thread-public") is None
+    assert session._bro_detail_thread_projection().bro_thread_executor_turns.get("thread-public") is None
 
     await session.handle_codex_thread_event(
         CodexThreadEventMessage(
@@ -1426,7 +1430,7 @@ async def test_selected_codex_thread_plan_deltas_are_coalesced_but_final_plan_is
         )
     )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].metadata["codex_plan"] == {
         "text": "Final selected-thread plan.",
@@ -1444,7 +1448,7 @@ async def test_selected_codex_thread_split_user_turn_pairs_with_final_plan_item(
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1495,7 +1499,7 @@ async def test_selected_codex_thread_split_user_turn_pairs_with_final_plan_item(
         )
     )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].executor_turn_id == "turn-plan"
     assert turns[0].metadata["original_user_executor_turn_id"] == "turn-user"
@@ -1523,7 +1527,7 @@ async def test_selected_codex_thread_same_turn_plan_marks_existing_user_message_
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1554,7 +1558,7 @@ async def test_selected_codex_thread_same_turn_plan_marks_existing_user_message_
             )
         )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].metadata["plan_mode"] is True
     assert turns[0].user is not None
@@ -1603,7 +1607,7 @@ async def test_selected_codex_thread_late_event_merges_with_completed_direct_tur
             metadata={},
         )
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1635,7 +1639,7 @@ async def test_selected_codex_thread_late_event_merges_with_completed_direct_tur
         )
     )
 
-    executor_turns = session._bro_thread_executor_turns["thread-public"]
+    executor_turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(executor_turns) == 1
     assert executor_turns[0].client_request_id == "audio-client-1"
     assert executor_turns[0].created_at == "2026-05-26T22:01:12+00:00"
