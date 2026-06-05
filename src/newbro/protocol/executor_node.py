@@ -100,6 +100,10 @@ class ListCodexThreadsCommand(BaseModel):
     request_id: str
     executor_type: Literal["codex"] = "codex"
     workspace_id: str | None = None
+    limit: int = 100
+    cursor: str | None = None
+    sort_key: Literal["created_at", "updated_at"] = "updated_at"
+    sort_direction: Literal["asc", "desc"] = "desc"
 
 
 class CodexThreadsListedMessage(BaseModel):
@@ -110,6 +114,33 @@ class CodexThreadsListedMessage(BaseModel):
     ok: bool = True
     error: str | None = None
     threads: list[CodexThreadListItem] = Field(default_factory=list)
+    next_cursor: str | None = None
+    previous_cursor: str | None = None
+
+
+class ListCodexThreadTurnsCommand(BaseModel):
+    type: Literal["list_codex_thread_turns"] = "list_codex_thread_turns"
+    request_id: str
+    executor_type: Literal["codex"] = "codex"
+    thread_id: str
+    limit: int = 100
+    cursor: str | None = None
+    sort_direction: Literal["asc", "desc"] = "desc"
+    items_view: Literal["summary", "full"] = "full"
+
+
+class CodexThreadTurnsListedMessage(BaseModel):
+    type: Literal["codex_thread_turns_listed"] = "codex_thread_turns_listed"
+    request_id: str
+    node_id: str
+    executor_type: Literal["codex"] = "codex"
+    ok: bool = True
+    error: str | None = None
+    thread_id: str
+    turns: list[dict[str, object]] = Field(default_factory=list)
+    goal: str | None = None
+    next_cursor: str | None = None
+    previous_cursor: str | None = None
 
 
 class ReadCodexThreadCommand(BaseModel):

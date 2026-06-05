@@ -33,6 +33,26 @@ class ConversationHistoryEntryModel(BaseModel):
     created_at: str
 
 
+class CursorPageInfo(BaseModel):
+    next_cursor: str | None = None
+    previous_cursor: str | None = None
+    has_more: bool = False
+    status: Literal["not_loaded", "loading", "loaded", "failed"] = "not_loaded"
+    error: str | None = None
+
+
+class BroThreadPageResponse(BaseModel):
+    persona_id: str
+    threads: list[BroThread] = Field(default_factory=list)
+    page: CursorPageInfo = Field(default_factory=CursorPageInfo)
+
+
+class BroTimelineTurnPageResponse(BaseModel):
+    thread_id: str
+    turns: list[BroTimelineTurn] = Field(default_factory=list)
+    page: CursorPageInfo = Field(default_factory=CursorPageInfo)
+
+
 class SessionSnapshot(BaseModel):
     session_id: str
     voice_target_persona_id: str | None = None
@@ -46,6 +66,8 @@ class SessionSnapshot(BaseModel):
     outbound_turn_requests: list[OutboundTurnRequest] = Field(default_factory=list)
     bro_threads: list[BroThread] = Field(default_factory=list)
     bro_timeline_turns: list[BroTimelineTurn] = Field(default_factory=list)
+    bro_thread_pages: dict[str, CursorPageInfo] = Field(default_factory=dict)
+    bro_timeline_pages: dict[str, CursorPageInfo] = Field(default_factory=dict)
     personas: list[Persona] = Field(default_factory=list)
     interaction_requests: list[InteractionRequest] = Field(default_factory=list)
     attention_items: list[AttentionItem] = Field(default_factory=list)
