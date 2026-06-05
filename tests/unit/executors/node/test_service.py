@@ -72,6 +72,19 @@ class FakeExecutor:
         ]
 
 
+class FakeUnsupportedCodexExecutor(FakeExecutor):
+    async def refresh_capabilities(self) -> ExecutorCapabilities:
+        capabilities = self.get_capabilities()
+        capabilities.version = "codex-cli 0.134.9"
+        capabilities.minimum_version = "0.135.0"
+        capabilities.availability_reason = "unsupported_codex_version"
+        capabilities.supports_thread_list = True
+        return capabilities
+
+    async def list_threads_page(self, workspace_id=None, *, limit=100, cursor=None):
+        return None
+
+
 class FakeStartTurnExecutor(FakeExecutor):
     async def start_turn_request(self, command):
         from newbro.executors.core import ExecutorEvent, ExecutorEventType
@@ -234,6 +247,21 @@ def build_service(monkeypatch: pytest.MonkeyPatch, *, reporter: ExecutorNodeLife
         audio_transcriber=FakeAudioTranscriber(),
         reporter=reporter,
     )
+
+
+@pytest.mark.anyio
+async def test_codex_descriptor_reports_unsupported_version(monkeypatch: pytest.MonkeyPatch):
+    reporter = ExecutorNodeLifecycleReporter(stream=io.StringIO())
+    service = build_service(monkeypatch, reporter=reporter)
+    executor = FakeUnsupportedCodexExecutor()
+
+    descriptor = await service._descriptor("codex", executor)
+
+    assert descriptor.executor_type == "codex"
+    assert descriptor.supports_thread_list is False
+    assert descriptor.version == "codex-cli 0.134.9"
+    assert descriptor.minimum_version == "0.135.0"
+    assert descriptor.availability_reason == "unsupported_codex_version"
 
 
 @pytest.mark.anyio
@@ -701,6 +729,8 @@ async def test_list_codex_threads_returns_normalized_thread_list(monkeypatch: py
                     },
                 }
             ],
+            "next_cursor": None,
+            "previous_cursor": None,
         }
     ]
 

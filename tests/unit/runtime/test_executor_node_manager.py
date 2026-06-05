@@ -317,6 +317,27 @@ async def test_request_codex_thread_turns_sends_cursor_page_command(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_unsupported_codex_node_does_not_support_thread_list(tmp_path):
+    issue, manager = await _registered_manager_with_issue(tmp_path)
+    await manager.register_connection(
+        object(),
+        RegisterNodeMessage(
+            node_id=issue.node.node_id,
+            token=issue.token,
+            executors=[
+                ExecutorNodeExecutor(
+                    executor_type="codex",
+                    supports_thread_list=True,
+                    availability_reason="unsupported_codex_version",
+                )
+            ],
+        ),
+    )
+
+    assert manager.executor_supports_thread_list("codex", node_id=issue.node.node_id) is False
+
+
+@pytest.mark.anyio
 async def test_start_codex_turn_serializes_without_task_run_or_execution_session_ids(tmp_path):
     manager = ExecutorNodeManager(
         detached_executor_types=("codex",),

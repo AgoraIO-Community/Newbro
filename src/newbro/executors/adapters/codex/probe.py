@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -13,6 +14,32 @@ class CodexProbeResult:
     version: str | None
     ok: bool
     error: str | None = None
+
+
+CODEX_MINIMUM_SUPPORTED_VERSION = (0, 135, 0)
+CODEX_MINIMUM_SUPPORTED_VERSION_TEXT = "0.135.0"
+
+
+def codex_version_tuple(version: str | None) -> tuple[int, int, int] | None:
+    if not version:
+        return None
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", version)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def codex_version_supported(version: str | None) -> bool:
+    parsed = codex_version_tuple(version)
+    return parsed is not None and parsed >= CODEX_MINIMUM_SUPPORTED_VERSION
+
+
+def unsupported_codex_version_error(version: str | None) -> str:
+    display = version or "unknown"
+    return (
+        f"Codex CLI {display} is below Newbro's minimum supported version "
+        f"{CODEX_MINIMUM_SUPPORTED_VERSION_TEXT}."
+    )
 
 
 def discover_codex_commands(*, configured_command: str | None = None) -> list[str]:
@@ -57,6 +84,13 @@ def probe_codex_command(command: str) -> CodexProbeResult:
             version=first_line,
             ok=False,
             error=first_line or f"codex --version exited {completed.returncode}",
+        )
+    if not codex_version_supported(first_line):
+        return CodexProbeResult(
+            path=path,
+            version=first_line,
+            ok=False,
+            error=unsupported_codex_version_error(first_line),
         )
     return CodexProbeResult(path=path, version=first_line, ok=True)
 

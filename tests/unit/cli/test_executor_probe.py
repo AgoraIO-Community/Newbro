@@ -90,6 +90,33 @@ def test_executor_probe_json_reports_current_and_candidates(monkeypatch, tmp_pat
     ]
 
 
+def test_codex_probe_rejects_version_below_minimum():
+    from newbro.executors.adapters.codex import probe as codex_probe
+
+    assert codex_probe.codex_version_tuple("codex-cli 0.134.9") == (0, 134, 9)
+    assert codex_probe.codex_version_supported("codex-cli 0.134.9") is False
+    assert codex_probe.codex_version_supported("codex-cli 0.135.0") is True
+    assert codex_probe.codex_version_supported("codex-cli 0.137.0") is True
+
+
+def test_codex_probe_marks_old_version_unavailable(monkeypatch):
+    from newbro.executors.adapters.codex import probe as codex_probe
+
+    class Completed:
+        returncode = 0
+        stdout = "codex-cli 0.134.9\n"
+        stderr = ""
+
+    monkeypatch.setattr(codex_probe, "_resolve_command_path", lambda command: command)
+    monkeypatch.setattr(codex_probe.subprocess, "run", lambda *_args, **_kwargs: Completed())
+
+    result = codex_probe.probe_codex_command("codex")
+
+    assert result.ok is False
+    assert result.version == "codex-cli 0.134.9"
+    assert result.error == "Codex CLI codex-cli 0.134.9 is below Newbro's minimum supported version 0.135.0."
+
+
 def test_executor_use_validates_and_writes_codex_command(monkeypatch, tmp_path: Path):
     selected = tmp_path / "bin" / "codex"
     _write_config(tmp_path, codex_command="codex")

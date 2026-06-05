@@ -15,6 +15,9 @@ class ExecutorNodeExecutor(BaseModel):
     supports_thread_list: bool = False
     supports_pause: bool = False
     supports_cancel: bool = True
+    version: str | None = None
+    minimum_version: str | None = None
+    availability_reason: str | None = None
 
 
 class ExecutorNodeRecord(BaseModel):

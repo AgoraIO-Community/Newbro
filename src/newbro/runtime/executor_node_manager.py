@@ -183,7 +183,11 @@ class ExecutorNodeManager:
         if state is None:
             return False
         executor = state.executors.get(executor_type)
-        return executor is not None and executor.supports_thread_list
+        return (
+            executor is not None
+            and executor.supports_thread_list
+            and executor.availability_reason is None
+        )
 
     def codex_thread_events(self) -> asyncio.Queue[CodexThreadEventMessage]:
         return self._codex_thread_event_queue

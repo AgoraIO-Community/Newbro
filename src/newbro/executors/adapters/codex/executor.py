@@ -22,6 +22,7 @@ from newbro.protocol import (
 
 from .client import CodexAppServerClient
 from .jsonrpc import JsonRpcPeer
+from .probe import CODEX_MINIMUM_SUPPORTED_VERSION_TEXT, probe_codex_command
 from .session import CodexExecutorSession
 
 
@@ -60,11 +61,23 @@ class CodexExecutor:
             str,
             tuple[str, asyncio.Queue[dict[str, object]]],
         ] = {}
+        self._last_detected_version: str | None = None
 
     def get_capabilities(self) -> ExecutorCapabilities:
         return self._capabilities
 
     async def refresh_capabilities(self) -> ExecutorCapabilities:
+        probe = await asyncio.to_thread(probe_codex_command, self._command)
+        self._last_detected_version = probe.version
+        supported = probe.ok
+        self._capabilities.version = probe.version
+        self._capabilities.minimum_version = CODEX_MINIMUM_SUPPORTED_VERSION_TEXT
+        self._capabilities.availability_reason = None if supported else "unsupported_codex_version"
+        self._capabilities.supports_resume = supported
+        self._capabilities.supports_follow_up = supported
+        self._capabilities.supports_thread_list = supported
+        self._capabilities.supports_pause = supported
+        self._capabilities.supports_cancel = supported
         return self._capabilities
 
     async def create_session(self, workspace_id: str | None = None) -> CodexExecutorSession:

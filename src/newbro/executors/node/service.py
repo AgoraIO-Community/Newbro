@@ -1059,9 +1059,16 @@ class ExecutorNodeService:
             supports_follow_up=capabilities.supports_follow_up,
             supports_audio_instruction=capabilities.supports_audio_instruction
             or (capabilities.supports_follow_up and self._audio_transcriber.available),
-            supports_thread_list=bool(executor_type == "codex" and hasattr(executor, "list_threads")),
+            supports_thread_list=bool(
+                executor_type == "codex"
+                and hasattr(executor, "list_threads_page")
+                and capabilities.availability_reason is None
+            ),
             supports_pause=capabilities.supports_pause,
             supports_cancel=capabilities.supports_cancel,
+            version=capabilities.version,
+            minimum_version=capabilities.minimum_version,
+            availability_reason=capabilities.availability_reason,
         )
 
     async def _cancel_active_runs(self) -> None:
