@@ -427,7 +427,7 @@ class SessionRuntime:
         *,
         target_persona_id: str,
         thread_id: str,
-        limit: int = 100,
+        limit: int = 15,
         cursor: str | None = None,
     ):
         persona = await self.blackboard.get_persona(target_persona_id)

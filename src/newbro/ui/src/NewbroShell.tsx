@@ -509,7 +509,7 @@ function useNewbroShellState() {
         targetPersonaId,
         threadId,
         cursor: pageInfo.next_cursor,
-        limit: 100,
+        limit: 15,
       });
       if (!mountedRef.current) {
         return;

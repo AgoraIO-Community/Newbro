@@ -274,7 +274,7 @@ export async function listBroTimelinePage(
 ): Promise<BroTimelineTurnPageResponse> {
   const params = new URLSearchParams();
   params.set("target_persona_id", payload.targetPersonaId);
-  params.set("limit", String(payload.limit ?? 100));
+  params.set("limit", String(payload.limit ?? 15));
   if (payload.cursor) params.set("cursor", payload.cursor);
   const response = await fetch(
     buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/timeline?${params.toString()}`),

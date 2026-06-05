@@ -211,11 +211,11 @@ describe("session-client transport base URL handling", () => {
       targetPersonaId: "forge",
       threadId: "thread-1",
       cursor: "older",
-      limit: 100,
+      limit: 15,
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/sessions/session-1/bro-threads/thread-1/timeline?target_persona_id=forge&limit=100&cursor=older",
+      "/api/sessions/session-1/bro-threads/thread-1/timeline?target_persona_id=forge&limit=15&cursor=older",
     );
   });
 

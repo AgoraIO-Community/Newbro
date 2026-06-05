@@ -1633,7 +1633,7 @@ describe("Newbro artboard shell", () => {
       targetPersonaId: "forge",
       threadId,
       cursor: "older",
-      limit: 100,
+      limit: 15,
     });
   });
 

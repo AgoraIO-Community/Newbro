@@ -159,7 +159,7 @@ async def list_bro_timeline_page(
     thread_id: str,
     request: Request,
     target_persona_id: str,
-    limit: int = 100,
+    limit: int = 15,
     cursor: str | None = None,
 ):
     await require_session_owner_or_internal(request, session_id)
