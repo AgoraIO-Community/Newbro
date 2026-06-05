@@ -136,7 +136,7 @@ void test_parse_bro_threads_empty_for_unknown_persona(void) {
 
 void test_parse_bro_threads_rejects_garbage(void) {
   std::vector<ThreadInfo> out;
-  TEST_ASSERT_FALSE(parseBroThreads("not json", out));
+  TEST_ASSERT_FALSE(parseBroThreads("not json", "p1", out));
 }
 
 int main(int, char **) {

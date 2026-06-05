@@ -110,6 +110,7 @@ bool parseBroThreads(const std::string &snapshotJson, const std::string &persona
   for (JsonObject th : doc["bro_threads"].as<JsonArray>()) {
     const char *pid = th["persona_id"].is<const char *>() ? th["persona_id"].as<const char *>() : "";
     if (personaId != pid) continue;
+    if (!th["thread_id"].is<const char *>()) continue;  // skip threads with no id
     ThreadInfo info;
     info.id = th["thread_id"].as<std::string>();
     info.title = th["title"].is<const char *>() ? th["title"].as<std::string>() : std::string();
