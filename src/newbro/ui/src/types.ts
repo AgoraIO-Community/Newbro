@@ -229,6 +229,7 @@ export interface BroThreadPageResponse {
 
 export interface BroTimelineTurnPageResponse {
   thread_id: string;
+  thread: BroThread;
   turns: BroTimelineTurn[];
   page: CursorPageInfo;
 }

@@ -232,6 +232,15 @@ async def test_list_bro_thread_page_appends_cached_imported_threads(monkeypatch:
 @pytest.mark.anyio
 async def test_list_bro_timeline_page_uses_codex_turn_cursor(monkeypatch: pytest.MonkeyPatch):
     session, persona, projection, _publish_calls = await _projection_harness()
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id=persona.persona_id,
+        persona_name=persona.name,
+        executor_id="codex",
+        executor_node_id="node-forge",
+        title="Imported thread",
+        has_resume_handle=True,
+    )
     projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
         executor_id="codex",
         session_handle="native-thread-1",
@@ -273,6 +282,60 @@ async def test_list_bro_timeline_page_uses_codex_turn_cursor(monkeypatch: pytest
     assert [turn.executor_turn_id for turn in page.turns] == ["turn-old"]
     assert page.page.next_cursor is None
     assert page.page.previous_cursor == "newer"
+
+
+@pytest.mark.anyio
+async def test_list_bro_timeline_page_returns_thread_summary(monkeypatch: pytest.MonkeyPatch):
+    session, persona, projection, _publish_calls = await _projection_harness()
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id=persona.persona_id,
+        persona_name=persona.name,
+        executor_id="codex",
+        executor_node_id="node-forge",
+        workspace_id="/tmp/workspace",
+        workspace_name="workspace",
+        title="Thread summary",
+        has_resume_handle=True,
+    )
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        assert kwargs["thread_id"] == "native-thread-1"
+        return CodexThreadTurnPage(thread_id="native-thread-1", turns=[])
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+
+    page = await projection.list_bro_timeline_page(
+        persona=persona,
+        public_thread_id="codex-import-1",
+        node_id="node-forge",
+    )
+
+    assert page.thread.thread_id == "codex-import-1"
+    assert page.thread.title == "Thread summary"
+    assert page.thread.workspace_id == "/tmp/workspace"
+    assert page.thread.timeline_status == "loaded"
+    assert page.thread.timeline_error is None
+
+
+@pytest.mark.anyio
+async def test_list_bro_timeline_page_requires_loaded_thread_summary():
+    _session, persona, projection, _publish_calls = await _projection_harness()
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+
+    with pytest.raises(ValueError, match="Thread is not loaded; list thread page first."):
+        await projection.list_bro_timeline_page(
+            persona=persona,
+            public_thread_id="codex-import-1",
+            node_id="node-forge",
+        )
 
 
 @pytest.mark.anyio

@@ -641,6 +641,9 @@ class BroDetailThreadProjection:
         cursor: str | None = None,
         limit: int = SELECTED_CODEX_TURN_PAGE_LIMIT,
     ) -> BroTimelineTurnPageResponse:
+        thread = self.imported_codex_threads.get(public_thread_id)
+        if thread is None:
+            raise ValueError("Thread is not loaded; list thread page first.")
         resume_handle = self.imported_codex_thread_resume_handles.get(public_thread_id)
         if (
             resume_handle is None
@@ -676,7 +679,14 @@ class BroDetailThreadProjection:
             error=None,
         )
         self.bro_thread_timeline_page_info[public_thread_id] = info
-        return BroTimelineTurnPageResponse(thread_id=public_thread_id, turns=turns, page=info)
+        self.timeline_status[public_thread_id] = "loaded"
+        self.timeline_errors.pop(public_thread_id, None)
+        return BroTimelineTurnPageResponse(
+            thread_id=public_thread_id,
+            thread=self.with_timeline_state([thread])[0],
+            turns=turns,
+            page=info,
+        )
 
     async def unsubscribe_bro_thread(
         self,

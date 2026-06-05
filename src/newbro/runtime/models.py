@@ -49,6 +49,7 @@ class BroThreadPageResponse(BaseModel):
 
 class BroTimelineTurnPageResponse(BaseModel):
     thread_id: str
+    thread: BroThread
     turns: list[BroTimelineTurn] = Field(default_factory=list)
     page: CursorPageInfo = Field(default_factory=CursorPageInfo)
 
