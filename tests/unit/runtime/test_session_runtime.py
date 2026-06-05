@@ -1777,20 +1777,32 @@ async def test_commentary_phases_keep_turn_live_until_final_answer():
             )
         )
 
-    def turn_status():
-        return projection.bro_thread_executor_turns["thread-public"][0].status
+    def turn():
+        return projection.bro_thread_executor_turns["thread-public"][0]
 
     for cid, ctext in [("c1", "Working on it."), ("c2", "Still working.")]:
+        await thread_event(
+            "item/started",
+            {"turnId": "turn-1", "item": {"type": "agentMessage", "id": cid, "text": "", "phase": "commentary"}},
+        )
         await thread_event("item/agentMessage/delta", {"turnId": "turn-1", "itemId": cid, "delta": ctext})
-        assert turn_status() == "running"
+        assert turn().status == "running"
+        assert turn().assistant is None, "commentary must not fill the answer slot (it is a step)"
         await thread_event(
             "item/completed",
             {"turnId": "turn-1", "item": {"type": "agentMessage", "id": cid, "text": ctext, "phase": "commentary"}},
         )
-        assert turn_status() == "running", "commentary completion must not settle the turn"
+        assert turn().status == "running", "commentary completion must not settle the turn"
+        assert turn().assistant is None
 
+    # The final answer streams into the answer slot and settles the turn.
+    await thread_event(
+        "item/started",
+        {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "final", "text": "", "phase": "final_answer"}},
+    )
     await thread_event("item/agentMessage/delta", {"turnId": "turn-1", "itemId": "final", "delta": "The report"})
-    assert turn_status() == "running"
+    assert turn().status == "running"
+    assert turn().assistant is not None and turn().assistant.text == "The report"
     await thread_event(
         "item/completed",
         {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "final", "text": "The full report.", "phase": "final_answer"}},
@@ -1840,11 +1852,11 @@ async def test_turn_completed_event_settles_turn_without_final_answer_phase():
             )
         )
 
-    await thread_event("item/agentMessage/delta", {"turnId": "turn-1", "itemId": "c1", "delta": "Narrating."})
     await thread_event(
-        "item/completed",
-        {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "c1", "text": "Narrating.", "phase": "commentary"}},
+        "item/started",
+        {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "c1", "text": "", "phase": "commentary"}},
     )
+    await thread_event("item/agentMessage/delta", {"turnId": "turn-1", "itemId": "c1", "delta": "Narrating."})
     assert projection.bro_thread_executor_turns["thread-public"][0].status == "running"
 
     await thread_event("turn/completed", {"turn": {"id": "turn-1", "status": "completed"}})
@@ -1852,8 +1864,6 @@ async def test_turn_completed_event_settles_turn_without_final_answer_phase():
     turns = projection.bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].status == "completed"
-    assert turns[0].assistant is not None
-    assert turns[0].assistant.text == "Narrating."
 
 
 @pytest.mark.anyio

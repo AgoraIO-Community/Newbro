@@ -106,6 +106,7 @@ class BroDetailThreadProjection:
     open_bro_thread_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     bro_thread_executor_turns: dict[str, list[BroTimelineTurn]] = field(default_factory=dict)
     bro_thread_live_message_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict)
+    bro_thread_live_item_phase: dict[tuple[str, str, str], str] = field(default_factory=dict)
     timeline_status: dict[str, Literal["not_loaded", "loading", "loaded", "failed"]] = field(default_factory=dict)
     timeline_errors: dict[str, str] = field(default_factory=dict)
     timeline_load_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
@@ -679,6 +680,7 @@ class BroDetailThreadProjection:
             return
         if message.method not in {
             "turn/completed",
+            "item/started",
             "item/agentMessage/delta",
             "item/plan/delta",
             "item/completed",
@@ -689,6 +691,7 @@ class BroDetailThreadProjection:
         }:
             return
         if message.method in {
+            "item/started",
             "item/agentMessage/delta",
             "item/plan/delta",
             "item/completed",
@@ -963,30 +966,41 @@ class BroDetailThreadProjection:
                 )
                 return True
             role = _codex_item_role(item)
-            text = _extract_codex_item_text(item)
-            if role is None or not text:
-                return False
             item_id = item.get("id")
             item_id_text = str(item_id) if isinstance(item_id, str) and item_id else "completed"
-            status = item.get("status")
-            # Codex streams several agentMessage items per turn: 'commentary'
-            # phases are intermediate working narration, and only the
-            # 'final_answer' phase is the settled answer. A commentary completion
-            # must NOT settle the turn, otherwise the bubble settles on each
-            # commentary line and snaps back to working on the next one (a
-            # per-message settle/un-settle flicker). Items without a phase
-            # (history, older codex) keep their reported status so a lone native
-            # answer still settles.
             phase = item.get("phase")
+            # Record the agentMessage phase as soon as it is known (item/started,
+            # then item/completed) so streaming deltas — which carry no phase — can
+            # be routed: 'commentary' is intermediate working narration shown as a
+            # reasoning step, only 'final_answer' (or a phase-less native answer) is
+            # the settled answer.
+            if role == "assistant" and isinstance(item_id, str) and item_id and isinstance(phase, str) and phase:
+                self.bro_thread_live_item_phase[(subscription.public_thread_id, turn_id, item_id)] = phase
+            text = _extract_codex_item_text(item)
+            if role is None:
+                return False
+            # Commentary is surfaced via the channel-A reasoning step stream; keep
+            # the turn live but never place it in the answer slot, which would
+            # double-render the message (once as a step, once as the answer).
+            if role == "assistant" and self._selected_thread_item_is_commentary(
+                subscription.public_thread_id, turn_id, item_id if isinstance(item_id, str) else None
+            ):
+                return self._keep_selected_thread_turn_live(
+                    subscription=subscription,
+                    turn_id=turn_id,
+                    client_request_id=client_request_id,
+                    codex_goal=codex_goal,
+                    timestamp=timestamp,
+                )
+            if not text:
+                return False
+            status = item.get("status")
             default_status = status if isinstance(status, str) and status else "completed"
             if role == "user":
                 # The echoed user message completing does not finish the turn; the
                 # assistant answer is still pending, so keep the turn live (the
                 # message itself keeps its own reported status).
                 message_status = default_status
-                turn_status = "running"
-            elif phase == "commentary":
-                message_status = "running"
                 turn_status = "running"
             else:
                 message_status = default_status
@@ -1077,6 +1091,15 @@ class BroDetailThreadProjection:
         delta = params.get("delta")
         if not isinstance(item_id, str) or not item_id or not isinstance(delta, str) or not delta:
             return False
+        if self._selected_thread_item_is_commentary(subscription.public_thread_id, turn_id, item_id):
+            # Commentary streams as a reasoning step (channel-A), not the answer.
+            return self._keep_selected_thread_turn_live(
+                subscription=subscription,
+                turn_id=turn_id,
+                client_request_id=client_request_id,
+                codex_goal=codex_goal,
+                timestamp=timestamp,
+            )
         key = (subscription.public_thread_id, turn_id, item_id)
         text = f"{self.bro_thread_live_message_deltas.get(key, '')}{delta}"
         self.bro_thread_live_message_deltas[key] = text
@@ -1153,6 +1176,51 @@ class BroDetailThreadProjection:
                 self.bro_thread_executor_turns.pop(public_thread_id, None)
             return candidate.user, candidate.executor_turn_id
         return None, None
+
+    def _selected_thread_item_is_commentary(
+        self, public_thread_id: str, turn_id: str, item_id: str | None
+    ) -> bool:
+        if not isinstance(item_id, str) or not item_id:
+            return False
+        return self.bro_thread_live_item_phase.get((public_thread_id, turn_id, item_id)) == "commentary"
+
+    def _keep_selected_thread_turn_live(
+        self,
+        *,
+        subscription: "SelectedCodexThreadSubscription",
+        turn_id: str,
+        client_request_id: str | None,
+        codex_goal: str | None,
+        timestamp: str,
+    ) -> bool:
+        # Commentary agentMessages are intermediate working narration surfaced as
+        # reasoning steps (via the channel-A progress stream); keep the turn live
+        # without placing the streaming text in the answer slot, which would
+        # double-render it (once as a step, once as the answer).
+        self.upsert_bro_thread_executor_turn(
+            BroTimelineTurn(
+                turn_id=f"{subscription.public_thread_id}:codex:{turn_id}",
+                thread_id=subscription.public_thread_id,
+                persona_id=subscription.persona_id,
+                executor_id="codex",
+                owner="executor",
+                client_request_id=client_request_id,
+                executor_thread_id=subscription.codex_thread_id,
+                executor_turn_id=turn_id,
+                input_modality="unknown",
+                status="running",
+                created_at=timestamp,
+                updated_at=timestamp,
+                metadata={
+                    "source": "selected_thread_event",
+                    "executor_thread_id": subscription.codex_thread_id,
+                    "executor_turn_id": turn_id,
+                    "client_request_id": client_request_id,
+                    "codex_goal": codex_goal,
+                },
+            )
+        )
+        return True
 
     def settle_selected_thread_turn(self, *, public_thread_id: str, executor_turn_id: str) -> bool:
         turns = self.bro_thread_executor_turns.get(public_thread_id)

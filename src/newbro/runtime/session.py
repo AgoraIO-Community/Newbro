@@ -439,6 +439,10 @@ class SessionRuntime:
         event_type = message.event_type.lower()
         if event_type not in {"progress", "plan"}:
             return
+        # The final answer is rendered as the settled answer bubble, not a
+        # reasoning step; only commentary / intermediate narration is a step.
+        if message.metadata.get("phase") == "final_answer":
+            return
         text = (message.message or "").strip()
         if not text:
             return
