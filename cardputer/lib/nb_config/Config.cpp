@@ -26,4 +26,17 @@ bool decodeConfig(const std::string &blob, DeviceConfig &out) {
   return true;
 }
 
+DeviceConfig mergeDefaults(const DeviceConfig &stored, const DeviceDefaults &defaults) {
+  DeviceConfig out = stored;  // deviceToken (and everything else) preserved by default
+  if (!defaults.wifiSsid.empty()) out.wifiSsid = defaults.wifiSsid;
+  if (!defaults.wifiPassword.empty()) out.wifiPassword = defaults.wifiPassword;
+  if (!defaults.serverHost.empty()) out.serverHost = defaults.serverHost;
+  if (defaults.serverPort != 0) {
+    out.serverPort = defaults.serverPort;
+  } else if (out.serverPort == 0) {
+    out.serverPort = 443;
+  }
+  return out;
+}
+
 }  // namespace nb

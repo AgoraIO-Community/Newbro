@@ -19,6 +19,11 @@
 #include "ui/Router.h"
 #include "ui/TextScreen.h"
 
+// Optional flashed Wi-Fi/server defaults (gitignored; absent by default).
+#if __has_include("DeviceSecrets.h")
+#include "DeviceSecrets.h"
+#endif
+
 namespace {
 
 nb::ConfigStore g_store;
@@ -172,6 +177,22 @@ void setup() {
   delay(600);
 
   g_store.load(g_config);
+
+  nb::DeviceDefaults defaults;
+#ifdef NB_DEFAULT_WIFI_SSID
+  defaults.wifiSsid = NB_DEFAULT_WIFI_SSID;
+#endif
+#ifdef NB_DEFAULT_WIFI_PASSWORD
+  defaults.wifiPassword = NB_DEFAULT_WIFI_PASSWORD;
+#endif
+#ifdef NB_DEFAULT_SERVER_HOST
+  defaults.serverHost = NB_DEFAULT_SERVER_HOST;
+#endif
+#ifdef NB_DEFAULT_SERVER_PORT
+  defaults.serverPort = NB_DEFAULT_SERVER_PORT;
+#endif
+  g_config = nb::mergeDefaults(g_config, defaults);
+
   runFirstRunSetupIfNeeded();
 
   nb::screen::status("Connecting", g_config.wifiSsid);

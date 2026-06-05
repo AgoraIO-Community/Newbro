@@ -21,4 +21,17 @@ struct DeviceConfig {
 std::string encodeConfig(const DeviceConfig &c);
 bool decodeConfig(const std::string &blob, DeviceConfig &out);
 
+// Optional compile-time defaults (from a flashed DeviceSecrets.h). An empty
+// string / zero port means "not set" and leaves the stored value in place.
+struct DeviceDefaults {
+  std::string wifiSsid;
+  std::string wifiPassword;
+  std::string serverHost;
+  uint16_t serverPort = 0;
+};
+
+// Overlay defaults onto a stored config: defaults win for non-empty Wi-Fi/server
+// fields; the device token is always kept from `stored`.
+DeviceConfig mergeDefaults(const DeviceConfig &stored, const DeviceDefaults &defaults);
+
 }  // namespace nb
