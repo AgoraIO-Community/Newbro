@@ -133,14 +133,14 @@ async def test_direct_ptt_selected_imported_thread_does_not_create_task_before_e
         runtime_session = app.state.runtime_container.get_session(session_id)
         await _put_connected_audio_forge(runtime_session, app.state.runtime_container.executor_node_manager, websocket)
 
-        runtime_session._imported_codex_threads["codex-import-audio-1"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["codex-import-audio-1"] = BroThread(
             thread_id="codex-import-audio-1",
             persona_id="forge",
             title="Imported",
             status="completed",
             has_resume_handle=True,
         )
-        runtime_session._imported_codex_thread_resume_handles["codex-import-audio-1"] = AgentResumeHandle(
+        runtime_session._bro_detail_thread_projection().imported_codex_thread_resume_handles["codex-import-audio-1"] = AgentResumeHandle(
             executor_id="codex",
             session_handle="native-thread-1",
             opaque={"cwd": "/tmp/work"},
@@ -210,14 +210,14 @@ async def test_executor_audio_instruction_accepts_valid_pcm_payload_over_default
         runtime_session = app.state.runtime_container.get_session(session_id)
         await _put_connected_audio_forge(runtime_session, app.state.runtime_container.executor_node_manager, websocket)
 
-        runtime_session._imported_codex_threads["codex-import-audio-large"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["codex-import-audio-large"] = BroThread(
             thread_id="codex-import-audio-large",
             persona_id="forge",
             title="Imported",
             status="completed",
             has_resume_handle=True,
         )
-        runtime_session._imported_codex_thread_resume_handles["codex-import-audio-large"] = AgentResumeHandle(
+        runtime_session._bro_detail_thread_projection().imported_codex_thread_resume_handles["codex-import-audio-large"] = AgentResumeHandle(
             executor_id="codex",
             session_handle="native-thread-large",
             opaque={"cwd": "/tmp/work"},
@@ -627,7 +627,7 @@ async def test_executor_audio_instruction_starts_outbound_turn_for_connected_idl
                 status="idle",
             )
         )
-        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["workspace-thread"] = BroThread(
             thread_id="workspace-thread",
             persona_id="forge",
             persona_name="Forge",
@@ -735,7 +735,7 @@ async def test_executor_audio_create_new_thread_ignores_active_thread_and_starts
                 status="busy",
             )
         )
-        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["workspace-thread"] = BroThread(
             thread_id="workspace-thread",
             persona_id="forge",
             persona_name="Forge",

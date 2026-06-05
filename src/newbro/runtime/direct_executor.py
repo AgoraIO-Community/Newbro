@@ -11,7 +11,6 @@ from uuid import uuid4
 from newbro.blackboard import BlackboardStore
 from newbro.protocol import (
     AgentResumeHandle,
-    BroThread,
     ExecutionMode,
     ExecutionRun,
     ExecutionSession,
@@ -26,21 +25,16 @@ from newbro.protocol import (
     TaskMode,
     TaskStatus,
 )
+from newbro.runtime.bro_detail_thread_projection import BroDetailThreadProjection
 from newbro.runtime.executor_node_manager import ExecutorNodeManager
 
 
 LOGGER = logging.getLogger(__name__)
-BRO_THREAD_PREFIX = "bro-thread-"
-IMPORTED_CODEX_THREAD_PREFIX = "codex-import-"
 AUDIO_ACTIVE_RUN_STATUSES = {RunStatus.ASSIGNED, RunStatus.RUNNING, RunStatus.BLOCKED}
 
 
 def _elapsed_ms(started_at: float) -> int:
     return int((time.perf_counter() - started_at) * 1000)
-
-
-def _new_bro_thread_id() -> str:
-    return f"{BRO_THREAD_PREFIX}{uuid4().hex[:12]}"
 
 
 def _title_from_draft_text(text: str) -> str:
@@ -50,37 +44,11 @@ def _title_from_draft_text(text: str) -> str:
     return title or "Draft task"
 
 
-def _public_thread_id(session: ExecutionSession) -> str:
-    if isinstance(session.continuity_key, str) and session.continuity_key.startswith(BRO_THREAD_PREFIX):
-        return session.continuity_key
-    if isinstance(session.continuity_key, str) and session.continuity_key.startswith(IMPORTED_CODEX_THREAD_PREFIX):
-        return session.continuity_key
-    return session.execution_session_id
-
-
-def _session_matches_thread_id(session: ExecutionSession, thread_id: str) -> bool:
-    return thread_id in {
-        session.execution_session_id,
-        session.continuity_key or "",
-        _public_thread_id(session),
-    }
-
-
 def _task_metadata_string(task: Task | None, key: str) -> str | None:
     if task is None:
         return None
     value = task.metadata.get(key)
     return value if isinstance(value, str) and value else None
-
-
-def _task_belongs_to_persona(task: Task | None, persona_id: str) -> bool:
-    if task is None:
-        return False
-    return task.metadata.get("persona_id") == persona_id or task.metadata.get("assigned_bro_id") == persona_id
-
-
-def _task_thread_public_id(task: Task) -> str | None:
-    return _task_metadata_string(task, "target_thread_id") or _task_metadata_string(task, "bro_thread_id")
 
 
 def _workspace_name(workspace_id: str | None) -> str | None:
@@ -91,29 +59,6 @@ def _workspace_name(workspace_id: str | None) -> str | None:
         return None
     tail = normalized.replace("\\", "/").rsplit("/", 1)[-1].strip()
     return tail or normalized
-
-
-def _workspace_from_resume_handle(resume_handle: AgentResumeHandle | None) -> str | None:
-    if resume_handle is None:
-        return None
-    cwd = resume_handle.opaque.get("cwd")
-    if isinstance(cwd, str) and cwd.strip():
-        return cwd.strip()
-    workspace_id = resume_handle.opaque.get("workspace_id")
-    if isinstance(workspace_id, str) and workspace_id.strip():
-        return workspace_id.strip()
-    return None
-
-
-def _task_workspace_id(task: Task | None) -> str | None:
-    if task is None:
-        return None
-    workspace_id = task.metadata.get("workspace_id")
-    if isinstance(workspace_id, str) and workspace_id.strip():
-        return workspace_id.strip()
-    if isinstance(task.session_affinity, str) and task.session_affinity.strip():
-        return task.session_affinity.strip()
-    return None
 
 
 def mark_direct_executor_input(metadata: dict[str, object], source: str) -> dict[str, object]:
@@ -144,8 +89,7 @@ class DirectExecutorInteraction:
     session_id: str
     blackboard: BlackboardStore
     executor_node_manager: ExecutorNodeManager
-    imported_codex_threads: dict[str, BroThread]
-    imported_codex_thread_resume_handles: dict[str, AgentResumeHandle]
+    bro_detail_thread_projection: BroDetailThreadProjection
     publish_snapshot: Callable[[], Awaitable[object]]
     observability: object | None = None
 
@@ -254,7 +198,7 @@ class DirectExecutorInteraction:
 
         resolved_workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         resolve_started_at = time.perf_counter()
-        thread_target = await self._resolve_thread_target(
+        thread_target = await self._thread_target(
             persona=persona,
             target_thread_id=target_thread_id,
             create_new_thread=create_new_thread,
@@ -471,7 +415,7 @@ class DirectExecutorInteraction:
         )
         return instruction
 
-    async def _resolve_thread_target(
+    async def _thread_target(
         self,
         *,
         persona,
@@ -479,61 +423,20 @@ class DirectExecutorInteraction:
         create_new_thread: bool,
         workspace_id: str | None = None,
     ) -> ThreadTarget:
-        if target_thread_id and create_new_thread:
-            raise ValueError("Direct Bro Detail instruction cannot target an existing thread and create a new thread.")
-        if target_thread_id and workspace_id:
-            raise ValueError("Direct Bro Detail instruction cannot target an existing thread and choose a new workspace.")
-
-        if create_new_thread:
-            await self._validate_new_codex_thread_workspace(persona=persona, workspace_id=workspace_id)
-            thread_id = _new_bro_thread_id()
-            return ThreadTarget(
-                public_thread_id=thread_id,
-                continuity_key=thread_id,
-                execution_session=None,
-                resume_handle=None,
+        public_thread_id, continuity_key, execution_session, resume_handle = (
+            await self.bro_detail_thread_projection.resolve_bro_thread_target(
+                persona=persona,
+                target_thread_id=target_thread_id,
+                create_new_thread=create_new_thread,
+                workspace_id=workspace_id,
             )
-
-        if target_thread_id:
-            session = await self._find_codex_thread_session_for_persona(
-                persona.persona_id,
-                target_thread_id,
-            )
-            if session is not None:
-                return ThreadTarget(
-                    public_thread_id=_public_thread_id(session),
-                    continuity_key=session.continuity_key or session.execution_session_id,
-                    execution_session=session,
-                    resume_handle=None,
-                )
-            imported = self.imported_codex_threads.get(target_thread_id)
-            imported_resume_handle = self.imported_codex_thread_resume_handles.get(target_thread_id)
-            if (
-                imported is not None
-                and imported.persona_id == persona.persona_id
-                and imported_resume_handle is not None
-            ):
-                return ThreadTarget(
-                    public_thread_id=imported.thread_id,
-                    continuity_key=imported.thread_id,
-                    execution_session=None,
-                    resume_handle=imported_resume_handle,
-                )
-            pending_task = await self._find_direct_task_thread_for_persona(
-                persona.persona_id,
-                target_thread_id,
-            )
-            if pending_task is not None:
-                continuity_key = _task_metadata_string(pending_task, "bro_thread_id") or target_thread_id
-                return ThreadTarget(
-                    public_thread_id=target_thread_id,
-                    continuity_key=continuity_key,
-                    execution_session=None,
-                    resume_handle=None,
-                )
-            raise ValueError("Selected Codex thread is not available for this Bro.")
-
-        raise ValueError("Direct Bro Detail instruction requires explicit thread intent.")
+        )
+        return ThreadTarget(
+            public_thread_id=public_thread_id,
+            continuity_key=continuity_key,
+            execution_session=execution_session,
+            resume_handle=resume_handle,
+        )
 
     async def _active_codex_execution_for_persona(
         self,
@@ -549,7 +452,10 @@ class DirectExecutorInteraction:
         for execution_session in await self.blackboard.list_sessions():
             if execution_session.base_executor_id != "codex" or not execution_session.active_run_id:
                 continue
-            if not _session_matches_thread_id(execution_session, target_thread_id):
+            if not self.bro_detail_thread_projection.session_matches_thread_id(
+                execution_session,
+                target_thread_id,
+            ):
                 continue
             run = await self.blackboard.get_run(execution_session.active_run_id or "")
             if run is None:
@@ -558,86 +464,6 @@ class DirectExecutorInteraction:
                 continue
             return execution_session, run
         return None, None
-
-    async def _validate_new_codex_thread_workspace(self, *, persona, workspace_id: str | None) -> None:
-        normalized_workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else ""
-        if not normalized_workspace_id:
-            raise ValueError("New Codex thread requires a workspace selection.")
-        known_workspaces = await self._known_codex_workspaces_for_persona(persona)
-        if normalized_workspace_id not in known_workspaces:
-            raise ValueError("Selected Codex workspace is not available for this Bro.")
-
-    async def _known_codex_workspaces_for_persona(self, persona) -> set[str]:
-        workspaces: set[str] = set()
-        for imported in self.imported_codex_threads.values():
-            if imported.persona_id != persona.persona_id:
-                continue
-            if imported.executor_node_id != persona.executor_node_id:
-                continue
-            if imported.workspace_id:
-                workspaces.add(imported.workspace_id)
-            cwd = imported.diagnostics.get("codex_cwd")
-            if isinstance(cwd, str) and cwd.strip():
-                workspaces.add(cwd.strip())
-        for session in await self.blackboard.list_sessions():
-            if session.base_executor_id != "codex":
-                continue
-            if session.executor_node_id != persona.executor_node_id:
-                continue
-            if not await self._session_belongs_to_persona(session, persona.persona_id):
-                continue
-            workspace_id = _workspace_from_resume_handle(session.latest_resume_handle)
-            if workspace_id:
-                workspaces.add(workspace_id)
-        for task in await self.blackboard.list_tasks():
-            if not _task_belongs_to_persona(task, persona.persona_id):
-                continue
-            if task.preferred_executor != "codex":
-                continue
-            executor_node_id = _task_metadata_string(task, "executor_node_id")
-            if executor_node_id and executor_node_id != persona.executor_node_id:
-                continue
-            workspace_id = _task_workspace_id(task)
-            if workspace_id:
-                workspaces.add(workspace_id)
-        return workspaces
-
-    async def _find_codex_thread_session_for_persona(
-        self,
-        persona_id: str,
-        thread_id: str,
-    ) -> ExecutionSession | None:
-        for session in reversed(await self.blackboard.list_sessions()):
-            if session.base_executor_id != "codex" or not _session_matches_thread_id(session, thread_id):
-                continue
-            if await self._session_belongs_to_persona(session, persona_id):
-                return session
-        return None
-
-    async def _find_direct_task_thread_for_persona(self, persona_id: str, thread_id: str) -> Task | None:
-        for task in reversed(await self.blackboard.list_tasks()):
-            if _task_thread_public_id(task) != thread_id:
-                continue
-            if _task_belongs_to_persona(task, persona_id):
-                return task
-        return None
-
-    async def _session_belongs_to_persona(self, session: ExecutionSession, persona_id: str) -> bool:
-        task_ids = list(session.run_ids)
-        if session.latest_run_id and session.latest_run_id not in task_ids:
-            task_ids.append(session.latest_run_id)
-        for run_id in task_ids:
-            run = await self.blackboard.get_run(run_id)
-            if run is None:
-                continue
-            task = await self.blackboard.get_task(run.task_id)
-            if _task_belongs_to_persona(task, persona_id):
-                return True
-        task = await self.blackboard.get_task(session.task_id)
-        if _task_belongs_to_persona(task, persona_id):
-            return True
-        persona = await self.blackboard.get_persona(persona_id)
-        return persona is not None and session.continuity_key == persona.bro_detail_session_id
 
     async def _start_text_task_from_direct_input(
         self,
@@ -771,7 +597,7 @@ class DirectExecutorInteraction:
             raise ValueError("Selected Bro's executor node does not support audio transcription instructions.")
 
         resolved_workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
-        thread_target = await self._resolve_thread_target(
+        thread_target = await self._thread_target(
             persona=persona,
             target_thread_id=target_thread_id,
             create_new_thread=create_new_thread,
@@ -977,7 +803,7 @@ class DirectExecutorInteraction:
         if not isinstance(target_thread_id, str) or not target_thread_id:
             task_thread_id = task.metadata.get("target_thread_id")
             target_thread_id = task_thread_id if isinstance(task_thread_id, str) else None
-        thread_target = await self._resolve_thread_target(
+        thread_target = await self._thread_target(
             persona=persona,
             target_thread_id=target_thread_id,
             create_new_thread=False,

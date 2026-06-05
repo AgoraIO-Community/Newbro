@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +15,7 @@ from newbro.protocol import (
     Persona,
 )
 from newbro.runtime.direct_executor import DirectExecutorInteraction
+from newbro.runtime.bro_detail_thread_projection import BroDetailThreadProjection
 from newbro.runtime.executor_node_manager import NodeConnectionState
 
 
@@ -27,6 +29,22 @@ class FakeWebSocket:
 
 async def _publish_snapshot() -> None:
     return None
+
+
+def test_direct_executor_does_not_duplicate_projection_thread_targeting():
+    source = Path("src/newbro/runtime/direct_executor.py").read_text()
+    duplicate_names = [
+        "_resolve_thread_target",
+        "_validate_new_codex_thread_workspace",
+        "_known_codex_workspaces_for_persona",
+        "_find_codex_thread_session_for_persona",
+        "_find_direct_task_thread_for_persona",
+        "_session_belongs_to_persona",
+    ]
+
+    for name in duplicate_names:
+        assert f"def {name}" not in source
+        assert f"async def {name}" not in source
 
 
 @dataclass(slots=True)
@@ -68,28 +86,31 @@ async def _harness() -> Harness:
             status="idle",
         )
     )
-    imported_threads = {
-        "codex-import-1": BroThread(
-            thread_id="codex-import-1",
-            persona_id="forge",
-            title="Imported",
-            status="completed",
-            has_resume_handle=True,
-        )
-    }
-    resume_handles = {
-        "codex-import-1": AgentResumeHandle(
-            executor_id="codex",
-            session_handle="native-thread-1",
-            opaque={"cwd": "/tmp/work"},
-        )
-    }
+    projection = BroDetailThreadProjection(
+        session_id="session-1",
+        blackboard=store,
+        executor_node_manager=manager,
+        interaction_manager=None,
+        observability=None,
+        publish_snapshot=_publish_snapshot,
+    )
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id="forge",
+        title="Imported",
+        status="completed",
+        has_resume_handle=True,
+    )
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+        opaque={"cwd": "/tmp/work"},
+    )
     interaction = DirectExecutorInteraction(
         session_id="session-1",
         blackboard=store,
         executor_node_manager=manager,
-        imported_codex_threads=imported_threads,
-        imported_codex_thread_resume_handles=resume_handles,
+        bro_detail_thread_projection=projection,
         publish_snapshot=_publish_snapshot,
         observability=None,
     )

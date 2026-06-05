@@ -27,6 +27,44 @@ from newbro.protocol import (
     TaskSummary,
 )
 from newbro.runtime.executor_node_manager import ExecutorNodeManager
+from .bro_detail_thread_helpers import (
+    IMPORTED_CODEX_THREAD_PREFIX,
+    SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS,
+    DateParseCache,
+    _bro_timeline_turn_from_codex_turn_event,
+    _build_bro_thread_projection,
+    _build_bro_timeline_projection,
+    _codex_item_role,
+    _codex_thread_alias_key,
+    _codex_thread_event_timestamp,
+    _codex_thread_goal,
+    _codex_thread_status,
+    _codex_thread_status_from_outbound_request,
+    _event_metadata_string,
+    _extract_codex_item_text,
+    _extract_codex_plan,
+    _imported_bro_thread_id,
+    _is_ephemeral_codex_thread,
+    _iso_from_epoch_seconds,
+    _mark_timeline_message_plan_mode,
+    _merge_timeline_turn,
+    _new_bro_thread_id,
+    _outbound_request_status_from_codex_event,
+    _public_thread_id,
+    _session_matches_thread_id,
+    _should_emit_selected_thread_plan_delta,
+    _task_belongs_to_persona,
+    _task_metadata_string,
+    _task_thread_public_id,
+    _task_updated_at,
+    _task_workspace_id,
+    _thread_progress,
+    _timeline_turns_from_codex_thread,
+    _title_from_codex_thread,
+    _title_from_draft_text,
+    _workspace_from_resume_handle,
+    _workspace_name,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -85,8 +123,6 @@ class BroDetailThreadProjection:
         personas: list[Persona],
         sync_imported_codex_threads: bool = True,
     ) -> BroDetailThreadProjectionSnapshot:
-        from newbro.runtime.session import _build_bro_thread_projection, _build_bro_timeline_projection
-
         imported_threads = (
             await self.sync_imported_codex_threads(
                 personas=personas,
@@ -127,6 +163,9 @@ class BroDetailThreadProjection:
             for thread in threads
         ]
 
+    def session_matches_thread_id(self, session: ExecutionSession, thread_id: str) -> bool:
+        return _session_matches_thread_id(session, thread_id)
+
     def executor_turn_snapshot(self) -> list[BroTimelineTurn]:
         turns: list[BroTimelineTurn] = []
         for thread_turns in self.bro_thread_executor_turns.values():
@@ -139,17 +178,6 @@ class BroDetailThreadProjection:
         personas: list[Persona],
         sessions: list[ExecutionSession],
     ) -> list[BroThread]:
-        from newbro.runtime.session import (
-            _codex_thread_alias_key,
-            _codex_thread_status,
-            _imported_bro_thread_id,
-            _is_ephemeral_codex_thread,
-            _iso_from_epoch_seconds,
-            _thread_progress,
-            _title_from_codex_thread,
-            _workspace_name,
-        )
-
         eligible_personas = [
             persona
             for persona in personas
@@ -382,8 +410,6 @@ class BroDetailThreadProjection:
         public_thread_id: str,
         resume_handle: AgentResumeHandle,
     ) -> bool:
-        from newbro.runtime.session import IMPORTED_CODEX_THREAD_PREFIX
-
         if not public_thread_id.startswith(IMPORTED_CODEX_THREAD_PREFIX):
             return False
         if public_thread_id in self.bro_thread_executor_turns:
@@ -439,8 +465,6 @@ class BroDetailThreadProjection:
         node_id: str,
         resume_handle: AgentResumeHandle,
     ) -> None:
-        from newbro.runtime.session import _codex_thread_goal, _timeline_turns_from_codex_thread
-
         native_thread_id = resume_handle.session_handle
         if not isinstance(native_thread_id, str) or not native_thread_id:
             return
@@ -512,8 +536,6 @@ class BroDetailThreadProjection:
         fallback_timestamp: str | None,
         stop_wait: bool = True,
     ) -> bool:
-        from newbro.runtime.session import SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS
-
         codex_thread_id = resume_handle.session_handle
         if not isinstance(codex_thread_id, str) or not codex_thread_id:
             return False
@@ -606,8 +628,6 @@ class BroDetailThreadProjection:
         wait: bool = True,
         cancel_pending: bool = True,
     ) -> None:
-        from newbro.runtime.session import SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS
-
         if cancel_pending:
             pending = self.selected_codex_thread_subscription_tasks.pop(persona_id, None)
             if pending is not None and not pending.done():
@@ -685,11 +705,6 @@ class BroDetailThreadProjection:
         return
 
     async def handle_codex_turn_event(self, message: CodexTurnEventMessage) -> None:
-        from newbro.runtime.session import (
-            _bro_timeline_turn_from_codex_turn_event,
-            _outbound_request_status_from_codex_event,
-        )
-
         request = await self.blackboard.get_outbound_turn_request(message.request_id)
         if request is None:
             return
@@ -740,14 +755,6 @@ class BroDetailThreadProjection:
         request: OutboundTurnRequest,
         message: CodexTurnEventMessage,
     ) -> None:
-        from newbro.runtime.session import (
-            _codex_thread_alias_key,
-            _codex_thread_status_from_outbound_request,
-            _thread_progress,
-            _title_from_draft_text,
-            _workspace_name,
-        )
-
         if not request.create_new_thread:
             return
         if not request.target_thread_id or not message.executor_thread_id:
@@ -801,8 +808,6 @@ class BroDetailThreadProjection:
         executor_thread_id: str,
         executor_turn_id: str,
     ) -> str | None:
-        from newbro.runtime.session import _event_metadata_string, _task_metadata_string, _task_thread_public_id, _task_updated_at
-
         tasks = await self.blackboard.list_tasks()
         task_by_id = {task.task_id: task for task in tasks}
         for run in await self.blackboard.list_runs():
@@ -870,17 +875,6 @@ class BroDetailThreadProjection:
         message: CodexThreadEventMessage,
         subscription: SelectedCodexThreadSubscription,
     ) -> bool:
-        from newbro.runtime.session import (
-            DateParseCache,
-            _codex_item_role,
-            _codex_thread_event_timestamp,
-            _codex_thread_goal,
-            _extract_codex_item_text,
-            _extract_codex_plan,
-            _mark_timeline_message_plan_mode,
-            _should_emit_selected_thread_plan_delta,
-        )
-
         params = message.params
         if message.method in {"thread/goal/updated", "thread/goal/cleared"}:
             if message.method == "thread/goal/cleared":
@@ -1097,8 +1091,6 @@ class BroDetailThreadProjection:
         plan_turn_id: str,
         plan_timestamp: str,
     ) -> tuple[BroTimelineMessage | None, str | None]:
-        from newbro.runtime.session import DateParseCache
-
         turns = list(self.bro_thread_executor_turns.get(public_thread_id, []))
         plan_time = DateParseCache.parse(plan_timestamp)
         for index in range(len(turns) - 1, -1, -1):
@@ -1127,8 +1119,6 @@ class BroDetailThreadProjection:
         return None, None
 
     def upsert_bro_thread_executor_turn(self, turn: BroTimelineTurn) -> None:
-        from newbro.runtime.session import _merge_timeline_turn
-
         turns = list(self.bro_thread_executor_turns.get(turn.thread_id, []))
         existing_index = next(
             (
@@ -1167,8 +1157,6 @@ class BroDetailThreadProjection:
         create_new_thread: bool,
         workspace_id: str | None = None,
     ) -> tuple[str, str, ExecutionSession | None, AgentResumeHandle | None]:
-        from newbro.runtime.session import _new_bro_thread_id, _public_thread_id, _task_metadata_string
-
         if target_thread_id and create_new_thread:
             raise ValueError("Direct Bro Detail instruction cannot target an existing thread and create a new thread.")
         if target_thread_id and workspace_id:
@@ -1214,13 +1202,6 @@ class BroDetailThreadProjection:
             raise ValueError("Selected Codex workspace is not available for this Bro.")
 
     async def known_codex_workspaces_for_persona(self, persona: Persona) -> set[str]:
-        from newbro.runtime.session import (
-            _task_belongs_to_persona,
-            _task_metadata_string,
-            _task_workspace_id,
-            _workspace_from_resume_handle,
-        )
-
         workspaces: set[str] = set()
         for imported in self.imported_codex_threads.values():
             if imported.persona_id != persona.persona_id:
@@ -1260,8 +1241,6 @@ class BroDetailThreadProjection:
         persona_id: str,
         thread_id: str,
     ) -> ExecutionSession | None:
-        from newbro.runtime.session import _session_matches_thread_id
-
         for session in reversed(await self.blackboard.list_sessions()):
             if session.base_executor_id != "codex" or not _session_matches_thread_id(session, thread_id):
                 continue
@@ -1270,8 +1249,6 @@ class BroDetailThreadProjection:
         return None
 
     async def find_direct_task_thread_for_persona(self, persona_id: str, thread_id: str) -> Task | None:
-        from newbro.runtime.session import _task_belongs_to_persona, _task_thread_public_id
-
         for task in reversed(await self.blackboard.list_tasks()):
             if _task_thread_public_id(task) != thread_id:
                 continue
@@ -1280,8 +1257,6 @@ class BroDetailThreadProjection:
         return None
 
     async def session_belongs_to_persona(self, session: ExecutionSession, persona_id: str) -> bool:
-        from newbro.runtime.session import _task_belongs_to_persona
-
         task_ids = list(session.run_ids)
         if session.latest_run_id and session.latest_run_id not in task_ids:
             task_ids.append(session.latest_run_id)

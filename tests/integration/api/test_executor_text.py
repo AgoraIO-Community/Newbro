@@ -64,14 +64,14 @@ async def test_direct_text_selected_imported_thread_does_not_create_task_before_
         runtime_session = app.state.runtime_container.get_session(session_id)
         await _put_connected_forge(runtime_session, app.state.runtime_container.executor_node_manager, websocket)
 
-        runtime_session._imported_codex_threads["codex-import-1"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["codex-import-1"] = BroThread(
             thread_id="codex-import-1",
             persona_id="forge",
             title="Imported",
             status="completed",
             has_resume_handle=True,
         )
-        runtime_session._imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        runtime_session._bro_detail_thread_projection().imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
             executor_id="codex",
             session_handle="native-thread-1",
             opaque={"cwd": "/tmp/work"},
@@ -170,7 +170,7 @@ async def test_executor_text_instruction_rejects_unknown_new_thread_workspace(tm
         session_id = (await client.post("/api/sessions")).json()["session_id"]
         runtime_session = app.state.runtime_container.get_session(session_id)
         await _put_connected_forge(runtime_session, app.state.runtime_container.executor_node_manager)
-        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["workspace-thread"] = BroThread(
             thread_id="workspace-thread",
             persona_id="forge",
             persona_name="Forge",
@@ -326,7 +326,7 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
                 status="idle",
             )
         )
-        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["workspace-thread"] = BroThread(
             thread_id="workspace-thread",
             persona_id="forge",
             persona_name="Forge",
@@ -336,7 +336,7 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
             workspace_name="work",
             title="Known workspace",
         )
-        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["workspace-thread"] = BroThread(
             thread_id="workspace-thread",
             persona_id="forge",
             persona_name="Forge",
@@ -422,7 +422,7 @@ async def test_open_new_direct_thread_does_not_duplicate_sent_text_as_history(
                 status="idle",
             )
         )
-        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["workspace-thread"] = BroThread(
             thread_id="workspace-thread",
             persona_id="forge",
             persona_name="Forge",
@@ -846,7 +846,7 @@ async def test_open_imported_codex_thread_loads_native_messages_without_task_hyd
 
         snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
         assert list_calls == 1
-        runtime_session._last_codex_thread_sync_monotonic = 0
+        runtime_session._bro_detail_thread_projection().last_codex_thread_sync_monotonic = 0
         original_thread_ids = [thread["thread_id"] for thread in snapshot["bro_threads"]]
         imported_thread = next(
             thread
@@ -1163,7 +1163,7 @@ async def test_sync_imported_codex_threads_skips_ephemeral_entries(
         assert imported[0]["workspace_id"] == "/Users/zhangqianze/Documents/Synopse"
         assert imported[0]["diagnostics"].get("ephemeral") is False
 
-        workspaces = await runtime_session._known_codex_workspaces_for_persona(
+        workspaces = await runtime_session._bro_detail_thread_projection().known_codex_workspaces_for_persona(
             await runtime_session.blackboard.get_persona("forge")
         )
         assert "/Users/zhangqianze/Documents/Synopse" in workspaces

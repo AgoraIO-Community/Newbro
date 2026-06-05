@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,6 +11,65 @@ from newbro.runtime import Settings
 from newbro.runtime.bro_detail_thread_projection import BroDetailThreadProjection
 from newbro.runtime.executor_node_manager import NodeConnectionState
 from newbro.runtime.session import create_session_runtime
+
+
+def test_projection_module_does_not_import_session_runtime_helpers():
+    source = Path("src/newbro/runtime/bro_detail_thread_projection.py").read_text()
+
+    assert "from newbro.runtime.session import" not in source
+
+
+def test_session_runtime_does_not_proxy_projection_private_methods():
+    source = Path("src/newbro/runtime/session.py").read_text()
+    proxy_names = [
+        "_sync_imported_codex_threads",
+        "_open_bro_thread_locked",
+        "_should_load_bro_thread_timeline",
+        "_load_bro_thread_timeline",
+        "_codex_thread_open_needs_import_sync",
+        "_replace_selected_codex_thread_subscription",
+        "_schedule_selected_codex_thread_subscription",
+        "_stop_selected_codex_thread_subscription",
+        "_attach_outbound_new_thread_resume_handle",
+        "_client_request_id_for_selected_thread_turn",
+        "_apply_codex_thread_timeline_event",
+        "_pop_selected_thread_pending_user_turn",
+        "_upsert_bro_thread_executor_turn",
+        "_resolve_bro_thread_target",
+        "_validate_new_codex_thread_workspace",
+        "_known_codex_workspaces_for_persona",
+        "_find_codex_thread_session_for_persona",
+        "_find_direct_task_thread_for_persona",
+        "_session_belongs_to_persona",
+    ]
+
+    for name in proxy_names:
+        assert f"def {name}" not in source
+        assert f"async def {name}" not in source
+
+
+def test_session_runtime_does_not_proxy_projection_state():
+    source = Path("src/newbro/runtime/session.py").read_text()
+    proxy_names = [
+        "_imported_codex_threads",
+        "_imported_codex_thread_resume_handles",
+        "_codex_thread_public_id_aliases",
+        "_codex_thread_sync_lock",
+        "_last_codex_thread_sync_monotonic",
+        "_selected_codex_thread_subscriptions",
+        "_selected_codex_thread_subscription_tasks",
+        "_open_bro_thread_locks",
+        "_bro_thread_executor_turns",
+        "_bro_thread_timeline_status",
+        "_bro_thread_timeline_errors",
+        "_bro_thread_live_message_deltas",
+        "_bro_thread_live_plan_deltas",
+        "_bro_thread_live_plan_emitted_text",
+        "_bro_thread_goals",
+    ]
+
+    for name in proxy_names:
+        assert f"def {name}" not in source
 
 
 async def _projection_harness():
