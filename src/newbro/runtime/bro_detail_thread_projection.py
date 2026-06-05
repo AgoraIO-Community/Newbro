@@ -27,7 +27,12 @@ from newbro.protocol import (
     TaskSummary,
 )
 from newbro.runtime.executor_node_manager import ExecutorNodeManager
-from newbro.runtime.models import BroThreadPageResponse, BroTimelineTurnPageResponse, CursorPageInfo
+from newbro.runtime.models import (
+    BroThreadPageResponse,
+    BroThreadSubscriptionResponse,
+    BroTimelineTurnPageResponse,
+    CursorPageInfo,
+)
 from .bro_detail_thread_helpers import (
     IMPORTED_CODEX_THREAD_PREFIX,
     SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS,
@@ -107,8 +112,7 @@ class BroDetailThreadProjection:
     last_codex_thread_sync_monotonic: float = 0.0
     codex_thread_sync_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     selected_codex_thread_subscriptions: dict[str, SelectedCodexThreadSubscription] = field(default_factory=dict)
-    selected_codex_thread_subscription_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
-    open_bro_thread_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+    subscribe_bro_thread_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     bro_thread_executor_turns: dict[str, list[BroTimelineTurn]] = field(default_factory=dict)
     bro_thread_live_message_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict)
     bro_thread_live_item_phase: dict[tuple[str, str, str], str] = field(default_factory=dict)
@@ -408,12 +412,27 @@ class BroDetailThreadProjection:
             page=info,
         )
 
-    async def open_bro_thread(
+    def bro_thread_subscription_response(
+        self,
+        *,
+        thread_id: str,
+        persona_id: str,
+        subscribed: bool,
+    ) -> BroThreadSubscriptionResponse:
+        return BroThreadSubscriptionResponse(
+            thread_id=thread_id,
+            persona_id=persona_id,
+            subscribed=subscribed,
+            timeline_status=self.timeline_status.get(thread_id, "not_loaded"),
+            timeline_error=self.timeline_errors.get(thread_id),
+        )
+
+    async def subscribe_bro_thread(
         self,
         *,
         target_persona_id: str,
         thread_id: str,
-    ) -> object:
+    ) -> BroThreadSubscriptionResponse:
         persona = await self.blackboard.get_persona(target_persona_id)
         if persona is None:
             raise ValueError("Selected Bro is not available.")
@@ -422,12 +441,16 @@ class BroDetailThreadProjection:
         if not self.executor_node_manager.is_executor_connected("codex", node_id=persona.executor_node_id):
             raise ValueError("Selected Bro's Codex executor node is not connected.")
 
-        sessions = await self.blackboard.list_sessions()
-        if await self.codex_thread_open_needs_import_sync(persona=persona, target_thread_id=thread_id):
-            await self.sync_imported_codex_threads(
-                personas=await self.blackboard.list_personas(),
-                sessions=sessions,
-            )
+        if thread_id.startswith(IMPORTED_CODEX_THREAD_PREFIX):
+            imported = self.imported_codex_threads.get(thread_id)
+            imported_resume_handle = self.imported_codex_thread_resume_handles.get(thread_id)
+            if (
+                imported is None
+                or imported.persona_id != persona.persona_id
+                or imported_resume_handle is None
+            ):
+                raise ValueError("Thread is not loaded; list thread page first.")
+
         resolved_thread_id, thread_continuity_key, selected_session, imported_resume_handle = await self.resolve_bro_thread_target(
             persona=persona,
             target_thread_id=thread_id,
@@ -442,16 +465,20 @@ class BroDetailThreadProjection:
             or not isinstance(resume_handle.session_handle, str)
             or not resume_handle.session_handle
         ):
-            return await self.publish_snapshot()
+            return self.bro_thread_subscription_response(
+                thread_id=resolved_thread_id,
+                persona_id=persona.persona_id,
+                subscribed=False,
+            )
 
         node_id = selected_session.executor_node_id if selected_session is not None else persona.executor_node_id
         if not node_id:
             raise ValueError("Selected Codex thread is not connected to an executor node.")
 
-        if persona.persona_id not in self.open_bro_thread_locks:
-            self.open_bro_thread_locks[persona.persona_id] = asyncio.Lock()
-        async with self.open_bro_thread_locks[persona.persona_id]:
-            return await self._open_bro_thread_locked(
+        if persona.persona_id not in self.subscribe_bro_thread_locks:
+            self.subscribe_bro_thread_locks[persona.persona_id] = asyncio.Lock()
+        async with self.subscribe_bro_thread_locks[persona.persona_id]:
+            return await self._subscribe_bro_thread_locked(
                 persona=persona,
                 resolved_thread_id=resolved_thread_id,
                 thread_continuity_key=thread_continuity_key,
@@ -459,7 +486,7 @@ class BroDetailThreadProjection:
                 node_id=node_id,
             )
 
-    async def _open_bro_thread_locked(
+    async def _subscribe_bro_thread_locked(
         self,
         *,
         persona: Persona,
@@ -467,13 +494,9 @@ class BroDetailThreadProjection:
         thread_continuity_key: str,
         resume_handle: AgentResumeHandle,
         node_id: str,
-    ) -> object:
+    ) -> BroThreadSubscriptionResponse:
         imported_thread = self.imported_codex_threads.get(resolved_thread_id)
         current_subscription = self.selected_codex_thread_subscriptions.get(persona.persona_id)
-        should_load_timeline = self.should_load_bro_thread_timeline(
-            public_thread_id=resolved_thread_id,
-            resume_handle=resume_handle,
-        )
         if current_subscription is not None:
             same = (
                 current_subscription.public_thread_id == resolved_thread_id
@@ -481,32 +504,27 @@ class BroDetailThreadProjection:
                 and current_subscription.node_id == node_id
             )
             if same:
-                if should_load_timeline:
-                    await self.load_bro_thread_timeline(
-                        persona=persona,
-                        public_thread_id=resolved_thread_id,
-                        node_id=node_id,
-                        resume_handle=resume_handle,
-                    )
-                return await self.publish_snapshot()
+                return self.bro_thread_subscription_response(
+                    thread_id=resolved_thread_id,
+                    persona_id=persona.persona_id,
+                    subscribed=True,
+                )
             await self.stop_selected_codex_thread_subscription(persona_id=persona.persona_id, wait=False)
 
-        self.schedule_selected_codex_thread_subscription(
+        await self.replace_selected_codex_thread_subscription(
             persona=persona,
             public_thread_id=resolved_thread_id,
             thread_continuity_key=thread_continuity_key,
             node_id=node_id,
             resume_handle=resume_handle,
             fallback_timestamp=imported_thread.updated_at if imported_thread is not None else None,
+            stop_wait=False,
         )
-        if should_load_timeline:
-            await self.load_bro_thread_timeline(
-                persona=persona,
-                public_thread_id=resolved_thread_id,
-                node_id=node_id,
-                resume_handle=resume_handle,
-            )
-        return await self.publish_snapshot()
+        return self.bro_thread_subscription_response(
+            thread_id=resolved_thread_id,
+            persona_id=persona.persona_id,
+            subscribed=True,
+        )
 
     def should_load_bro_thread_timeline(
         self,
@@ -660,28 +678,26 @@ class BroDetailThreadProjection:
         self.bro_thread_timeline_page_info[public_thread_id] = info
         return BroTimelineTurnPageResponse(thread_id=public_thread_id, turns=turns, page=info)
 
-    async def codex_thread_open_needs_import_sync(self, *, persona: Persona, target_thread_id: str) -> bool:
-        if await self.find_codex_thread_session_for_persona(persona.persona_id, target_thread_id) is not None:
-            return False
-        imported = self.imported_codex_threads.get(target_thread_id)
-        imported_resume_handle = self.imported_codex_thread_resume_handles.get(target_thread_id)
-        return not (
-            imported is not None
-            and imported.persona_id == persona.persona_id
-            and imported_resume_handle is not None
-        )
-
-    async def close_bro_thread(
+    async def unsubscribe_bro_thread(
         self,
         *,
         target_persona_id: str,
         thread_id: str | None = None,
-    ) -> object:
-        await self.stop_selected_codex_thread_subscription(
-            persona_id=target_persona_id,
-            public_thread_id=thread_id,
-        )
-        return await self.publish_snapshot()
+    ) -> BroThreadSubscriptionResponse:
+        if target_persona_id not in self.subscribe_bro_thread_locks:
+            self.subscribe_bro_thread_locks[target_persona_id] = asyncio.Lock()
+        async with self.subscribe_bro_thread_locks[target_persona_id]:
+            current = self.selected_codex_thread_subscriptions.get(target_persona_id)
+            response_thread_id = thread_id or (current.public_thread_id if current is not None else "")
+            await self.stop_selected_codex_thread_subscription(
+                persona_id=target_persona_id,
+                public_thread_id=thread_id,
+            )
+            return self.bro_thread_subscription_response(
+                thread_id=response_thread_id,
+                persona_id=target_persona_id,
+                subscribed=False,
+            )
 
     async def replace_selected_codex_thread_subscription(
         self,
@@ -708,24 +724,13 @@ class BroDetailThreadProjection:
         await self.stop_selected_codex_thread_subscription(
             persona_id=persona.persona_id,
             wait=stop_wait,
-            cancel_pending=False,
         )
         subscription_id = f"codex-sub-{uuid4().hex[:12]}"
         workspace_id = None
         cwd = resume_handle.opaque.get("cwd")
         if isinstance(cwd, str) and cwd:
             workspace_id = cwd
-        await self.executor_node_manager.subscribe_codex_thread(
-            node_id=node_id,
-            subscription_id=subscription_id,
-            session_id=self.session_id,
-            target_persona_id=persona.persona_id,
-            target_thread_id=public_thread_id,
-            thread_id=codex_thread_id,
-            workspace_id=workspace_id,
-            timeout_seconds=SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS,
-        )
-        self.selected_codex_thread_subscriptions[persona.persona_id] = SelectedCodexThreadSubscription(
+        subscription = SelectedCodexThreadSubscription(
             subscription_id=subscription_id,
             persona_id=persona.persona_id,
             public_thread_id=public_thread_id,
@@ -735,48 +740,32 @@ class BroDetailThreadProjection:
             resume_handle=resume_handle,
             fallback_timestamp=fallback_timestamp,
         )
+        self.selected_codex_thread_subscriptions[persona.persona_id] = subscription
+        try:
+            await self.executor_node_manager.subscribe_codex_thread(
+                node_id=node_id,
+                subscription_id=subscription_id,
+                session_id=self.session_id,
+                target_persona_id=persona.persona_id,
+                target_thread_id=public_thread_id,
+                thread_id=codex_thread_id,
+                workspace_id=workspace_id,
+                timeout_seconds=SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:
+            if self.selected_codex_thread_subscriptions.get(persona.persona_id) is subscription:
+                self.selected_codex_thread_subscriptions.pop(persona.persona_id, None)
+            cleanup_task = asyncio.create_task(
+                self._unsubscribe_selected_codex_thread(persona_id=persona.persona_id, current=subscription)
+            )
+            await asyncio.shield(cleanup_task)
+            raise
+        except Exception:
+            if self.selected_codex_thread_subscriptions.get(persona.persona_id) is subscription:
+                self.selected_codex_thread_subscriptions.pop(persona.persona_id, None)
+            await self._unsubscribe_selected_codex_thread(persona_id=persona.persona_id, current=subscription)
+            raise
         return True
-
-    def schedule_selected_codex_thread_subscription(
-        self,
-        *,
-        persona: Persona,
-        public_thread_id: str,
-        thread_continuity_key: str,
-        node_id: str,
-        resume_handle: AgentResumeHandle,
-        fallback_timestamp: str | None,
-    ) -> None:
-        existing = self.selected_codex_thread_subscription_tasks.pop(persona.persona_id, None)
-        if existing is not None and not existing.done():
-            existing.cancel()
-
-        async def subscribe() -> None:
-            try:
-                await self.replace_selected_codex_thread_subscription(
-                    persona=persona,
-                    public_thread_id=public_thread_id,
-                    thread_continuity_key=thread_continuity_key,
-                    node_id=node_id,
-                    resume_handle=resume_handle,
-                    fallback_timestamp=fallback_timestamp,
-                    stop_wait=False,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                LOGGER.warning(
-                    "Selected Codex thread subscription failed for %s after open: %s",
-                    resume_handle.session_handle,
-                    exc,
-                )
-            finally:
-                current = self.selected_codex_thread_subscription_tasks.get(persona.persona_id)
-                if current is task:
-                    self.selected_codex_thread_subscription_tasks.pop(persona.persona_id, None)
-
-        task = asyncio.create_task(subscribe())
-        self.selected_codex_thread_subscription_tasks[persona.persona_id] = task
 
     async def stop_selected_codex_thread_subscription(
         self,
@@ -784,12 +773,7 @@ class BroDetailThreadProjection:
         persona_id: str,
         public_thread_id: str | None = None,
         wait: bool = True,
-        cancel_pending: bool = True,
     ) -> None:
-        if cancel_pending:
-            pending = self.selected_codex_thread_subscription_tasks.pop(persona_id, None)
-            if pending is not None and not pending.done():
-                pending.cancel()
         current = self.selected_codex_thread_subscriptions.get(persona_id)
         if current is None:
             return
@@ -798,31 +782,39 @@ class BroDetailThreadProjection:
         self.selected_codex_thread_subscriptions.pop(persona_id, None)
 
         async def unsubscribe() -> None:
-            try:
-                response = await self.executor_node_manager.unsubscribe_codex_thread(
-                    node_id=current.node_id,
-                    subscription_id=current.subscription_id,
-                    thread_id=current.codex_thread_id,
-                    timeout_seconds=SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS,
-                )
-                status = response.status if response is not None else "node_unavailable"
-            except Exception as exc:
-                status = f"error:{exc}"
-            LOGGER.info(
-                "Stopped selected Codex thread subscription",
-                extra={
-                    "session_id": self.session_id,
-                    "persona_id": persona_id,
-                    "public_thread_id": current.public_thread_id,
-                    "codex_thread_id": current.codex_thread_id,
-                    "unsubscribe_status": status,
-                },
-            )
+            await self._unsubscribe_selected_codex_thread(persona_id=persona_id, current=current)
 
         if not wait:
             asyncio.create_task(unsubscribe())
             return
         await unsubscribe()
+
+    async def _unsubscribe_selected_codex_thread(
+        self,
+        *,
+        persona_id: str,
+        current: SelectedCodexThreadSubscription,
+    ) -> None:
+        try:
+            response = await self.executor_node_manager.unsubscribe_codex_thread(
+                node_id=current.node_id,
+                subscription_id=current.subscription_id,
+                thread_id=current.codex_thread_id,
+                timeout_seconds=SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS,
+            )
+            status = response.status if response is not None else "node_unavailable"
+        except Exception as exc:
+            status = f"error:{exc}"
+        LOGGER.info(
+            "Stopped selected Codex thread subscription",
+            extra={
+                "session_id": self.session_id,
+                "persona_id": persona_id,
+                "public_thread_id": current.public_thread_id,
+                "codex_thread_id": current.codex_thread_id,
+                "unsubscribe_status": status,
+            },
+        )
 
     async def handle_codex_thread_event(self, message: CodexThreadEventMessage) -> None:
         current = self.selected_codex_thread_subscriptions.get(message.target_persona_id)

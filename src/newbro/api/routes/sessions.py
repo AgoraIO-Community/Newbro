@@ -5,7 +5,7 @@ from newbro.api.models import DiagnosticTimelineResponse, SessionResponse
 from newbro.api.public_auth import require_public_user, require_session_owner, require_session_owner_or_internal
 from newbro.api.snapshots import scope_session_snapshot_for_user
 from newbro.observability.schema import LEVEL_PRIORITY
-from newbro.runtime.models import BroListResponse
+from newbro.runtime.models import BroListResponse, BroThreadSubscriptionResponse
 
 router = APIRouter()
 
@@ -140,7 +140,7 @@ class VoiceTargetRequest(BaseModel):
     target_persona_id: str
 
 
-class OpenBroThreadRequest(BaseModel):
+class BroThreadSubscriptionRequest(BaseModel):
     target_persona_id: str
 
 
@@ -203,72 +203,64 @@ async def list_bro_timeline_page(
         ) from exc
 
 
-@router.post("/sessions/{session_id}/bro-threads/{thread_id}/open")
-async def open_bro_thread(
+@router.post(
+    "/sessions/{session_id}/bro-threads/{thread_id}/subscribe",
+    response_model=BroThreadSubscriptionResponse,
+)
+async def subscribe_bro_thread(
     session_id: str,
     thread_id: str,
-    body: OpenBroThreadRequest,
+    body: BroThreadSubscriptionRequest,
     request: Request,
-):
-    user = await require_session_owner_or_internal(request, session_id)
+) -> BroThreadSubscriptionResponse:
+    await require_session_owner_or_internal(request, session_id)
     container = request.app.state.runtime_container
     try:
         session = container.get_session(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     try:
-        snapshot = await session.open_bro_thread(
+        return await session.subscribe_bro_thread(
             target_persona_id=body.target_persona_id,
             thread_id=thread_id,
         )
     except TimeoutError as exc:
         raise HTTPException(
             status_code=409,
-            detail=_conflict_detail(exc, "Timed out reading Codex thread history."),
+            detail=_conflict_detail(exc, "Timed out subscribing to this thread."),
         ) from exc
     except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=_conflict_detail(exc, "Unable to open this thread.")) from exc
-    if user is None:
-        return snapshot
-    return await scope_session_snapshot_for_user(
-        request.app.state.public_auth_store,
-        user,
-        snapshot,
-    )
+        raise HTTPException(status_code=409, detail=_conflict_detail(exc, "Unable to subscribe to this thread.")) from exc
 
 
-@router.delete("/sessions/{session_id}/bro-threads/{thread_id}/open")
-async def close_bro_thread(
+@router.delete(
+    "/sessions/{session_id}/bro-threads/{thread_id}/subscribe",
+    response_model=BroThreadSubscriptionResponse,
+)
+async def unsubscribe_bro_thread(
     session_id: str,
     thread_id: str,
-    body: OpenBroThreadRequest,
+    body: BroThreadSubscriptionRequest,
     request: Request,
-):
-    user = await require_session_owner_or_internal(request, session_id)
+) -> BroThreadSubscriptionResponse:
+    await require_session_owner_or_internal(request, session_id)
     container = request.app.state.runtime_container
     try:
         session = container.get_session(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     try:
-        snapshot = await session.close_bro_thread(
+        return await session.unsubscribe_bro_thread(
             target_persona_id=body.target_persona_id,
             thread_id=thread_id,
         )
     except TimeoutError as exc:
         raise HTTPException(
             status_code=409,
-            detail=_conflict_detail(exc, "Timed out closing Codex thread history."),
+            detail=_conflict_detail(exc, "Timed out unsubscribing from this thread."),
         ) from exc
     except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=_conflict_detail(exc, "Unable to close this thread.")) from exc
-    if user is None:
-        return snapshot
-    return await scope_session_snapshot_for_user(
-        request.app.state.public_auth_store,
-        user,
-        snapshot,
-    )
+        raise HTTPException(status_code=409, detail=_conflict_detail(exc, "Unable to unsubscribe from this thread.")) from exc
 
 
 @router.put("/sessions/{session_id}/voice-target")

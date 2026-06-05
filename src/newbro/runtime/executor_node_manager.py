@@ -695,6 +695,9 @@ class ExecutorNodeManager:
         try:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except asyncio.CancelledError:
+            self._codex_thread_subscribe_requests.pop(request_id, None)
+            raise
         except TimeoutError as exc:
             self._codex_thread_subscribe_requests.pop(request_id, None)
             raise TimeoutError("Timed out subscribing to Codex thread updates.") from exc
@@ -736,6 +739,9 @@ class ExecutorNodeManager:
         try:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
+        except asyncio.CancelledError:
+            self._codex_thread_unsubscribe_requests.pop(request_id, None)
+            raise
         except TimeoutError as exc:
             self._codex_thread_unsubscribe_requests.pop(request_id, None)
             raise TimeoutError("Timed out unsubscribing from Codex thread updates.") from exc

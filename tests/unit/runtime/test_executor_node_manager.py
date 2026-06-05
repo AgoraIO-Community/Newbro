@@ -206,6 +206,62 @@ async def test_selected_codex_thread_subscription_request_round_trip(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_selected_codex_thread_subscription_requests_cleanup_on_cancel(tmp_path):
+    manager = ExecutorNodeManager(
+        detached_executor_types=("codex",),
+        registry=ExecutorNodeRegistry(path=tmp_path / "executor_nodes.yaml"),
+    )
+    issue = await manager.create_node(name="Node One", enabled_executors=["codex"])
+    sent_event = asyncio.Event()
+
+    class CapturingSocket:
+        async def send_json(self, payload: dict[str, object]) -> None:
+            sent_event.set()
+
+    await manager.register_connection(
+        CapturingSocket(),
+        RegisterNodeMessage(
+            node_id=issue.node.node_id,
+            token=issue.token,
+            executors=[ExecutorNodeExecutor(executor_type="codex", supports_thread_list=True)],
+        ),
+    )
+
+    task = asyncio.create_task(
+        manager.subscribe_codex_thread(
+            node_id=issue.node.node_id,
+            subscription_id="sub-1",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="public-thread-1",
+            thread_id="codex-thread-1",
+            workspace_id="/tmp/workspace",
+        )
+    )
+    await asyncio.wait_for(sent_event.wait(), timeout=1.0)
+    assert len(manager._codex_thread_subscribe_requests) == 1
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert manager._codex_thread_subscribe_requests == {}
+
+    sent_event.clear()
+    task = asyncio.create_task(
+        manager.unsubscribe_codex_thread(
+            node_id=issue.node.node_id,
+            subscription_id="sub-1",
+            thread_id="codex-thread-1",
+        )
+    )
+    await asyncio.wait_for(sent_event.wait(), timeout=1.0)
+    assert len(manager._codex_thread_unsubscribe_requests) == 1
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert manager._codex_thread_unsubscribe_requests == {}
+
+
+@pytest.mark.anyio
 async def test_request_codex_threads_sends_cursor_page_command(tmp_path):
     issue, manager = await _registered_manager_with_issue(tmp_path)
     sent_event = asyncio.Event()

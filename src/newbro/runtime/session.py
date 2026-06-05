@@ -106,6 +106,7 @@ from .models import (
     BroExecutorNodeSummary,
     BroListResponse,
     BroSummary,
+    BroThreadSubscriptionResponse,
     ConversationAppendedStreamEvent,
     ConversationHistoryEntryModel,
     ConversationSnapshot,
@@ -494,24 +495,24 @@ class SessionRuntime:
             cursor=cursor,
         )
 
-    async def open_bro_thread(
+    async def subscribe_bro_thread(
         self,
         *,
         target_persona_id: str,
         thread_id: str,
-    ) -> SessionSnapshot:
-        return await self._bro_detail_thread_projection().open_bro_thread(
+    ) -> BroThreadSubscriptionResponse:
+        return await self._bro_detail_thread_projection().subscribe_bro_thread(
             target_persona_id=target_persona_id,
             thread_id=thread_id,
         )
 
-    async def close_bro_thread(
+    async def unsubscribe_bro_thread(
         self,
         *,
         target_persona_id: str,
         thread_id: str | None = None,
-    ) -> SessionSnapshot:
-        return await self._bro_detail_thread_projection().close_bro_thread(
+    ) -> BroThreadSubscriptionResponse:
+        return await self._bro_detail_thread_projection().unsubscribe_bro_thread(
             target_persona_id=target_persona_id,
             thread_id=thread_id,
         )

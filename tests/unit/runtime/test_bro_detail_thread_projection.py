@@ -22,12 +22,10 @@ def test_session_runtime_does_not_proxy_projection_private_methods():
     source = Path("src/newbro/runtime/session.py").read_text()
     proxy_names = [
         "_sync_imported_codex_threads",
-        "_open_bro_thread_locked",
+        "_subscribe_bro_thread_locked",
         "_should_load_bro_thread_timeline",
         "_load_bro_thread_timeline",
-        "_codex_thread_open_needs_import_sync",
         "_replace_selected_codex_thread_subscription",
-        "_schedule_selected_codex_thread_subscription",
         "_stop_selected_codex_thread_subscription",
         "_attach_outbound_new_thread_resume_handle",
         "_client_request_id_for_selected_thread_turn",
@@ -56,8 +54,7 @@ def test_session_runtime_does_not_proxy_projection_state():
         "_codex_thread_sync_lock",
         "_last_codex_thread_sync_monotonic",
         "_selected_codex_thread_subscriptions",
-        "_selected_codex_thread_subscription_tasks",
-        "_open_bro_thread_locks",
+        "_subscribe_bro_thread_locks",
         "_bro_thread_executor_turns",
         "_bro_thread_timeline_status",
         "_bro_thread_timeline_errors",
@@ -488,7 +485,7 @@ async def test_failed_timeline_load_retries_codex_history_request(
 
 
 @pytest.mark.anyio
-async def test_open_loaded_imported_thread_skips_history_read_but_subscribes(
+async def test_subscribe_loaded_imported_thread_skips_history_read(
     monkeypatch: pytest.MonkeyPatch,
 ):
     session, persona, projection, _publish_calls = await _projection_harness()
@@ -534,8 +531,14 @@ async def test_open_loaded_imported_thread_skips_history_read_but_subscribes(
     subscription_started = asyncio.Event()
     subscription_release = asyncio.Event()
 
+    async def fail_sync_imported_codex_threads(**kwargs):
+        raise AssertionError("subscribe must not sync imported Codex threads")
+
+    async def fail_load_bro_thread_timeline(**kwargs):
+        raise AssertionError("subscribe must not hydrate Codex history")
+
     async def fail_request_codex_thread_turns(**kwargs):
-        raise AssertionError("loaded open must not read Codex history again")
+        raise AssertionError("subscribe must not read Codex history")
 
     async def fake_subscribe_codex_thread(
         *,
@@ -563,16 +566,23 @@ async def test_open_loaded_imported_thread_skips_history_read_but_subscribes(
         subscription_started.set()
         await subscription_release.wait()
 
+    monkeypatch.setattr(projection, "sync_imported_codex_threads", fail_sync_imported_codex_threads)
+    monkeypatch.setattr(projection, "load_bro_thread_timeline", fail_load_bro_thread_timeline)
     monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fail_request_codex_thread_turns)
     monkeypatch.setattr(session.executor_node_manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
 
-    await projection.open_bro_thread(target_persona_id="forge", thread_id="codex-import-1")
+    response_task = asyncio.create_task(
+        projection.subscribe_bro_thread(target_persona_id="forge", thread_id="codex-import-1")
+    )
     await asyncio.wait_for(subscription_started.wait(), timeout=1.0)
     subscription_release.set()
-    task = projection.selected_codex_thread_subscription_tasks.get("forge")
-    if task is not None:
-        await asyncio.wait_for(task, timeout=1.0)
+    response = await asyncio.wait_for(response_task, timeout=1.0)
 
+    assert response.thread_id == "codex-import-1"
+    assert response.persona_id == "forge"
+    assert response.subscribed is True
+    assert response.timeline_status == "loaded"
+    assert response.timeline_error is None
     assert len(subscription_calls) == 1
     call = subscription_calls[0]
     assert isinstance(call["subscription_id"], str)
@@ -597,3 +607,158 @@ async def test_open_loaded_imported_thread_skips_history_read_but_subscribes(
     assert selected.codex_thread_id == "native-thread-1"
     assert selected.resume_handle == projection.imported_codex_thread_resume_handles["codex-import-1"]
     assert selected.fallback_timestamp == "2026-05-26T22:00:00+00:00"
+
+
+@pytest.mark.anyio
+async def test_subscribe_unknown_imported_thread_requires_list_page_first(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session, _persona, projection, _publish_calls = await _projection_harness()
+    session.executor_node_manager._connections_by_node["node-forge"] = NodeConnectionState(
+        websocket=object(),
+        node_id="node-forge",
+        connected_at="2026-06-03T00:00:00+00:00",
+        executors={
+            "codex": ExecutorNodeExecutor(
+                executor_type="codex",
+                supports_resume=True,
+                supports_follow_up=True,
+                supports_audio_instruction=True,
+                supports_thread_list=True,
+            )
+        },
+    )
+
+    async def fail_sync_imported_codex_threads(**kwargs):
+        raise AssertionError("subscribe must not sync imported Codex threads")
+
+    async def fail_request_codex_thread_turns(**kwargs):
+        raise AssertionError("subscribe must not read Codex history")
+
+    monkeypatch.setattr(projection, "sync_imported_codex_threads", fail_sync_imported_codex_threads)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fail_request_codex_thread_turns)
+
+    with pytest.raises(ValueError, match="Thread is not loaded; list thread page first."):
+        await projection.subscribe_bro_thread(target_persona_id="forge", thread_id="codex-import-missing")
+
+
+@pytest.mark.anyio
+async def test_unsubscribe_waits_for_in_flight_subscribe_before_stopping(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session, persona, projection, _publish_calls = await _projection_harness()
+    session.executor_node_manager._connections_by_node["node-forge"] = NodeConnectionState(
+        websocket=object(),
+        node_id="node-forge",
+        connected_at="2026-06-03T00:00:00+00:00",
+        executors={
+            "codex": ExecutorNodeExecutor(
+                executor_type="codex",
+                supports_resume=True,
+                supports_follow_up=True,
+                supports_audio_instruction=True,
+                supports_thread_list=True,
+            )
+        },
+    )
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id=persona.persona_id,
+        persona_name=persona.name,
+        executor_id="codex",
+        executor_node_id="node-forge",
+        title="Imported thread",
+        has_resume_handle=True,
+    )
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+    subscribe_started = asyncio.Event()
+    subscribe_release = asyncio.Event()
+    unsubscribe_calls: list[tuple[str, str]] = []
+
+    async def fake_subscribe_codex_thread(**_kwargs):
+        subscribe_started.set()
+        await subscribe_release.wait()
+
+    async def fake_unsubscribe_codex_thread(*, subscription_id: str, thread_id: str, **_kwargs):
+        unsubscribe_calls.append((subscription_id, thread_id))
+
+    monkeypatch.setattr(session.executor_node_manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
+
+    subscribe_task = asyncio.create_task(
+        projection.subscribe_bro_thread(target_persona_id="forge", thread_id="codex-import-1")
+    )
+    await asyncio.wait_for(subscribe_started.wait(), timeout=1.0)
+    unsubscribe_task = asyncio.create_task(
+        projection.unsubscribe_bro_thread(target_persona_id="forge", thread_id="codex-import-1")
+    )
+    await asyncio.sleep(0)
+
+    assert unsubscribe_calls == []
+
+    subscribe_release.set()
+    subscribe_response = await asyncio.wait_for(subscribe_task, timeout=1.0)
+    unsubscribe_response = await asyncio.wait_for(unsubscribe_task, timeout=1.0)
+
+    assert subscribe_response.subscribed is True
+    assert unsubscribe_response.subscribed is False
+    assert len(unsubscribe_calls) == 1
+    assert unsubscribe_calls[0][0]
+    assert unsubscribe_calls[0][1] == "native-thread-1"
+    assert "forge" not in projection.selected_codex_thread_subscriptions
+
+
+@pytest.mark.anyio
+async def test_subscribe_failure_cleans_up_provisional_executor_subscription(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session, persona, projection, _publish_calls = await _projection_harness()
+    session.executor_node_manager._connections_by_node["node-forge"] = NodeConnectionState(
+        websocket=object(),
+        node_id="node-forge",
+        connected_at="2026-06-03T00:00:00+00:00",
+        executors={
+            "codex": ExecutorNodeExecutor(
+                executor_type="codex",
+                supports_resume=True,
+                supports_follow_up=True,
+                supports_audio_instruction=True,
+                supports_thread_list=True,
+            )
+        },
+    )
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id=persona.persona_id,
+        persona_name=persona.name,
+        executor_id="codex",
+        executor_node_id="node-forge",
+        title="Imported thread",
+        has_resume_handle=True,
+    )
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+    subscribe_calls: list[str] = []
+    unsubscribe_calls: list[tuple[str, str]] = []
+
+    async def fake_subscribe_codex_thread(*, subscription_id: str, **_kwargs):
+        subscribe_calls.append(subscription_id)
+        raise TimeoutError("Timed out subscribing to Codex thread updates.")
+
+    async def fake_unsubscribe_codex_thread(*, subscription_id: str, thread_id: str, **_kwargs):
+        unsubscribe_calls.append((subscription_id, thread_id))
+
+    monkeypatch.setattr(session.executor_node_manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
+
+    with pytest.raises(TimeoutError, match="Timed out subscribing"):
+        await projection.subscribe_bro_thread(target_persona_id="forge", thread_id="codex-import-1")
+
+    assert subscribe_calls
+    assert unsubscribe_calls == [(subscribe_calls[0], "native-thread-1")]
+    assert "forge" not in projection.selected_codex_thread_subscriptions
