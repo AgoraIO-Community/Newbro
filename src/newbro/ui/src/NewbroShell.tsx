@@ -217,6 +217,30 @@ function markThreadTimeline(
   ));
 }
 
+function isExecutorConnectionErrorMessage(value: string | null | undefined): boolean {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return normalized.includes("executor node is not connected")
+    || normalized.includes("executor node not connected");
+}
+
+function clearExecutorConnectionTimelineErrors(threads: BroThread[]): BroThread[] {
+  let changed = false;
+  const next = threads.map((thread) => {
+    if (
+      thread.timeline_status !== "failed"
+      || !isExecutorConnectionErrorMessage(thread.timeline_error)
+    ) {
+      return thread;
+    }
+    changed = true;
+    return { ...thread, timeline_status: "not_loaded" as const, timeline_error: null };
+  });
+  return changed ? next : threads;
+}
+
 function replaceTimelineTurnsForThread(
   turns: BroTimelineTurn[],
   threadId: string,
@@ -436,11 +460,16 @@ function useNewbroShellState() {
   const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string; id: string; createdAt?: string }>>([]);
   const [draftSession, setDraftSession] = useState<DraftSession | null>(null);
   const [latestDraftOutputEvent, setLatestDraftOutputEvent] = useState<DraftOutputEvent | null>(null);
+  const [streamReconnectNonce, setStreamReconnectNonce] = useState(0);
   const mountedRef = useRef(false);
   const shellLoadSequenceRef = useRef(0);
+  const broListRefreshSequenceRef = useRef(0);
   const threadOpenInFlightRef = useRef(new Set<string>());
   const threadOpenLatestKeyRef = useRef<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const streamReconnectTimerRef = useRef<number | null>(null);
+  const streamSessionIdRef = useRef<string | null>(null);
+  const streamOpenedForSessionRef = useRef(false);
 
   function applySnapshot(snapshot: SessionSnapshot) {
     setTasks(snapshot.tasks ?? []);
@@ -532,7 +561,7 @@ function useNewbroShellState() {
             return await listBroThreadsPage(sessionId, {
               targetPersonaId: bro.persona_id,
               cursor: null,
-              limit: 25,
+              limit: 15,
             });
           } catch (error) {
             return {
@@ -582,6 +611,45 @@ function useNewbroShellState() {
       return;
     }
     await loadShellSession(activeShellSessionId);
+  });
+
+  const refreshBroList = useEffectEvent(async (sessionId: string) => {
+    if (!mountedRef.current) {
+      return;
+    }
+    const loadSequence = shellLoadSequenceRef.current;
+    const refreshSequence = ++broListRefreshSequenceRef.current;
+    try {
+      const broList = await listBros(sessionId);
+      if (
+        !mountedRef.current
+        || activeShellSessionId !== sessionId
+        || shellLoadSequenceRef.current !== loadSequence
+        || broListRefreshSequenceRef.current !== refreshSequence
+      ) {
+        return;
+      }
+      startTransition(() => {
+        applyBroList(broList);
+        setThreadOpenError((current) => (
+          isExecutorConnectionErrorMessage(current) ? null : current
+        ));
+        setShellError((current) => (
+          isExecutorConnectionErrorMessage(current) ? null : current
+        ));
+        setShellWarning((current) => (
+          isExecutorConnectionErrorMessage(current) ? null : current
+        ));
+        setBroThreads((current) => clearExecutorConnectionTimelineErrors(current));
+      });
+    } catch (error: unknown) {
+      if (!mountedRef.current || activeShellSessionId !== sessionId) {
+        return;
+      }
+      startTransition(() => {
+        setShellWarning(describeApiFailure(error, "Bro connection status could not refresh."));
+      });
+    }
   });
 
   const openRuntimeBroThread = useEffectEvent(async (targetPersonaId: string, threadId: string) => {
@@ -660,7 +728,7 @@ function useNewbroShellState() {
       const page = await listBroThreadsPage(activeShellSessionId, {
         targetPersonaId,
         cursor: pageInfo.next_cursor,
-        limit: 25,
+        limit: 15,
       });
       if (!mountedRef.current) {
         return;
@@ -793,15 +861,56 @@ function useNewbroShellState() {
 
   useEffect(() => {
     if (!activeShellSessionId) {
+      if (streamReconnectTimerRef.current !== null) {
+        window.clearTimeout(streamReconnectTimerRef.current);
+        streamReconnectTimerRef.current = null;
+      }
       socketRef.current = null;
+      streamSessionIdRef.current = null;
+      streamOpenedForSessionRef.current = false;
       return undefined;
     }
+    if (streamSessionIdRef.current !== activeShellSessionId) {
+      streamSessionIdRef.current = activeShellSessionId;
+      streamOpenedForSessionRef.current = false;
+    }
+    let closedByCleanup = false;
+    const scheduleReconnect = () => {
+      if (!mountedRef.current || streamReconnectTimerRef.current !== null) {
+        return;
+      }
+      streamReconnectTimerRef.current = window.setTimeout(() => {
+        streamReconnectTimerRef.current = null;
+        if (mountedRef.current) {
+          setStreamReconnectNonce((current) => current + 1);
+        }
+      }, 1000);
+    };
     const socket = openSessionStream(activeShellSessionId, {
-      onOpen: () => {},
-      onClose: () => { socketRef.current = null; },
-      onError: () => { socketRef.current = null; },
+      onOpen: () => {
+        if (streamOpenedForSessionRef.current) {
+          void refreshBroList(activeShellSessionId);
+        }
+        streamOpenedForSessionRef.current = true;
+      },
+      onClose: () => {
+        socketRef.current = null;
+        if (!closedByCleanup) {
+          scheduleReconnect();
+        }
+      },
+      onError: () => {
+        socketRef.current = null;
+        if (!closedByCleanup) {
+          scheduleReconnect();
+        }
+      },
       onMessage: (event) => {
         if (!mountedRef.current) return;
+        if (event.type === "bro_list_invalidated") {
+          void refreshBroList(activeShellSessionId);
+          return;
+        }
         if (event.type === "snapshot") {
           logDirectExecutorSnapshotMetric(activeShellSessionId, event.snapshot);
           startTransition(() => applySnapshot(event.snapshot));
@@ -856,10 +965,15 @@ function useNewbroShellState() {
     });
     socketRef.current = socket;
     return () => {
+      closedByCleanup = true;
+      if (streamReconnectTimerRef.current !== null) {
+        window.clearTimeout(streamReconnectTimerRef.current);
+        streamReconnectTimerRef.current = null;
+      }
       socket.close();
       socketRef.current = null;
     };
-  }, [activeShellSessionId]);
+  }, [activeShellSessionId, streamReconnectNonce]);
 
   useEffect(() => {
     if (!activeShellSessionId) {

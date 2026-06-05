@@ -131,6 +131,17 @@ class SnapshotStreamEvent(SessionStreamEventBase):
     snapshot: SessionSnapshot
 
 
+class BroListInvalidatedStreamEvent(SessionStreamEventBase):
+    type: Literal["bro_list_invalidated"] = "bro_list_invalidated"
+    reason: Literal[
+        "executor_node_connected",
+        "executor_node_disconnected",
+        "executor_node_changed",
+        "persona_changed",
+    ]
+    node_id: str | None = None
+
+
 class ActionAcceptedStreamEvent(SessionStreamEventBase):
     type: Literal["action_accepted"] = "action_accepted"
     request_id: str

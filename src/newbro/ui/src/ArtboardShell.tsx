@@ -79,7 +79,7 @@ type ChatMessage = {
   createdAt?: string;
 };
 
-const THREAD_LIST_PAGE_SIZE = 25;
+const THREAD_LIST_PAGE_SIZE = 15;
 
 type WorkspaceOption = {
   id: string;

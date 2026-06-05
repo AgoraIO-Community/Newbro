@@ -188,11 +188,11 @@ describe("session-client transport base URL handling", () => {
     await client.listBroThreadsPage("session-1", {
       targetPersonaId: "forge",
       cursor: "cursor-1",
-      limit: 25,
+      limit: 5,
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/sessions/session-1/bro-threads?target_persona_id=forge&limit=25&cursor=cursor-1",
+      "/api/sessions/session-1/bro-threads?target_persona_id=forge&limit=5&cursor=cursor-1",
     );
   });
 

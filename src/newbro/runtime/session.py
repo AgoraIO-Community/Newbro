@@ -102,6 +102,7 @@ from .models import (
     AssistantResponseDeltaStreamEvent,
     AssistantResponseFailedStreamEvent,
     AssistantResponseStartedStreamEvent,
+    BroListInvalidatedStreamEvent,
     BroExecutorCapabilitySummary,
     BroExecutorNodeSummary,
     BroListResponse,
@@ -461,7 +462,7 @@ class SessionRuntime:
         self,
         *,
         target_persona_id: str,
-        limit: int = 25,
+        limit: int = 15,
         cursor: str | None = None,
     ):
         persona = await self.blackboard.get_persona(target_persona_id)
@@ -747,6 +748,25 @@ class SessionRuntime:
         snapshot = await self.snapshot(sync_imported_codex_threads=sync_imported_codex_threads)
         await self._broadcast_event(self._snapshot_event(snapshot))
         return snapshot
+
+    async def publish_bro_list_invalidated(
+        self,
+        *,
+        reason: Literal[
+            "executor_node_connected",
+            "executor_node_disconnected",
+            "executor_node_changed",
+            "persona_changed",
+        ],
+        node_id: str | None = None,
+    ) -> None:
+        await self._broadcast_event(
+            BroListInvalidatedStreamEvent(
+                sequence=self._next_event_sequence(),
+                reason=reason,
+                node_id=node_id,
+            )
+        )
 
     async def initial_snapshot_event(self) -> SnapshotStreamEvent:
         return self._snapshot_event(await self.snapshot(sync_imported_codex_threads=False))

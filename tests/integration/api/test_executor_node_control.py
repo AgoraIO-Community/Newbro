@@ -177,6 +177,127 @@ async def test_executor_node_registration_requeues_waiting_task_and_completes(mo
 
 
 @pytest.mark.anyio
+async def test_executor_node_connection_invalidates_bro_list_for_subscribers(monkeypatch, tmp_path):
+    monkeypatch.setattr(node_registry, "EXECUTOR_NODES_FILE", tmp_path / "executor_nodes.yaml")
+    app = _build_app()
+    issue = await _issue_node(app, name="Node 1")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        session = app.state.runtime_container.get_session(session_id)
+        await session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id=issue.node.node_id,
+                bro_detail_session_id="detail-forge",
+            )
+        )
+        subscriber = session.subscribe()
+
+        try:
+            async def next_bro_list_invalidated():
+                deadline = asyncio.get_running_loop().time() + 1.0
+                while asyncio.get_running_loop().time() < deadline:
+                    event = await asyncio.wait_for(
+                        subscriber.get(),
+                        timeout=max(0.01, deadline - asyncio.get_running_loop().time()),
+                    )
+                    if event.type == "bro_list_invalidated":
+                        return event
+                raise AssertionError("Timed out waiting for bro_list_invalidated event.")
+
+            async with ASGIWebSocketSession(app, "/api/executors/control") as websocket:
+                await websocket.send_json(
+                    {
+                        "type": "register_node",
+                        "node_id": issue.node.node_id,
+                        "token": issue.token,
+                        "executors": [
+                            {
+                                "executor_type": "codex",
+                                "supports_resume": True,
+                                "supports_follow_up": True,
+                                "supports_pause": True,
+                                "supports_cancel": True,
+                            }
+                        ],
+                    }
+                )
+                assert (await websocket.receive_json())["type"] == "ack"
+                connected = await next_bro_list_invalidated()
+                assert connected.reason == "executor_node_connected"
+                assert connected.node_id == issue.node.node_id
+
+            disconnected = await next_bro_list_invalidated()
+            assert disconnected.reason == "executor_node_disconnected"
+            assert disconnected.node_id == issue.node.node_id
+        finally:
+            session.unsubscribe(subscriber)
+
+
+@pytest.mark.anyio
+async def test_executor_node_connection_invalidates_bro_list_on_session_websocket(monkeypatch, tmp_path):
+    monkeypatch.setattr(node_registry, "EXECUTOR_NODES_FILE", tmp_path / "executor_nodes.yaml")
+    app = _build_app()
+    issue = await _issue_node(app, name="Node 1")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        session = app.state.runtime_container.get_session(session_id)
+        await session.blackboard.put_persona(
+            Persona(
+                persona_id="forge",
+                name="Forge",
+                avatar="bro",
+                base_prompt="",
+                executor_node_id=issue.node.node_id,
+                bro_detail_session_id="detail-forge",
+            )
+        )
+
+        async def next_bro_list_invalidated(websocket):
+            deadline = asyncio.get_running_loop().time() + 1.0
+            while asyncio.get_running_loop().time() < deadline:
+                event = await websocket.receive_json(
+                    timeout=max(0.01, deadline - asyncio.get_running_loop().time()),
+                )
+                if event["type"] == "bro_list_invalidated":
+                    return event
+            raise AssertionError("Timed out waiting for bro_list_invalidated websocket event.")
+
+        async with ASGIWebSocketSession(app, f"/api/sessions/{session_id}/stream") as stream:
+            initial = await stream.receive_json()
+            assert initial["type"] == "snapshot"
+
+            async with ASGIWebSocketSession(app, "/api/executors/control") as executor:
+                await executor.send_json(
+                    {
+                        "type": "register_node",
+                        "node_id": issue.node.node_id,
+                        "token": issue.token,
+                        "executors": [
+                            {
+                                "executor_type": "codex",
+                                "supports_resume": True,
+                                "supports_follow_up": True,
+                                "supports_pause": True,
+                                "supports_cancel": True,
+                            }
+                        ],
+                    }
+                )
+                assert (await executor.receive_json())["type"] == "ack"
+                connected = await next_bro_list_invalidated(stream)
+                assert connected["reason"] == "executor_node_connected"
+                assert connected["node_id"] == issue.node.node_id
+
+            disconnected = await next_bro_list_invalidated(stream)
+            assert disconnected["reason"] == "executor_node_disconnected"
+            assert disconnected["node_id"] == issue.node.node_id
+
+
+@pytest.mark.anyio
 async def test_executor_node_registration_refreshes_imported_codex_threads_for_subscribers(monkeypatch, tmp_path):
     monkeypatch.setattr(node_registry, "EXECUTOR_NODES_FILE", tmp_path / "executor_nodes.yaml")
     app = _build_app()

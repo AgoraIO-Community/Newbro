@@ -600,6 +600,12 @@ export interface SnapshotStreamEvent extends StreamEventBase {
   snapshot: SessionSnapshot;
 }
 
+export interface BroListInvalidatedStreamEvent extends StreamEventBase {
+  type: "bro_list_invalidated";
+  reason: "executor_node_connected" | "executor_node_disconnected" | "executor_node_changed" | "persona_changed";
+  node_id: string | null;
+}
+
 export interface ActionAcceptedStreamEvent extends StreamEventBase {
   type: "action_accepted";
   request_id: string;
@@ -685,6 +691,7 @@ export interface ConversationAppendedStreamEvent extends StreamEventBase {
 
 export type SessionStreamEvent =
   | SnapshotStreamEvent
+  | BroListInvalidatedStreamEvent
   | ActionAcceptedStreamEvent
   | ActionRejectedStreamEvent
   | UserMessageAppendedStreamEvent

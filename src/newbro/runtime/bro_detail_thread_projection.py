@@ -73,7 +73,7 @@ from .bro_detail_thread_helpers import (
 )
 
 LOGGER = logging.getLogger(__name__)
-IMPORTED_CODEX_THREAD_PAGE_LIMIT = 25
+IMPORTED_CODEX_THREAD_PAGE_LIMIT = 15
 SELECTED_CODEX_TURN_PAGE_LIMIT = 15
 
 

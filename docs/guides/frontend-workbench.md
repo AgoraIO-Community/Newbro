@@ -171,7 +171,7 @@ Current behavior:
   `plan_proposal` requests are acknowledgements only; Bro Detail removes the
   proposal card after snapshot refresh and shows follow-up execution state
   through the task/run timeline or a new pending request.
-  Desktop and mobile thread pickers render long thread lists in pages of 25 and
+  Desktop and mobile thread pickers render long thread lists in pages of 15 and
   expose an inline show-more control while auto-expanding enough to keep a
   URL-selected thread visible.
 - `New thread` is a pending UI target and creates no Codex thread until the

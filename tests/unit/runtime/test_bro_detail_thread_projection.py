@@ -174,7 +174,7 @@ async def test_imported_codex_threads_snapshot_uses_first_page_only(monkeypatch:
     )
 
     async def fake_request_codex_threads(**kwargs):
-        assert kwargs["limit"] == 25
+        assert kwargs["limit"] == 15
         assert kwargs["cursor"] is None
         return CodexThreadListPage(
             threads=[
@@ -205,6 +205,7 @@ async def test_list_bro_thread_page_appends_cached_imported_threads(monkeypatch:
     session, persona, projection, _publish_calls = await _projection_harness()
 
     async def fake_request_codex_threads(**kwargs):
+        assert kwargs["limit"] == 25
         assert kwargs["cursor"] == "next-page"
         return CodexThreadListPage(
             threads=[CodexThreadListItem(thread_id="native-2", preview="Task: Two", updated_at=1780650100)],

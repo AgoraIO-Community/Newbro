@@ -8,6 +8,7 @@ import { getRouter } from "../router";
 const socketHarness = vi.hoisted(() => {
   const state = {
     handlers: null as null | {
+      onOpen: () => void;
       onMessage: (event: any) => void;
       onClose: () => void;
       onError: () => void;
@@ -1954,7 +1955,7 @@ describe("Newbro artboard shell", () => {
         diagnostics: { codex_thread_id: `codex-${number}` },
       };
     };
-    snapshot.bro_threads = Array.from({ length: 25 }, (_, index) => threadFixture(index)) as any;
+    snapshot.bro_threads = Array.from({ length: 15 }, (_, index) => threadFixture(index)) as any;
     (snapshot as any).bro_thread_pages = {
       forge: { next_cursor: "page-2", previous_cursor: null, has_more: true, status: "loaded", error: null },
     };
@@ -1964,7 +1965,7 @@ describe("Newbro artboard shell", () => {
       .mockImplementationOnce(async (_sessionId: string, body: any) => threadPageFromSnapshot(snapshot, body.targetPersonaId))
       .mockResolvedValueOnce({
         persona_id: "forge",
-        threads: [threadFixture(25)],
+        threads: [threadFixture(15)],
         page: { next_cursor: null, previous_cursor: "page-1", has_more: false, status: "loaded", error: null },
       });
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
@@ -1972,16 +1973,21 @@ describe("Newbro artboard shell", () => {
     render(<RouterProvider router={getRouter()} />);
 
     expect(await screen.findByText("Paged thread 01")).toBeInTheDocument();
-    expect(screen.getByText("Paged thread 25")).toBeInTheDocument();
-    expect(screen.queryByText("Paged thread 26")).not.toBeInTheDocument();
+    expect(screen.getByText("Paged thread 15")).toBeInTheDocument();
+    expect(screen.queryByText("Paged thread 16")).not.toBeInTheDocument();
+    expect(clientMock.listBroThreadsPage).toHaveBeenCalledWith("session-existing", {
+      targetPersonaId: "forge",
+      cursor: null,
+      limit: 15,
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Show more" }));
 
-    expect(await screen.findByText("Paged thread 26")).toBeInTheDocument();
+    expect(await screen.findByText("Paged thread 16")).toBeInTheDocument();
     expect(clientMock.listBroThreadsPage).toHaveBeenCalledWith("session-existing", {
       targetPersonaId: "forge",
       cursor: "page-2",
-      limit: 25,
+      limit: 15,
     });
   });
 
@@ -2272,6 +2278,128 @@ describe("Newbro artboard shell", () => {
     expect(screen.queryByText(/token=pending/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy connect settings" })).toBeEnabled();
     expect(screen.getByTestId("voice-session-start")).toBeDisabled();
+    expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
+  });
+
+  it("refreshes Bro connection state when the session stream invalidates the Bro list", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    const connectedNode = usableExecutorNode();
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing", offlineNode));
+    clientMock.listBros
+      .mockResolvedValueOnce(broListFromSnapshot(forgeSnapshot("session-existing", offlineNode)))
+      .mockResolvedValueOnce(broListFromSnapshot(forgeSnapshot("session-existing", connectedNode)));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByTestId("bro-node-disconnected-warning")).toHaveTextContent("Workshop Mini is offline");
+    await act(async () => {
+      socketHarness.handlers?.onMessage({
+        type: "bro_list_invalidated",
+        sequence: 2,
+        reason: "executor_node_connected",
+        node_id: "node-forge",
+      });
+    });
+
+    await waitFor(() => expect(clientMock.listBros).toHaveBeenCalledTimes(2));
+    await waitFor(() => {
+      expect(screen.queryByTestId("bro-node-disconnected-warning")).not.toBeInTheDocument();
+    });
+    expect(screen.getByPlaceholderText("Type to Forge...")).toBeEnabled();
+  });
+
+  it("shows offline state when the session stream invalidates a connected Bro list", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing"));
+    clientMock.listBros
+      .mockResolvedValueOnce(broListFromSnapshot(forgeSnapshot("session-existing")))
+      .mockResolvedValueOnce(broListFromSnapshot(forgeSnapshot("session-existing", offlineNode)));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByPlaceholderText("Type to Forge...")).toBeEnabled();
+    await act(async () => {
+      socketHarness.handlers?.onMessage({
+        type: "bro_list_invalidated",
+        sequence: 2,
+        reason: "executor_node_disconnected",
+        node_id: "node-forge",
+      });
+    });
+
+    const banner = await screen.findByTestId("bro-node-disconnected-warning");
+    expect(banner).toHaveTextContent("Workshop Mini is offline");
+    expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
+  });
+
+  it("reconnects the session stream and refreshes Bro status after the stream closes", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(forgeSnapshot("session-existing"));
+    clientMock.listBros
+      .mockResolvedValueOnce(broListFromSnapshot(forgeSnapshot("session-existing")))
+      .mockResolvedValueOnce(broListFromSnapshot(forgeSnapshot("session-existing", offlineNode)));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByPlaceholderText("Type to Forge...")).toBeEnabled();
+    act(() => {
+      socketHarness.handlers?.onOpen();
+      socketHarness.handlers?.onClose();
+    });
+
+    await waitFor(() => expect(clientMock.openSessionStream).toHaveBeenCalledTimes(2), { timeout: 1500 });
+    await act(async () => {
+      socketHarness.handlers?.onOpen();
+    });
+
+    const banner = await screen.findByTestId("bro-node-disconnected-warning");
+    expect(banner).toHaveTextContent("Workshop Mini is offline");
+    expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
+  });
+
+  it("clears stale executor-disconnected thread-open errors after the selected Bro status refreshes", async () => {
+    const offlineNode = usableExecutorNode({
+      connected_executors: [],
+      connection_status: "disconnected",
+      last_connected_at: "2026-05-23T20:00:00Z",
+    });
+    const error = "Selected Bro's Codex executor node is not connected.";
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(activeForgeSnapshot("session-existing"));
+    clientMock.listBros
+      .mockResolvedValueOnce(broListFromSnapshot(activeForgeSnapshot("session-existing")))
+      .mockResolvedValueOnce(broListFromSnapshot(activeForgeSnapshot("session-existing", offlineNode)));
+    clientMock.subscribeBroThread.mockRejectedValueOnce(new Error(error));
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect((await screen.findAllByText(error)).length).toBeGreaterThan(0);
+
+    await act(async () => {
+      socketHarness.handlers?.onMessage({
+        type: "bro_list_invalidated",
+        sequence: 2,
+        reason: "executor_node_disconnected",
+        node_id: "node-forge",
+      });
+    });
+    expect(await screen.findByTestId("bro-node-disconnected-warning")).toHaveTextContent("Workshop Mini is offline");
+    await waitFor(() => expect(screen.queryByText(error)).not.toBeInTheDocument());
     expect(screen.getByPlaceholderText("Reconnect your computer before sending")).toBeDisabled();
   });
 
