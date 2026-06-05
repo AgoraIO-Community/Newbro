@@ -1,4 +1,5 @@
 #include <M5Cardputer.h>
+#include <esp_heap_caps.h>
 
 #include <string>
 #include <vector>
@@ -108,6 +109,9 @@ void runVoiceTurn() {
   g_chatScreen.setPhase(nb::Phase::Recording);
   g_chatScreen.setReply("");
   renderOnce();
+  Serial.printf("[heap] before record: %u free (largest internal block %u)\n",
+                ESP.getFreeHeap(),
+                heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   if (!g_mic.beginRecording()) {
     g_chatScreen.setReply("mic unavailable");
     g_chatScreen.setPhase(nb::Phase::Idle);
@@ -129,6 +133,8 @@ void runVoiceTurn() {
   g_chatScreen.setPhase(nb::Phase::Transcribing);
   renderOnce();
   nb::AudioMeta meta = nb::computeAudioMeta(g_mic.sampleCount(), nb::MicRecorder::kSampleRate, 1);
+  Serial.printf("[heap] before upload: %u free, audio=%u bytes (%u ms)\n",
+                ESP.getFreeHeap(), (unsigned)meta.byteLen, (unsigned)meta.durationMs);
   std::string transcript;
   if (!g_clientPtr->sendAudio(g_sessionId, g_activeBro.id, meta,
                               reinterpret_cast<const uint8_t *>(g_mic.data()), meta.byteLen, transcript)) {
@@ -172,6 +178,10 @@ void setup() {
   auto cfg = M5.config();
   M5Cardputer.begin(cfg, true);
   M5Cardputer.Display.setRotation(1);
+
+  Serial.begin(115200);
+  delay(200);
+  Serial.printf("[heap] boot: %u free\n", ESP.getFreeHeap());
 
   nb::screen::title("newbro");
   delay(600);
@@ -225,6 +235,7 @@ void setup() {
   }
 
   g_router.begin();
+  Serial.printf("[heap] after canvas: %u free\n", ESP.getFreeHeap());
   g_listScreen.setBros(g_personas);
   g_listScreen.onOpen(openChat);
   g_chatScreen.onBack(backToList);

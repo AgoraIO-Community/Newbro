@@ -8,9 +8,10 @@ namespace nb {
 bool MicRecorder::beginRecording() {
   count_ = 0;
   if (buffer_ == nullptr) {
+    // No PSRAM on this board: allocate in internal SRAM.
     buffer_ = static_cast<int16_t *>(
-        heap_caps_malloc(kMaxSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM));
-    if (buffer_ == nullptr) return false;  // no PSRAM available
+        heap_caps_malloc(kMaxSamples * sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (buffer_ == nullptr) return false;  // not enough internal RAM
   }
   M5Cardputer.Speaker.end();  // mic and speaker can't run together
   M5Cardputer.Mic.begin();

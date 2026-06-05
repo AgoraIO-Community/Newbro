@@ -4,7 +4,7 @@
 namespace nb {
 
 void Router::begin() {
-  canvas_.setPsram(true);
+  canvas_.setPsram(false);  // no PSRAM on the Cardputer; the 64 KB canvas lives in internal SRAM
   canvas_.setColorDepth(16);
   canvas_.createSprite(M5Cardputer.Display.width(), M5Cardputer.Display.height());
 }
