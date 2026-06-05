@@ -17,6 +17,8 @@ import {
   getConversationSnapshot,
   getCurrentUser,
   getSessionSnapshot,
+  listBroThreadsPage,
+  listBroTimelinePage,
   logoutPublicUser,
   closeBroThread,
   openBroThread,
@@ -49,6 +51,7 @@ import type {
   AttentionItem,
   BroTimelineTurn,
   BroThread,
+  CursorPageInfo,
   InteractionRequest,
   Persona,
   SessionSnapshot,
@@ -293,6 +296,8 @@ function useNewbroShellState() {
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
   const [broThreads, setBroThreads] = useState<BroThread[]>([]);
   const [broTimelineTurns, setBroTimelineTurns] = useState<BroTimelineTurn[]>([]);
+  const [broThreadPages, setBroThreadPages] = useState<Record<string, CursorPageInfo>>({});
+  const [broTimelinePages, setBroTimelinePages] = useState<Record<string, CursorPageInfo>>({});
   const [interactionRequests, setInteractionRequests] = useState<InteractionRequest[]>([]);
   const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
@@ -327,6 +332,8 @@ function useNewbroShellState() {
     setExecutionRuns(snapshot.execution_runs ?? []);
     setBroThreads(snapshot.bro_threads ?? []);
     setBroTimelineTurns(snapshot.bro_timeline_turns ?? []);
+    setBroThreadPages(snapshot.bro_thread_pages ?? {});
+    setBroTimelinePages(snapshot.bro_timeline_pages ?? {});
     setInteractionRequests(snapshot.interaction_requests ?? []);
     setAttentionItems(snapshot.attention_items ?? []);
     setTaskSummaries(snapshot.summaries ?? []);
@@ -346,6 +353,8 @@ function useNewbroShellState() {
     setExecutionRuns([]);
     setBroThreads([]);
     setBroTimelineTurns([]);
+    setBroThreadPages({});
+    setBroTimelinePages({});
     setInteractionRequests([]);
     setAttentionItems([]);
     setTaskSummaries([]);
@@ -453,6 +462,69 @@ function useNewbroShellState() {
     } catch {
       // Closing a selected thread is cleanup; backend subscription ids still
       // protect the newly selected thread if this request fails.
+    }
+  });
+
+  const loadMoreBroThreads = useEffectEvent(async (targetPersonaId: string) => {
+    if (!activeShellSessionId || !mountedRef.current) {
+      return;
+    }
+    const pageInfo = broThreadPages[targetPersonaId];
+    if (!pageInfo?.next_cursor) {
+      return;
+    }
+    try {
+      const page = await listBroThreadsPage(activeShellSessionId, {
+        targetPersonaId,
+        cursor: pageInfo.next_cursor,
+        limit: 25,
+      });
+      if (!mountedRef.current) {
+        return;
+      }
+      startTransition(() => {
+        setBroThreads((current) => {
+          const seen = new Set(current.map((thread) => thread.thread_id));
+          return [...current, ...page.threads.filter((thread) => !seen.has(thread.thread_id))];
+        });
+        setBroThreadPages((current) => ({ ...current, [targetPersonaId]: page.page }));
+      });
+    } catch (error) {
+      if (mountedRef.current) {
+        setShellError(describeApiFailure(error, "More threads could not be loaded."));
+      }
+    }
+  });
+
+  const loadMoreBroTimeline = useEffectEvent(async (targetPersonaId: string, threadId: string) => {
+    if (!activeShellSessionId || !mountedRef.current) {
+      return;
+    }
+    const pageInfo = broTimelinePages[threadId];
+    if (!pageInfo?.next_cursor) {
+      return;
+    }
+    try {
+      const page = await listBroTimelinePage(activeShellSessionId, {
+        targetPersonaId,
+        threadId,
+        cursor: pageInfo.next_cursor,
+        limit: 100,
+      });
+      if (!mountedRef.current) {
+        return;
+      }
+      startTransition(() => {
+        setBroTimelineTurns((current) => {
+          const seen = new Set(current.map((turn) => turn.turn_id));
+          return [...page.turns.filter((turn) => !seen.has(turn.turn_id)), ...current];
+        });
+        setBroTimelinePages((current) => ({ ...current, [threadId]: page.page }));
+      });
+    } catch (error) {
+      if (mountedRef.current) {
+        setShellError(describeApiFailure(error, "Older timeline entries could not be loaded."));
+      }
     }
   });
 
@@ -791,6 +863,8 @@ function useNewbroShellState() {
     executionRuns,
     broThreads,
     broTimelineTurns,
+    broThreadPages,
+    broTimelinePages,
     interactionRequests,
     attentionItems,
     taskSummaries,
@@ -817,6 +891,8 @@ function useNewbroShellState() {
     refreshShellSession,
     openRuntimeBroThread,
     closeRuntimeBroThread,
+    loadMoreBroThreads,
+    loadMoreBroTimeline,
     draftSession,
     latestDraftOutputEvent,
     chatMessages,

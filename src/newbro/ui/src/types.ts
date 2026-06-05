@@ -213,6 +213,26 @@ export interface BroTimelineTurn {
   metadata: Record<string, unknown>;
 }
 
+export interface CursorPageInfo {
+  next_cursor: string | null;
+  previous_cursor: string | null;
+  has_more: boolean;
+  status: "not_loaded" | "loading" | "loaded" | "failed";
+  error: string | null;
+}
+
+export interface BroThreadPageResponse {
+  persona_id: string;
+  threads: BroThread[];
+  page: CursorPageInfo;
+}
+
+export interface BroTimelineTurnPageResponse {
+  thread_id: string;
+  turns: BroTimelineTurn[];
+  page: CursorPageInfo;
+}
+
 export interface OutboundTurnRequest {
   request_id: string;
   persona_id: string;
@@ -460,6 +480,8 @@ export interface SessionSnapshot {
   outbound_turn_requests: OutboundTurnRequest[];
   bro_threads: BroThread[];
   bro_timeline_turns: BroTimelineTurn[];
+  bro_thread_pages?: Record<string, CursorPageInfo>;
+  bro_timeline_pages?: Record<string, CursorPageInfo>;
   personas: Persona[];
   interaction_requests: InteractionRequest[];
   attention_items: AttentionItem[];

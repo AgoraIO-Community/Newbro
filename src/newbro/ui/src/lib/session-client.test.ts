@@ -174,6 +174,51 @@ describe("session-client transport base URL handling", () => {
     expect(revealed.token).toBe("token-1");
   });
 
+  it("lists a bro thread page with cursor params", async () => {
+    const fetchMock = vi.fn(async () =>
+      okJsonResponse({
+        persona_id: "forge",
+        threads: [],
+        page: { next_cursor: "next", previous_cursor: null, has_more: true, status: "loaded", error: null },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./session-client");
+    await client.listBroThreadsPage("session-1", {
+      targetPersonaId: "forge",
+      cursor: "cursor-1",
+      limit: 25,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sessions/session-1/bro-threads?target_persona_id=forge&limit=25&cursor=cursor-1",
+    );
+  });
+
+  it("lists a bro timeline page with cursor params", async () => {
+    const fetchMock = vi.fn(async () =>
+      okJsonResponse({
+        thread_id: "thread-1",
+        turns: [],
+        page: { next_cursor: null, previous_cursor: "newer", has_more: false, status: "loaded", error: null },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./session-client");
+    await client.listBroTimelinePage("session-1", {
+      targetPersonaId: "forge",
+      threadId: "thread-1",
+      cursor: "older",
+      limit: 100,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sessions/session-1/bro-threads/thread-1/timeline?target_persona_id=forge&limit=100&cursor=older",
+    );
+  });
+
   it("includes the target persona on websocket messages when provided", async () => {
     const client = await import("./session-client");
     const socket = { send: vi.fn() } as unknown as WebSocket;

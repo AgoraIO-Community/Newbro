@@ -74,8 +74,11 @@ const clientMock = vi.hoisted(() => ({
   signupPublicUser: vi.fn(),
   getCurrentUser: vi.fn(),
   logoutPublicUser: vi.fn(),
+  claimDevice: vi.fn(),
   getSessionSnapshot: vi.fn(),
   getConversationSnapshot: vi.fn(),
+  listBroThreadsPage: vi.fn(),
+  listBroTimelinePage: vi.fn(),
   openBroThread: vi.fn(),
   closeBroThread: vi.fn(),
   openSessionStream: vi.fn((_sessionId: string, handlers: any) => {
@@ -1569,6 +1572,71 @@ describe("Newbro artboard shell", () => {
     expect(link.closest(".dt-bubble-you")).not.toBeNull();
   });
 
+  it("loads older selected timeline turns from the backend", async () => {
+    const snapshot = forgeSnapshot("session-existing");
+    const threadId = "codex-import-history";
+    const importedThread = {
+      thread_id: threadId,
+      persona_id: "forge",
+      persona_name: "Forge",
+      executor_id: "codex",
+      executor_node_id: "node-forge",
+      execution_session_id: null,
+      status: "completed",
+      title: "Imported Codex thread",
+      preview: "Remote history",
+      progress: 100,
+      task_ids: [],
+      active_task_id: null,
+      latest_task_id: null,
+      has_resume_handle: true,
+      updated_at: "2026-05-26T22:00:00+00:00",
+      timeline_status: "loaded",
+      timeline_error: null,
+      diagnostics: { codex_thread_id: "codex-native-history" },
+    };
+    snapshot.bro_threads = [importedThread] as any;
+    snapshot.bro_timeline_turns = [
+      timelineTurn({
+        thread_id: threadId,
+        executor_turn_id: "turn-current",
+        userText: "Current question",
+        assistantText: "Current answer",
+      }),
+    ] as any;
+    (snapshot as any).bro_timeline_pages = {
+      [threadId]: { next_cursor: "older", previous_cursor: null, has_more: true, status: "loaded", error: null },
+    };
+    clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
+    clientMock.openBroThread.mockResolvedValue(snapshot);
+    clientMock.listBroTimelinePage.mockResolvedValueOnce({
+      thread_id: threadId,
+      turns: [
+        timelineTurn({
+          thread_id: threadId,
+          executor_turn_id: "turn-old",
+          userText: "Older question",
+          assistantText: "Older answer",
+        }),
+      ],
+      page: { next_cursor: null, previous_cursor: "newer", has_more: false, status: "loaded", error: null },
+    });
+    window.history.replaceState({}, "", `/bros/forge?sid=session-existing&thread=${threadId}`);
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Current answer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Load older" }));
+
+    expect(await screen.findByText("Older answer")).toBeInTheDocument();
+    expect(clientMock.listBroTimelinePage).toHaveBeenCalledWith("session-existing", {
+      targetPersonaId: "forge",
+      threadId,
+      cursor: "older",
+      limit: 100,
+    });
+  });
+
   it("keeps the latest selected imported thread history when an earlier open resolves late", async () => {
     const snapshot = forgeSnapshot("session-existing");
     const importedThreads = [
@@ -1677,9 +1745,9 @@ describe("Newbro artboard shell", () => {
     expect(screen.queryByText("First fetched response.")).not.toBeInTheDocument();
   });
 
-  it("pages the desktop thread rail and expands on demand", async () => {
+  it("loads additional runtime thread pages from the backend", async () => {
     const snapshot = forgeSnapshot("session-existing");
-    snapshot.bro_threads = Array.from({ length: 30 }, (_, index) => {
+    const threadFixture = (index: number) => {
       const number = String(index + 1).padStart(2, "0");
       return {
         thread_id: `thread-${number}`,
@@ -1699,9 +1767,18 @@ describe("Newbro artboard shell", () => {
         updated_at: `2026-05-26T20:${number}:00+00:00`,
         diagnostics: { codex_thread_id: `codex-${number}` },
       };
-    }) as any;
+    };
+    snapshot.bro_threads = Array.from({ length: 25 }, (_, index) => threadFixture(index)) as any;
+    (snapshot as any).bro_thread_pages = {
+      forge: { next_cursor: "page-2", previous_cursor: null, has_more: true, status: "loaded", error: null },
+    };
     clientMock.getSessionSnapshot.mockResolvedValueOnce(snapshot);
     clientMock.openBroThread.mockResolvedValue(snapshot);
+    clientMock.listBroThreadsPage.mockResolvedValueOnce({
+      persona_id: "forge",
+      threads: [threadFixture(25)],
+      page: { next_cursor: null, previous_cursor: "page-1", has_more: false, status: "loaded", error: null },
+    });
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");
 
     render(<RouterProvider router={getRouter()} />);
@@ -1710,9 +1787,14 @@ describe("Newbro artboard shell", () => {
     expect(screen.getByText("Paged thread 25")).toBeInTheDocument();
     expect(screen.queryByText("Paged thread 26")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Show 5 more" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
 
-    expect(await screen.findByText("Paged thread 30")).toBeInTheDocument();
+    expect(await screen.findByText("Paged thread 26")).toBeInTheDocument();
+    expect(clientMock.listBroThreadsPage).toHaveBeenCalledWith("session-existing", {
+      targetPersonaId: "forge",
+      cursor: "page-2",
+      limit: 25,
+    });
   });
 
   it("keeps New thread pending until the first desktop send", async () => {

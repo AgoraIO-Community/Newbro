@@ -2496,6 +2496,8 @@ function ThreadPanel({
   onTextTurn,
   disabled,
   disabledReason,
+  hasOlderTimeline,
+  onLoadOlderTimeline,
 }: {
   bro: BroCardModel;
   textTurns: TextTurn[];
@@ -2505,6 +2507,8 @@ function ThreadPanel({
   onTextTurn?: (turn: TextTurn) => void;
   disabled?: boolean;
   disabledReason?: string | null;
+  hasOlderTimeline?: boolean;
+  onLoadOlderTimeline?: () => void;
 }) {
   const shell = useNewbroShell();
   const draftText = shell.draftSession?.current_draft?.text ?? "";
@@ -2576,6 +2580,12 @@ function ThreadPanel({
         </div>
       ) : null}
       {hasContent ? <div className="dt-thread-day"><span>Current session</span></div> : null}
+      {hasOlderTimeline ? (
+        <button type="button" className="dt-thread-more" onClick={onLoadOlderTimeline}>
+          <Layers size={12} strokeWidth={2.2} aria-hidden="true" />
+          <span>Load older</span>
+        </button>
+      ) : null}
       {draftText ? (
         <div className="dt-turn dt-turn-you">
           <div className="dt-bubble dt-bubble-you">{draftText}</div>
@@ -2834,6 +2844,16 @@ function MobileThreadSurface({
               <span>{timelineLoadError}</span>
             </div>
           </div>
+        ) : null}
+        {selectedThreadId && shell.broTimelinePages[selectedThreadId]?.has_more ? (
+          <button
+            type="button"
+            className="dt-thread-more"
+            onClick={() => { void shell.loadMoreBroTimeline(bro.id, selectedThreadId); }}
+          >
+            <Layers size={12} strokeWidth={2.2} aria-hidden="true" />
+            <span>Load older</span>
+          </button>
         ) : null}
         {renderedTurns.map((turn) => (
           <TimelineTurnView
@@ -3318,6 +3338,8 @@ function DesktopActivityRail({
   selectedThreadId,
   pendingNewThread,
   pendingWorkspaceId,
+  hasMore,
+  showMoreLabel,
   onSelectThread,
   onNewThread,
   onShowMore,
@@ -3328,6 +3350,8 @@ function DesktopActivityRail({
   selectedThreadId: string | null;
   pendingNewThread: boolean;
   pendingWorkspaceId: string | null;
+  hasMore?: boolean;
+  showMoreLabel?: string;
   onSelectThread: (threadId: string) => void;
   onNewThread: () => void;
   onShowMore: () => void;
@@ -3378,10 +3402,10 @@ function DesktopActivityRail({
             </li>
           ))}
         </ul>
-        {hiddenThreadCount > 0 ? (
+        {(hasMore ?? hiddenThreadCount > 0) ? (
           <button type="button" className="dt-thread-more" onClick={onShowMore}>
             <Layers size={12} strokeWidth={2.2} aria-hidden="true" />
-            <span>Show {Math.min(THREAD_LIST_PAGE_SIZE, hiddenThreadCount)} more</span>
+            <span>{showMoreLabel ?? `Show ${Math.min(THREAD_LIST_PAGE_SIZE, hiddenThreadCount)} more`}</span>
           </button>
         ) : null}
         <button type="button" className="dt-thread-new" onClick={onNewThread}>
@@ -3466,6 +3490,13 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     () => threads.slice(0, threadVisibleCount),
     [threadVisibleCount, threads],
   );
+  const broThreadPage = bro?.source === "runtime" ? shell.broThreadPages[bro.id] : null;
+  const hasMoreRuntimeThreads = Boolean(broThreadPage?.has_more && broThreadPage.next_cursor);
+  const hiddenThreadCount = Math.max(0, threads.length - visibleThreads.length);
+  const hasMoreThreads = hasMoreRuntimeThreads || hiddenThreadCount > 0;
+  const showMoreLabel = hasMoreRuntimeThreads
+    ? "Show more"
+    : `Show ${Math.min(THREAD_LIST_PAGE_SIZE, hiddenThreadCount)} more`;
   const threadScrollVersion = [
     activeThreadId ?? "new",
     shell.broTimelineTurns
@@ -3562,9 +3593,18 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
             selectedThreadId={activeThreadId}
             pendingNewThread={pendingNewThread}
             pendingWorkspaceId={pendingWorkspaceId}
+            hasMore={hasMoreThreads}
+            showMoreLabel={showMoreLabel}
             onSelectThread={selectThread}
             onNewThread={newThread}
-            onShowMore={() => setThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE)}
+            onShowMore={() => {
+              if (bro.source === "runtime" && hasMoreRuntimeThreads) {
+                setThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE);
+                void shell.loadMoreBroThreads(bro.id);
+                return;
+              }
+              setThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE);
+            }}
           />
           <section className="dt-pane">
             {bro.source === "runtime" ? (
@@ -3595,6 +3635,10 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
                   onTextTurn={upsertTextTurn}
                   disabled={Boolean(offline)}
                   disabledReason={disabledReason}
+                  hasOlderTimeline={Boolean(activeThreadId && shell.broTimelinePages[activeThreadId]?.has_more)}
+                  onLoadOlderTimeline={() => {
+                    if (activeThreadId) void shell.loadMoreBroTimeline(bro.id, activeThreadId);
+                  }}
                 />
               </div>
             </div>
@@ -4142,6 +4186,12 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
     [drawerThreadVisibleCount, threads],
   );
   const hiddenDrawerThreadCount = Math.max(0, threads.length - visibleDrawerThreads.length);
+  const drawerThreadPage = bro.source === "runtime" ? shell.broThreadPages[bro.id] : null;
+  const hasMoreRuntimeDrawerThreads = Boolean(drawerThreadPage?.has_more && drawerThreadPage.next_cursor);
+  const hasMoreDrawerThreads = hasMoreRuntimeDrawerThreads || hiddenDrawerThreadCount > 0;
+  const drawerShowMoreLabel = hasMoreRuntimeDrawerThreads
+    ? "Show more"
+    : `Show ${Math.min(THREAD_LIST_PAGE_SIZE, hiddenDrawerThreadCount)} more`;
   const headerThreadTitle = pendingNewThread
     ? "New thread"
     : selectedThread?.title ?? (bro.status === "busy" ? bro.taskTitle : "New thread");
@@ -4301,14 +4351,21 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
               </li>
             ))}
           </ul>
-          {hiddenDrawerThreadCount > 0 ? (
+          {hasMoreDrawerThreads ? (
             <button
               type="button"
               className="thr-drawer-more"
-              onClick={() => setDrawerThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE)}
+              onClick={() => {
+                if (bro.source === "runtime" && hasMoreRuntimeDrawerThreads) {
+                  setDrawerThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE);
+                  void shell.loadMoreBroThreads(bro.id);
+                  return;
+                }
+                setDrawerThreadVisibleCount((count) => count + THREAD_LIST_PAGE_SIZE);
+              }}
             >
               <Layers size={14} strokeWidth={2.2} />
-              <span>Show {Math.min(THREAD_LIST_PAGE_SIZE, hiddenDrawerThreadCount)} more</span>
+              <span>{drawerShowMoreLabel}</span>
             </button>
           ) : null}
           <button type="button" className="thr-drawer-new" onClick={() => { newThread(); setPickerOpen(false); }}>
