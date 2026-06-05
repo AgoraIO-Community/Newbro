@@ -100,11 +100,16 @@ Adapter direction:
 - Codex app-server `thread/list` is the source for imported Codex dialog
   threads; Newbro calls it with `limit`, `cursor`, updated-time sort, and
   descending direction, then preserves cursor metadata through backend page
-  APIs and UI load-more controls. `thread/read` is the compact per-thread
-  metadata/status hydration path when a user opens/selects a thread, and
+  APIs and UI load-more controls. `GET /api/sessions/{session_id}` does not
+  run this list path. Browser clients first fetch compact Bro/node bootstrap
+  with `GET /api/sessions/{session_id}/bros`, then fetch explicit Bro-thread
+  pages for eligible Bros. `thread/read` is the compact per-thread
+  metadata/status hydration path for timeline page requests, and
   `thread/turns/list` is the bounded cursor path for selected-thread history.
-  Opening a selected thread is also a loaded-thread lifecycle owned by the
-  detached executor node. Each Codex executor node owns one long-lived
+  Selecting a thread is a loaded-thread subscription lifecycle owned by the
+  detached executor node; Newbro's subscribe endpoint acknowledges only that
+  live event interest, and clients fetch selected-thread turns through the
+  Bro-timeline page API. Each Codex executor node owns one long-lived
   app-server process and multiplexes `thread/list`, `thread/read`,
   `thread/turns/list`, `thread/resume`, `thread/start`, and selected-thread
   event routing through that process. Selected-thread subscription is a
@@ -113,7 +118,7 @@ Adapter direction:
   events to Newbro, and calls `thread/unsubscribe` when the selected thread is
   replaced or closed. Newbro must not refresh Codex `thread/list`,
   `thread/read`, or `thread/turns/list` as part of ordinary text/PTT sends or
-  session snapshot broadcasts; those refreshes are explicit list/open/page
+  session snapshot broadcasts; those refreshes are explicit list/subscribe/page
   operations. Imported history and live selected-thread events are normalized
   into generic `BroTimelineTurn` identity fields (`executor_id`,
   `executor_thread_id`, `executor_turn_id`) before the UI sees them, so Bro

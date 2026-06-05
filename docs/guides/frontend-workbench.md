@@ -23,8 +23,8 @@ The current frontend stack is:
 - desktop top header: `Home`, `Bros`, `Nodes`, `Settings`, account, logout, and
   runtime readiness
 - home page: design workspace with top voice control, runtime Bro grid,
-  runtime/node rail, and an explicit empty workspace card when no personas
-  exist
+  runtime/node rail, and an explicit empty workspace card when no compact
+  `/bros` rows exist
 - Bro detail page: design-style real thread rail plus main pane, preserving the
   Draft/STT/send/talk controls and disconnected-node warning behavior
 - setup/connect state: design cards and first-run sheet for creating or
@@ -41,6 +41,11 @@ Current reads and live transport:
 
 - `POST /api/sessions`
 - `GET /api/sessions/{session_id}`
+- `GET /api/sessions/{session_id}/bros`
+- `GET /api/sessions/{session_id}/bro-threads?target_persona_id=...&limit=...&cursor=...`
+- `GET /api/sessions/{session_id}/bro-threads/{thread_id}/timeline?target_persona_id=...&limit=...&cursor=...`
+- `POST /api/sessions/{session_id}/bro-threads/{thread_id}/subscribe`
+- `DELETE /api/sessions/{session_id}/bro-threads/{thread_id}/subscribe`
 - `WS /api/sessions/{session_id}/stream`
 - `GET /api/sessions/{session_id}/personas`
 - `GET /api/sessions/{session_id}/executor-nodes`
@@ -57,18 +62,19 @@ Current behavior:
   URL as `sid` so the session can be reopened later from the same link
 - if `sid` cannot be resumed, the app opens a fresh session, replaces the URL
   `sid`, and shows a non-blocking resume-failed warning
-- the active session stream keeps `personas` and `executor_nodes` fresh while
-  the shell stays open
+- the active session stream keeps durable task/execution and timeline
+  projections fresh while the shell stays open; Bro/node bootstrap comes from
+  compact `/bros`, and detailed node management uses `/executor-nodes`
 - the `Home` route remains the workspace when runtime Bros exist; explicit Bro
   Detail navigation uses Bro cards or `/bros/:broId`
-- if persona data is empty, the home view renders the design empty workspace
+- if compact `/bros` data is empty, the home view renders the design empty workspace
   instead of replacing runtime state with seeded active cards
 - the empty workspace `Create your first bro` action opens a design-backed
   first-run sheet that creates a real executor node, shows the issued connect
   command, and waits to create the Bro persona until the node has connected
   successfully once
-- Bro liveness is derived from `persona.executor_node_id` plus the matching
-  executor node connection state
+- Bro liveness is derived from compact `/bros` rows and live node updates;
+  first-time setup depends on the real compact `last_connected_at` value
 - the `Bros` page edits each worker Bro's base prompt, avatar, and node binding
 - the `Nodes` page creates, edits, rotates, and deletes executor nodes and
   shows the token on create/rotate plus a persistent on-demand
@@ -106,27 +112,30 @@ Current behavior:
   render it as a thread-level approval card using `details.target_thread_id` and
   `details.persona_id`.
 - Bro Detail desktop left rail and mobile drawer render real Codex-backed
-  `bro_threads` from the runtime snapshot, not task records. Selecting a thread
-  calls the open-thread endpoint, writes `thread` into the URL, and direct
-  text/PTT sends include that target so completed selected Codex threads resume
-  through their stored execution-session resume handle. For a new Codex thread,
-  the frontend prompts for a known workspace from `bro_threads[*].workspace_id`
-  and sends that `workspace_id`; if no workspace is known, creation is blocked
-  in the UI instead of relying on an implicit runtime fallback. Thread rows show
-  `workspace_name` in the existing metadata line when present. The frontend does not
-  call Codex app-server subscription APIs directly: Newbro's open-thread
-  endpoint asks the bound executor node to subscribe to selected-thread events in
-  the background, and the close-thread endpoint releases that subscription when
-  Bro Detail leaves the thread, starts a new pending thread, or unmounts. The
-  snapshot can include Codex threads imported through the connected executor
-  node's `thread/list` capability even when Newbro has not created task history
-  for that native thread yet; opening one reuses the cached imported-thread
+  `bro_threads` from explicit Bro-thread page responses, not task records or
+  the session snapshot. On shell load, the frontend fetches lightweight session
+  state, durable conversation history, compact `/bros` data, and then first
+  Bro-thread pages for Bros whose compact node summary advertises Codex thread
+  listing. A failed first thread page is stored as failed page metadata for that
+  Bro and must not make the shell discard the requested session. Selecting a
+  thread calls Newbro's subscribe endpoint, writes `thread` into the URL, then
+  loads the first selected-thread timeline page with `limit: 15`; direct text/PTT
+  sends include that target so completed selected Codex threads resume through
+  their stored execution-session resume handle. Switching existing selected
+  threads, starting a new pending thread, closing Bro Detail, or unmounting
+  calls the unsubscribe path for the previous selected thread. For a new Codex
+  thread, the frontend prompts for a known workspace from
+  `bro_threads[*].workspace_id` and sends that `workspace_id`; if no workspace
+  is known, creation is blocked in the UI instead of relying on an implicit
+  runtime fallback. Thread rows show `workspace_name` in the existing metadata
+  line when present. The frontend does not call Codex app-server subscription
+  APIs directly. Imported thread selection reuses cached imported-thread
   projection instead of refreshing the global list, then loads native Codex
-  history into canonical `bro_timeline_turns` for display without creating
-  Newbro `Task`, `ExecutionRun`, or `TaskSummary` records. Bro Detail renders
-  the selected thread from `SessionSnapshot.bro_timeline_turns` only, plus
-  local optimistic text/audio placeholders that already use the same turn shape
-  and are replaced by canonical backend turns via `client_request_id`. It no
+  history through the Bro-timeline page API for display without creating Newbro
+  `Task`, `ExecutionRun`, or `TaskSummary` records. Bro Detail renders the
+  selected thread from backend-owned `bro_timeline_turns` plus local optimistic
+  text/audio placeholders that already use the same turn shape and are replaced
+  by canonical backend turns via `client_request_id`. It no
   longer timestamp-merges local text turns, local audio turns, task records,
   conversation messages, and native executor messages. Both sides of
   direct/native turns render from the same object: each user instruction
