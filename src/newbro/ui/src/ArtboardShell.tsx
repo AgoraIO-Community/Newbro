@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEven
 import { ArrowUp, Check, ChevronLeft, Download, FileText, GitBranch, Layers, LogOut, MessageSquare, Mic, Pencil, Plus, Radio, Settings, WifiOff, X } from "lucide-react";
 import {
   buildExecutorConnectCommands,
+  claimDevice,
   clearDraft,
   clearVoiceTarget,
   createExecutorNode,
@@ -18,6 +19,7 @@ import {
 import { useThreadSelection } from "./lib/useThreadSelection";
 import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForNativeTurn, buildReasoningStepsForTurn, type ReasoningStep } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
+import { DevicePairingForm } from "./components/newbro/DevicePairingForm";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
 import { deriveLiveTurnState } from "./lib/reasoningPhase";
@@ -1599,6 +1601,7 @@ function Header({
   account: string;
   onConnect?: () => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const tone = bro ? homeBroTone(homeBroState(bro)) : "calm";
   const detailPaused = bro?.liveState === "offline" || bro?.liveState === "unbound";
   return (
@@ -1636,10 +1639,37 @@ function Header({
             </span>
           )
         ) : null}
-        <span className="dt-header-account dt-header-static">
-          <span className="dt-header-account-avatar">{account.trim().charAt(0).toUpperCase() || "N"}</span>
-          <span className="dt-header-account-name">{account}</span>
-        </span>
+        <div className="dt-header-account-wrap">
+          <button
+            type="button"
+            className="dt-header-account dt-header-account-btn"
+            aria-haspopup="dialog"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <span className="dt-header-account-avatar">{account.trim().charAt(0).toUpperCase() || "N"}</span>
+            <span className="dt-header-account-name">{account}</span>
+          </button>
+          {menuOpen ? (
+            <>
+              <button
+                type="button"
+                className="dt-account-backdrop"
+                aria-hidden="true"
+                tabIndex={-1}
+                onClick={() => setMenuOpen(false)}
+              />
+              <div className="dt-account-pop" role="dialog" aria-label="Account">
+                <div className="dt-account-pop-email">{account}</div>
+                <div className="dt-account-pop-section">
+                  <div className="dt-account-pop-eyebrow">DEVICES</div>
+                  <p className="dt-account-pop-hint">Pair a Cardputer or other device using the code shown on its screen.</p>
+                  <DevicePairingForm onClaim={claimDevice} />
+                </div>
+              </div>
+            </>
+          ) : null}
+        </div>
         <button type="button" data-testid="sidebar-logout" className="dt-header-icon-btn" aria-label="Sign out" onClick={onLogout}>
           <LogOut className="h-3.5 w-3.5" strokeWidth={1.9} />
         </button>
@@ -3765,6 +3795,12 @@ function HomeAccountSheet({
           </span>
           <span className="acct-row-chev">›</span>
         </button>
+      </div>
+
+      <div className="acct-section">
+        <div className="acct-section-eyebrow">DEVICES</div>
+        <p className="acct-row-meta">Pair a Cardputer or other device using the code shown on its screen.</p>
+        <DevicePairingForm onClaim={claimDevice} />
       </div>
 
       <div className="acct-section">

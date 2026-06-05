@@ -9,7 +9,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -30,6 +30,11 @@ DEFAULT_BRO_BASE_PROMPT = (
     "or push-to-talk instructions in the connected workspace, and ask only when "
     "you need a concrete decision to continue."
 )
+
+USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+USER_CODE_LENGTH = 4
+DEVICE_PAIRING_TTL_SECONDS = 600
+DEVICE_PAIRING_POLL_INTERVAL_SECONDS = 2
 
 
 class PublicUser(BaseModel):
@@ -60,6 +65,20 @@ class PublicPersonaRecord(BaseModel):
 class RedeemedSession:
     user: PublicUser
     raw_token: str
+
+
+@dataclass(slots=True)
+class DevicePairingStart:
+    device_code: str
+    user_code: str
+    interval: int
+    expires_at: str
+
+
+@dataclass(slots=True)
+class DevicePairingPoll:
+    status: str  # "pending" | "claimed"
+    token: str | None = None
 
 
 class PublicAuthStore:
@@ -129,6 +148,16 @@ class PublicAuthStore:
                     node_id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
                     created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS device_pairings (
+                    device_code_hash TEXT PRIMARY KEY,
+                    user_code TEXT NOT NULL UNIQUE,
+                    user_id TEXT,
+                    issued_token TEXT,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    claimed_at TEXT
                 );
                 """
             )
@@ -275,6 +304,87 @@ class PublicAuthStore:
         async with self._lock:
             with self._connect() as conn:
                 conn.execute("DELETE FROM browser_sessions WHERE token_hash = ?", (_hash_secret(raw_token),))
+
+    async def create_device_pairing(self) -> DevicePairingStart:
+        async with self._lock:
+            with self._connect() as conn:
+                now = datetime.now(UTC)
+                expires_at = (now + timedelta(seconds=DEVICE_PAIRING_TTL_SECONDS)).isoformat()
+                device_code = secrets.token_urlsafe(32)
+                for _ in range(10):
+                    user_code = "".join(secrets.choice(USER_CODE_ALPHABET) for _ in range(USER_CODE_LENGTH))
+                    try:
+                        conn.execute(
+                            """
+                            INSERT INTO device_pairings
+                                (device_code_hash, user_code, status, created_at, expires_at)
+                            VALUES (?, ?, 'pending', ?, ?)
+                            """,
+                            (_hash_secret(device_code), user_code, now.isoformat(), expires_at),
+                        )
+                        break
+                    except sqlite3.IntegrityError:
+                        continue
+                else:
+                    raise PublicAuthError("Could not allocate a pairing code.")
+        return DevicePairingStart(
+            device_code=device_code,
+            user_code=user_code,
+            interval=DEVICE_PAIRING_POLL_INTERVAL_SECONDS,
+            expires_at=expires_at,
+        )
+
+    async def claim_device_pairing(self, *, user_code: str, user_id: str) -> None:
+        normalized = user_code.strip().upper()
+        async with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM device_pairings WHERE user_code = ?",
+                    (normalized,),
+                ).fetchone()
+                if row is None:
+                    raise PublicAuthError("Invalid pairing code.")
+                if row["status"] != "pending":
+                    raise PublicAuthError("Pairing code already used.")
+                if _is_expired(row["expires_at"]):
+                    raise PublicAuthError("Pairing code expired.")
+                now = _timestamp()
+                raw_token = secrets.token_urlsafe(32)
+                conn.execute(
+                    "INSERT INTO browser_sessions (token_hash, user_id, created_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                    (_hash_secret(raw_token), user_id, now, now),
+                )
+                # issued_token is stored in plaintext temporarily; poll_device_pairing delivers it exactly once and then clears it.
+                conn.execute(
+                    """
+                    UPDATE device_pairings
+                    SET status = 'claimed', user_id = ?, issued_token = ?, claimed_at = ?
+                    WHERE user_code = ?
+                    """,
+                    (user_id, raw_token, now, normalized),
+                )
+
+    async def poll_device_pairing(self, *, device_code: str) -> DevicePairingPoll:
+        device_code_hash = _hash_secret(device_code)
+        async with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM device_pairings WHERE device_code_hash = ?",
+                    (device_code_hash,),
+                ).fetchone()
+                if row is None:
+                    raise PublicAuthError("Unknown pairing.")
+                if row["status"] == "pending":
+                    if _is_expired(row["expires_at"]):
+                        raise PublicAuthError("Pairing code expired.")
+                    return DevicePairingPoll(status="pending")
+                token = row["issued_token"]
+                if token is not None:
+                    conn.execute(
+                        "UPDATE device_pairings SET issued_token = NULL WHERE device_code_hash = ?",
+                        (device_code_hash,),
+                    )
+                return DevicePairingPoll(status="claimed", token=token)
 
     async def claim_session(self, *, user_id: str, session_id: str) -> None:
         async with self._lock:
@@ -531,6 +641,10 @@ def _cookie_secure() -> bool:
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _is_expired(expires_at: str) -> bool:
+    return datetime.fromisoformat(expires_at) <= datetime.now(UTC)
 
 
 def _normalize_email(value: str | None) -> str | None:

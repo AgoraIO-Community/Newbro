@@ -40,6 +40,8 @@ def auto_login_legacy_api_clients(monkeypatch):
     current_test = os.environ.get("PYTEST_CURRENT_TEST", "")
     if "test_public_auth_onboarding.py" in current_test:
         return
+    if "test_device_pairing.py" in current_test:
+        return
 
     original_request = AsyncClient.request
 

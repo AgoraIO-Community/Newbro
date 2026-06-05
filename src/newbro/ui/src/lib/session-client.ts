@@ -226,6 +226,15 @@ export async function logoutPublicUser(): Promise<void> {
   await ensureOk(response);
 }
 
+export async function claimDevice(userCode: string): Promise<void> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/devices/pair/claim`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_code: userCode.trim().toUpperCase() }),
+  });
+  await ensureOk(response);
+}
+
 export async function bootstrapPublicUser(): Promise<PublicBootstrapResponse> {
   const response = await fetch(buildHttpUrl(`${API_PREFIX}/me/bootstrap`));
   return (await ensureOk(response)).json();
