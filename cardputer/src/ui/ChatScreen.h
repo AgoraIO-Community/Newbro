@@ -10,6 +10,8 @@ namespace nb {
 class ChatScreen : public Screen {
  public:
   void setBro(const Persona &bro) { bro_ = bro; }
+  void setThread(const std::string &threadId) { threadId_ = threadId; }
+  const std::string &threadId() const { return threadId_; }
   void setTranscript(const std::string &t) { transcript_ = t; }
   void setReply(const std::string &r) { reply_ = r; }
   void setPhase(Phase p) { phase_ = p; }
@@ -20,6 +22,7 @@ class ChatScreen : public Screen {
 
  private:
   Persona bro_;
+  std::string threadId_;
   std::string transcript_;
   std::string reply_;
   Phase phase_ = Phase::Idle;
