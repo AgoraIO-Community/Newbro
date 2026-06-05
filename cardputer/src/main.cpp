@@ -140,10 +140,12 @@ void runVoiceTurn() {
   std::string transcript;
   if (!g_clientPtr->sendAudio(g_sessionId, g_activeBro.id, meta,
                               reinterpret_cast<const uint8_t *>(g_mic.data()), meta.byteLen, transcript)) {
+    Serial.printf("[audio] FAILED: %s\n", g_clientPtr->lastError().c_str());
     g_chatScreen.setReply(g_clientPtr->lastError());
     g_chatScreen.setPhase(nb::Phase::Idle);
     return;
   }
+  Serial.printf("[audio] transcript='%s'\n", transcript.c_str());
   g_chatScreen.setTranscript(transcript);
 
   g_chatScreen.setPhase(nb::Phase::Streaming);

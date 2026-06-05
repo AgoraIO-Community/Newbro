@@ -55,7 +55,10 @@ bool NewbroClient::sendAudio(const std::string &sessionId, const std::string &pe
       "/api/sessions/" + sessionId + "/executor-audio-instructions?" + buildAudioQuery(personaId, meta);
   HttpResponse r = t_.postBytes(path, "audio/pcm", pcm, len, token_);
   if (!r.transportOk) { lastError_ = "network error"; return false; }
-  if (r.status != 200) { lastError_ = "audio failed: HTTP " + std::to_string(r.status); return false; }
+  if (r.status != 200) {
+    lastError_ = "audio HTTP " + std::to_string(r.status) + ": " + r.body;
+    return false;
+  }
   transcriptOut = parseAudioTranscript(r.body);
   return true;
 }
