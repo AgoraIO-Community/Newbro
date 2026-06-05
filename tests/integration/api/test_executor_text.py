@@ -8,8 +8,9 @@ from httpx import ASGITransport, AsyncClient
 from newbro.api.app import create_app
 from newbro.api.public_auth import PublicAuthStore
 from newbro.blackboard.store import BlackboardWriteEvent, BlackboardWriteKind
-from newbro.protocol import AgentResumeHandle, BroThread, CodexThreadListItem, ExecutionRun, ExecutionSession, ExecutorNodeExecutor, Persona, RunStatus, Task, TaskStatus
-from newbro.runtime.executor_node_manager import CodexThreadListPage, CodexThreadTurnPage, NodeConnectionState
+from newbro.executors.node.registry import ExecutorNodeRegistry
+from newbro.protocol import AgentResumeHandle, BroThread, CodexThreadListItem, ExecutionRun, ExecutionSession, ExecutorNodeExecutor, Persona, RegisterNodeMessage, RunStatus, Task, TaskStatus
+from newbro.runtime.executor_node_manager import CodexThreadListPage, CodexThreadTurnPage, ExecutorNodeManager, NodeConnectionState
 
 
 class FakeWebSocket:
@@ -51,6 +52,82 @@ async def _put_connected_forge(runtime_session, manager, websocket: FakeWebSocke
             status="idle",
         )
     )
+
+
+@pytest.mark.anyio
+async def test_bro_list_api_returns_compact_bro_node_rows(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    app.state.runtime_container.executor_node_manager = ExecutorNodeManager(
+        detached_executor_types=("codex",),
+        registry=ExecutorNodeRegistry(path=tmp_path / "executor_nodes.yaml"),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-bro-list")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        manager = app.state.runtime_container.executor_node_manager
+        create_node = await client.post(
+            f"/api/sessions/{session_id}/executor-nodes",
+            json={"name": "Mac Studio", "enabled_executors": ["codex"]},
+        )
+        assert create_node.status_code == 201
+        node_id = create_node.json()["node"]["node_id"]
+        await manager.register_connection(
+            websocket=FakeWebSocket(),
+            register=RegisterNodeMessage(
+                node_id=node_id,
+                token=create_node.json()["token"],
+                executors=[
+                    ExecutorNodeExecutor(
+                        executor_type="codex",
+                        supports_resume=True,
+                        supports_follow_up=True,
+                        supports_audio_instruction=True,
+                        supports_thread_list=True,
+                        version="0.135.0",
+                        minimum_version="0.135.0",
+                    )
+                ],
+            ),
+        )
+        create_persona = await client.post(
+            f"/api/sessions/{session_id}/personas",
+            json={
+                "name": "Forge",
+                "avatar": "bro",
+                "base_prompt": "",
+                "executor_node_id": node_id,
+            },
+        )
+        assert create_persona.status_code == 201
+
+        response = await client.get(f"/api/sessions/{session_id}/bros")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bros"] == [
+        {
+            "persona_id": create_persona.json()["persona_id"],
+            "name": "Forge",
+            "avatar": "bro",
+            "status": "idle",
+            "executor_node": {
+                "node_id": node_id,
+                "name": "Mac Studio",
+                "connection_status": "connected",
+                "enabled_executors": ["codex"],
+                "codex": {
+                    "version": "0.135.0",
+                    "minimum_version": "0.135.0",
+                    "availability_reason": None,
+                    "supports_thread_list": True,
+                    "supports_audio_instruction": True,
+                },
+            },
+        }
+    ]
+    assert "token_hint" not in body["bros"][0]["executor_node"]
+    assert "last_seen_at" not in body["bros"][0]["executor_node"]
 
 
 @pytest.mark.anyio

@@ -102,6 +102,10 @@ from .models import (
     AssistantResponseDeltaStreamEvent,
     AssistantResponseFailedStreamEvent,
     AssistantResponseStartedStreamEvent,
+    BroExecutorCapabilitySummary,
+    BroExecutorNodeSummary,
+    BroListResponse,
+    BroSummary,
     ConversationAppendedStreamEvent,
     ConversationHistoryEntryModel,
     ConversationSnapshot,
@@ -341,7 +345,7 @@ class SessionRuntime:
             )
         return self.bro_detail_thread_projection
 
-    async def snapshot(self, *, sync_imported_codex_threads: bool = True) -> SessionSnapshot:
+    async def snapshot(self, *, sync_imported_codex_threads: bool = False) -> SessionSnapshot:
         tasks = await self.blackboard.list_tasks()
         sessions = await self.blackboard.list_sessions()
         runs = await self.blackboard.list_runs()
@@ -378,7 +382,6 @@ class SessionRuntime:
             personas=personas,
             sync_imported_codex_threads=sync_imported_codex_threads,
         )
-        bro_detail_threads = self._bro_detail_thread_projection()
         return SessionSnapshot(
             session_id=self.session_id,
             voice_target_persona_id=self._voice_target_persona_id,
@@ -392,33 +395,28 @@ class SessionRuntime:
             outbound_turn_requests=outbound_turn_requests,
             bro_threads=bro_detail_projection.bro_threads,
             bro_timeline_turns=bro_detail_projection.bro_timeline_turns,
-            bro_thread_pages=dict(bro_detail_threads.imported_codex_thread_page_info),
-            bro_timeline_pages=dict(bro_detail_threads.bro_thread_timeline_page_info),
-            personas=personas,
+            bro_thread_pages={},
+            bro_timeline_pages={},
+            personas=[],
             interaction_requests=sanitized_interaction_requests,
             attention_items=attention_items,
             agent_events=await self.blackboard.list_agent_events(),
             executor_capabilities=self._executor_capabilities_snapshot(),
-            executor_nodes=await self.executor_node_manager.list_nodes(),
+            executor_nodes=[],
             recent_execution_details=recent_execution_details,
             recent_native_turn_reasoning=self._recent_native_turn_reasoning(),
             draft_session=self.draft_manager.active_session,
         )
 
-    async def bro_list(self):
-        from newbro.runtime.models import (
-            BroExecutorCapabilitySummary,
-            BroExecutorNodeSummary,
-            BroListResponse,
-            BroSummary,
-        )
-
+    async def bro_list(self, *, allowed_executor_node_ids: set[str] | None = None) -> BroListResponse:
         personas = await self.blackboard.list_personas()
         nodes = {node.node_id: node for node in await self.executor_node_manager.list_nodes()}
         bros: list[BroSummary] = []
         for persona in personas:
             node_summary = None
-            if persona.executor_node_id:
+            if persona.executor_node_id and (
+                allowed_executor_node_ids is None or persona.executor_node_id in allowed_executor_node_ids
+            ):
                 node = nodes.get(persona.executor_node_id)
                 if node is not None:
                     codex_capability = next(

@@ -12,6 +12,7 @@ from newbro.protocol import (
     AttentionItemStatus,
     AttentionPriority,
     BindingStatus,
+    BroThread,
     CodexThreadEventMessage,
     CodexTurnEventMessage,
     ExecutionMode,
@@ -35,6 +36,7 @@ from newbro.protocol import (
 from newbro.executors.core import ExecutorCapabilities, ExecutorEvent, ExecutorEventType, ExecutorSession
 from newbro.protocol import Task, TaskStatus
 from newbro.runtime import Settings
+from newbro.runtime.models import CursorPageInfo
 from newbro.protocol.session import BroTimelineMessage, BroTimelineTurn
 from newbro.runtime.bro_detail_thread_helpers import (
     _merge_timeline_turn,
@@ -197,6 +199,45 @@ async def test_bro_list_returns_compact_persona_node_rows_without_full_node_data
     dumped = rows.model_dump(mode="json")
     assert "token_hint" not in dumped["bros"][0]["executor_node"]
     assert "last_seen_at" not in dumped["bros"][0]["executor_node"]
+
+
+@pytest.mark.anyio
+async def test_session_snapshot_does_not_sync_imported_codex_threads(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    session = build_session_runtime(tmp_path)
+    manager = session.executor_node_manager
+    issue = await manager.create_node(name="Mac Studio", enabled_executors=["codex"])
+    await session.blackboard.put_persona(
+        Persona(persona_id="forge", name="Forge", executor_node_id=issue.node.node_id)
+    )
+    projection = session._bro_detail_thread_projection()
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id="forge",
+        title="Cached thread",
+    )
+    projection.imported_codex_thread_page_info["forge"] = CursorPageInfo(
+        status="loaded",
+        next_cursor="next-page",
+        has_more=True,
+    )
+    projection.bro_thread_timeline_page_info["codex-import-1"] = CursorPageInfo(status="loaded")
+    calls = 0
+
+    async def fail_if_synced(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("snapshot must not refresh imported Codex threads")
+
+    monkeypatch.setattr(projection, "sync_imported_codex_threads", fail_if_synced)
+
+    snapshot = await session.snapshot()
+
+    assert calls == 0
+    assert [thread.thread_id for thread in snapshot.bro_threads] == ["codex-import-1"]
+    assert snapshot.bro_thread_pages == {}
+    assert snapshot.bro_timeline_pages == {}
+    assert snapshot.personas == []
+    assert snapshot.executor_nodes == []
 
 
 @pytest.mark.anyio

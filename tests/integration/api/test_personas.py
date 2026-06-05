@@ -53,15 +53,19 @@ async def test_persona_changes_sync_into_active_sessions(monkeypatch, tmp_path):
         assert list_response.status_code == 200
         assert len(list_response.json()) == 1
 
+        first_bros = (await client.get(f"/api/sessions/{first_session_id}/bros")).json()
+        assert len(first_bros["bros"]) == 1
+        assert first_bros["bros"][0]["name"] == "Alex"
         first_snapshot = (await client.get(f"/api/sessions/{first_session_id}")).json()
-        assert len(first_snapshot["personas"]) == 1
-        assert first_snapshot["personas"][0]["name"] == "Alex"
+        assert first_snapshot["personas"] == []
 
         second_session_id = (await client.post("/api/sessions")).json()["session_id"]
+        second_bros = (await client.get(f"/api/sessions/{second_session_id}/bros")).json()
         second_snapshot = (await client.get(f"/api/sessions/{second_session_id}")).json()
 
-        assert len(second_snapshot["personas"]) == 1
-        assert second_snapshot["personas"][0]["name"] == "Alex"
+        assert len(second_bros["bros"]) == 1
+        assert second_bros["bros"][0]["name"] == "Alex"
+        assert second_snapshot["personas"] == []
 
 
 @pytest.mark.anyio

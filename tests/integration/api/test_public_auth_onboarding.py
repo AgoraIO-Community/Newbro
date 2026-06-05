@@ -90,12 +90,15 @@ async def test_fixed_code_signup_reuses_existing_user_for_duplicate_email(tmp_pa
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as second:
         second_user_id = await _signup(second, email="User@Example.com", code="open-sesame")
         bootstrap = await second.get("/api/me/bootstrap")
-        snapshot = await second.get(f"/api/sessions/{bootstrap.json()['session_id']}")
+        session_id = bootstrap.json()["session_id"]
+        snapshot = await second.get(f"/api/sessions/{session_id}")
+        bros = await second.get(f"/api/sessions/{session_id}/bros")
 
     assert second_user_id == first_user_id
     assert bootstrap.status_code == 200
     assert snapshot.status_code == 200
-    assert [persona["name"] for persona in snapshot.json()["personas"]] == ["atlas"]
+    assert snapshot.json()["personas"] == []
+    assert [bro["name"] for bro in bros.json()["bros"]] == ["atlas"]
 
 
 @pytest.mark.anyio
@@ -120,13 +123,16 @@ async def test_fixed_code_signup_prefers_duplicate_user_that_already_owns_bros(t
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         selected_user_id = await _signup(client, email="user@example.com", code="open-sesame")
         bootstrap = await client.get("/api/me/bootstrap")
-        snapshot = await client.get(f"/api/sessions/{bootstrap.json()['session_id']}")
+        session_id = bootstrap.json()["session_id"]
+        snapshot = await client.get(f"/api/sessions/{session_id}")
+        bros = await client.get(f"/api/sessions/{session_id}/bros")
 
     assert selected_user_id == "user-with-bro"
     assert selected_user_id != empty_user_id
     assert bootstrap.status_code == 200
     assert snapshot.status_code == 200
-    assert [persona["name"] for persona in snapshot.json()["personas"]] == ["atlas"]
+    assert snapshot.json()["personas"] == []
+    assert [bro["name"] for bro in bros.json()["bros"]] == ["atlas"]
 
 
 @pytest.mark.anyio
@@ -215,15 +221,24 @@ async def test_user_cannot_access_other_user_session_or_node(tmp_path):
         assert create_node.status_code == 201
         node_id = create_node.json()["node"]["node_id"]
         snapshot_a = await user_a.get(f"/api/sessions/{session_a}")
+        list_nodes_a = await user_a.get(f"/api/sessions/{session_a}/executor-nodes")
         assert snapshot_a.status_code == 200
-        assert [node["node_id"] for node in snapshot_a.json()["executor_nodes"]] == [node_id]
+        assert snapshot_a.json()["executor_nodes"] == []
+        assert [node["node_id"] for node in list_nodes_a.json()] == [node_id]
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as user_b:
-        await _redeem(user_b, app, "invite-b")
+        user_b_id = await _redeem(user_b, app, "invite-b")
         bootstrap_b = (await user_b.get("/api/me/bootstrap")).json()
         session_b = bootstrap_b["session_id"]
         user_b_cookie = user_b.cookies.get(SESSION_COOKIE_NAME)
         assert user_b_cookie
+        await app.state.public_auth_store.create_persona(
+            user_id=user_b_id,
+            name="Beta",
+            avatar="bro",
+            base_prompt="",
+            executor_node_id=node_id,
+        )
 
         assert (await user_b.get(f"/api/sessions/{session_a}")).status_code == 404
         assert (await user_b.get(f"/api/sessions/{session_a}/conversation")).status_code == 404
@@ -232,6 +247,10 @@ async def test_user_cannot_access_other_user_session_or_node(tmp_path):
         snapshot_b = await user_b.get(f"/api/sessions/{session_b}")
         assert snapshot_b.status_code == 200
         assert snapshot_b.json()["executor_nodes"] == []
+        bros_b = await user_b.get(f"/api/sessions/{session_b}/bros")
+        assert bros_b.status_code == 200
+        assert bros_b.json()["bros"][0]["name"] == "Beta"
+        assert bros_b.json()["bros"][0]["executor_node"] is None
 
         list_nodes = await user_b.get(f"/api/sessions/{session_b}/executor-nodes")
         assert list_nodes.status_code == 200

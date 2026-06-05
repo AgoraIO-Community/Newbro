@@ -5,6 +5,7 @@ from newbro.api.models import DiagnosticTimelineResponse, SessionResponse
 from newbro.api.public_auth import require_public_user, require_session_owner, require_session_owner_or_internal
 from newbro.api.snapshots import scope_session_snapshot_for_user
 from newbro.observability.schema import LEVEL_PRIORITY
+from newbro.runtime.models import BroListResponse
 
 router = APIRouter()
 
@@ -42,6 +43,27 @@ async def get_session(
         request.app.state.public_auth_store,
         user,
         snapshot,
+    )
+
+
+@router.get("/sessions/{session_id}/bros", response_model=BroListResponse)
+async def list_bros(
+    session_id: str,
+    request: Request,
+) -> BroListResponse:
+    user = await require_session_owner_or_internal(request, session_id)
+    container = request.app.state.runtime_container
+    try:
+        session = container.get_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if user is None:
+        return await session.bro_list()
+    store = request.app.state.public_auth_store
+    personas = await store.list_personas(user_id=user.user_id)
+    await container.sync_user_personas(session_id=session_id, personas=personas)
+    return await session.bro_list(
+        allowed_executor_node_ids=set(await store.owned_executor_node_ids(user_id=user.user_id)),
     )
 
 
