@@ -67,6 +67,7 @@ class BroExecutorNodeSummary(BaseModel):
     name: str
     connection_status: Literal["connected", "disconnected"] = "disconnected"
     enabled_executors: list[str] = Field(default_factory=list)
+    last_connected_at: str | None = None
     codex: BroExecutorCapabilitySummary | None = None
 
 

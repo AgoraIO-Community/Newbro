@@ -196,6 +196,7 @@ async def test_bro_list_returns_compact_persona_node_rows_without_full_node_data
     assert rows.bros[0].executor_node.node_id == issue.node.node_id
     assert rows.bros[0].executor_node.name == "Mac Studio"
     assert rows.bros[0].executor_node.enabled_executors == ["codex"]
+    assert rows.bros[0].executor_node.last_connected_at is None
     dumped = rows.model_dump(mode="json")
     assert "token_hint" not in dumped["bros"][0]["executor_node"]
     assert "last_seen_at" not in dumped["bros"][0]["executor_node"]

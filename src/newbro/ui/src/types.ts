@@ -234,6 +234,43 @@ export interface BroTimelineTurnPageResponse {
   page: CursorPageInfo;
 }
 
+export interface BroExecutorCapabilitySummary {
+  version: string | null;
+  minimum_version: string | null;
+  availability_reason: string | null;
+  supports_thread_list: boolean;
+  supports_audio_instruction: boolean;
+}
+
+export interface BroExecutorNodeSummary {
+  node_id: string;
+  name: string;
+  connection_status: "connected" | "disconnected";
+  enabled_executors: string[];
+  last_connected_at: string | null;
+  codex: BroExecutorCapabilitySummary | null;
+}
+
+export interface BroSummary {
+  persona_id: string;
+  name: string;
+  avatar: string;
+  status: "idle" | "busy";
+  executor_node: BroExecutorNodeSummary | null;
+}
+
+export interface BroListResponse {
+  bros: BroSummary[];
+}
+
+export interface BroThreadSubscriptionResponse {
+  thread_id: string;
+  persona_id: string;
+  subscribed: boolean;
+  timeline_status: "not_loaded" | "loading" | "loaded" | "failed";
+  timeline_error: string | null;
+}
+
 export interface OutboundTurnRequest {
   request_id: string;
   persona_id: string;

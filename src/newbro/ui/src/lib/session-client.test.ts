@@ -196,10 +196,52 @@ describe("session-client transport base URL handling", () => {
     );
   });
 
+  it("lists compact bros for a session", async () => {
+    const fetchMock = vi.fn(async () =>
+      okJsonResponse({
+        bros: [
+          {
+            persona_id: "forge",
+            name: "Forge",
+            avatar: "bro",
+            status: "idle",
+            executor_node: null,
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./session-client");
+    await client.listBros("session-1");
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/session-1/bros");
+  });
+
   it("lists a bro timeline page with cursor params", async () => {
     const fetchMock = vi.fn(async () =>
       okJsonResponse({
         thread_id: "thread-1",
+        thread: {
+          thread_id: "thread-1",
+          persona_id: "forge",
+          persona_name: "Forge",
+          executor_id: "codex",
+          executor_node_id: "node-forge",
+          execution_session_id: null,
+          status: "completed",
+          title: "Thread 1",
+          preview: null,
+          progress: 100,
+          task_ids: [],
+          active_task_id: null,
+          latest_task_id: null,
+          has_resume_handle: true,
+          updated_at: null,
+          timeline_status: "loaded",
+          timeline_error: null,
+          diagnostics: {},
+        },
         turns: [],
         page: { next_cursor: null, previous_cursor: "newer", has_more: false, status: "loaded", error: null },
       }),
@@ -400,72 +442,50 @@ describe("session-client transport base URL handling", () => {
     );
   });
 
-  it("opens a bro thread through the hydration endpoint", async () => {
+  it("subscribes to a bro thread through the subscribe endpoint", async () => {
     const fetchMock = vi.fn(async () =>
       okJsonResponse({
-        session_id: "session-1",
-        tasks: [],
-        execution_sessions: [],
-        execution_runs: [],
-        execution_modes: [],
-        bindings: [],
-        summaries: [],
-        notification_candidates: [],
-        bro_threads: [],
-        personas: [],
-        interaction_requests: [],
-        attention_items: [],
-        agent_events: [],
-        executor_capabilities: [],
-        executor_nodes: [],
-        draft_session: null,
+        thread_id: "codex-import-1",
+        persona_id: "forge",
+        subscribed: true,
+        timeline_status: "not_loaded",
+        timeline_error: null,
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
     const client = await import("./session-client");
-    await client.openBroThread("session-1", {
+    await client.subscribeBroThread("session-1", {
       targetPersonaId: "forge",
       threadId: "codex-import-1",
     });
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/session-1/bro-threads/codex-import-1/open", {
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/session-1/bro-threads/codex-import-1/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ target_persona_id: "forge" }),
     });
   });
 
-  it("closes a bro thread through the selected-thread endpoint", async () => {
+  it("unsubscribes from a bro thread through the subscribe endpoint", async () => {
     const fetchMock = vi.fn(async () =>
       okJsonResponse({
-        session_id: "session-1",
-        tasks: [],
-        execution_sessions: [],
-        execution_runs: [],
-        execution_modes: [],
-        bindings: [],
-        summaries: [],
-        notification_candidates: [],
-        bro_threads: [],
-        personas: [],
-        interaction_requests: [],
-        attention_items: [],
-        agent_events: [],
-        executor_capabilities: [],
-        executor_nodes: [],
-        draft_session: null,
+        thread_id: "codex-import-1",
+        persona_id: "forge",
+        subscribed: false,
+        timeline_status: "not_loaded",
+        timeline_error: null,
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
     const client = await import("./session-client");
-    await client.closeBroThread("session-1", {
+    await client.unsubscribeBroThread("session-1", {
       targetPersonaId: "forge",
       threadId: "codex-import-1",
     });
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/session-1/bro-threads/codex-import-1/open", {
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/session-1/bro-threads/codex-import-1/subscribe", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ target_persona_id: "forge" }),

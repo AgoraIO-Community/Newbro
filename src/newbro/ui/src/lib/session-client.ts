@@ -1,7 +1,9 @@
 import { ensureOk } from "./http-errors";
 import type {
+  BroListResponse,
   ConversationSnapshot,
   BroThreadPageResponse,
+  BroThreadSubscriptionResponse,
   BroTimelineTurnPageResponse,
   DiagnosticTimelineResponse,
   ExecutorNodeCredentialIssue,
@@ -247,6 +249,11 @@ export async function getSessionSnapshot(sessionId: string): Promise<SessionSnap
   return (await ensureOk(response)).json();
 }
 
+export async function listBros(sessionId: string): Promise<BroListResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bros`));
+  return (await ensureOk(response)).json();
+}
+
 export async function listBroThreadsPage(
   sessionId: string,
   payload: {
@@ -282,14 +289,14 @@ export async function listBroTimelinePage(
   return (await ensureOk(response)).json();
 }
 
-export async function openBroThread(
+export async function subscribeBroThread(
   sessionId: string,
   payload: {
     targetPersonaId: string;
     threadId: string;
   },
-): Promise<SessionSnapshot> {
-  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/open`), {
+): Promise<BroThreadSubscriptionResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/subscribe`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target_persona_id: payload.targetPersonaId }),
@@ -297,14 +304,14 @@ export async function openBroThread(
   return (await ensureOk(response)).json();
 }
 
-export async function closeBroThread(
+export async function unsubscribeBroThread(
   sessionId: string,
   payload: {
     targetPersonaId: string;
     threadId: string;
   },
-): Promise<SessionSnapshot> {
-  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/open`), {
+): Promise<BroThreadSubscriptionResponse> {
+  const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/bro-threads/${encodeURIComponent(payload.threadId)}/subscribe`), {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target_persona_id: payload.targetPersonaId }),

@@ -116,6 +116,7 @@ async def test_bro_list_api_returns_compact_bro_node_rows(tmp_path):
                 "name": "Mac Studio",
                 "connection_status": "connected",
                 "enabled_executors": ["codex"],
+                "last_connected_at": body["bros"][0]["executor_node"]["last_connected_at"],
                 "codex": {
                     "version": "0.135.0",
                     "minimum_version": "0.135.0",
@@ -126,6 +127,7 @@ async def test_bro_list_api_returns_compact_bro_node_rows(tmp_path):
             },
         }
     ]
+    assert body["bros"][0]["executor_node"]["last_connected_at"] is not None
     assert "token_hint" not in body["bros"][0]["executor_node"]
     assert "last_seen_at" not in body["bros"][0]["executor_node"]
 

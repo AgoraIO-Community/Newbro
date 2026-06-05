@@ -8,7 +8,7 @@ import {
   createExecutorNode,
   createPersona,
   deletePersona,
-  getSessionSnapshot,
+  listExecutorNodes,
   revealExecutorNodeConnectCommand,
   setVoiceTarget,
   submitExecutorAudioInstruction,
@@ -2056,12 +2056,14 @@ function CreateConnectSheet({
   onClose,
   onCreated,
   bro,
+  mode,
   mobile = false,
 }: {
   sessionId: string;
   onClose: () => void;
   onCreated: () => Promise<void>;
   bro?: BroCardModel | null;
+  mode?: "setup" | "reconnect";
   mobile?: boolean;
 }) {
   const initialBroName = bro?.name ?? "atlas";
@@ -2084,6 +2086,7 @@ function CreateConnectSheet({
   const connectActionsDisabled = existingBroNameDirty || nameSaving;
   const canCreate = trimmedName.length > 0 && !busy && !nameSaving && !commands && !pendingNodeId && !completed;
   const canSaveExistingBroName = Boolean(bro) && existingBroNameChanged && !busy && !nameSaving && !completed;
+  const reconnectExistingBro = Boolean(bro?.nodeName) && mode !== "setup";
 
   // For an existing bro that already has a node, reveal its connect command as
   // soon as the dialog opens, so the command + copy work without a "create" click.
@@ -2210,8 +2213,8 @@ function CreateConnectSheet({
 
     const poll = async () => {
       try {
-        const snapshot = await getSessionSnapshot(sessionId);
-        const node = snapshot.executor_nodes.find((candidate) => candidate.node_id === pendingNodeId);
+        const nodes = await listExecutorNodes(sessionId);
+        const node = nodes.find((candidate) => candidate.node_id === pendingNodeId);
         if (node?.last_connected_at) {
           if (!cancelled) {
             await finalizeConnectedNode(pendingNodeId, pendingBroName);
@@ -2245,8 +2248,8 @@ function CreateConnectSheet({
           <header className="ob-sheet-head">
             <div className="ob-sheet-titles">
               <span className="ob-eyebrow ob-eyebrow-coral">NEW BRO</span>
-              <h2 className="ob-sheet-h">{bro ? (bro.nodeName ? `Reconnect ${bro.name}` : `Set up ${bro.name}`) : "Set up your first bro"}</h2>
-              <p className="ob-sheet-intro">{bro ? (bro.nodeName ? `Get ${bro.name} back online — install the Newbro app on its Mac and copy the connect settings.` : `Install the Newbro app on the Mac that runs ${bro.name}, then copy the connect settings.`) : "A bro works on a Mac you keep on. Three quick steps and it’s ready."}</p>
+              <h2 className="ob-sheet-h">{bro ? (reconnectExistingBro ? `Reconnect ${bro.name}` : `Set up ${bro.name}`) : "Set up your first bro"}</h2>
+              <p className="ob-sheet-intro">{bro ? (reconnectExistingBro ? `Get ${bro.name} back online — install the Newbro app on its Mac and copy the connect settings.` : `Install the Newbro app on the Mac that runs ${bro.name}, then copy the connect settings.`) : "A bro works on a Mac you keep on. Three quick steps and it’s ready."}</p>
             </div>
             <button type="button" className="ob-sheet-close" aria-label="Close" onClick={onClose}><X size={16} strokeWidth={2.2} /></button>
           </header>
@@ -3581,7 +3584,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
     <DesktopFrame active="detail" bro={bro} onHome={onHome} onConnect={() => setConnectOpen(true)}>
       {needsConnect && shell.activeShellSessionId ? (
         <div className="dt-main-pad nb-detail-connect-stage">
-          <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onHome} onCreated={shell.refreshShellSession} bro={bro} />
+          <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onHome} onCreated={shell.refreshShellSession} bro={bro} mode={nodeState.kind === "never_connected" ? "setup" : undefined} />
         </div>
       ) : null}
       {!needsConnect ? (
@@ -3664,7 +3667,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
         onClose={() => setWorkspacePickerOpen(false)}
       />
       {connectOpen && shell.activeShellSessionId ? (
-        <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setConnectOpen(false)} onCreated={shell.refreshShellSession} bro={bro} />
+        <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setConnectOpen(false)} onCreated={shell.refreshShellSession} bro={bro} mode={nodeState.kind === "never_connected" ? "setup" : undefined} />
       ) : null}
       {renameOpen && shell.activeShellSessionId && bro.source === "runtime" ? (
         <RenameBroDialog sessionId={shell.activeShellSessionId} bro={bro} onClose={() => setRenameOpen(false)} onRenamed={shell.refreshShellSession} />
@@ -4248,7 +4251,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
               <span className="home-section-eyebrow">Connect · {bro.name}</span>
               <h2>Set up this Bro before talking.</h2>
               <p>Create or reveal Install + connect and run it on the computer where this Bro should work.</p>
-              <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onBack} onCreated={shell.refreshShellSession} bro={bro} mobile />
+              <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={onBack} onCreated={shell.refreshShellSession} bro={bro} mode={nodeState.kind === "never_connected" ? "setup" : undefined} mobile />
             </section>
           </main>
         </div>
@@ -4399,7 +4402,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
         />
       </div>
       {connectOpen && shell.activeShellSessionId ? (
-        <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setConnectOpen(false)} onCreated={shell.refreshShellSession} bro={bro} mobile />
+        <CreateConnectSheet sessionId={shell.activeShellSessionId} onClose={() => setConnectOpen(false)} onCreated={shell.refreshShellSession} bro={bro} mode={nodeState.kind === "never_connected" ? "setup" : undefined} mobile />
       ) : null}
     </MobileStage>
   );

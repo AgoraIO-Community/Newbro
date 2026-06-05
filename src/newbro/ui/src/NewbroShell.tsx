@@ -17,11 +17,10 @@ import {
   getConversationSnapshot,
   getCurrentUser,
   getSessionSnapshot,
+  listBros,
   listBroThreadsPage,
   listBroTimelinePage,
   logoutPublicUser,
-  closeBroThread,
-  openBroThread,
   openSessionStream,
   resolveInteractionRequest,
   sendSocketCommand,
@@ -29,6 +28,8 @@ import {
   sendSocketMessage,
   setVoiceTarget,
   signupPublicUser,
+  subscribeBroThread,
+  unsubscribeBroThread,
   type PublicUser,
 } from "./lib/session-client";
 import { beginThreadOpen, finishThreadOpen, threadOpenKey } from "./lib/thread-open-dedupe";
@@ -49,8 +50,11 @@ import type {
   ExecutorNodeRecord,
   AgentEvent,
   AttentionItem,
+  BroListResponse,
+  BroSummary,
   BroTimelineTurn,
   BroThread,
+  BroThreadPageResponse,
   CursorPageInfo,
   InteractionRequest,
   Persona,
@@ -124,6 +128,120 @@ function describeApiFailure(error: unknown, defaultMessage: string): string {
     return defaultMessage;
   }
   return message;
+}
+
+function compactBroToPersona(bro: BroSummary): Persona {
+  return {
+    persona_id: bro.persona_id,
+    name: bro.name,
+    avatar: bro.avatar,
+    base_prompt: "",
+    executor_node_id: bro.executor_node?.node_id ?? null,
+    bro_detail_session_id: bro.persona_id,
+    status: bro.status,
+  };
+}
+
+function compactBroToExecutorNode(bro: BroSummary): ExecutorNodeRecord | null {
+  const node = bro.executor_node;
+  if (!node) {
+    return null;
+  }
+  const connectedCodex = node.connection_status === "connected" && node.codex !== null;
+  return {
+    node_id: node.node_id,
+    name: node.name,
+    enabled_executors: node.enabled_executors,
+    acpx_agent: null,
+    connected_executors: connectedCodex ? ["codex"] : [],
+    connected_executor_capabilities: node.codex
+      ? [
+          {
+            executor_type: "codex",
+            supports_pause: false,
+            supports_cancel: false,
+            supports_resume: true,
+            supports_follow_up: true,
+            connected: connectedCodex,
+            node_id: node.node_id,
+            availability_reason: node.codex.availability_reason,
+            supports_audio_instruction: node.codex.supports_audio_instruction,
+            supports_thread_list: node.codex.supports_thread_list,
+          },
+        ]
+      : [],
+    connection_status: node.connection_status,
+    token_hint: null,
+    last_connected_at: node.last_connected_at,
+    last_seen_at: null,
+  };
+}
+
+function personasFromBroList(response: BroListResponse): Persona[] {
+  return response.bros.map(compactBroToPersona);
+}
+
+function executorNodesFromBroList(response: BroListResponse): ExecutorNodeRecord[] {
+  const nodesById = new Map<string, ExecutorNodeRecord>();
+  for (const bro of response.bros) {
+    const node = compactBroToExecutorNode(bro);
+    if (node) {
+      nodesById.set(node.node_id, node);
+    }
+  }
+  return [...nodesById.values()];
+}
+
+function upsertThread(threads: BroThread[], thread: BroThread): BroThread[] {
+  let replaced = false;
+  const next = threads.map((candidate) => {
+    if (candidate.thread_id !== thread.thread_id) {
+      return candidate;
+    }
+    replaced = true;
+    return thread;
+  });
+  return replaced ? next : [thread, ...next];
+}
+
+function markThreadTimeline(
+  threads: BroThread[],
+  threadId: string,
+  status: BroThread["timeline_status"],
+  error: string | null = null,
+): BroThread[] {
+  return threads.map((thread) => (
+    thread.thread_id === threadId
+      ? { ...thread, timeline_status: status, timeline_error: error }
+      : thread
+  ));
+}
+
+function replaceTimelineTurnsForThread(
+  turns: BroTimelineTurn[],
+  threadId: string,
+  nextTurns: BroTimelineTurn[],
+): BroTimelineTurn[] {
+  return [
+    ...turns.filter((turn) => turn.thread_id !== threadId),
+    ...nextTurns,
+  ];
+}
+
+function prependTimelineTurns(
+  turns: BroTimelineTurn[],
+  nextTurns: BroTimelineTurn[],
+): BroTimelineTurn[] {
+  const seen = new Set(turns.map((turn) => turn.turn_id));
+  return [...nextTurns.filter((turn) => !seen.has(turn.turn_id)), ...turns];
+}
+
+function broCanListThreads(bro: BroSummary): boolean {
+  return Boolean(
+    bro.executor_node
+    && bro.executor_node.connection_status === "connected"
+    && bro.executor_node.codex?.supports_thread_list,
+  );
 }
 
 function SignupInviteCodeInput({
@@ -325,15 +443,11 @@ function useNewbroShellState() {
   const socketRef = useRef<WebSocket | null>(null);
 
   function applySnapshot(snapshot: SessionSnapshot) {
-    setRuntimePersonas(snapshot.personas);
-    setExecutorNodes(snapshot.executor_nodes ?? []);
     setTasks(snapshot.tasks ?? []);
     setExecutionSessions(snapshot.execution_sessions ?? []);
     setExecutionRuns(snapshot.execution_runs ?? []);
     setBroThreads(snapshot.bro_threads ?? []);
     setBroTimelineTurns(snapshot.bro_timeline_turns ?? []);
-    setBroThreadPages(snapshot.bro_thread_pages ?? {});
-    setBroTimelinePages(snapshot.bro_timeline_pages ?? {});
     setInteractionRequests(snapshot.interaction_requests ?? []);
     setAttentionItems(snapshot.attention_items ?? []);
     setTaskSummaries(snapshot.summaries ?? []);
@@ -343,6 +457,33 @@ function useNewbroShellState() {
     setDraftSession(snapshot.draft_session ?? null);
     setHasLoadedShellSnapshot(true);
     setShellError(null);
+  }
+
+  function applyBroList(response: BroListResponse) {
+    setRuntimePersonas(personasFromBroList(response));
+    setExecutorNodes(executorNodesFromBroList(response));
+  }
+
+  function applyBroThreadPages(pages: BroThreadPageResponse[]) {
+    if (pages.length === 0) {
+      return;
+    }
+    setBroThreads((current) => {
+      let next = current;
+      for (const page of pages) {
+        for (const thread of page.threads) {
+          next = upsertThread(next, thread);
+        }
+      }
+      return next;
+    });
+    setBroThreadPages((current) => {
+      const next = { ...current };
+      for (const page of pages) {
+        next[page.persona_id] = page.page;
+      }
+      return next;
+    });
   }
 
   function clearShellSessionState() {
@@ -378,16 +519,44 @@ function useNewbroShellState() {
     }
     const loadSequence = ++shellLoadSequenceRef.current;
     setShellError(null);
-    const [snapshot, conversation] = await Promise.all([
+    const [snapshot, conversation, broList] = await Promise.all([
       getSessionSnapshot(sessionId),
       getConversationSnapshot(sessionId),
+      listBros(sessionId),
     ]);
+    const broThreadPages = await Promise.all(
+      broList.bros
+        .filter(broCanListThreads)
+        .map(async (bro) => {
+          try {
+            return await listBroThreadsPage(sessionId, {
+              targetPersonaId: bro.persona_id,
+              cursor: null,
+              limit: 25,
+            });
+          } catch (error) {
+            return {
+              persona_id: bro.persona_id,
+              threads: [],
+              page: {
+                next_cursor: null,
+                previous_cursor: null,
+                has_more: false,
+                status: "failed" as const,
+                error: describeApiFailure(error, "Thread list could not be loaded."),
+              },
+            };
+          }
+        }),
+    );
     if (!mountedRef.current || shellLoadSequenceRef.current !== loadSequence) {
       return;
     }
     startTransition(() => {
       setActiveShellSessionId(sessionId);
       applySnapshot(snapshot);
+      applyBroList(broList);
+      applyBroThreadPages(broThreadPages);
       const hydrated = (conversation.conversation_history ?? []).map((entry) => ({
         role: entry.role as "user" | "assistant",
         text: entry.text,
@@ -427,17 +596,27 @@ function useNewbroShellState() {
       return;
     }
     try {
-      const snapshot = await openBroThread(activeShellSessionId, { targetPersonaId, threadId });
+      setBroThreads((current) => markThreadTimeline(current, threadId, "loading"));
+      await subscribeBroThread(activeShellSessionId, { targetPersonaId, threadId });
+      const page = await listBroTimelinePage(activeShellSessionId, {
+        targetPersonaId,
+        threadId,
+        cursor: null,
+        limit: 15,
+      });
       if (!mountedRef.current || threadOpenLatestKeyRef.current !== openKey) {
         return;
       }
       startTransition(() => {
-        applySnapshot(snapshot);
+        setBroThreads((current) => upsertThread(current, page.thread));
+        setBroTimelineTurns((current) => replaceTimelineTurnsForThread(current, threadId, page.turns));
+        setBroTimelinePages((current) => ({ ...current, [threadId]: page.page }));
       });
     } catch (error) {
       if (!mountedRef.current || threadOpenLatestKeyRef.current !== openKey) {
         return;
       }
+      setBroThreads((current) => markThreadTimeline(current, threadId, "failed", describeApiFailure(error, "Thread history could not be fetched. Try selecting the thread again.")));
       setThreadOpenError(describeApiFailure(error, "Thread history could not be fetched. Try selecting the thread again."));
     } finally {
       finishThreadOpen(threadOpenInFlightRef.current, openKey);
@@ -452,12 +631,16 @@ function useNewbroShellState() {
       return;
     }
     try {
-      const snapshot = await closeBroThread(activeShellSessionId, { targetPersonaId, threadId });
+      await unsubscribeBroThread(activeShellSessionId, { targetPersonaId, threadId });
       if (!mountedRef.current) {
         return;
       }
       startTransition(() => {
-        applySnapshot(snapshot);
+        setBroThreads((current) => markThreadTimeline(current, threadId, "not_loaded"));
+        setBroTimelinePages((current) => {
+          const { [threadId]: _removed, ...rest } = current;
+          return rest;
+        });
       });
     } catch {
       // Closing a selected thread is cleanup; backend subscription ids still
@@ -516,9 +699,9 @@ function useNewbroShellState() {
       }
       startTransition(() => {
         setBroTimelineTurns((current) => {
-          const seen = new Set(current.map((turn) => turn.turn_id));
-          return [...page.turns.filter((turn) => !seen.has(turn.turn_id)), ...current];
+          return prependTimelineTurns(current, page.turns);
         });
+        setBroThreads((current) => upsertThread(current, page.thread));
         setBroTimelinePages((current) => ({ ...current, [threadId]: page.page }));
       });
     } catch (error) {

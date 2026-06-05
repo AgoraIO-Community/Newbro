@@ -433,6 +433,7 @@ class SessionRuntime:
                         name=node.name,
                         connection_status=node.connection_status,
                         enabled_executors=list(node.enabled_executors),
+                        last_connected_at=node.last_connected_at,
                         codex=(
                             BroExecutorCapabilitySummary(
                                 version=codex_capability.version,
