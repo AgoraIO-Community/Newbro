@@ -692,6 +692,7 @@ class BroDetailThreadProjection:
             "item/agentMessage/delta",
             "item/plan/delta",
             "item/completed",
+            "turn/completed",
             "thread/goal/updated",
             "thread/goal/cleared",
         }:
@@ -898,6 +899,18 @@ class BroDetailThreadProjection:
             if updated:
                 self.bro_thread_executor_turns[subscription.public_thread_id] = updated
             return bool(updated)
+        if message.method == "turn/completed":
+            # Turn-level completion is the authoritative settle signal. Commentary
+            # item completions keep the turn live, so the turn settles here (or via
+            # the outbound codex_turn_event 'completed') rather than per message.
+            turn = params.get("turn")
+            completed_turn_id = turn.get("id") if isinstance(turn, dict) else None
+            if not isinstance(completed_turn_id, str) or not completed_turn_id:
+                return False
+            return self.settle_selected_thread_turn(
+                public_thread_id=subscription.public_thread_id,
+                executor_turn_id=completed_turn_id,
+            )
         turn_id = params.get("turnId") or params.get("turn_id")
         if not isinstance(turn_id, str) or not turn_id:
             return False
@@ -956,17 +969,40 @@ class BroDetailThreadProjection:
             item_id = item.get("id")
             item_id_text = str(item_id) if isinstance(item_id, str) and item_id else "completed"
             status = item.get("status")
+            # Codex streams several agentMessage items per turn: 'commentary'
+            # phases are intermediate working narration, and only the
+            # 'final_answer' phase is the settled answer. A commentary completion
+            # must NOT settle the turn, otherwise the bubble settles on each
+            # commentary line and snaps back to working on the next one (a
+            # per-message settle/un-settle flicker). Items without a phase
+            # (history, older codex) keep their reported status so a lone native
+            # answer still settles.
+            phase = item.get("phase")
+            default_status = status if isinstance(status, str) and status else "completed"
+            if role == "user":
+                # The echoed user message completing does not finish the turn; the
+                # assistant answer is still pending, so keep the turn live (the
+                # message itself keeps its own reported status).
+                message_status = default_status
+                turn_status = "running"
+            elif phase == "commentary":
+                message_status = "running"
+                turn_status = "running"
+            else:
+                message_status = default_status
+                turn_status = "running" if message_status in {"running", "inProgress"} else "completed"
             timeline_message = BroTimelineMessage(
                 message_id=f"{subscription.public_thread_id}:{turn_id}:{role}",
                 role=role,
                 kind="text",
                 text=text,
                 created_at=timestamp,
-                status=status if isinstance(status, str) and status else "completed",
+                status=message_status,
                 metadata={
                     "executor_turn_id": turn_id,
                     "codex_item_id": item_id_text,
                     "codex_item_type": item.get("type") if isinstance(item.get("type"), str) else None,
+                    "codex_agent_message_phase": phase if isinstance(phase, str) else None,
                     "source": "selected_thread_event",
                 },
             )
@@ -983,7 +1019,7 @@ class BroDetailThreadProjection:
                     input_modality="text" if role == "user" else "unknown",
                     user=timeline_message if role == "user" else None,
                     assistant=timeline_message if role == "assistant" else None,
-                    status="running" if timeline_message.status in {"running", "inProgress"} else "completed",
+                    status=turn_status,
                     created_at=timestamp,
                     updated_at=timestamp,
                     metadata={
@@ -1117,6 +1153,29 @@ class BroDetailThreadProjection:
                 self.bro_thread_executor_turns.pop(public_thread_id, None)
             return candidate.user, candidate.executor_turn_id
         return None, None
+
+    def settle_selected_thread_turn(self, *, public_thread_id: str, executor_turn_id: str) -> bool:
+        turns = self.bro_thread_executor_turns.get(public_thread_id)
+        if not turns:
+            return False
+        changed = False
+        updated: list[BroTimelineTurn] = []
+        for turn in turns:
+            if (
+                turn.executor_turn_id == executor_turn_id
+                and turn.status not in {"completed", "failed", "cancelled"}
+            ):
+                assistant = turn.assistant
+                if assistant is not None and (assistant.status or "").lower() in {
+                    "running", "in_progress", "inprogress", "pending", "streaming"
+                }:
+                    assistant = assistant.model_copy(update={"status": "completed"})
+                turn = turn.model_copy(update={"status": "completed", "assistant": assistant})
+                changed = True
+            updated.append(turn)
+        if changed:
+            self.bro_thread_executor_turns[public_thread_id] = updated
+        return changed
 
     def upsert_bro_thread_executor_turn(self, turn: BroTimelineTurn) -> None:
         turns = list(self.bro_thread_executor_turns.get(turn.thread_id, []))
