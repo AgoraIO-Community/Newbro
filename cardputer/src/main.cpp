@@ -138,7 +138,7 @@ void runVoiceTurn() {
   Serial.printf("[heap] before upload: %u free, audio=%u bytes (%u ms)\n",
                 ESP.getFreeHeap(), (unsigned)meta.byteLen, (unsigned)meta.durationMs);
   std::string transcript;
-  if (!g_clientPtr->sendAudio(g_sessionId, g_activeBro.id, meta,
+  if (!g_clientPtr->sendAudio(g_sessionId, g_activeBro.id, "", meta,
                               reinterpret_cast<const uint8_t *>(g_mic.data()), meta.byteLen, transcript)) {
     Serial.printf("[audio] FAILED: %s\n", g_clientPtr->lastError().c_str());
     g_chatScreen.setReply(g_clientPtr->lastError());

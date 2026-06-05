@@ -79,7 +79,7 @@ bool NewbroClient::getThreads(const std::string &sessionId, const std::string &p
   lastError_.clear();
   HttpResponse r = t_.request("GET", "/api/sessions/" + sessionId, "", token_);
   if (!r.transportOk) { lastError_ = "network error"; return false; }
-  if (r.status != 200) { lastError_ = "threads HTTP " + std::to_string(r.status); return false; }
+  if (r.status != 200) { lastError_ = "threads HTTP " + std::to_string(r.status) + ": " + r.body; return false; }
   if (!parseBroThreads(r.body, personaId, out)) { lastError_ = "bad snapshot"; return false; }
   return true;
 }
