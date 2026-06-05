@@ -106,6 +106,39 @@ void test_build_text_body(void) {
   TEST_ASSERT_TRUE(b.find(R"("text":"hi")") != std::string::npos);
 }
 
+static const char *kThreadsSnapshot = R"({
+  "session_id":"s",
+  "bro_timeline_turns":[],
+  "bro_threads":[
+    {"thread_id":"t-old","persona_id":"p1","title":"Old build","preview":"fixed the bug","status":"completed","updated_at":"2026-06-04T00:00:01+00:00"},
+    {"thread_id":"t-other","persona_id":"p2","title":"Other bro","preview":null,"status":"running","updated_at":"2026-06-04T00:00:09+00:00"},
+    {"thread_id":"t-new","persona_id":"p1","title":"Ship it","preview":null,"status":"running","updated_at":"2026-06-04T00:00:05+00:00"}
+  ]
+})";
+
+void test_parse_bro_threads_filters_and_sorts(void) {
+  std::vector<ThreadInfo> out;
+  TEST_ASSERT_TRUE(parseBroThreads(kThreadsSnapshot, "p1", out));
+  TEST_ASSERT_EQUAL_INT(2, (int)out.size());
+  TEST_ASSERT_EQUAL_STRING("t-new", out[0].id.c_str());
+  TEST_ASSERT_EQUAL_STRING("Ship it", out[0].title.c_str());
+  TEST_ASSERT_TRUE(out[0].preview.empty());
+  TEST_ASSERT_EQUAL_STRING("running", out[0].status.c_str());
+  TEST_ASSERT_EQUAL_STRING("t-old", out[1].id.c_str());
+  TEST_ASSERT_EQUAL_STRING("fixed the bug", out[1].preview.c_str());
+}
+
+void test_parse_bro_threads_empty_for_unknown_persona(void) {
+  std::vector<ThreadInfo> out;
+  TEST_ASSERT_TRUE(parseBroThreads(kThreadsSnapshot, "pX", out));
+  TEST_ASSERT_EQUAL_INT(0, (int)out.size());
+}
+
+void test_parse_bro_threads_rejects_garbage(void) {
+  std::vector<ThreadInfo> out;
+  TEST_ASSERT_FALSE(parseBroThreads("not json", out));
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_parse_bootstrap);
@@ -120,5 +153,8 @@ int main(int, char **) {
   RUN_TEST(test_parse_audio_transcript);
   RUN_TEST(test_build_audio_query);
   RUN_TEST(test_build_text_body);
+  RUN_TEST(test_parse_bro_threads_filters_and_sorts);
+  RUN_TEST(test_parse_bro_threads_empty_for_unknown_persona);
+  RUN_TEST(test_parse_bro_threads_rejects_garbage);
   return UNITY_END();
 }

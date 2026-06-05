@@ -1,5 +1,6 @@
 #include "SessionJson.h"
 #include <ArduinoJson.h>
+#include <algorithm>
 
 namespace nb {
 
@@ -88,6 +89,39 @@ std::string buildTextBody(const std::string &personaId, const std::string &text)
   std::string out;
   serializeJson(doc, out);
   return out;
+}
+
+bool parseBroThreads(const std::string &snapshotJson, const std::string &personaId,
+                     std::vector<ThreadInfo> &out) {
+  JsonDocument filter;
+  JsonObject t = filter["bro_threads"].add<JsonObject>();
+  t["thread_id"] = true;
+  t["persona_id"] = true;
+  t["title"] = true;
+  t["preview"] = true;
+  t["status"] = true;
+  t["updated_at"] = true;
+
+  JsonDocument doc;
+  if (deserializeJson(doc, snapshotJson, DeserializationOption::Filter(filter)) != DeserializationError::Ok) {
+    return false;
+  }
+  out.clear();
+  for (JsonObject th : doc["bro_threads"].as<JsonArray>()) {
+    const char *pid = th["persona_id"].is<const char *>() ? th["persona_id"].as<const char *>() : "";
+    if (personaId != pid) continue;
+    ThreadInfo info;
+    info.id = th["thread_id"].as<std::string>();
+    info.title = th["title"].is<const char *>() ? th["title"].as<std::string>() : std::string();
+    info.preview = th["preview"].is<const char *>() ? th["preview"].as<std::string>() : std::string();
+    info.status = th["status"].is<const char *>() ? th["status"].as<std::string>() : std::string();
+    info.updatedAt = th["updated_at"].is<const char *>() ? th["updated_at"].as<std::string>() : std::string();
+    out.push_back(info);
+  }
+  std::sort(out.begin(), out.end(), [](const ThreadInfo &a, const ThreadInfo &b) {
+    return a.updatedAt > b.updatedAt;  // ISO-8601 desc; "" sorts last
+  });
+  return true;
 }
 
 }  // namespace nb
