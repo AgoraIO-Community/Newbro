@@ -19,6 +19,8 @@ void Router::tick() {
 }
 
 Key Router::readKey() {
+  // NOTE: isChange() is one-shot (it resets its baseline on read), so it MUST be
+  // called exactly once per loop. Callers use the returned Key, never isChange() again.
   if (!(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed())) return Key::None;
   auto st = M5Cardputer.Keyboard.keysState();
   if (st.enter) return Key::Enter;
@@ -27,7 +29,7 @@ Key Router::readKey() {
     if (c == '.') return Key::Down;
     if (c == '`' || c == 0x1b) return Key::Back;
   }
-  return Key::None;
+  return Key::Other;  // fresh press of a non-nav key → push-to-talk
 }
 
 }  // namespace nb

@@ -11,7 +11,7 @@ namespace nb {
 class MicRecorder {
  public:
   static constexpr uint32_t kSampleRate = 16000;
-  static constexpr size_t kMaxSamples = kSampleRate * 5;  // 5 s cap (160 KB internal RAM)
+  static constexpr size_t kMaxSamples = kSampleRate * 4;  // 4 s cap (128 KB internal RAM)
 
   bool beginRecording();   // allocate (once) + start mic + reset; false if RAM alloc failed
   void poll();             // capture available samples (call frequently while held)

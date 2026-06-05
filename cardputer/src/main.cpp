@@ -263,8 +263,8 @@ void loop() {
   if (g_inChat) {
     if (key == nb::Key::Back) {
       g_chatScreen.onKey(nb::Key::Back);
-    } else if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed() && key == nb::Key::None) {
-      runVoiceTurn();
+    } else if (key == nb::Key::Other) {
+      runVoiceTurn();  // push-to-talk: any non-nav key
     }
   } else if (key != nb::Key::None) {
     g_listScreen.onKey(key);
