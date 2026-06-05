@@ -1150,6 +1150,18 @@ function TimelineTurnView({
     stepCount: reasoningSteps.length,
     hasAnswer: answerText !== "",
   });
+  // While reasoning, the latest (streaming) step is shown as a prominent
+  // commentary line above the compact step list; it collapses into the steps
+  // once the next message starts or the answer arrives.
+  const isReasoning = liveState.kind === "live" && liveState.sub === "reasoning";
+  const activeCommentary =
+    isReasoning && reasoningSteps.length > 0 ? reasoningSteps[reasoningSteps.length - 1].label : null;
+  const stepsForBubble =
+    liveState.kind === "settled"
+      ? dedupedSettledSteps
+      : isReasoning
+        ? reasoningSteps.slice(0, -1)
+        : reasoningSteps;
   const stopTaskId = turn.task?.task_id ?? null;
   const canStop = liveState.kind !== "settled" && stopTaskId !== null;
   const onStop = () => { if (stopTaskId) shell.cancelTask(stopTaskId); };
@@ -1168,7 +1180,8 @@ function TimelineTurnView({
         <LiveTurnBubble
           broName={bro.name}
           state={liveState}
-          steps={liveState.kind === "settled" ? dedupedSettledSteps : reasoningSteps}
+          steps={stepsForBubble}
+          activeCommentary={activeCommentary}
           answer={answerText}
           mobile={Boolean(mobile)}
           canStop={canStop}
