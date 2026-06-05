@@ -94,16 +94,19 @@ void test_parse_audio_transcript(void) {
 
 void test_build_audio_query(void) {
   AudioMeta m = computeAudioMeta(16000, 16000, 1);
-  std::string q = buildAudioQuery("p1", m);
+  std::string q = buildAudioQuery("p1", m, "t-7");
   TEST_ASSERT_EQUAL_STRING(
-      "target_persona_id=p1&duration_ms=1000&sample_rate=16000&num_channels=1&samples_per_channel=16000",
+      "target_persona_id=p1&target_thread_id=t-7&duration_ms=1000&sample_rate=16000"
+      "&num_channels=1&samples_per_channel=16000",
       q.c_str());
 }
 
 void test_build_text_body(void) {
-  std::string b = buildTextBody("p1", "hi");
+  std::string b = buildTextBody("p1", "hi", "t-7");
   TEST_ASSERT_TRUE(b.find(R"("target_persona_id":"p1")") != std::string::npos);
+  TEST_ASSERT_TRUE(b.find(R"("target_thread_id":"t-7")") != std::string::npos);
   TEST_ASSERT_TRUE(b.find(R"("text":"hi")") != std::string::npos);
+  TEST_ASSERT_TRUE(b.find(R"("create_new_thread":false)") != std::string::npos);
 }
 
 static const char *kThreadsSnapshot = R"({

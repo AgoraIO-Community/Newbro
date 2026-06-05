@@ -71,9 +71,11 @@ std::string parseAudioTranscript(const std::string &json) {
   return doc["transcript_text"].is<const char *>() ? doc["transcript_text"].as<std::string>() : std::string();
 }
 
-std::string buildAudioQuery(const std::string &personaId, const AudioMeta &m) {
+std::string buildAudioQuery(const std::string &personaId, const AudioMeta &m,
+                            const std::string &targetThreadId) {
   std::string q;
   q += "target_persona_id=" + personaId;
+  q += "&target_thread_id=" + targetThreadId;
   q += "&duration_ms=" + std::to_string(m.durationMs);
   q += "&sample_rate=" + std::to_string(m.sampleRate);
   q += "&num_channels=" + std::to_string(static_cast<unsigned>(m.numChannels));
@@ -81,9 +83,11 @@ std::string buildAudioQuery(const std::string &personaId, const AudioMeta &m) {
   return q;
 }
 
-std::string buildTextBody(const std::string &personaId, const std::string &text) {
+std::string buildTextBody(const std::string &personaId, const std::string &text,
+                          const std::string &targetThreadId) {
   JsonDocument doc;
   doc["target_persona_id"] = personaId;
+  doc["target_thread_id"] = targetThreadId;
   doc["text"] = text;
   doc["create_new_thread"] = false;
   std::string out;

@@ -43,7 +43,9 @@ bool parseBroThreads(const std::string &snapshotJson, const std::string &persona
 // Implemented in Task 3:
 bool extractLatestTurn(const std::string &snapshotJson, const std::string &personaId, TurnView &out);
 std::string parseAudioTranscript(const std::string &json);
-std::string buildAudioQuery(const std::string &personaId, const AudioMeta &m);
-std::string buildTextBody(const std::string &personaId, const std::string &text);
+std::string buildAudioQuery(const std::string &personaId, const AudioMeta &m,
+                            const std::string &targetThreadId);
+std::string buildTextBody(const std::string &personaId, const std::string &text,
+                          const std::string &targetThreadId);
 
 }  // namespace nb
