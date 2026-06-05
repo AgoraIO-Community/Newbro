@@ -4,6 +4,7 @@ import pytest
 
 from newbro.communication.models import ScriptedCommunicationModel
 from newbro.communication.models.scripted import ScriptedPlan
+from newbro.executors.node.registry import ExecutorNodeRegistry
 from newbro.protocol import (
     AgentResumeHandle,
     AttentionItem,
@@ -40,9 +41,25 @@ from newbro.runtime.bro_detail_thread_helpers import (
     _timeline_turns_from_codex_thread,
 )
 from newbro.runtime.bro_detail_thread_projection import SelectedCodexThreadSubscription
+from newbro.runtime.executor_node_manager import ExecutorNodeManager
 from newbro.runtime.session import (
     create_session_runtime,
 )
+
+
+def build_session_runtime(tmp_path):
+    executor_node_manager = ExecutorNodeManager(
+        detached_executor_types=("codex",),
+        registry=ExecutorNodeRegistry(path=tmp_path / "executor_nodes.yaml"),
+    )
+    return create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+        executor_node_manager=executor_node_manager,
+    )
 
 
 def _executor_turn(status: str, *, assistant_status: str | None, text: str = "hi") -> BroTimelineTurn:
@@ -158,6 +175,28 @@ async def test_session_runtime_publish_snapshot_uses_cached_codex_threads_by_def
     assert initial.type == "snapshot"
 
     session.unsubscribe(queue)
+
+
+@pytest.mark.anyio
+async def test_bro_list_returns_compact_persona_node_rows_without_full_node_data(tmp_path):
+    session = build_session_runtime(tmp_path)
+    manager = session.executor_node_manager
+    issue = await manager.create_node(name="Mac Studio", enabled_executors=["codex"])
+    await session.blackboard.put_persona(
+        Persona(persona_id="forge", name="Forge", executor_node_id=issue.node.node_id)
+    )
+
+    rows = await session.bro_list()
+
+    assert rows.bros[0].persona_id == "forge"
+    assert rows.bros[0].name == "Forge"
+    assert rows.bros[0].executor_node is not None
+    assert rows.bros[0].executor_node.node_id == issue.node.node_id
+    assert rows.bros[0].executor_node.name == "Mac Studio"
+    assert rows.bros[0].executor_node.enabled_executors == ["codex"]
+    dumped = rows.model_dump(mode="json")
+    assert "token_hint" not in dumped["bros"][0]["executor_node"]
+    assert "last_seen_at" not in dumped["bros"][0]["executor_node"]
 
 
 @pytest.mark.anyio

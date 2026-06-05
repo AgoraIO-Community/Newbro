@@ -405,6 +405,58 @@ class SessionRuntime:
             draft_session=self.draft_manager.active_session,
         )
 
+    async def bro_list(self):
+        from newbro.runtime.models import (
+            BroExecutorCapabilitySummary,
+            BroExecutorNodeSummary,
+            BroListResponse,
+            BroSummary,
+        )
+
+        personas = await self.blackboard.list_personas()
+        nodes = {node.node_id: node for node in await self.executor_node_manager.list_nodes()}
+        bros: list[BroSummary] = []
+        for persona in personas:
+            node_summary = None
+            if persona.executor_node_id:
+                node = nodes.get(persona.executor_node_id)
+                if node is not None:
+                    codex_capability = next(
+                        (
+                            capability
+                            for capability in node.connected_executor_capabilities
+                            if capability.executor_type == "codex"
+                        ),
+                        None,
+                    )
+                    node_summary = BroExecutorNodeSummary(
+                        node_id=node.node_id,
+                        name=node.name,
+                        connection_status=node.connection_status,
+                        enabled_executors=list(node.enabled_executors),
+                        codex=(
+                            BroExecutorCapabilitySummary(
+                                version=codex_capability.version,
+                                minimum_version=codex_capability.minimum_version,
+                                availability_reason=codex_capability.availability_reason,
+                                supports_thread_list=codex_capability.supports_thread_list,
+                                supports_audio_instruction=codex_capability.supports_audio_instruction,
+                            )
+                            if codex_capability is not None
+                            else None
+                        ),
+                    )
+            bros.append(
+                BroSummary(
+                    persona_id=persona.persona_id,
+                    name=persona.name,
+                    avatar=persona.avatar,
+                    status=persona.status,
+                    executor_node=node_summary,
+                )
+            )
+        return BroListResponse(bros=bros)
+
     async def list_bro_thread_page(
         self,
         *,

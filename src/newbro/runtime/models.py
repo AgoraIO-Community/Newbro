@@ -53,6 +53,42 @@ class BroTimelineTurnPageResponse(BaseModel):
     page: CursorPageInfo = Field(default_factory=CursorPageInfo)
 
 
+class BroExecutorCapabilitySummary(BaseModel):
+    version: str | None = None
+    minimum_version: str | None = None
+    availability_reason: str | None = None
+    supports_thread_list: bool = False
+    supports_audio_instruction: bool = False
+
+
+class BroExecutorNodeSummary(BaseModel):
+    node_id: str
+    name: str
+    connection_status: Literal["connected", "disconnected"] = "disconnected"
+    enabled_executors: list[str] = Field(default_factory=list)
+    codex: BroExecutorCapabilitySummary | None = None
+
+
+class BroSummary(BaseModel):
+    persona_id: str
+    name: str
+    avatar: str = ""
+    status: str = "idle"
+    executor_node: BroExecutorNodeSummary | None = None
+
+
+class BroListResponse(BaseModel):
+    bros: list[BroSummary] = Field(default_factory=list)
+
+
+class BroThreadSubscriptionResponse(BaseModel):
+    thread_id: str
+    persona_id: str
+    subscribed: bool
+    timeline_status: Literal["not_loaded", "loading", "loaded", "failed"] = "not_loaded"
+    timeline_error: str | None = None
+
+
 class SessionSnapshot(BaseModel):
     session_id: str
     voice_target_persona_id: str | None = None
