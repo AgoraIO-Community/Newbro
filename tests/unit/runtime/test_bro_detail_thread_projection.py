@@ -6,10 +6,10 @@ import pytest
 
 from newbro.communication.models import ScriptedCommunicationModel
 from newbro.communication.models.scripted import ScriptedPlan
-from newbro.protocol import AgentResumeHandle, BroThread, ExecutorNodeExecutor, Persona
+from newbro.protocol import AgentResumeHandle, BroThread, CodexThreadListItem, ExecutorNodeExecutor, Persona
 from newbro.runtime import Settings
 from newbro.runtime.bro_detail_thread_projection import BroDetailThreadProjection
-from newbro.runtime.executor_node_manager import NodeConnectionState
+from newbro.runtime.executor_node_manager import CodexThreadListPage, NodeConnectionState
 from newbro.runtime.session import create_session_runtime
 
 
@@ -165,6 +165,72 @@ async def test_projection_snapshot_uses_cached_imported_codex_threads_without_sy
     assert snapshot.bro_threads[0].timeline_status == "loaded"
     assert snapshot.bro_threads[0].diagnostics["codex_thread_id"] == "native-thread-1"
     assert snapshot.bro_timeline_turns == []
+
+
+@pytest.mark.anyio
+async def test_imported_codex_threads_snapshot_uses_first_page_only(monkeypatch: pytest.MonkeyPatch):
+    session, persona, projection, _publish_calls = await _projection_harness()
+    session.executor_node_manager._connections_by_node["node-forge"] = NodeConnectionState(
+        websocket=object(),
+        node_id="node-forge",
+        connected_at="2026-06-05T00:00:00+00:00",
+        executors={"codex": ExecutorNodeExecutor(executor_type="codex", supports_thread_list=True)},
+    )
+
+    async def fake_request_codex_threads(**kwargs):
+        assert kwargs["limit"] == 25
+        assert kwargs["cursor"] is None
+        return CodexThreadListPage(
+            threads=[
+                CodexThreadListItem(thread_id="native-1", preview="Task: One", updated_at=1780650000),
+            ],
+            next_cursor="next-page",
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_threads", fake_request_codex_threads)
+
+    snapshot = await projection.snapshot_parts(
+        tasks=[],
+        sessions=[],
+        runs=[],
+        summaries=[],
+        personas=[persona],
+        sync_imported_codex_threads=True,
+    )
+
+    assert [thread.title for thread in snapshot.bro_threads] == ["One"]
+    assert projection.imported_codex_thread_page_info[persona.persona_id].next_cursor == "next-page"
+    assert projection.imported_codex_thread_page_info[persona.persona_id].has_more is True
+
+
+@pytest.mark.anyio
+async def test_list_bro_thread_page_appends_cached_imported_threads(monkeypatch: pytest.MonkeyPatch):
+    session, persona, projection, _publish_calls = await _projection_harness()
+
+    async def fake_request_codex_threads(**kwargs):
+        assert kwargs["cursor"] == "next-page"
+        return CodexThreadListPage(
+            threads=[CodexThreadListItem(thread_id="native-2", preview="Task: Two", updated_at=1780650100)],
+            next_cursor=None,
+            previous_cursor="first-page",
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_threads", fake_request_codex_threads)
+    page = await projection.list_bro_thread_page(
+        persona=persona,
+        sessions=[],
+        limit=25,
+        cursor="next-page",
+    )
+
+    assert [thread.title for thread in page.threads] == ["Two"]
+    assert page.page.next_cursor is None
+    assert page.page.previous_cursor == "first-page"
+    assert any(
+        thread.diagnostics["codex_thread_id"] == "native-2"
+        for thread in projection.imported_codex_threads.values()
+    )
 
 
 @pytest.mark.anyio

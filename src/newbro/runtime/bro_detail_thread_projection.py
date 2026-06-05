@@ -27,6 +27,7 @@ from newbro.protocol import (
     TaskSummary,
 )
 from newbro.runtime.executor_node_manager import ExecutorNodeManager
+from newbro.runtime.models import BroThreadPageResponse, CursorPageInfo
 from .bro_detail_thread_helpers import (
     IMPORTED_CODEX_THREAD_PREFIX,
     SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS,
@@ -67,6 +68,8 @@ from .bro_detail_thread_helpers import (
 )
 
 LOGGER = logging.getLogger(__name__)
+IMPORTED_CODEX_THREAD_PAGE_LIMIT = 25
+SELECTED_CODEX_TURN_PAGE_LIMIT = 100
 
 
 @dataclass
@@ -98,6 +101,8 @@ class BroDetailThreadProjection:
     record_native_turn_reasoning: Callable[[OutboundTurnRequest, CodexTurnEventMessage, str], None] | None = None
     imported_codex_threads: dict[str, BroThread] = field(default_factory=dict)
     imported_codex_thread_resume_handles: dict[str, AgentResumeHandle] = field(default_factory=dict)
+    imported_codex_thread_page_info: dict[str, CursorPageInfo] = field(default_factory=dict)
+    imported_codex_thread_pages_by_persona: dict[str, list[str]] = field(default_factory=dict)
     codex_thread_public_id_aliases: dict[str, str] = field(default_factory=dict)
     last_codex_thread_sync_monotonic: float = 0.0
     codex_thread_sync_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -110,9 +115,66 @@ class BroDetailThreadProjection:
     timeline_status: dict[str, Literal["not_loaded", "loading", "loaded", "failed"]] = field(default_factory=dict)
     timeline_errors: dict[str, str] = field(default_factory=dict)
     timeline_load_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    bro_thread_timeline_page_info: dict[str, CursorPageInfo] = field(default_factory=dict)
     bro_thread_live_plan_deltas: dict[tuple[str, str, str], str] = field(default_factory=dict)
     bro_thread_live_plan_emitted_text: dict[tuple[str, str, str], str] = field(default_factory=dict)
     bro_thread_goals: dict[str, str] = field(default_factory=dict)
+
+    def _project_imported_codex_thread(
+        self,
+        *,
+        persona: Persona,
+        node_id: str,
+        codex_thread,
+    ) -> tuple[BroThread, AgentResumeHandle]:
+        public_thread_id = self.codex_thread_public_id_aliases.get(
+            _codex_thread_alias_key(persona.persona_id, codex_thread.thread_id)
+        ) or _imported_bro_thread_id(persona.persona_id, codex_thread.thread_id)
+        status = _codex_thread_status(codex_thread.status)
+        thread_title = _title_from_codex_thread(codex_thread)
+        thread_updated_at = _iso_from_epoch_seconds(codex_thread.updated_at or codex_thread.created_at)
+        resume_handle = AgentResumeHandle(
+            executor_id="codex",
+            session_handle=codex_thread.thread_id,
+            opaque={
+                "cwd": codex_thread.cwd or "",
+                "path": codex_thread.path or "",
+                "cliVersion": codex_thread.cli_version or "",
+                "title": thread_title,
+                "listUpdatedAt": thread_updated_at or "",
+            },
+        )
+        diagnostics = {
+            **codex_thread.diagnostics,
+            "codex_thread_id": codex_thread.thread_id,
+            "codex_session_id": codex_thread.session_id,
+            "codex_cwd": codex_thread.cwd,
+            "codex_path": codex_thread.path,
+            "codex_cli_version": codex_thread.cli_version,
+            "codex_thread_source": codex_thread.source,
+            "imported_from_codex_thread_list": True,
+        }
+        thread = BroThread(
+            thread_id=public_thread_id,
+            persona_id=persona.persona_id,
+            persona_name=persona.name,
+            executor_id="codex",
+            executor_node_id=node_id,
+            workspace_id=codex_thread.cwd,
+            workspace_name=_workspace_name(codex_thread.cwd),
+            execution_session_id=None,
+            status=status,  # type: ignore[arg-type]
+            title=thread_title,
+            preview=codex_thread.preview,
+            progress=_thread_progress(status),
+            task_ids=[],
+            active_task_id=None,
+            latest_task_id=None,
+            has_resume_handle=True,
+            updated_at=thread_updated_at,
+            diagnostics=diagnostics,
+        )
+        return thread, resume_handle
 
     async def snapshot_parts(
         self,
@@ -189,6 +251,8 @@ class BroDetailThreadProjection:
         if not eligible_personas:
             self.imported_codex_threads.clear()
             self.imported_codex_thread_resume_handles.clear()
+            self.imported_codex_thread_page_info.clear()
+            self.imported_codex_thread_pages_by_persona.clear()
             return []
 
         now = time.monotonic()
@@ -214,11 +278,24 @@ class BroDetailThreadProjection:
 
             imported_threads: dict[str, BroThread] = {}
             imported_resume_handles: dict[str, AgentResumeHandle] = {}
+            imported_page_ids_by_persona: dict[str, list[str]] = {}
             for node_id, node_personas in personas_by_node.items():
                 try:
-                    codex_page = await self.executor_node_manager.request_codex_threads(node_id=node_id)
+                    codex_page = await self.executor_node_manager.request_codex_threads(
+                        node_id=node_id,
+                        limit=IMPORTED_CODEX_THREAD_PAGE_LIMIT,
+                        cursor=None,
+                    )
                     codex_threads = codex_page.threads
                 except Exception as exc:
+                    for persona in node_personas:
+                        previous = self.imported_codex_thread_page_info.get(persona.persona_id, CursorPageInfo())
+                        self.imported_codex_thread_page_info[persona.persona_id] = previous.model_copy(
+                            update={
+                                "status": "failed",
+                                "error": str(exc),
+                            }
+                        )
                     self.observability.logger.emit_event(
                         level="WARNING",
                         event_name="runtime.codex_thread_sync_failed",
@@ -230,6 +307,8 @@ class BroDetailThreadProjection:
                     continue
                 skipped_ephemeral_count = 0
                 imported_thread_count = 0
+                for persona in node_personas:
+                    imported_page_ids_by_persona[persona.persona_id] = []
                 for codex_thread in codex_threads:
                     if codex_thread.thread_id in existing_codex_thread_ids:
                         continue
@@ -238,54 +317,23 @@ class BroDetailThreadProjection:
                         continue
                     imported_thread_count += 1
                     for persona in node_personas:
-                        public_thread_id = self.codex_thread_public_id_aliases.get(
-                            _codex_thread_alias_key(persona.persona_id, codex_thread.thread_id)
-                        ) or _imported_bro_thread_id(persona.persona_id, codex_thread.thread_id)
-                        status = _codex_thread_status(codex_thread.status)
-                        thread_title = _title_from_codex_thread(codex_thread)
-                        thread_updated_at = _iso_from_epoch_seconds(codex_thread.updated_at or codex_thread.created_at)
-                        resume_handle = AgentResumeHandle(
-                            executor_id="codex",
-                            session_handle=codex_thread.thread_id,
-                            opaque={
-                                "cwd": codex_thread.cwd or "",
-                                "path": codex_thread.path or "",
-                                "cliVersion": codex_thread.cli_version or "",
-                                "title": thread_title,
-                                "listUpdatedAt": thread_updated_at or "",
-                            },
+                        thread, resume_handle = self._project_imported_codex_thread(
+                            persona=persona,
+                            node_id=node_id,
+                            codex_thread=codex_thread,
                         )
-                        diagnostics = {
-                            **codex_thread.diagnostics,
-                            "codex_thread_id": codex_thread.thread_id,
-                            "codex_session_id": codex_thread.session_id,
-                            "codex_cwd": codex_thread.cwd,
-                            "codex_path": codex_thread.path,
-                            "codex_cli_version": codex_thread.cli_version,
-                            "codex_thread_source": codex_thread.source,
-                            "imported_from_codex_thread_list": True,
-                        }
-                        imported_threads[public_thread_id] = BroThread(
-                            thread_id=public_thread_id,
-                            persona_id=persona.persona_id,
-                            persona_name=persona.name,
-                            executor_id="codex",
-                            executor_node_id=node_id,
-                            workspace_id=codex_thread.cwd,
-                            workspace_name=_workspace_name(codex_thread.cwd),
-                            execution_session_id=None,
-                            status=status,  # type: ignore[arg-type]
-                            title=thread_title,
-                            preview=codex_thread.preview,
-                            progress=_thread_progress(status),
-                            task_ids=[],
-                            active_task_id=None,
-                            latest_task_id=None,
-                            has_resume_handle=True,
-                            updated_at=thread_updated_at,
-                            diagnostics=diagnostics,
-                        )
-                        imported_resume_handles[public_thread_id] = resume_handle
+                        imported_threads[thread.thread_id] = thread
+                        imported_page_ids_by_persona[persona.persona_id].append(thread.thread_id)
+                        imported_resume_handles[thread.thread_id] = resume_handle
+                page_info = CursorPageInfo(
+                    next_cursor=codex_page.next_cursor,
+                    previous_cursor=codex_page.previous_cursor,
+                    has_more=bool(codex_page.next_cursor),
+                    status="loaded",
+                    error=None,
+                )
+                for persona in node_personas:
+                    self.imported_codex_thread_page_info[persona.persona_id] = page_info
                 self.observability.logger.emit_event(
                     level="INFO",
                     event_name="runtime.codex_thread_sync",
@@ -303,8 +351,62 @@ class BroDetailThreadProjection:
             self.imported_codex_threads.update(imported_threads)
             self.imported_codex_thread_resume_handles.clear()
             self.imported_codex_thread_resume_handles.update(imported_resume_handles)
+            self.imported_codex_thread_pages_by_persona.clear()
+            self.imported_codex_thread_pages_by_persona.update(imported_page_ids_by_persona)
             self.last_codex_thread_sync_monotonic = time.monotonic()
             return list(self.imported_codex_threads.values())
+
+    async def list_bro_thread_page(
+        self,
+        *,
+        persona: Persona,
+        sessions: list[ExecutionSession],
+        limit: int = IMPORTED_CODEX_THREAD_PAGE_LIMIT,
+        cursor: str | None = None,
+    ) -> BroThreadPageResponse:
+        if not persona.executor_node_id:
+            raise ValueError("Selected Bro is not bound to an executor node.")
+        page = await self.executor_node_manager.request_codex_threads(
+            node_id=persona.executor_node_id,
+            limit=limit,
+            cursor=cursor,
+        )
+        existing_codex_thread_ids = {
+            session.latest_resume_handle.session_handle
+            for session in sessions
+            if session.latest_resume_handle is not None
+            and session.latest_resume_handle.executor_id == "codex"
+            and isinstance(session.latest_resume_handle.session_handle, str)
+            and session.latest_resume_handle.session_handle
+        }
+        threads: list[BroThread] = []
+        for codex_thread in page.threads:
+            if codex_thread.thread_id in existing_codex_thread_ids or _is_ephemeral_codex_thread(codex_thread):
+                continue
+            thread, resume_handle = self._project_imported_codex_thread(
+                persona=persona,
+                node_id=persona.executor_node_id,
+                codex_thread=codex_thread,
+            )
+            self.imported_codex_threads[thread.thread_id] = thread
+            self.imported_codex_thread_resume_handles[thread.thread_id] = resume_handle
+            persona_page_ids = self.imported_codex_thread_pages_by_persona.setdefault(persona.persona_id, [])
+            if thread.thread_id not in persona_page_ids:
+                persona_page_ids.append(thread.thread_id)
+            threads.append(thread)
+        info = CursorPageInfo(
+            next_cursor=page.next_cursor,
+            previous_cursor=page.previous_cursor,
+            has_more=bool(page.next_cursor),
+            status="loaded",
+            error=None,
+        )
+        self.imported_codex_thread_page_info[persona.persona_id] = info
+        return BroThreadPageResponse(
+            persona_id=persona.persona_id,
+            threads=self.with_timeline_state(threads),
+            page=info,
+        )
 
     async def open_bro_thread(
         self,

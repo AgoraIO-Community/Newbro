@@ -378,6 +378,7 @@ class SessionRuntime:
             personas=personas,
             sync_imported_codex_threads=sync_imported_codex_threads,
         )
+        bro_detail_threads = self._bro_detail_thread_projection()
         return SessionSnapshot(
             session_id=self.session_id,
             voice_target_persona_id=self._voice_target_persona_id,
@@ -391,6 +392,8 @@ class SessionRuntime:
             outbound_turn_requests=outbound_turn_requests,
             bro_threads=bro_detail_projection.bro_threads,
             bro_timeline_turns=bro_detail_projection.bro_timeline_turns,
+            bro_thread_pages=dict(bro_detail_threads.imported_codex_thread_page_info),
+            bro_timeline_pages=dict(bro_detail_threads.bro_thread_timeline_page_info),
             personas=personas,
             interaction_requests=sanitized_interaction_requests,
             attention_items=attention_items,
@@ -400,6 +403,23 @@ class SessionRuntime:
             recent_execution_details=recent_execution_details,
             recent_native_turn_reasoning=self._recent_native_turn_reasoning(),
             draft_session=self.draft_manager.active_session,
+        )
+
+    async def list_bro_thread_page(
+        self,
+        *,
+        target_persona_id: str,
+        limit: int = 25,
+        cursor: str | None = None,
+    ):
+        persona = await self.blackboard.get_persona(target_persona_id)
+        if persona is None:
+            raise ValueError("Selected Bro is not available.")
+        return await self._bro_detail_thread_projection().list_bro_thread_page(
+            persona=persona,
+            sessions=await self.blackboard.list_sessions(),
+            limit=limit,
+            cursor=cursor,
         )
 
     async def open_bro_thread(
