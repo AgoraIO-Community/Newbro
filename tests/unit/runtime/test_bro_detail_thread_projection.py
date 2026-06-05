@@ -1,6 +1,5 @@
 import asyncio
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -9,7 +8,7 @@ from newbro.communication.models.scripted import ScriptedPlan
 from newbro.protocol import AgentResumeHandle, BroThread, CodexThreadListItem, ExecutorNodeExecutor, Persona
 from newbro.runtime import Settings
 from newbro.runtime.bro_detail_thread_projection import BroDetailThreadProjection
-from newbro.runtime.executor_node_manager import CodexThreadListPage, NodeConnectionState
+from newbro.runtime.executor_node_manager import CodexThreadListPage, CodexThreadTurnPage, NodeConnectionState
 from newbro.runtime.session import create_session_runtime
 
 
@@ -234,6 +233,52 @@ async def test_list_bro_thread_page_appends_cached_imported_threads(monkeypatch:
 
 
 @pytest.mark.anyio
+async def test_list_bro_timeline_page_uses_codex_turn_cursor(monkeypatch: pytest.MonkeyPatch):
+    session, persona, projection, _publish_calls = await _projection_harness()
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        assert kwargs["node_id"] == "node-forge"
+        assert kwargs["thread_id"] == "native-thread-1"
+        assert kwargs["limit"] == 100
+        assert kwargs["cursor"] == "older"
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-old",
+                    "status": "completed",
+                    "items": [
+                        {"type": "agentMessage", "id": "agent-old", "text": "Old answer", "phase": "final_answer"}
+                    ],
+                    "startedAt": 1780650000,
+                    "completedAt": 1780650010,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor="newer",
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+
+    page = await projection.list_bro_timeline_page(
+        persona=persona,
+        public_thread_id="codex-import-1",
+        node_id="node-forge",
+        cursor="older",
+        limit=100,
+    )
+
+    assert page.thread_id == "codex-import-1"
+    assert [turn.executor_turn_id for turn in page.turns] == ["turn-old"]
+    assert page.page.next_cursor is None
+    assert page.page.previous_cursor == "newer"
+
+
+@pytest.mark.anyio
 async def test_concurrent_timeline_loads_share_one_codex_history_request(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -253,16 +298,16 @@ async def test_concurrent_timeline_loads_share_one_codex_history_request(
             shared_wait_started.set()
         return original_shield(awaitable)
 
-    async def fake_request_codex_thread(
-        *, node_id: str, thread_id: str, timeout_seconds: float = 8.0
-    ) -> dict[str, Any]:
+    async def fake_request_codex_thread_turns(
+        *, node_id: str, thread_id: str, limit: int = 100, cursor: str | None = None, timeout_seconds: float = 8.0
+    ) -> CodexThreadTurnPage:
         read_calls.append((node_id, thread_id))
         read_started.set()
         await release_read.wait()
-        return {"id": thread_id, "turns": []}
+        return CodexThreadTurnPage(thread_id=thread_id, turns=[])
 
     monkeypatch.setattr(asyncio, "shield", tracking_shield)
-    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fake_request_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
 
     first: asyncio.Task[None] | None = None
     second: asyncio.Task[None] | None = None
@@ -323,16 +368,16 @@ async def test_cancelled_timeline_waiter_does_not_cancel_shared_history_load(
             shared_wait_started.set()
         return original_shield(awaitable)
 
-    async def fake_request_codex_thread(
-        *, node_id: str, thread_id: str, timeout_seconds: float = 8.0
-    ) -> dict[str, Any]:
+    async def fake_request_codex_thread_turns(
+        *, node_id: str, thread_id: str, limit: int = 100, cursor: str | None = None, timeout_seconds: float = 8.0
+    ) -> CodexThreadTurnPage:
         read_calls.append((node_id, thread_id))
         read_started.set()
         await release_read.wait()
-        return {"id": thread_id, "turns": []}
+        return CodexThreadTurnPage(thread_id=thread_id, turns=[])
 
     monkeypatch.setattr(asyncio, "shield", tracking_shield)
-    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fake_request_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
 
     first: asyncio.Task[None] | None = None
     second: asyncio.Task[None] | None = None
@@ -390,13 +435,13 @@ async def test_loaded_timeline_load_skips_codex_history_request(
     resume_handle = AgentResumeHandle(executor_id="codex", session_handle="native-thread-1")
     read_calls: list[tuple[str, str]] = []
 
-    async def fake_request_codex_thread(
-        *, node_id: str, thread_id: str, timeout_seconds: float = 8.0
-    ) -> dict[str, Any]:
+    async def fake_request_codex_thread_turns(
+        *, node_id: str, thread_id: str, limit: int = 100, cursor: str | None = None, timeout_seconds: float = 8.0
+    ) -> CodexThreadTurnPage:
         read_calls.append((node_id, thread_id))
-        return {"id": thread_id, "turns": []}
+        return CodexThreadTurnPage(thread_id=thread_id, turns=[])
 
-    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fake_request_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
 
     await projection.load_bro_thread_timeline(
         persona=persona,
@@ -421,13 +466,13 @@ async def test_failed_timeline_load_retries_codex_history_request(
     resume_handle = AgentResumeHandle(executor_id="codex", session_handle="native-thread-1")
     read_calls: list[tuple[str, str]] = []
 
-    async def fake_request_codex_thread(
-        *, node_id: str, thread_id: str, timeout_seconds: float = 8.0
-    ) -> dict[str, Any]:
+    async def fake_request_codex_thread_turns(
+        *, node_id: str, thread_id: str, limit: int = 100, cursor: str | None = None, timeout_seconds: float = 8.0
+    ) -> CodexThreadTurnPage:
         read_calls.append((node_id, thread_id))
-        return {"id": thread_id, "turns": []}
+        return CodexThreadTurnPage(thread_id=thread_id, turns=[])
 
-    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fake_request_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
 
     await projection.load_bro_thread_timeline(
         persona=persona,
@@ -489,7 +534,7 @@ async def test_open_loaded_imported_thread_skips_history_read_but_subscribes(
     subscription_started = asyncio.Event()
     subscription_release = asyncio.Event()
 
-    async def fail_request_codex_thread(**kwargs):
+    async def fail_request_codex_thread_turns(**kwargs):
         raise AssertionError("loaded open must not read Codex history again")
 
     async def fake_subscribe_codex_thread(
@@ -518,7 +563,7 @@ async def test_open_loaded_imported_thread_skips_history_read_but_subscribes(
         subscription_started.set()
         await subscription_release.wait()
 
-    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fail_request_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fail_request_codex_thread_turns)
     monkeypatch.setattr(session.executor_node_manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
 
     await projection.open_bro_thread(target_persona_id="forge", thread_id="codex-import-1")

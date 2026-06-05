@@ -27,7 +27,7 @@ from newbro.protocol import (
     TaskSummary,
 )
 from newbro.runtime.executor_node_manager import ExecutorNodeManager
-from newbro.runtime.models import BroThreadPageResponse, CursorPageInfo
+from newbro.runtime.models import BroThreadPageResponse, BroTimelineTurnPageResponse, CursorPageInfo
 from .bro_detail_thread_helpers import (
     IMPORTED_CODEX_THREAD_PREFIX,
     SELECTED_THREAD_SUBSCRIPTION_TIMEOUT_SECONDS,
@@ -576,9 +576,11 @@ class BroDetailThreadProjection:
         self.timeline_errors.pop(public_thread_id, None)
         await self.publish_snapshot()
         try:
-            thread = await self.executor_node_manager.request_codex_thread(
+            page = await self.executor_node_manager.request_codex_thread_turns(
                 node_id=node_id,
                 thread_id=native_thread_id,
+                limit=SELECTED_CODEX_TURN_PAGE_LIMIT,
+                cursor=None,
             )
         except Exception as exc:
             message = str(exc).strip() or "Codex thread history could not be loaded."
@@ -592,19 +594,71 @@ class BroDetailThreadProjection:
                 message,
             )
             return
-        thread_goal = _codex_thread_goal(thread)
-        if thread_goal:
-            self.bro_thread_goals[public_thread_id] = thread_goal
+        if page.goal:
+            self.bro_thread_goals[public_thread_id] = page.goal
         for turn in _timeline_turns_from_codex_thread(
-            thread=thread,
+            thread={"id": page.thread_id, "goal": page.goal, "turns": list(reversed(page.turns))},
             public_thread_id=public_thread_id,
             executor_thread_id=native_thread_id,
             persona_id=persona.persona_id,
             executor_id="codex",
         ):
             self.upsert_bro_thread_executor_turn(turn)
+        self.bro_thread_timeline_page_info[public_thread_id] = CursorPageInfo(
+            next_cursor=page.next_cursor,
+            previous_cursor=page.previous_cursor,
+            has_more=bool(page.next_cursor),
+            status="loaded",
+            error=None,
+        )
         self.timeline_status[public_thread_id] = "loaded"
         self.timeline_errors.pop(public_thread_id, None)
+
+    async def list_bro_timeline_page(
+        self,
+        *,
+        persona: Persona,
+        public_thread_id: str,
+        node_id: str,
+        cursor: str | None = None,
+        limit: int = SELECTED_CODEX_TURN_PAGE_LIMIT,
+    ) -> BroTimelineTurnPageResponse:
+        resume_handle = self.imported_codex_thread_resume_handles.get(public_thread_id)
+        if (
+            resume_handle is None
+            or resume_handle.executor_id != "codex"
+            or not isinstance(resume_handle.session_handle, str)
+            or not resume_handle.session_handle
+        ):
+            raise ValueError("Selected Codex thread is not available.")
+        page = await self.executor_node_manager.request_codex_thread_turns(
+            node_id=node_id,
+            thread_id=resume_handle.session_handle,
+            limit=limit,
+            cursor=cursor,
+        )
+        if page.goal:
+            self.bro_thread_goals[public_thread_id] = page.goal
+        turns = list(
+            _timeline_turns_from_codex_thread(
+                thread={"id": page.thread_id, "goal": page.goal, "turns": list(reversed(page.turns))},
+                public_thread_id=public_thread_id,
+                executor_thread_id=page.thread_id,
+                persona_id=persona.persona_id,
+                executor_id="codex",
+            )
+        )
+        for turn in turns:
+            self.upsert_bro_thread_executor_turn(turn)
+        info = CursorPageInfo(
+            next_cursor=page.next_cursor,
+            previous_cursor=page.previous_cursor,
+            has_more=bool(page.next_cursor),
+            status="loaded",
+            error=None,
+        )
+        self.bro_thread_timeline_page_info[public_thread_id] = info
+        return BroTimelineTurnPageResponse(thread_id=public_thread_id, turns=turns, page=info)
 
     async def codex_thread_open_needs_import_sync(self, *, persona: Persona, target_thread_id: str) -> bool:
         if await self.find_codex_thread_session_for_persona(persona.persona_id, target_thread_id) is not None:

@@ -153,6 +153,34 @@ async def list_bro_thread_page(
         ) from exc
 
 
+@router.get("/sessions/{session_id}/bro-threads/{thread_id}/timeline")
+async def list_bro_timeline_page(
+    session_id: str,
+    thread_id: str,
+    request: Request,
+    target_persona_id: str,
+    limit: int = 100,
+    cursor: str | None = None,
+):
+    await require_session_owner_or_internal(request, session_id)
+    container = request.app.state.runtime_container
+    try:
+        session = container.get_session(session_id)
+        return await session.list_bro_timeline_page(
+            target_persona_id=target_persona_id,
+            thread_id=thread_id,
+            limit=limit,
+            cursor=cursor,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=_conflict_detail(exc, "Timeline page could not be listed."),
+        ) from exc
+
+
 @router.post("/sessions/{session_id}/bro-threads/{thread_id}/open")
 async def open_bro_thread(
     session_id: str,

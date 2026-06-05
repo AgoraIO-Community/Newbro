@@ -422,6 +422,28 @@ class SessionRuntime:
             cursor=cursor,
         )
 
+    async def list_bro_timeline_page(
+        self,
+        *,
+        target_persona_id: str,
+        thread_id: str,
+        limit: int = 100,
+        cursor: str | None = None,
+    ):
+        persona = await self.blackboard.get_persona(target_persona_id)
+        if persona is None:
+            raise ValueError("Selected Bro is not available.")
+        node_id = persona.executor_node_id
+        if not node_id:
+            raise ValueError("Selected Bro is not bound to an executor node.")
+        return await self._bro_detail_thread_projection().list_bro_timeline_page(
+            persona=persona,
+            public_thread_id=thread_id,
+            node_id=node_id,
+            limit=limit,
+            cursor=cursor,
+        )
+
     async def open_bro_thread(
         self,
         *,

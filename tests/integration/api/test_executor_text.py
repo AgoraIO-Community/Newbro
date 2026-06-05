@@ -9,7 +9,7 @@ from newbro.api.app import create_app
 from newbro.api.public_auth import PublicAuthStore
 from newbro.blackboard.store import BlackboardWriteEvent, BlackboardWriteKind
 from newbro.protocol import AgentResumeHandle, BroThread, CodexThreadListItem, ExecutionRun, ExecutionSession, ExecutorNodeExecutor, Persona, RunStatus, Task, TaskStatus
-from newbro.runtime.executor_node_manager import NodeConnectionState
+from newbro.runtime.executor_node_manager import CodexThreadListPage, CodexThreadTurnPage, NodeConnectionState
 
 
 class FakeWebSocket:
@@ -436,14 +436,14 @@ async def test_open_new_direct_thread_does_not_duplicate_sent_text_as_history(
         def mark_scheduled(self) -> None:
             return None
 
-        async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
+        async def fake_request_codex_thread_turns(**kwargs):
             raise AssertionError("opening a direct thread must not read Codex history")
 
         async def fake_subscribe_codex_thread(**kwargs):
             return None
 
         monkeypatch.setattr(type(runtime_session), "schedule_execution", mark_scheduled)
-        monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+        monkeypatch.setattr(manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
         monkeypatch.setattr(manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
 
         response = await client.post(
@@ -633,24 +633,28 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
 
         list_calls = 0
 
-        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+        async def fake_request_codex_threads(
+            *, node_id: str, workspace_id=None, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
             nonlocal list_calls
             assert node_id == "node-forge"
             list_calls += 1
-            return [
-                CodexThreadListItem(
-                    thread_id="codex-imported-native-1",
-                    session_id="codex-imported-native-1",
-                    preview="Task: Imported outside Newbro\nGoal: keep context",
-                    status="notLoaded",
-                    cwd="/Users/zhangqianze/Documents/Synopse",
-                    path="/Users/zhangqianze/.codex/sessions/import.jsonl",
-                    created_at=1779850000,
-                    updated_at=1779850100,
-                    cli_version="0.133.0",
-                    source="vscode",
-                )
-            ]
+            return CodexThreadListPage(
+                threads=[
+                    CodexThreadListItem(
+                        thread_id="codex-imported-native-1",
+                        session_id="codex-imported-native-1",
+                        preview="Task: Imported outside Newbro\nGoal: keep context",
+                        status="notLoaded",
+                        cwd="/Users/zhangqianze/Documents/Synopse",
+                        path="/Users/zhangqianze/.codex/sessions/import.jsonl",
+                        created_at=1779850000,
+                        updated_at=1779850100,
+                        cli_version="0.133.0",
+                        source="vscode",
+                    )
+                ]
+            )
 
         monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
         scheduled = False
@@ -742,44 +746,58 @@ async def test_open_imported_codex_thread_loads_native_messages_without_task_hyd
 
         list_calls = 0
 
-        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+        async def fake_request_codex_threads(
+            *, node_id: str, workspace_id=None, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
             nonlocal list_calls
             assert node_id == "node-forge"
             list_calls += 1
-            return [
-                CodexThreadListItem(
-                    thread_id="codex-imported-newer-history",
-                    session_id="codex-imported-newer-history",
-                    preview="Task: Newer imported history",
-                    status="notLoaded",
-                    cwd="/tmp/newer",
-                    path="/tmp/codex-newer-history.jsonl",
-                    created_at=1779850200,
-                    updated_at=1779850300,
-                    cli_version="0.133.0",
-                    source="vscode",
-                ),
-                CodexThreadListItem(
-                    thread_id="codex-imported-native-history",
-                    session_id="codex-imported-native-history",
-                    preview="Task: Imported history",
-                    status="notLoaded",
-                    cwd="/tmp/elsewhere",
-                    path="/tmp/codex-history.jsonl",
-                    created_at=1779850000,
-                    updated_at=1779850100,
-                    cli_version="0.133.0",
-                    source="vscode",
-                )
-            ]
+            return CodexThreadListPage(
+                threads=[
+                    CodexThreadListItem(
+                        thread_id="codex-imported-newer-history",
+                        session_id="codex-imported-newer-history",
+                        preview="Task: Newer imported history",
+                        status="notLoaded",
+                        cwd="/tmp/newer",
+                        path="/tmp/codex-newer-history.jsonl",
+                        created_at=1779850200,
+                        updated_at=1779850300,
+                        cli_version="0.133.0",
+                        source="vscode",
+                    ),
+                    CodexThreadListItem(
+                        thread_id="codex-imported-native-history",
+                        session_id="codex-imported-native-history",
+                        preview="Task: Imported history",
+                        status="notLoaded",
+                        cwd="/tmp/elsewhere",
+                        path="/tmp/codex-history.jsonl",
+                        created_at=1779850000,
+                        updated_at=1779850100,
+                        cli_version="0.133.0",
+                        source="vscode",
+                    ),
+                ]
+            )
 
         read_calls: list[tuple[str, str]] = []
 
-        async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
+        async def fake_request_codex_thread_turns(
+            *, node_id: str, thread_id: str, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
             read_calls.append((node_id, thread_id))
-            return {
-                "id": thread_id,
-                "turns": [
+            return CodexThreadTurnPage(
+                thread_id=thread_id,
+                turns=[
+                    {
+                        "id": "turn-assistant",
+                        "createdAt": 1779850120,
+                        "items": [
+                            {"type": "agentMessage", "id": "assistant-commentary", "text": "Checking imported context."},
+                            {"type": "agentMessage", "id": "assistant-1", "text": "Imported context is ready."}
+                        ],
+                    },
                     {
                         "id": "turn-user",
                         "createdAt": 1779850110,
@@ -791,16 +809,8 @@ async def test_open_imported_codex_thread_loads_native_messages_without_task_hyd
                             }
                         ],
                     },
-                    {
-                        "id": "turn-assistant",
-                        "createdAt": 1779850120,
-                        "items": [
-                            {"type": "agentMessage", "id": "assistant-commentary", "text": "Checking imported context."},
-                            {"type": "agentMessage", "id": "assistant-1", "text": "Imported context is ready."}
-                        ],
-                    },
                 ],
-            }
+            )
 
         subscription_calls: list[tuple[str, str, str]] = []
         unsubscribe_calls: list[tuple[str, str]] = []
@@ -840,7 +850,7 @@ async def test_open_imported_codex_thread_loads_native_messages_without_task_hyd
             unsubscribe_calls.append((subscription_id, thread_id))
 
         monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
-        monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+        monkeypatch.setattr(manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
         monkeypatch.setattr(manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
         monkeypatch.setattr(manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
 
@@ -934,23 +944,29 @@ async def test_open_imported_codex_thread_history_timeout_marks_messages_failed(
             )
         )
 
-        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
-            return [
-                CodexThreadListItem(
-                    thread_id="codex-timeout-history",
-                    session_id="codex-timeout-history",
-                    preview="Task: Timeout history",
-                    status="notLoaded",
-                    cwd="/tmp/elsewhere",
-                    path="/tmp/codex-timeout.jsonl",
-                    created_at=1779850000,
-                    updated_at=1779850100,
-                    cli_version="0.133.0",
-                    source="vscode",
-                )
-            ]
+        async def fake_request_codex_threads(
+            *, node_id: str, workspace_id=None, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
+            return CodexThreadListPage(
+                threads=[
+                    CodexThreadListItem(
+                        thread_id="codex-timeout-history",
+                        session_id="codex-timeout-history",
+                        preview="Task: Timeout history",
+                        status="notLoaded",
+                        cwd="/tmp/elsewhere",
+                        path="/tmp/codex-timeout.jsonl",
+                        created_at=1779850000,
+                        updated_at=1779850100,
+                        cli_version="0.133.0",
+                        source="vscode",
+                    )
+                ]
+            )
 
-        async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
+        async def fake_request_codex_thread_turns(
+            *, node_id: str, thread_id: str, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
             raise TimeoutError("Timed out reading Codex thread history.")
 
         subscription_calls: list[str] = []
@@ -981,7 +997,7 @@ async def test_open_imported_codex_thread_history_timeout_marks_messages_failed(
             unsubscribe_calls.append((subscription_id, thread_id))
 
         monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
-        monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+        monkeypatch.setattr(manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
         monkeypatch.setattr(manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
         monkeypatch.setattr(manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
 
@@ -1122,34 +1138,38 @@ async def test_sync_imported_codex_threads_skips_ephemeral_entries(
             )
         )
 
-        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+        async def fake_request_codex_threads(
+            *, node_id: str, workspace_id=None, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
             assert node_id == "node-forge"
-            return [
-                CodexThreadListItem(
-                    thread_id="codex-real",
-                    session_id="codex-real",
-                    preview="Real project work",
-                    status="notLoaded",
-                    cwd="/Users/zhangqianze/Documents/Synopse",
-                    created_at=1779850000,
-                    updated_at=1779850100,
-                    cli_version="0.133.0",
-                    source="vscode",
-                    diagnostics={"ephemeral": False},
-                ),
-                CodexThreadListItem(
-                    thread_id="codex-scratch",
-                    session_id="codex-scratch",
-                    preview="Scratch turn",
-                    status="notLoaded",
-                    cwd="/Users/zhangqianze/.codex/scratch/abc",
-                    created_at=1779850200,
-                    updated_at=1779850300,
-                    cli_version="0.133.0",
-                    source="cli",
-                    diagnostics={"ephemeral": True},
-                ),
-            ]
+            return CodexThreadListPage(
+                threads=[
+                    CodexThreadListItem(
+                        thread_id="codex-real",
+                        session_id="codex-real",
+                        preview="Real project work",
+                        status="notLoaded",
+                        cwd="/Users/zhangqianze/Documents/Synopse",
+                        created_at=1779850000,
+                        updated_at=1779850100,
+                        cli_version="0.133.0",
+                        source="vscode",
+                        diagnostics={"ephemeral": False},
+                    ),
+                    CodexThreadListItem(
+                        thread_id="codex-scratch",
+                        session_id="codex-scratch",
+                        preview="Scratch turn",
+                        status="notLoaded",
+                        cwd="/Users/zhangqianze/.codex/scratch/abc",
+                        created_at=1779850200,
+                        updated_at=1779850300,
+                        cli_version="0.133.0",
+                        source="cli",
+                        diagnostics={"ephemeral": True},
+                    ),
+                ]
+            )
 
         monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
 
