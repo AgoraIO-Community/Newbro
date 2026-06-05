@@ -77,9 +77,11 @@ bool runPairing() {
   machine.begin();
   nb::PairStart start;
   while (!client.startPairing(start)) {
+    Serial.printf("[pair] start failed: %s\n", client.lastError().c_str());
     nb::screen::status("Pairing", client.lastError());
     delay(retry.next());
   }
+  Serial.printf("[pair] code=%s (enter it in newbro -> Devices)\n", start.userCode.c_str());
   machine.onStart(start);
   retry.reset();
   uint32_t intervalMs = (start.interval > 0 ? start.interval : 2) * 1000U;
@@ -202,6 +204,9 @@ void setup() {
   defaults.serverPort = NB_DEFAULT_SERVER_PORT;
 #endif
   g_config = nb::mergeDefaults(g_config, defaults);
+  Serial.printf("[cfg] ssid='%s' host='%s' port=%u token=%s\n",
+                g_config.wifiSsid.c_str(), g_config.serverHost.c_str(),
+                g_config.serverPort, g_config.hasToken() ? "yes" : "no");
 
   runFirstRunSetupIfNeeded();
 
@@ -211,6 +216,7 @@ void setup() {
     nb::screen::status("Wi-Fi failed", "check credentials, reboot to retry");
     return;
   }
+  Serial.printf("[net] wifi connected\n");
   if (!g_config.hasToken()) {
     if (!runPairing()) {
       nb::screen::status("Pairing failed", "reboot to retry");

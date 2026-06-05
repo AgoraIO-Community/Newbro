@@ -3,8 +3,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
-// Arduino-ESP32 built-in Mozilla root CA bundle (linked from the core).
-extern const uint8_t rootca_crt_bundle_start[] asm("_binary_data_cert_x509_crt_bundle_bin_start");
+#include "transport/RootCa.h"
 
 namespace nb {
 
@@ -12,7 +11,7 @@ HttpResponse HttpsTransport::request(const std::string &method, const std::strin
                                      const std::string &body, const std::string &cookieToken) {
   HttpResponse out;
   WiFiClientSecure client;
-  client.setCACertBundle(rootca_crt_bundle_start);
+  client.setCACert(kRootCaPem);
 
   HTTPClient https;
   std::string url = "https://" + host_ + ":" + std::to_string(port_) + path;
@@ -47,7 +46,7 @@ HttpResponse HttpsTransport::postBytes(const std::string &path, const std::strin
                                        const uint8_t *body, size_t len, const std::string &cookieToken) {
   HttpResponse out;
   WiFiClientSecure client;
-  client.setCACertBundle(rootca_crt_bundle_start);
+  client.setCACert(kRootCaPem);
 
   HTTPClient https;
   std::string url = "https://" + host_ + ":" + std::to_string(port_) + path;
