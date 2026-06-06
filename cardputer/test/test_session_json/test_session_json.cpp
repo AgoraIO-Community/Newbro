@@ -30,8 +30,8 @@ void test_parse_bootstrap_rejects_no_session(void) {
 void test_parse_personas(void) {
   std::vector<Persona> out;
   bool ok = parsePersonas(
-      R"([{"persona_id":"p1","name":"Pixel","avatar":"rabbit","status":"busy"},
-          {"persona_id":"p2","name":"Mochi","avatar":"cat","status":"idle"}])",
+      R"({"bros":[{"persona_id":"p1","name":"Pixel","avatar":"rabbit","status":"busy"},
+          {"persona_id":"p2","name":"Mochi","avatar":"cat","status":"idle"}]})",
       out);
   TEST_ASSERT_TRUE(ok);
   TEST_ASSERT_EQUAL_INT(2, (int)out.size());
@@ -44,31 +44,30 @@ void test_parse_personas(void) {
 
 void test_parse_personas_empty(void) {
   std::vector<Persona> out;
-  TEST_ASSERT_TRUE(parsePersonas("[]", out));
+  TEST_ASSERT_TRUE(parsePersonas(R"({"bros":[]})", out));
   TEST_ASSERT_EQUAL_INT(0, (int)out.size());
 }
 
 void test_parse_personas_rejects_non_array(void) {
   std::vector<Persona> out;
-  TEST_ASSERT_FALSE(parsePersonas(R"({"not":"an array"})", out));
+  TEST_ASSERT_FALSE(parsePersonas(R"({"not":"bros"})", out));
 }
 
 void test_parse_personas_skips_malformed_entries(void) {
   std::vector<Persona> out;
-  TEST_ASSERT_TRUE(parsePersonas(R"([{"persona_id":"p1","name":"Pixel","avatar":"rabbit","status":"idle"}, null, {"name":"no id"}])", out));
+  TEST_ASSERT_TRUE(parsePersonas(R"({"bros":[{"persona_id":"p1","name":"Pixel","avatar":"rabbit","status":"idle"}, null, {"name":"no id"}]})", out));
   TEST_ASSERT_EQUAL_INT(1, (int)out.size());
   TEST_ASSERT_EQUAL_STRING("p1", out[0].id.c_str());
 }
 
 static const char *kSnapshot = R"({
-  "session_id":"s",
-  "tasks":[],
-  "bro_timeline_turns":[
+  "thread_id":"t-7",
+  "turns":[
     {"persona_id":"p1","status":"completed","user":{"transcript":"old"},"assistant":{"text":"old reply"},"created_at":"2026-06-04T00:00:01+00:00"},
     {"persona_id":"p2","status":"running","user":{"transcript":"other"},"assistant":{"text":"nope"},"created_at":"2026-06-04T00:00:02+00:00"},
     {"persona_id":"p1","status":"running","user":{"transcript":"ship it"},"assistant":{"text":"on it"},"created_at":"2026-06-04T00:00:03+00:00"}
   ],
-  "personas":[]
+  "page":{}
 })";
 
 void test_extract_latest_turn_for_persona(void) {
@@ -110,13 +109,13 @@ void test_build_text_body(void) {
 }
 
 static const char *kThreadsSnapshot = R"({
-  "session_id":"s",
-  "bro_timeline_turns":[],
-  "bro_threads":[
+  "persona_id":"p1",
+  "threads":[
     {"thread_id":"t-old","persona_id":"p1","title":"Old build","preview":"fixed the bug","status":"completed","updated_at":"2026-06-04T00:00:01+00:00"},
     {"thread_id":"t-other","persona_id":"p2","title":"Other bro","preview":null,"status":"running","updated_at":"2026-06-04T00:00:09+00:00"},
     {"thread_id":"t-new","persona_id":"p1","title":"Ship it","preview":null,"status":"running","updated_at":"2026-06-04T00:00:05+00:00"}
-  ]
+  ],
+  "page":{}
 })";
 
 void test_parse_bro_threads_filters_and_sorts(void) {

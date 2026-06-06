@@ -26,7 +26,8 @@ class NewbroClient {
   bool sendAudio(const std::string &sessionId, const std::string &personaId,
                  const std::string &targetThreadId, const AudioMeta &meta,
                  const uint8_t *pcm, size_t len, std::string &transcriptOut);
-  bool getReply(const std::string &sessionId, const std::string &personaId, TurnView &out);
+  bool getReply(const std::string &sessionId, const std::string &personaId,
+                const std::string &threadId, TurnView &out);
   bool getThreads(const std::string &sessionId, const std::string &personaId,
                   std::vector<ThreadInfo> &out);
 

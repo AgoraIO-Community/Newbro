@@ -19,6 +19,12 @@ inline const lgfx::IFont *fontName() { return &fonts::FreeSansBold9pt7b; }
 inline const lgfx::IFont *fontBody() { return &fonts::FreeSans9pt7b; }
 inline const lgfx::IFont *fontSmall() { return &fonts::Font0; }
 
+// CJK-capable fonts for user/assistant text (transcripts/replies can be Chinese).
+// efontCN covers Simplified Chinese + ASCII. (Traditional Chinese / Korean /
+// Japanese would each need their own efont; M5GFX has no single all-CJK font.)
+inline const lgfx::IFont *fontCJK() { return &fonts::efontCN_16; }
+inline const lgfx::IFont *fontCJKSmall() { return &fonts::efontCN_12; }
+
 template <typename Gfx>
 void fillInkBackground(Gfx &g) {
   int h = g.height();

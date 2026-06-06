@@ -1,4 +1,5 @@
 #pragma once
+#include <ArduinoJson.h>
 #include <string>
 #include <vector>
 #include "AudioMeta.h"
@@ -40,8 +41,18 @@ bool parsePersonas(const std::string &json, std::vector<Persona> &out);
 bool parseBroThreads(const std::string &snapshotJson, const std::string &personaId,
                      std::vector<ThreadInfo> &out);
 
-// Implemented in Task 3:
+// Filter + collection halves of parseBroThreads, so the same logic serves both a
+// whole-string parse (tests) and a streamed parse of the chunked snapshot on the
+// device (which must never buffer the full body in RAM — it OOMs this no-PSRAM
+// part). buildBroThreadsFilter sets up the ArduinoJson filter; collectBroThreads
+// reads the (already filtered) document.
+void buildBroThreadsFilter(JsonDocument &filter);
+void collectBroThreads(JsonDocument &doc, const std::string &personaId,
+                       std::vector<ThreadInfo> &out);
+
 bool extractLatestTurn(const std::string &snapshotJson, const std::string &personaId, TurnView &out);
+void buildTurnFilter(JsonDocument &filter);
+void collectLatestTurn(JsonDocument &doc, const std::string &personaId, TurnView &out);
 std::string parseAudioTranscript(const std::string &json);
 std::string buildAudioQuery(const std::string &personaId, const AudioMeta &m,
                             const std::string &targetThreadId);

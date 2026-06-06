@@ -158,7 +158,10 @@ void runVoiceTurn() {
     for (int f = 0; f < 20; ++f) { renderOnce(); delay(50); }
     M5Cardputer.update();
     nb::TurnView v;
-    if (g_clientPtr->getReply(g_sessionId, g_activeBro.id, v) && v.found) {
+    if (g_clientPtr->getReply(g_sessionId, g_activeBro.id, g_threadId, v) && v.found) {
+      // The server transcribes asynchronously, so the audio response often has no
+      // transcript_text; the transcription lands on the timeline turn instead.
+      if (!v.userText.empty()) g_chatScreen.setTranscript(v.userText);
       g_chatScreen.setReply(v.assistantText);
       if (!nb::isTurnActive(v.status)) break;
     }

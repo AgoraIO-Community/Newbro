@@ -11,7 +11,9 @@ namespace nb {
 class MicRecorder {
  public:
   static constexpr uint32_t kSampleRate = 16000;
-  static constexpr size_t kMaxSamples = kSampleRate * 4;  // 4 s cap (128 KB internal RAM)
+  // 3 s cap (96 KB internal RAM). Smaller upload = less exposed to packet loss on
+  // flaky Wi-Fi, and leaves more headroom before the TLS upload than 4 s did.
+  static constexpr size_t kMaxSamples = kSampleRate * 3;
 
   bool beginRecording();   // allocate (once) + start mic + reset; false if RAM alloc failed
   void poll();             // capture available samples (call frequently while held)

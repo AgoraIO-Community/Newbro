@@ -15,11 +15,13 @@ bool parseBootstrap(const std::string &json, Bootstrap &out) {
 }
 
 bool parsePersonas(const std::string &json, std::vector<Persona> &out) {
+  // GET /sessions/{id}/bros -> {"bros":[{persona_id,name,avatar,status,...}]}
   JsonDocument doc;
   if (deserializeJson(doc, json) != DeserializationError::Ok) return false;
-  if (!doc.is<JsonArray>()) return false;
+  JsonArray bros = doc["bros"].as<JsonArray>();
+  if (bros.isNull()) return false;
   out.clear();
-  for (JsonObject item : doc.as<JsonArray>()) {
+  for (JsonObject item : bros) {
     if (!item["persona_id"].is<const char *>()) continue;  // skip malformed entries
     Persona p;
     p.id = item["persona_id"].as<std::string>();
@@ -31,23 +33,32 @@ bool parsePersonas(const std::string &json, std::vector<Persona> &out) {
   return true;
 }
 
-bool extractLatestTurn(const std::string &snapshotJson, const std::string &personaId, TurnView &out) {
-  JsonDocument filter;
-  JsonObject t = filter["bro_timeline_turns"].add<JsonObject>();
+void buildTurnFilter(JsonDocument &filter) {
+  // GET /sessions/{id}/bro-threads/{tid}/timeline -> {"turns":[BroTimelineTurn]}
+  JsonObject t = filter["turns"].add<JsonObject>();
   t["persona_id"] = true;
   t["status"] = true;
   t["created_at"] = true;
   t["user"]["text"] = true;
   t["user"]["transcript"] = true;
   t["assistant"]["text"] = true;
+}
 
+bool extractLatestTurn(const std::string &snapshotJson, const std::string &personaId, TurnView &out) {
+  JsonDocument filter;
+  buildTurnFilter(filter);
   JsonDocument doc;
   if (deserializeJson(doc, snapshotJson, DeserializationOption::Filter(filter)) != DeserializationError::Ok) {
     return false;
   }
+  collectLatestTurn(doc, personaId, out);
+  return true;
+}
+
+void collectLatestTurn(JsonDocument &doc, const std::string &personaId, TurnView &out) {
   out = TurnView{};
   std::string bestCreatedAt;
-  for (JsonObject turn : doc["bro_timeline_turns"].as<JsonArray>()) {
+  for (JsonObject turn : doc["turns"].as<JsonArray>()) {
     const char *pid = turn["persona_id"].is<const char *>() ? turn["persona_id"].as<const char *>() : "";
     if (personaId != pid) continue;
     std::string createdAt = turn["created_at"].as<std::string>();
@@ -62,7 +73,6 @@ bool extractLatestTurn(const std::string &snapshotJson, const std::string &perso
     JsonObject assistant = turn["assistant"];
     out.assistantText = assistant["text"].is<const char *>() ? assistant["text"].as<std::string>() : std::string();
   }
-  return true;
 }
 
 std::string parseAudioTranscript(const std::string &json) {
@@ -95,23 +105,33 @@ std::string buildTextBody(const std::string &personaId, const std::string &text,
   return out;
 }
 
-bool parseBroThreads(const std::string &snapshotJson, const std::string &personaId,
-                     std::vector<ThreadInfo> &out) {
-  JsonDocument filter;
-  JsonObject t = filter["bro_threads"].add<JsonObject>();
+void buildBroThreadsFilter(JsonDocument &filter) {
+  // GET /sessions/{id}/bro-threads -> {"threads":[BroThread]}
+  JsonObject t = filter["threads"].add<JsonObject>();
   t["thread_id"] = true;
   t["persona_id"] = true;
   t["title"] = true;
   t["preview"] = true;
   t["status"] = true;
   t["updated_at"] = true;
+}
 
+bool parseBroThreads(const std::string &snapshotJson, const std::string &personaId,
+                     std::vector<ThreadInfo> &out) {
+  JsonDocument filter;
+  buildBroThreadsFilter(filter);
   JsonDocument doc;
   if (deserializeJson(doc, snapshotJson, DeserializationOption::Filter(filter)) != DeserializationError::Ok) {
     return false;
   }
+  collectBroThreads(doc, personaId, out);
+  return true;
+}
+
+void collectBroThreads(JsonDocument &doc, const std::string &personaId,
+                       std::vector<ThreadInfo> &out) {
   out.clear();
-  for (JsonObject th : doc["bro_threads"].as<JsonArray>()) {
+  for (JsonObject th : doc["threads"].as<JsonArray>()) {
     const char *pid = th["persona_id"].is<const char *>() ? th["persona_id"].as<const char *>() : "";
     if (personaId != pid) continue;
     if (!th["thread_id"].is<const char *>()) continue;  // skip threads with no id
@@ -126,7 +146,6 @@ bool parseBroThreads(const std::string &snapshotJson, const std::string &persona
   std::sort(out.begin(), out.end(), [](const ThreadInfo &a, const ThreadInfo &b) {
     return a.updatedAt > b.updatedAt;  // ISO-8601 desc; "" sorts last
   });
-  return true;
 }
 
 }  // namespace nb
