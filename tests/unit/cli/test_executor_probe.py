@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from newbro.config_home import ConfigHomeMigrationResult
 
 from tests.unit.cli.test_main import cli_main, configure_repo_paths
@@ -166,7 +168,7 @@ def test_executor_install_codex_uses_existing_usable_codex(monkeypatch, tmp_path
     from newbro.executors.adapters.codex import probe as codex_probe
 
     run_calls: list[list[str]] = []
-    monkeypatch.setattr(executor_settings, "_run_logged", lambda argv, *, env=None: run_calls.append(argv) or 0)
+    monkeypatch.setattr(executor_settings, "_run_logged", lambda argv, **kwargs: run_calls.append(argv) or 0)
     monkeypatch.setattr(executor_settings, "_tool_environment", lambda: {"PATH": str(tmp_path / "bin")})
     monkeypatch.setattr(executor_settings.shutil, "which", lambda command, path=None: None)
     monkeypatch.setattr(codex_probe, "discover_codex_commands", lambda configured_command=None: [str(selected)])
@@ -218,7 +220,7 @@ def test_executor_install_codex_bootstraps_missing_codex(monkeypatch, tmp_path: 
     monkeypatch.setattr(
         executor_settings,
         "_run_logged",
-        lambda argv, *, env=None: run_calls.append((argv, env)) or 0,
+        lambda argv, **kwargs: run_calls.append((argv, kwargs.get("env"))) or 0,
     )
     monkeypatch.setattr(codex_probe, "discover_codex_commands", lambda configured_command=None: [])
     probe_results = iter(
@@ -235,10 +237,13 @@ def test_executor_install_codex_bootstraps_missing_codex(monkeypatch, tmp_path: 
 
     assert cli_main.main(["executor", "install-codex"]) == 0
 
-    assert run_calls == [
-        (["sh", "-c", "curl -fsSL https://bun.sh/install | bash"], {"PATH": f"{bun.parent}{os.pathsep}/usr/bin"}),
-        ([str(bun), "add", "-g", "@openai/codex"], {"PATH": f"{bun.parent}{os.pathsep}/usr/bin"}),
-    ]
+    assert len(run_calls) == 3
+    assert run_calls[0][0][:4] == ["/usr/bin/curl", "-fsSL", "https://bun.sh/install", "-o"]
+    assert run_calls[0][1]["PATH"] == os.environ.get("PATH", "")
+    assert run_calls[1][0][0] == "/bin/bash"
+    assert run_calls[1][0][1] == run_calls[0][0][4]
+    assert run_calls[1][1]["PATH"] == os.environ.get("PATH", "")
+    assert run_calls[2] == ([str(bun), "add", "-g", "@openai/codex"], {"PATH": f"{bun.parent}{os.pathsep}/usr/bin"})
     out = capsys.readouterr().out
     assert "Installing required runtime..." in out
     assert "Installing Codex..." in out
@@ -264,10 +269,89 @@ def test_executor_install_codex_runtime_bootstrap_failure(monkeypatch, tmp_path:
     monkeypatch.setattr(codex_probe, "discover_codex_commands", lambda configured_command=None: [])
     monkeypatch.setattr(executor_settings, "_tool_environment", lambda: {"PATH": "/usr/bin"})
     monkeypatch.setattr(executor_settings.shutil, "which", lambda command, path=None: None)
-    monkeypatch.setattr(executor_settings, "_run_logged", lambda argv, *, env=None: 1)
+    monkeypatch.setattr(executor_settings, "_run_logged", lambda argv, **kwargs: 1)
 
     assert cli_main.main(["executor", "install-codex"]) == 1
 
     assert "Codex setup failed while installing required runtime" in capsys.readouterr().err
     configured = (tmp_path / ".newbro" / "config.yaml").read_text(encoding="utf-8")
     assert "command: codex" in configured
+
+
+def test_executor_install_codex_package_install_failure(monkeypatch, tmp_path: Path, capsys):
+    bun = tmp_path / "home" / ".bun" / "bin" / "bun"
+    _write_config(tmp_path, codex_command="codex")
+    configure_repo_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cli_main,
+        "ensure_newbro_home",
+        lambda **_kwargs: ConfigHomeMigrationResult(migrated=False),
+    )
+
+    from newbro.cli.commands import executor_settings
+    from newbro.executors.adapters.codex import probe as codex_probe
+
+    monkeypatch.setattr(codex_probe, "discover_codex_commands", lambda configured_command=None: [])
+    monkeypatch.setattr(executor_settings, "_tool_environment", lambda: {"PATH": f"{bun.parent}{os.pathsep}/usr/bin"})
+    monkeypatch.setattr(executor_settings.shutil, "which", lambda command, path=None: str(bun))
+    monkeypatch.setattr(executor_settings, "_run_logged", lambda argv, **kwargs: 1)
+
+    assert cli_main.main(["executor", "install-codex"]) == 1
+
+    assert "Codex setup failed while installing Codex." in capsys.readouterr().err
+    configured = (tmp_path / ".newbro" / "config.yaml").read_text(encoding="utf-8")
+    assert "command: codex" in configured
+
+
+def test_executor_install_codex_post_install_probe_failure(monkeypatch, tmp_path: Path, capsys):
+    bun = tmp_path / "home" / ".bun" / "bin" / "bun"
+    codex = tmp_path / "home" / ".bun" / "bin" / "codex"
+    _write_config(tmp_path, codex_command="codex")
+    configure_repo_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cli_main,
+        "ensure_newbro_home",
+        lambda **_kwargs: ConfigHomeMigrationResult(migrated=False),
+    )
+
+    from newbro.cli.commands import executor_settings
+    from newbro.executors.adapters.codex import probe as codex_probe
+
+    monkeypatch.setattr(codex_probe, "discover_codex_commands", lambda configured_command=None: [])
+    monkeypatch.setattr(executor_settings, "_tool_environment", lambda: {"PATH": f"{bun.parent}{os.pathsep}/usr/bin"})
+    monkeypatch.setattr(executor_settings.shutil, "which", lambda command, path=None: str(bun))
+    monkeypatch.setattr(executor_settings, "_run_logged", lambda argv, **kwargs: 0)
+    monkeypatch.setattr(
+        codex_probe,
+        "probe_codex_command",
+        lambda command: codex_probe.CodexProbeResult(
+            path=str(codex),
+            version=None,
+            ok=False,
+            error="command not found",
+        ),
+    )
+
+    assert cli_main.main(["executor", "install-codex"]) == 1
+
+    assert "Codex setup finished, but codex --version is still unavailable." in capsys.readouterr().err
+    configured = (tmp_path / ".newbro" / "config.yaml").read_text(encoding="utf-8")
+    assert "command: codex" in configured
+
+
+def test_run_logged_translates_missing_command_and_timeout(monkeypatch):
+    from newbro.cli.commands import executor_settings
+
+    def missing_command(*_args, **_kwargs):
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr(executor_settings.subprocess, "run", missing_command)
+    with pytest.raises(RuntimeError, match="Command not found: /missing/tool"):
+        executor_settings._run_logged(["/missing/tool"], timeout_seconds=1)
+
+    def timed_out(*_args, **_kwargs):
+        raise executor_settings.subprocess.TimeoutExpired(["/slow/tool"], 1)
+
+    monkeypatch.setattr(executor_settings.subprocess, "run", timed_out)
+    with pytest.raises(RuntimeError, match="Command timed out: /slow/tool"):
+        executor_settings._run_logged(["/slow/tool"], timeout_seconds=1)

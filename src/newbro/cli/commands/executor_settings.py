@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,10 @@ from newbro.executors.adapters.codex import probe as codex_probe
 
 
 SUPPORTED_EXECUTORS = ["codex"]
+BUN_INSTALL_URL = "https://bun.sh/install"
+COMMAND_TIMEOUT_SECONDS = 300
+SYSTEM_CURL = Path("/usr/bin/curl")
+SYSTEM_BASH = Path("/bin/bash")
 
 
 def run_executor_install_codex(args: Any, app: Any) -> int:
@@ -66,16 +71,14 @@ def install_codex_cli(config_path: Path) -> str:
     bun = shutil.which("bun", path=env.get("PATH"))
     if bun is None:
         print("Installing required runtime...")
-        if _run_logged(["sh", "-c", "curl -fsSL https://bun.sh/install | bash"], env=env) != 0:
-            raise RuntimeError("Codex setup failed while installing required runtime")
+        _install_required_runtime()
         env = _tool_environment()
         bun = shutil.which("bun", path=env.get("PATH"))
         if bun is None:
             raise RuntimeError("Codex setup failed while installing required runtime: bun is still unavailable.")
 
     print("Installing Codex...")
-    if _run_logged([bun, "add", "-g", "@openai/codex"], env=env) != 0:
-        raise RuntimeError("Codex setup failed while installing Codex.")
+    _run_install_step([bun, "add", "-g", "@openai/codex"], "Codex setup failed while installing Codex.", env=env)
 
     print("Checking Codex...")
     command = _first_usable_codex_command(config_path)
@@ -85,6 +88,33 @@ def install_codex_cli(config_path: Path) -> str:
         raise RuntimeError("Codex setup finished, but codex --version is still unavailable.")
     set_codex_command(config_path=config_path, command=command)
     return command
+
+
+def _install_required_runtime() -> None:
+    if not SYSTEM_CURL.exists():
+        raise RuntimeError(f"Codex setup failed while installing required runtime: {SYSTEM_CURL} is unavailable.")
+    if not SYSTEM_BASH.exists():
+        raise RuntimeError(f"Codex setup failed while installing required runtime: {SYSTEM_BASH} is unavailable.")
+
+    env = _bootstrap_environment()
+    with tempfile.TemporaryDirectory(prefix="newbro-codex-") as directory:
+        installer = str(Path(directory) / "bun-install.sh")
+        failure_message = "Codex setup failed while installing required runtime"
+        _run_install_step(
+            [str(SYSTEM_CURL), "-fsSL", BUN_INSTALL_URL, "-o", installer],
+            failure_message,
+            env=env,
+        )
+        _run_install_step([str(SYSTEM_BASH), installer], failure_message, env=env)
+
+
+def _run_install_step(argv: list[str], failure_message: str, *, env: dict[str, str] | None = None) -> None:
+    try:
+        returncode = _run_logged(argv, env=env)
+    except RuntimeError as exc:
+        raise RuntimeError(f"{failure_message}: {exc}") from exc
+    if returncode != 0:
+        raise RuntimeError(failure_message)
 
 
 def _first_usable_codex_command(config_path: Path) -> str | None:
@@ -111,8 +141,24 @@ def _tool_environment() -> dict[str, str]:
     return env
 
 
-def _run_logged(argv: list[str], *, env: dict[str, str] | None = None) -> int:
-    completed = subprocess.run(argv, check=False, env=env)
+def _bootstrap_environment() -> dict[str, str]:
+    env = dict(os.environ)
+    env["PATH"] = os.environ.get("PATH", "")
+    return env
+
+
+def _run_logged(
+    argv: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    timeout_seconds: float = COMMAND_TIMEOUT_SECONDS,
+) -> int:
+    try:
+        completed = subprocess.run(argv, check=False, env=env, timeout=timeout_seconds)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Command not found: {argv[0]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Command timed out: {' '.join(argv)}") from exc
     return completed.returncode
 
 
