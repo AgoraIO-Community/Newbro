@@ -48,12 +48,34 @@ Native executor turn projection
 
 This is intentionally not a fully generic executor plugin interface yet. Codex is the only current native threaded executor adapter. The module name leaves room for future executor-like reducers, while the implementation only abstracts what exists.
 
+Rename the selected-thread subscription context from Codex-specific language to native executor language:
+
+```text
+SelectedCodexThreadSubscription -> SelectedNativeThreadSubscription
+selected_codex_thread_subscriptions -> selected_native_thread_subscriptions
+```
+
+The new type should carry Bro-facing identity plus native executor identity:
+
+- `subscription_id`
+- `persona_id`
+- `public_thread_id`
+- `thread_continuity_key`
+- `executor_id`
+- `node_id`
+- `native_thread_id`
+- `resume_handle`
+- `fallback_timestamp`
+
+Codex is still the only native threaded executor implementation in this design. The rename is about the Bro Detail seam, not a new multi-executor registry.
+
 ## Ownership
 
 `BroDetailThreadProjection` keeps:
 
 - Bro thread list and projection assembly
-- selected Bro thread subscription lifecycle
+- selected native thread subscription lifecycle
+- Bro-selected subscription identity matching
 - imported thread state
 - thread target resolution
 - timeline storage and page state
@@ -63,6 +85,7 @@ Native executor turn projection owns:
 
 - Codex channel A `codex_turn_event` reduction
 - Codex channel B `codex_thread_event` item and turn reduction
+- Codex-native method validation after subscription identity is matched
 - `agentMessage` phase routing
 - live item phase map
 - live assistant message delta map
@@ -83,9 +106,9 @@ Channel A:
 
 Channel B:
 
-1. `BroDetailThreadProjection.handle_codex_thread_event` validates the selected subscription.
+1. `BroDetailThreadProjection.handle_codex_thread_event` matches the event against `SelectedNativeThreadSubscription`.
 2. Thread-level subscription lifecycle remains in `BroDetailThreadProjection`.
-3. Item and turn events are passed to the native turn projection module.
+3. Native item and turn events are passed to the native turn projection module.
 4. The module returns an upsert, settle, or no-op action over existing `BroTimelineTurn` state.
 5. `BroDetailThreadProjection` applies the action and publishes the snapshot when changed.
 
@@ -135,11 +158,12 @@ These tests should exercise the new module interface without constructing a full
 ## Migration Plan
 
 1. Add the native turn projection module with behavior copied from the current implementation.
-2. Move live phase and delta maps into the new module.
-3. Delegate Codex item and turn event handling from `BroDetailThreadProjection`.
-4. Keep old public route/session method names unchanged.
-5. Move `_merge_timeline_turn` only if doing so reduces interface width without causing broad churn; otherwise keep it as a shared helper during the first extraction.
-6. Run the current regression tests and the new focused module tests.
+2. Rename selected subscription state to `SelectedNativeThreadSubscription` / `selected_native_thread_subscriptions`.
+3. Move live phase and delta maps into the new module.
+4. Delegate Codex item and turn event handling from `BroDetailThreadProjection`.
+5. Keep old public route/session method names unchanged.
+6. Move `_merge_timeline_turn` only if doing so reduces interface width without causing broad churn; otherwise keep it as a shared helper during the first extraction.
+7. Run the current regression tests and the new focused module tests.
 
 ## Deferred Registry Decision
 
