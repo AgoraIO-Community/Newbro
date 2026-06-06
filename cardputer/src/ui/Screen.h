@@ -3,7 +3,8 @@
 
 namespace nb {
 
-enum class Key { None, Up, Down, Enter, Back };
+// Other = a fresh press of any non-navigation key (used for push-to-talk).
+enum class Key { None, Up, Down, Enter, Back, Other };
 
 class Screen {
  public:

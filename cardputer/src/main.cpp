@@ -1,4 +1,5 @@
 #include <M5Cardputer.h>
+#include <esp_heap_caps.h>
 
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "transport/HttpsTransport.h"
 #include "ui/BroListScreen.h"
 #include "ui/ChatScreen.h"
+#include "ui/ThreadListScreen.h"
 #include "ui/Router.h"
 #include "ui/TextScreen.h"
 
@@ -33,13 +35,17 @@ nb::MicRecorder g_mic;
 
 nb::Router g_router;
 nb::BroListScreen g_listScreen;
+nb::ThreadListScreen g_threadListScreen;
 nb::ChatScreen g_chatScreen;
 
 nb::NewbroClient *g_clientPtr = nullptr;
 std::string g_sessionId;
 std::vector<nb::Persona> g_personas;
 nb::Persona g_activeBro;
-bool g_inChat = false;
+std::string g_threadId;
+
+enum class Page { BroList, ThreadList, Chat };
+Page g_page = Page::BroList;
 
 std::string promptLine(const std::string &label, bool mask) {
   std::string buffer;
@@ -76,9 +82,11 @@ bool runPairing() {
   machine.begin();
   nb::PairStart start;
   while (!client.startPairing(start)) {
+    Serial.printf("[pair] start failed: %s\n", client.lastError().c_str());
     nb::screen::status("Pairing", client.lastError());
     delay(retry.next());
   }
+  Serial.printf("[pair] code=%s (enter it in newbro -> Devices)\n", start.userCode.c_str());
   machine.onStart(start);
   retry.reset();
   uint32_t intervalMs = (start.interval > 0 ? start.interval : 2) * 1000U;
@@ -108,6 +116,9 @@ void runVoiceTurn() {
   g_chatScreen.setPhase(nb::Phase::Recording);
   g_chatScreen.setReply("");
   renderOnce();
+  Serial.printf("[heap] before record: %u free (largest internal block %u)\n",
+                ESP.getFreeHeap(),
+                heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   if (!g_mic.beginRecording()) {
     g_chatScreen.setReply("mic unavailable");
     g_chatScreen.setPhase(nb::Phase::Idle);
@@ -129,13 +140,17 @@ void runVoiceTurn() {
   g_chatScreen.setPhase(nb::Phase::Transcribing);
   renderOnce();
   nb::AudioMeta meta = nb::computeAudioMeta(g_mic.sampleCount(), nb::MicRecorder::kSampleRate, 1);
+  Serial.printf("[heap] before upload: %u free, audio=%u bytes (%u ms)\n",
+                ESP.getFreeHeap(), (unsigned)meta.byteLen, (unsigned)meta.durationMs);
   std::string transcript;
-  if (!g_clientPtr->sendAudio(g_sessionId, g_activeBro.id, meta,
+  if (!g_clientPtr->sendAudio(g_sessionId, g_activeBro.id, g_threadId, meta,
                               reinterpret_cast<const uint8_t *>(g_mic.data()), meta.byteLen, transcript)) {
+    Serial.printf("[audio] FAILED: %s\n", g_clientPtr->lastError().c_str());
     g_chatScreen.setReply(g_clientPtr->lastError());
     g_chatScreen.setPhase(nb::Phase::Idle);
     return;
   }
+  Serial.printf("[audio] transcript='%s'\n", transcript.c_str());
   g_chatScreen.setTranscript(transcript);
 
   g_chatScreen.setPhase(nb::Phase::Streaming);
@@ -143,7 +158,10 @@ void runVoiceTurn() {
     for (int f = 0; f < 20; ++f) { renderOnce(); delay(50); }
     M5Cardputer.update();
     nb::TurnView v;
-    if (g_clientPtr->getReply(g_sessionId, g_activeBro.id, v) && v.found) {
+    if (g_clientPtr->getReply(g_sessionId, g_activeBro.id, g_threadId, v) && v.found) {
+      // The server transcribes asynchronously, so the audio response often has no
+      // transcript_text; the transcription lands on the timeline turn instead.
+      if (!v.userText.empty()) g_chatScreen.setTranscript(v.userText);
       g_chatScreen.setReply(v.assistantText);
       if (!nb::isTurnActive(v.status)) break;
     }
@@ -151,18 +169,37 @@ void runVoiceTurn() {
   g_chatScreen.setPhase(nb::Phase::Idle);
 }
 
-void openChat(const nb::Persona &bro) {
+void openThreads(const nb::Persona &bro) {
   g_activeBro = bro;
-  g_chatScreen.setBro(bro);
+  g_threadListScreen.setBroName(bro.name);
+  std::vector<nb::ThreadInfo> threads;
+  if (!g_clientPtr->getThreads(g_sessionId, bro.id, threads)) {
+    Serial.printf("[threads] load failed: %s\n", g_clientPtr->lastError().c_str());
+    threads.clear();  // show the empty state rather than a stale list
+  }
+  g_threadListScreen.setThreads(threads);
+  g_page = Page::ThreadList;
+  g_router.setScreen(&g_threadListScreen);
+}
+
+void openChat(const nb::ThreadInfo &thread) {
+  g_threadId = thread.id;
+  g_chatScreen.setBro(g_activeBro);
+  g_chatScreen.setThread(thread.id);
   g_chatScreen.setTranscript("");
   g_chatScreen.setReply("");
   g_chatScreen.setPhase(nb::Phase::Idle);
-  g_inChat = true;
+  g_page = Page::Chat;
   g_router.setScreen(&g_chatScreen);
 }
 
-void backToList() {
-  g_inChat = false;
+void backToThreads() {
+  g_page = Page::ThreadList;
+  g_router.setScreen(&g_threadListScreen);
+}
+
+void backToBros() {
+  g_page = Page::BroList;
   g_router.setScreen(&g_listScreen);
 }
 
@@ -172,6 +209,10 @@ void setup() {
   auto cfg = M5.config();
   M5Cardputer.begin(cfg, true);
   M5Cardputer.Display.setRotation(1);
+
+  Serial.begin(115200);
+  delay(200);
+  Serial.printf("[heap] boot: %u free\n", ESP.getFreeHeap());
 
   nb::screen::title("newbro");
   delay(600);
@@ -192,6 +233,9 @@ void setup() {
   defaults.serverPort = NB_DEFAULT_SERVER_PORT;
 #endif
   g_config = nb::mergeDefaults(g_config, defaults);
+  Serial.printf("[cfg] ssid='%s' host='%s' port=%u token=%s\n",
+                g_config.wifiSsid.c_str(), g_config.serverHost.c_str(),
+                g_config.serverPort, g_config.hasToken() ? "yes" : "no");
 
   runFirstRunSetupIfNeeded();
 
@@ -201,6 +245,7 @@ void setup() {
     nb::screen::status("Wi-Fi failed", "check credentials, reboot to retry");
     return;
   }
+  Serial.printf("[net] wifi connected\n");
   if (!g_config.hasToken()) {
     if (!runPairing()) {
       nb::screen::status("Pairing failed", "reboot to retry");
@@ -225,9 +270,12 @@ void setup() {
   }
 
   g_router.begin();
+  Serial.printf("[heap] after canvas: %u free\n", ESP.getFreeHeap());
   g_listScreen.setBros(g_personas);
-  g_listScreen.onOpen(openChat);
-  g_chatScreen.onBack(backToList);
+  g_listScreen.onOpen(openThreads);
+  g_threadListScreen.onPick(openChat);
+  g_threadListScreen.onBack(backToBros);
+  g_chatScreen.onBack(backToThreads);
 
   for (size_t i = 0; i < g_personas.size(); ++i) {
     if (g_personas[i].id == boot.defaultPersonaId) {
@@ -243,14 +291,17 @@ void loop() {
   M5Cardputer.update();
   nb::Key key = g_router.readKey();
 
-  if (g_inChat) {
-    if (key == nb::Key::Back) {
-      g_chatScreen.onKey(nb::Key::Back);
-    } else if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed() && key == nb::Key::None) {
-      runVoiceTurn();
-    }
-  } else if (key != nb::Key::None) {
-    g_listScreen.onKey(key);
+  switch (g_page) {
+    case Page::BroList:
+      if (key != nb::Key::None) g_listScreen.onKey(key);
+      break;
+    case Page::ThreadList:
+      if (key != nb::Key::None) g_threadListScreen.onKey(key);
+      break;
+    case Page::Chat:
+      if (key == nb::Key::Back) g_chatScreen.onKey(nb::Key::Back);
+      else if (key == nb::Key::Other) runVoiceTurn();
+      break;
   }
 
   g_router.tick();

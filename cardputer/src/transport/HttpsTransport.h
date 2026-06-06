@@ -14,6 +14,8 @@ class HttpsTransport : public Transport {
                        const std::string &body, const std::string &cookieToken) override;
   HttpResponse postBytes(const std::string &path, const std::string &contentType,
                          const uint8_t *body, size_t len, const std::string &cookieToken) override;
+  bool getFiltered(const std::string &path, const std::string &cookieToken,
+                   const JsonDocument &filter, JsonDocument &out, int &status) override;
 
  private:
   std::string host_;

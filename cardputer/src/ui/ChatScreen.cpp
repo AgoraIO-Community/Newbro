@@ -35,18 +35,18 @@ void ChatScreen::render(M5Canvas &canvas, uint32_t frame) {
 
   int y = 34;
   if (!transcript_.empty()) {
-    canvas.setFont(theme::fontSmall());
+    canvas.setFont(theme::fontCJKSmall());
     canvas.setTextColor(theme::muted);
     canvas.setCursor(8, y);
     canvas.print(("> " + truncate(transcript_, 36)).c_str());
-    y += 12;
+    y += 14;
   }
-  canvas.setFont(theme::fontBody());
+  canvas.setFont(theme::fontCJK());
   canvas.setTextColor(theme::text);
   for (const auto &lineStr : wrapLines(reply_, 30, 3)) {
     canvas.setCursor(8, y);
     canvas.print(lineStr.c_str());
-    y += 16;
+    y += 18;
   }
 
   int fy = canvas.height() - 6;
