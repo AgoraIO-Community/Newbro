@@ -269,11 +269,14 @@ def test_executor_install_codex_runtime_bootstrap_failure(monkeypatch, tmp_path:
     monkeypatch.setattr(codex_probe, "discover_codex_commands", lambda configured_command=None: [])
     monkeypatch.setattr(executor_settings, "_tool_environment", lambda: {"PATH": "/usr/bin"})
     monkeypatch.setattr(executor_settings.shutil, "which", lambda command, path=None: None)
-    monkeypatch.setattr(executor_settings, "_run_logged", lambda argv, **kwargs: 1)
+    monkeypatch.setattr(executor_settings, "_run_logged", lambda argv, **kwargs: 22)
 
     assert cli_main.main(["executor", "install-codex"]) == 1
 
-    assert "Codex setup failed while installing required runtime" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "Codex setup failed while installing required runtime" in err
+    assert "/usr/bin/curl -fsSL https://bun.sh/install -o" in err
+    assert "exited with code 22" in err
     configured = (tmp_path / ".newbro" / "config.yaml").read_text(encoding="utf-8")
     assert "command: codex" in configured
 
@@ -294,11 +297,14 @@ def test_executor_install_codex_package_install_failure(monkeypatch, tmp_path: P
     monkeypatch.setattr(codex_probe, "discover_codex_commands", lambda configured_command=None: [])
     monkeypatch.setattr(executor_settings, "_tool_environment", lambda: {"PATH": f"{bun.parent}{os.pathsep}/usr/bin"})
     monkeypatch.setattr(executor_settings.shutil, "which", lambda command, path=None: str(bun))
-    monkeypatch.setattr(executor_settings, "_run_logged", lambda argv, **kwargs: 1)
+    monkeypatch.setattr(executor_settings, "_run_logged", lambda argv, **kwargs: 127)
 
     assert cli_main.main(["executor", "install-codex"]) == 1
 
-    assert "Codex setup failed while installing Codex." in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "Codex setup failed while installing Codex." in err
+    assert f"{bun} add -g @openai/codex" in err
+    assert "exited with code 127" in err
     configured = (tmp_path / ".newbro" / "config.yaml").read_text(encoding="utf-8")
     assert "command: codex" in configured
 

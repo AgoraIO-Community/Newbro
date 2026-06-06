@@ -114,7 +114,11 @@ def _run_install_step(argv: list[str], failure_message: str, *, env: dict[str, s
     except RuntimeError as exc:
         raise RuntimeError(f"{failure_message}: {exc}") from exc
     if returncode != 0:
-        raise RuntimeError(failure_message)
+        raise RuntimeError(f"{failure_message}: {_format_command(argv)} exited with code {returncode}.")
+
+
+def _format_command(argv: list[str]) -> str:
+    return " ".join(argv)
 
 
 def _first_usable_codex_command(config_path: Path) -> str | None:
