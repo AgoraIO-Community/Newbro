@@ -101,6 +101,17 @@ public final class ExecutorSettingsClient: @unchecked Sendable {
         _ = try runner([newbroPath, "executor", "use", "--executor", "codex", "--command", path], environment)
     }
 
+    public func installCodex() throws -> String {
+        do {
+            return try runner([newbroPath, "executor", "install-codex"], environment)
+        } catch let error as ExecutorSettingsClientError {
+            if error.isUnsupportedInstallCodexSubcommand {
+                throw ExecutorSettingsClientError.runtimeTooOld(installedVersion: installedVersion())
+            }
+            throw error
+        }
+    }
+
     private func installedVersion() -> String? {
         guard let output = try? runner([newbroPath, "--version"], environment) else { return nil }
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -131,7 +142,15 @@ public final class ExecutorSettingsClient: @unchecked Sendable {
 
 private extension ExecutorSettingsClientError {
     var isUnsupportedProbeSubcommand: Bool {
+        isUnsupportedExecutorSubcommand("probe")
+    }
+
+    var isUnsupportedInstallCodexSubcommand: Bool {
+        isUnsupportedExecutorSubcommand("install-codex")
+    }
+
+    func isUnsupportedExecutorSubcommand(_ name: String) -> Bool {
         guard case .commandFailed(_, let output) = self else { return false }
-        return output.contains("executor_command: invalid choice: 'probe'")
+        return output.contains("executor_command: invalid choice: '\(name)'")
     }
 }

@@ -22,6 +22,12 @@ public func refreshCommandStatus(_ status: inout CommandStatus,
     return refreshed
 }
 
+public func newbroRuntimeMenuTitle(path: String?, version: String?) -> String {
+    guard path != nil else { return "newbro CLI not found" }
+    guard let version, !version.isEmpty else { return "newbro CLI version unknown" }
+    return "newbro CLI v\(version)"
+}
+
 public struct RuntimeLocator {
     public static let installScriptURL =
         "https://raw.githubusercontent.com/AgoraIO-Community/Newbro/main/scripts/install-newbro-cli.sh"

@@ -87,6 +87,27 @@ final class ExecutorSettingsClientTests: XCTestCase {
         ])
     }
 
+    func testClientInvokesInstallCodexCommand() throws {
+        var calls: [(argv: [String], environment: [String: String]?)] = []
+        let client = ExecutorSettingsClient(
+            newbroPath: "/usr/local/bin/newbro",
+            environment: ["PATH": "/login/bin", "HOME": "/Users/test"]
+        ) { argv, environment in
+            calls.append((argv, environment))
+            return "Codex is ready\n"
+        }
+
+        let output = try client.installCodex()
+
+        XCTAssertTrue(output.contains("Codex is ready"))
+        XCTAssertEqual(calls.map(\.argv), [
+            ["/usr/local/bin/newbro", "executor", "install-codex"],
+        ])
+        XCTAssertEqual(calls.map(\.environment), [
+            ["PATH": "/login/bin", "HOME": "/Users/test"],
+        ])
+    }
+
     func testDefaultRunnerThrowsWhenCommandFails() throws {
         let script = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("newbro-failing-\(UUID().uuidString).sh")
@@ -129,6 +150,32 @@ final class ExecutorSettingsClientTests: XCTestCase {
         }
         XCTAssertEqual(calls, [
             ["/usr/local/bin/newbro", "executor", "probe", "--executor", "codex", "--json"],
+            ["/usr/local/bin/newbro", "--version"],
+        ])
+    }
+
+    func testUnsupportedInstallCodexMapsToRuntimeTooOld() throws {
+        var calls: [[String]] = []
+        let oldRuntimeOutput = """
+        usage: newbro executor [-h] {run,probe,use} ...
+        newbro executor: error: argument executor_command: invalid choice: 'install-codex' (choose from 'run', 'probe', 'use')
+        """
+        let client = ExecutorSettingsClient(newbroPath: "/usr/local/bin/newbro") { argv, _ in
+            calls.append(argv)
+            if argv == ["/usr/local/bin/newbro", "--version"] {
+                return "newbro 0.1.2\n"
+            }
+            throw ExecutorSettingsClientError.commandFailed(status: 2, output: oldRuntimeOutput)
+        }
+
+        XCTAssertThrowsError(try client.installCodex()) { error in
+            XCTAssertEqual(
+                error as? ExecutorSettingsClientError,
+                .runtimeTooOld(installedVersion: "0.1.2")
+            )
+        }
+        XCTAssertEqual(calls, [
+            ["/usr/local/bin/newbro", "executor", "install-codex"],
             ["/usr/local/bin/newbro", "--version"],
         ])
     }

@@ -105,6 +105,21 @@ final class RuntimeLocatorTests: XCTestCase {
         XCTAssertFalse(locator.codexRuntimeStatus().isAvailable)
     }
 
+    func testNewbroStatusTitles() {
+        XCTAssertEqual(
+            newbroRuntimeMenuTitle(path: nil, version: nil),
+            "newbro CLI not found"
+        )
+        XCTAssertEqual(
+            newbroRuntimeMenuTitle(path: "/usr/local/bin/newbro", version: nil),
+            "newbro CLI version unknown"
+        )
+        XCTAssertEqual(
+            newbroRuntimeMenuTitle(path: "/usr/local/bin/newbro", version: "0.1.2"),
+            "newbro CLI v0.1.2"
+        )
+    }
+
     func testRefreshCommandStatusReplacesStaleCache() {
         var cached = CommandStatus(
             command: nil,
