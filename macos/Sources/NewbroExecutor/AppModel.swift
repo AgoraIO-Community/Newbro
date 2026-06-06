@@ -19,6 +19,9 @@ final class AppModel: ObservableObject {
     @Published var executorSettingsError: String?
     @Published var executorSettingsBusy: Bool = false
     @Published var executorSettingsCanUpdateCLI: Bool = false
+    @Published var profileDiagnoses: [String: ProfileStartDiagnosis] = [:]
+    @Published var codexSetupLog: String = ""
+    @Published var codexSetupBusy: Bool = false
 
     private let supervisor: ProfileSupervisor
     private let notifier: AppNotifying
@@ -114,10 +117,8 @@ final class AppModel: ObservableObject {
     func activeProfileIDs() -> [String] { Array(supervisor.activeIDs()) }
 
     func start(profileID id: String) {
-        perform(startProfileAction(in: profiles,
-                                   profileID: id,
-                                   runtimeAvailable: runtimeAvailable,
-                                   codexRuntimeAvailable: codexRuntimeAvailable))
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        start(profile)
     }
 
     func stop(profileID id: String) {
@@ -165,10 +166,37 @@ final class AppModel: ObservableObject {
     }
 
     func start(_ profile: Profile) {
-        perform(startProfileAction(for: profile,
-                                   runtimeAvailable: runtimeAvailable,
-                                   codexRuntimeAvailable: codexRuntimeAvailable))
+        refreshRuntime()
+        let diagnosis = diagnoseStart(for: profile)
+        guard diagnosis.status == .ready else {
+            objectWillChange.send()
+            return
+        }
+        profileDiagnoses.removeValue(forKey: profile.id)
+        perform(.start(profile))
     }
+
+    func diagnosis(for profile: Profile) -> ProfileStartDiagnosis? {
+        profileDiagnoses[profile.id]
+    }
+
+    @discardableResult
+    func diagnoseStart(for profile: Profile) -> ProfileStartDiagnosis {
+        let newbro = locator.resolveNewbro()
+        if executorProbe == nil && executorSettingsError == nil {
+            refreshExecutorProbe()
+        }
+        let diagnosis = diagnoseProfileStart(
+            profile,
+            newbroPath: newbro,
+            cliVersion: newbro == nil ? nil : installedCLIVersion(),
+            probe: newbro == nil ? nil : executorProbe,
+            probeError: newbro == nil ? nil : executorSettingsError
+        )
+        profileDiagnoses[profile.id] = diagnosis
+        return diagnosis
+    }
+
     func stop(_ profile: Profile) {
         controlQueue.async { [supervisor] in supervisor.stop(profile.id) }
     }
@@ -204,6 +232,69 @@ final class AppModel: ObservableObject {
                         self.executorSettingsCanUpdateCLI = true
                     } else {
                         self.executorSettingsCanUpdateCLI = false
+                    }
+                }
+            }
+        }
+    }
+
+    func setUpCodex(for profile: Profile?) {
+        guard !codexSetupBusy, let newbro = locator.resolveNewbro() else { return }
+        let profileID = profile?.id
+        codexSetupBusy = true
+        codexSetupLog = "Preparing Codex setup...\n"
+        executorSettingsBusy = true
+        let client = ExecutorSettingsClient(newbroPath: newbro)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { () -> (String, Result<ExecutorProbe, Error>) in
+                let output = try client.installCodex()
+                return (output, Result { try client.probe() })
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.codexSetupBusy = false
+                switch result {
+                case .success(let (output, probeResult)):
+                    self.codexSetupLog += output
+                    if !output.hasSuffix("\n") {
+                        self.codexSetupLog += "\n"
+                    }
+                    self.executorSettingsError = nil
+                    self.executorSettingsCanUpdateCLI = false
+                    self.refreshRuntime()
+                    switch probeResult {
+                    case .success(let probe):
+                        self.executorProbe = probe
+                        self.executorSettingsBusy = false
+                    case .failure(let error):
+                        self.executorProbe = nil
+                        self.executorSettingsError = error.localizedDescription
+                        if case ExecutorSettingsClientError.runtimeTooOld = error {
+                            self.executorSettingsCanUpdateCLI = true
+                        }
+                        self.executorSettingsBusy = false
+                    }
+                    self.refreshExecutorProbe()
+                    if let profileID,
+                       let profile = self.profiles.first(where: { $0.id == profileID }) {
+                        let diagnosis = self.diagnoseStart(for: profile)
+                        if diagnosis.status == .ready {
+                            self.profileDiagnoses.removeValue(forKey: profile.id)
+                            self.perform(.start(profile))
+                        }
+                    }
+                case .failure(let error):
+                    self.executorSettingsBusy = false
+                    self.executorSettingsError = error.localizedDescription
+                    self.codexSetupLog += error.localizedDescription + "\n"
+                    if let profileID {
+                        self.profileDiagnoses[profileID] = ProfileStartDiagnosis(
+                            status: .blocked,
+                            reason: .installerFailed,
+                            title: "Codex setup failed",
+                            detail: error.localizedDescription,
+                            primaryAction: .setUpCodex
+                        )
                     }
                 }
             }
