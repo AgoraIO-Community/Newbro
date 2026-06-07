@@ -281,9 +281,7 @@ final class AppModel: ObservableObject {
             title: "Checking Codex setup",
             primaryAction: .none
         )
-        refreshExecutorProbe { [weak self] in
-            self?.refreshStoredDiagnosis(for: profile)
-        }
+        refreshExecutorProbeAndStoredDiagnoses()
     }
 
     private func refreshStoredDiagnosis(for profile: Profile) {
@@ -360,6 +358,7 @@ final class AppModel: ObservableObject {
     func refreshExecutorProbeAndStoredDiagnoses() {
         runtimeDiagnosisRefreshRequestID += 1
         let requestID = runtimeDiagnosisRefreshRequestID
+        executorProbeRequestID += 1
         executorSettingsBusy = true
         executorProbeInFlight = true
         let loc = locator
@@ -485,25 +484,19 @@ final class AppModel: ObservableObject {
         executorSettingsBusy = true
         let client = ExecutorSettingsClient(newbroPath: newbro)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { () -> (String, Result<ExecutorProbe, Error>) in
-                let output = try client.installCodex()
-                return (output, Result { try client.probe() })
-            }
+            let result = Result { try client.installCodex() }
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard setupRequestID == self.codexSetupRequestID else { return }
                 self.executorProbeRequestID += 1
                 self.codexSetupBusy = false
                 switch result {
-                case .success(let (output, probeResult)):
+                case .success(let output):
                     self.codexSetupLog += output
                     if !output.hasSuffix("\n") {
                         self.codexSetupLog += "\n"
                     }
-                    self.refreshRuntime()
-                    self.applyExecutorProbeResult(probeResult)
-                    self.continuePendingStarts()
-                    self.refreshStoredProfileDiagnoses()
+                    self.refreshExecutorProbeAndStoredDiagnoses()
                 case .failure(let error):
                     self.codexSetupLog += error.localizedDescription + "\n"
                     let isRuntimeTooOld = self.isRuntimeTooOld(error)
@@ -560,7 +553,6 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             if code == 0 {
                 for id in activeIDs { self.pendingStartProfileIDs.insert(id) }
-                self.refreshRuntime()
                 self.refreshExecutorProbeAndStoredDiagnoses()
             } else {
                 self.restoreProfilesAfterMaintenance(activeIDs: activeIDs)
@@ -822,7 +814,6 @@ final class AppModel: ObservableObject {
     func notifyUpdateEvent(_ event: UpdateServiceEvent) {
         switch event {
         case .cliUpdateSucceeded:
-            refreshRuntime()
             refreshExecutorProbeAndStoredDiagnoses()
             notifier.notify(title: "Newbro CLI updated", body: "Executor nodes restarted.")
         case let .cliUpdateFailed(code, _):
