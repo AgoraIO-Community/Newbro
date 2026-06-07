@@ -273,6 +273,32 @@ final class AppModel: ObservableObject {
         return diagnosis
     }
 
+    private func refreshStoredProfileDiagnoses() {
+        let diagnosedIDs = Array(profileDiagnoses.keys)
+        guard !diagnosedIDs.isEmpty else { return }
+
+        let newbro = locator.resolveNewbro()
+        for profileID in diagnosedIDs {
+            guard let profile = profiles.first(where: { $0.id == profileID }) else {
+                profileDiagnoses.removeValue(forKey: profileID)
+                continue
+            }
+            let diagnosis = diagnoseProfileStart(
+                profile,
+                newbroPath: newbro,
+                cliVersion: newbro == nil ? nil : cachedCLIVersion,
+                probe: newbro == nil ? nil : executorProbe,
+                probeError: newbro == nil ? nil : executorSettingsError
+            )
+            switch diagnosis.status {
+            case .ready:
+                profileDiagnoses.removeValue(forKey: profileID)
+            case .blocked, .checking:
+                profileDiagnoses[profileID] = diagnosis
+            }
+        }
+    }
+
     func stop(_ profile: Profile) {
         controlQueue.async { [supervisor] in supervisor.stop(profile.id) }
     }
@@ -533,7 +559,9 @@ final class AppModel: ObservableObject {
                         self.pendingSilentStartProfileIDs.remove(id)
                         self.pendingRestartProfileIDs.insert(id)
                     }
-                    self.refreshExecutorProbe()
+                    self.refreshExecutorProbe {
+                        self.refreshStoredProfileDiagnoses()
+                    }
                 case .failure(let error):
                     self.executorSettingsBusy = false
                     self.executorSettingsError = error.localizedDescription
