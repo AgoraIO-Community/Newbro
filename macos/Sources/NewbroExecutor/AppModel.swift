@@ -538,7 +538,7 @@ final class AppModel: ObservableObject {
             if code == 0 {
                 for id in activeIDs { self.pendingStartProfileIDs.insert(id) }
                 self.refreshRuntime()
-                self.refreshExecutorProbe()
+                self.refreshExecutorProbeAndStoredDiagnoses()
             } else {
                 self.restoreProfilesAfterMaintenance(activeIDs: activeIDs)
                 self.executorSettingsBusy = false
