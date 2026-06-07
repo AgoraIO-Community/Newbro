@@ -431,6 +431,23 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func applyMissingRuntimeDiagnosisState(codexStatus: CommandStatus) {
+        runtimeDiagnosisRefreshRequestID += 1
+        executorProbeRequestID += 1
+        cliVersionRequestID += 1
+        let runtime = DiagnosisRuntimeContext(newbroPath: nil, cliVersion: nil)
+        runtimeAvailable = false
+        cachedCLIVersion = nil
+        self.codexStatus = codexStatus
+        executorProbe = nil
+        executorSettingsError = "newbro CLI not found"
+        executorSettingsCanUpdateCLI = false
+        executorSettingsBusy = false
+        executorProbeInFlight = false
+        continuePendingStarts(runtime: runtime)
+        refreshStoredProfileDiagnoses(runtime: runtime)
+    }
+
     private func applyExecutorProbeResult(_ result: Result<ExecutorProbe, Error>) {
         executorSettingsBusy = false
         executorProbeInFlight = false
@@ -643,11 +660,10 @@ final class AppModel: ObservableObject {
         let loc = locator
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let newbro = loc.resolveNewbro() else {
+                let codex = loc.codexRuntimeStatus()
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.executorSettingsBusy = false
-                    self.executorSettingsError = "newbro CLI not found"
-                    self.executorSettingsCanUpdateCLI = false
+                    self.applyMissingRuntimeDiagnosisState(codexStatus: codex)
                 }
                 return
             }
