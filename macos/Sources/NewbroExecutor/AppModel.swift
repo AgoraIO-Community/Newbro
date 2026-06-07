@@ -316,7 +316,6 @@ final class AppModel: ObservableObject {
         codexSetupRequestID += 1
         let setupRequestID = codexSetupRequestID
         executorProbeRequestID += 1
-        let setupProbeRequestID = executorProbeRequestID
         if let profileID { pendingStartProfileIDs.insert(profileID) }
         executorProbeInFlight = true
         codexSetupBusy = true
@@ -331,7 +330,7 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard setupRequestID == self.codexSetupRequestID else { return }
-                let canApplySetupState = setupProbeRequestID == self.executorProbeRequestID
+                self.executorProbeRequestID += 1
                 self.codexSetupBusy = false
                 switch result {
                 case .success(let (output, probeResult)):
@@ -340,9 +339,7 @@ final class AppModel: ObservableObject {
                         self.codexSetupLog += "\n"
                     }
                     self.refreshRuntime()
-                    if canApplySetupState {
-                        self.applyExecutorProbeResult(probeResult)
-                    }
+                    self.applyExecutorProbeResult(probeResult)
                     if let profileID,
                        let profile = self.profiles.first(where: { $0.id == profileID }) {
                         self.continueStartIfReady(profile)
@@ -351,12 +348,10 @@ final class AppModel: ObservableObject {
                 case .failure(let error):
                     self.codexSetupLog += error.localizedDescription + "\n"
                     let isRuntimeTooOld = self.isRuntimeTooOld(error)
-                    if canApplySetupState {
-                        self.executorSettingsBusy = false
-                        self.executorProbeInFlight = false
-                        self.executorSettingsError = error.localizedDescription
-                        self.executorSettingsCanUpdateCLI = isRuntimeTooOld
-                    }
+                    self.executorSettingsBusy = false
+                    self.executorProbeInFlight = false
+                    self.executorSettingsError = error.localizedDescription
+                    self.executorSettingsCanUpdateCLI = isRuntimeTooOld
                     if let profileID {
                         self.pendingStartProfileIDs.remove(profileID)
                         self.profileDiagnoses[profileID] = ProfileStartDiagnosis(
@@ -392,11 +387,20 @@ final class AppModel: ObservableObject {
                 self.refreshRuntime()
                 self.refreshExecutorProbe()
             } else {
-                for id in activeIDs { self.start(profileID: id) }
+                self.restoreProfilesAfterMaintenance(activeIDs: activeIDs)
                 self.executorSettingsBusy = false
                 self.executorSettingsError = "Update failed (exit \(code)). Nodes restarted."
                 self.executorSettingsCanUpdateCLI = true
             }
+        }
+    }
+
+    private func restoreProfilesAfterMaintenance(activeIDs: [String]) {
+        for id in activeIDs {
+            guard let profile = profiles.first(where: { $0.id == id }) else { continue }
+            pendingStartProfileIDs.remove(id)
+            profileDiagnoses.removeValue(forKey: id)
+            perform(.start(profile))
         }
     }
 
