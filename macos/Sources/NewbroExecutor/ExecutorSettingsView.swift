@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import NewbroExecutorCore
 
-private enum SettingsPane: Hashable {
+enum SettingsPane: Hashable {
     case updates
     case codex
 }
@@ -10,11 +10,17 @@ private enum SettingsPane: Hashable {
 struct NewbroSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var updates: UpdateService
-    @State private var selectedPane: SettingsPane? = .updates
+
+    private var selectedPane: Binding<SettingsPane?> {
+        Binding(
+            get: { model.selectedSettingsPane },
+            set: { model.selectedSettingsPane = $0 ?? .updates }
+        )
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            List(selection: $selectedPane) {
+            List(selection: selectedPane) {
                 Text("Updates")
                     .tag(SettingsPane.updates)
 
@@ -28,7 +34,7 @@ struct NewbroSettingsView: View {
             Divider()
 
             Group {
-                switch selectedPane ?? .updates {
+                switch model.selectedSettingsPane {
                 case .updates:
                     UpdatesSettingsPane(model: model, updates: updates)
                 case .codex:

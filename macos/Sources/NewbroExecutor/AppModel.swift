@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
     @Published var profileDiagnoses: [String: ProfileStartDiagnosis] = [:]
     @Published var codexSetupLog: String = ""
     @Published var codexSetupBusy: Bool = false
+    @Published var selectedSettingsPane: SettingsPane = .updates
 
     private let supervisor: ProfileSupervisor
     private let notifier: AppNotifying
@@ -673,7 +674,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func showSettings(updates: UpdateService) {
+    func showSettings(updates: UpdateService, initialPane: SettingsPane = .updates) {
+        selectedSettingsPane = initialPane
         refreshExecutorProbe()
         windows.show(id: "settings", title: "Settings",
                      size: NSSize(width: 760, height: 480)) { [self] in
