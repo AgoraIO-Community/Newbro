@@ -86,9 +86,6 @@ final class AppModel: ObservableObject {
                 eventRelay.enqueue(event)
             })
         self.profiles = store.load()
-        self.runtimeAvailable = locator.isRuntimeAvailable
-        self.codexStatus = locator.codexRuntimeStatus()
-        refreshCachedCLIVersion()
         // Forward supervisor status changes so SwiftUI re-renders the menu/icon.
         supervisor.objectWillChange
             .receive(on: RunLoop.main)
@@ -96,7 +93,7 @@ final class AppModel: ObservableObject {
             .store(in: &cancellables)
         // Start auto-activate profiles at launch (login-item or manual).
         autostart()
-        refreshExecutorProbe()
+        refreshExecutorProbeAndStoredDiagnoses()
     }
 
     func refreshRuntime() {
@@ -113,7 +110,6 @@ final class AppModel: ObservableObject {
     }
 
     func autostart() {
-        refreshRuntime()
         for profile in profiles where profile.autoActivate {
             _ = requestStart(profile, suppressStartNotification: true)
         }
@@ -140,12 +136,6 @@ final class AppModel: ObservableObject {
 
     func stop(profileID id: String) {
         controlQueue.async { [supervisor] in supervisor.stop(id) }
-    }
-
-    /// The installed CLI version, read by running `newbro --version` (e.g. "0.1.2").
-    func installedCLIVersion() -> String? {
-        guard let newbro = locator.resolveNewbro() else { return nil }
-        return Self.readInstalledCLIVersion(newbroPath: newbro)
     }
 
     private func refreshCachedCLIVersion() {
@@ -209,74 +199,26 @@ final class AppModel: ObservableObject {
     @discardableResult
     private func requestStart(_ profile: Profile,
                               suppressStartNotification: Bool = false) -> Bool {
-        refreshRuntime()
-        let diagnosis = diagnoseStart(for: profile)
-        switch diagnosis.status {
-        case .ready:
-            pendingStartProfileIDs.remove(profile.id)
-            pendingRestartProfileIDs.remove(profile.id)
-            pendingSilentStartProfileIDs.remove(profile.id)
-            pendingSilentRestartProfileIDs.remove(profile.id)
-            profileDiagnoses.removeValue(forKey: profile.id)
-            if suppressStartNotification {
-                notificationController.suppressNextStart(profileID: profile.id)
-            }
-            perform(.start(profile))
-            return true
-        case .checking:
-            pendingRestartProfileIDs.remove(profile.id)
-            pendingStartProfileIDs.insert(profile.id)
-            if suppressStartNotification {
-                pendingSilentStartProfileIDs.insert(profile.id)
-            } else {
-                pendingSilentStartProfileIDs.remove(profile.id)
-            }
-            pendingSilentRestartProfileIDs.remove(profile.id)
-            objectWillChange.send()
-            return true
-        case .blocked:
-            pendingStartProfileIDs.remove(profile.id)
-            pendingRestartProfileIDs.remove(profile.id)
-            pendingSilentStartProfileIDs.remove(profile.id)
-            pendingSilentRestartProfileIDs.remove(profile.id)
-            objectWillChange.send()
+        guard profileIsComplete(profile) else {
+            blockStartRequest(profile)
             return false
         }
+        pendingRestartProfileIDs.remove(profile.id)
+        pendingStartProfileIDs.insert(profile.id)
+        if suppressStartNotification {
+            pendingSilentStartProfileIDs.insert(profile.id)
+        } else {
+            pendingSilentStartProfileIDs.remove(profile.id)
+        }
+        pendingSilentRestartProfileIDs.remove(profile.id)
+        profileDiagnoses[profile.id] = checkingLocalSetupDiagnosis()
+        objectWillChange.send()
+        refreshExecutorProbeAndStoredDiagnoses()
+        return true
     }
 
     func diagnosis(for profile: Profile) -> ProfileStartDiagnosis? {
         profileDiagnoses[profile.id]
-    }
-
-    @discardableResult
-    func diagnoseStart(for profile: Profile) -> ProfileStartDiagnosis {
-        let newbro = locator.resolveNewbro()
-        if let newbro,
-           profileRequiresCodex(profile),
-           profileIsComplete(profile),
-           executorProbeInFlight || codexSetupBusy {
-            let diagnosis = diagnoseProfileStart(
-                profile,
-                newbroPath: newbro,
-                cliVersion: nil,
-                probe: nil,
-                probeError: nil
-            )
-            profileDiagnoses[profile.id] = diagnosis
-            return diagnosis
-        }
-        if executorProbe == nil && executorSettingsError == nil {
-            refreshExecutorProbe()
-        }
-        let diagnosis = diagnoseProfileStart(
-            profile,
-            newbroPath: newbro,
-            cliVersion: newbro == nil ? nil : installedCLIVersion(),
-            probe: newbro == nil ? nil : executorProbe,
-            probeError: newbro == nil ? nil : executorSettingsError
-        )
-        profileDiagnoses[profile.id] = diagnosis
-        return diagnosis
     }
 
     @discardableResult
@@ -293,6 +235,31 @@ final class AppModel: ObservableObject {
         return diagnosis
     }
 
+    private func checkingLocalSetupDiagnosis() -> ProfileStartDiagnosis {
+        ProfileStartDiagnosis(
+            status: .checking,
+            reason: .ready,
+            title: "Checking local setup",
+            primaryAction: .none
+        )
+    }
+
+    private func blockStartRequest(_ profile: Profile) {
+        let diagnosis = diagnoseProfileStart(
+            profile,
+            newbroPath: "newbro",
+            cliVersion: nil,
+            probe: nil,
+            probeError: nil
+        )
+        pendingStartProfileIDs.remove(profile.id)
+        pendingRestartProfileIDs.remove(profile.id)
+        pendingSilentStartProfileIDs.remove(profile.id)
+        pendingSilentRestartProfileIDs.remove(profile.id)
+        profileDiagnoses[profile.id] = diagnosis
+        objectWillChange.send()
+    }
+
     func rerunDiagnosis(for profile: Profile) {
         profileDiagnoses[profile.id] = ProfileStartDiagnosis(
             status: .checking,
@@ -301,17 +268,6 @@ final class AppModel: ObservableObject {
             primaryAction: .none
         )
         refreshExecutorProbeAndStoredDiagnoses()
-    }
-
-    private func refreshStoredDiagnosis(for profile: Profile) {
-        let newbro = locator.resolveNewbro()
-        refreshStoredDiagnosis(
-            for: profile,
-            runtime: DiagnosisRuntimeContext(
-                newbroPath: newbro,
-                cliVersion: newbro == nil ? nil : cachedCLIVersion
-            )
-        )
     }
 
     private func refreshStoredDiagnosis(for profile: Profile,
@@ -328,19 +284,6 @@ final class AppModel: ObservableObject {
             profileDiagnoses.removeValue(forKey: profile.id)
         case .blocked, .checking:
             profileDiagnoses[profile.id] = diagnosis
-        }
-    }
-
-    private func refreshStoredProfileDiagnoses() {
-        let diagnosedIDs = Array(profileDiagnoses.keys)
-        guard !diagnosedIDs.isEmpty else { return }
-
-        for profileID in diagnosedIDs {
-            guard let profile = profiles.first(where: { $0.id == profileID }) else {
-                profileDiagnoses.removeValue(forKey: profileID)
-                continue
-            }
-            refreshStoredDiagnosis(for: profile)
         }
     }
 
@@ -362,11 +305,6 @@ final class AppModel: ObservableObject {
     }
     func restart(_ profile: Profile) {
         _ = requestRestartAfterDiagnosis(profile)
-    }
-
-    func refreshExecutorProbe(after completion: (() -> Void)? = nil) {
-        refreshCachedCLIVersion()
-        refreshExecutorProbe(resolvedNewbro: locator.resolveNewbro(), after: completion)
     }
 
     private func refreshExecutorProbe(resolvedNewbro newbro: String?,
@@ -487,8 +425,12 @@ final class AppModel: ObservableObject {
 
     private func continueStartIfReady(_ profile: Profile,
                                       runtime: DiagnosisRuntimeContext? = nil) {
-        let diagnosis = runtime.map { diagnoseStart(for: profile, runtime: $0) }
-            ?? diagnoseStart(for: profile)
+        guard let runtime else {
+            profileDiagnoses[profile.id] = checkingLocalSetupDiagnosis()
+            refreshExecutorProbeAndStoredDiagnoses()
+            return
+        }
+        let diagnosis = diagnoseStart(for: profile, runtime: runtime)
         switch diagnosis.status {
         case .ready:
             pendingStartProfileIDs.remove(profile.id)
@@ -507,8 +449,12 @@ final class AppModel: ObservableObject {
 
     private func continueRestartIfReady(_ profile: Profile,
                                         runtime: DiagnosisRuntimeContext? = nil) {
-        let diagnosis = runtime.map { diagnoseStart(for: profile, runtime: $0) }
-            ?? diagnoseStart(for: profile)
+        guard let runtime else {
+            profileDiagnoses[profile.id] = checkingLocalSetupDiagnosis()
+            refreshExecutorProbeAndStoredDiagnoses()
+            return
+        }
+        let diagnosis = diagnoseStart(for: profile, runtime: runtime)
         switch diagnosis.status {
         case .ready:
             pendingRestartProfileIDs.remove(profile.id)
@@ -537,7 +483,7 @@ final class AppModel: ObservableObject {
     }
 
     func setUpCodex(for profile: Profile?) {
-        guard !codexSetupBusy, let newbro = locator.resolveNewbro() else { return }
+        guard !codexSetupBusy else { return }
         let profileID = profile?.id
         codexSetupRequestID += 1
         let setupRequestID = codexSetupRequestID
@@ -555,20 +501,36 @@ final class AppModel: ObservableObject {
         codexSetupBusy = true
         codexSetupLog = "Preparing Codex setup...\n"
         executorSettingsBusy = true
-        let client = ExecutorSettingsClient(newbroPath: newbro)
+        let loc = locator
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { try client.installCodex() }
+            guard let newbro = loc.resolveNewbro() else {
+                let codex = loc.codexRuntimeStatus()
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    guard setupRequestID == self.codexSetupRequestID else { return }
+                    self.codexSetupBusy = false
+                    self.codexSetupLog += "newbro CLI not found\n"
+                    self.applyMissingRuntimeDiagnosisState(codexStatus: codex)
+                }
+                return
+            }
+            let client = ExecutorSettingsClient(newbroPath: newbro)
+            let result = Result {
+                try client.installCodexStreaming { line in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        guard setupRequestID == self.codexSetupRequestID else { return }
+                        self.appendCodexSetupLog(line)
+                    }
+                }
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard setupRequestID == self.codexSetupRequestID else { return }
                 self.executorProbeRequestID += 1
                 self.codexSetupBusy = false
                 switch result {
-                case .success(let output):
-                    self.codexSetupLog += output
-                    if !output.hasSuffix("\n") {
-                        self.codexSetupLog += "\n"
-                    }
+                case .success:
                     self.refreshExecutorProbeAndStoredDiagnoses()
                 case .failure(let error):
                     self.codexSetupLog += error.localizedDescription + "\n"
@@ -585,6 +547,13 @@ final class AppModel: ObservableObject {
                     )
                 }
             }
+        }
+    }
+
+    private func appendCodexSetupLog(_ line: String) {
+        codexSetupLog += line
+        if !line.hasSuffix("\n") {
+            codexSetupLog += "\n"
         }
     }
 
@@ -748,7 +717,6 @@ final class AppModel: ObservableObject {
     }
 
     private func autoStartPastedProfile(_ profile: Profile) -> Bool {
-        refreshRuntime()
         if isActive(profile) {
             return requestRestartAfterDiagnosis(profile, suppressRestartNotification: true)
         }
@@ -758,39 +726,22 @@ final class AppModel: ObservableObject {
     @discardableResult
     private func requestRestartAfterDiagnosis(_ profile: Profile,
                                               suppressRestartNotification: Bool = false) -> Bool {
-        refreshRuntime()
-        let diagnosis = diagnoseStart(for: profile)
-        switch diagnosis.status {
-        case .ready:
-            pendingStartProfileIDs.remove(profile.id)
-            pendingRestartProfileIDs.remove(profile.id)
-            pendingSilentStartProfileIDs.remove(profile.id)
-            pendingSilentRestartProfileIDs.remove(profile.id)
-            profileDiagnoses.removeValue(forKey: profile.id)
-            if suppressRestartNotification {
-                notificationController.suppressNextRestart(profileID: profile.id)
-            }
-            perform(.restart(profile))
-            return true
-        case .checking:
-            pendingStartProfileIDs.remove(profile.id)
-            pendingRestartProfileIDs.insert(profile.id)
-            pendingSilentStartProfileIDs.remove(profile.id)
-            if suppressRestartNotification {
-                pendingSilentRestartProfileIDs.insert(profile.id)
-            } else {
-                pendingSilentRestartProfileIDs.remove(profile.id)
-            }
-            objectWillChange.send()
-            return true
-        case .blocked:
-            pendingStartProfileIDs.remove(profile.id)
-            pendingRestartProfileIDs.remove(profile.id)
-            pendingSilentStartProfileIDs.remove(profile.id)
-            pendingSilentRestartProfileIDs.remove(profile.id)
-            objectWillChange.send()
+        guard profileIsComplete(profile) else {
+            blockStartRequest(profile)
             return false
         }
+        pendingStartProfileIDs.remove(profile.id)
+        pendingRestartProfileIDs.insert(profile.id)
+        pendingSilentStartProfileIDs.remove(profile.id)
+        if suppressRestartNotification {
+            pendingSilentRestartProfileIDs.insert(profile.id)
+        } else {
+            pendingSilentRestartProfileIDs.remove(profile.id)
+        }
+        profileDiagnoses[profile.id] = checkingLocalSetupDiagnosis()
+        objectWillChange.send()
+        refreshExecutorProbeAndStoredDiagnoses()
+        return true
     }
 
     private func pasteNotificationTitle(wasUpdate: Bool, started: Bool) -> String {
@@ -803,11 +754,7 @@ final class AppModel: ObservableObject {
     }
 
     func canStart(_ profile: Profile) -> Bool {
-        return profileCanStart(profile, codexRuntimeAvailable: codexRuntimeAvailable)
-    }
-
-    private func codexRuntimeAvailable() -> Bool {
-        refreshCodexStatus().isAvailable
+        return profileCanStart(profile, codexRuntimeAvailable: { codexStatus.isAvailable })
     }
 
     private func perform(_ action: ProfileLifecycleAction?) {

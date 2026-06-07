@@ -112,6 +112,21 @@ public final class ExecutorSettingsClient: @unchecked Sendable {
         }
     }
 
+    public func installCodexStreaming(onLine: @escaping @Sendable (String) -> Void) throws -> String {
+        do {
+            return try Self.runProcessStreaming(
+                argv: [newbroPath, "executor", "install-codex"],
+                environment: environment,
+                onLine: onLine
+            )
+        } catch let error as ExecutorSettingsClientError {
+            if error.isUnsupportedInstallCodexSubcommand {
+                throw ExecutorSettingsClientError.runtimeTooOld(installedVersion: installedVersion())
+            }
+            throw error
+        }
+    }
+
     private func installedVersion() -> String? {
         guard let output = try? runner([newbroPath, "--version"], environment) else { return nil }
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -137,6 +152,67 @@ public final class ExecutorSettingsClient: @unchecked Sendable {
             )
         }
         return output
+    }
+
+    public static func runProcessStreaming(argv: [String],
+                                           environment: [String: String]?,
+                                           onLine: @escaping @Sendable (String) -> Void) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: argv[0])
+        process.arguments = Array(argv.dropFirst())
+        if let environment { process.environment = environment }
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        let lock = NSLock()
+        var output = Data()
+        var pending = Data()
+
+        func drainLines(final: Bool = false) {
+            while let newline = pending.firstIndex(of: 10) {
+                let lineData = pending[..<newline]
+                pending.removeSubrange(...newline)
+                let line = String(data: lineData, encoding: .utf8) ?? ""
+                onLine(line)
+            }
+            if final, !pending.isEmpty {
+                let line = String(data: pending, encoding: .utf8) ?? ""
+                pending.removeAll()
+                onLine(line)
+            }
+        }
+
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            lock.lock()
+            output.append(data)
+            pending.append(data)
+            drainLines()
+            lock.unlock()
+        }
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            pipe.fileHandleForReading.readabilityHandler = nil
+            lock.lock()
+            drainLines(final: true)
+            let finalOutput = String(data: output, encoding: .utf8) ?? ""
+            lock.unlock()
+            if process.terminationStatus != 0 {
+                throw ExecutorSettingsClientError.commandFailed(
+                    status: process.terminationStatus,
+                    output: finalOutput
+                )
+            }
+            return finalOutput
+        } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
+            throw error
+        }
     }
 }
 

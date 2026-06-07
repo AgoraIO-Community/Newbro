@@ -159,6 +159,8 @@ private struct CodexSettingsPane: View {
                         action: diagnosed.diagnosis.primaryAction,
                         profile: diagnosed.profile
                     )
+                } else if let action = settingsLevelAction {
+                    settingsActionButton(action: action)
                 }
 
                 if model.codexSetupBusy || !model.codexSetupLog.isEmpty {
@@ -224,6 +226,28 @@ private struct CodexSettingsPane: View {
         return nil
     }
 
+    private var settingsLevelAction: ProfileStartDiagnosisAction? {
+        if !model.runtimeAvailable {
+            return .installNewbroCLI
+        }
+        if model.executorSettingsCanUpdateCLI {
+            return .updateNewbroCLI
+        }
+        if isLoginRequired(model.executorProbe?.current.error) {
+            return .signInCodex
+        }
+        if let current = model.executorProbe?.current, !current.ok {
+            if model.executorProbe?.candidates.contains(where: { $0.ok && !$0.isCurrent }) == true {
+                return .openCodexSettings
+            }
+            return .setUpCodex
+        }
+        if !model.codexStatus.isAvailable && !model.executorSettingsBusy {
+            return .setUpCodex
+        }
+        return nil
+    }
+
     @ViewBuilder
     private func diagnosisActionButton(action: ProfileStartDiagnosisAction, profile: Profile) -> some View {
         switch action {
@@ -249,6 +273,39 @@ private struct CodexSettingsPane: View {
         case .none:
             EmptyView()
         }
+    }
+
+    @ViewBuilder
+    private func settingsActionButton(action: ProfileStartDiagnosisAction) -> some View {
+        switch action {
+        case .installNewbroCLI, .updateNewbroCLI:
+            Button("Install/Update Newbro CLI…") { model.updateCLIFromExecutorSettings() }
+                .disabled(model.executorSettingsBusy)
+        case .setUpCodex:
+            Button("Set Up Codex…") { model.setUpCodex(for: nil) }
+                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+        case .openCodexSettings:
+            Text("Choose a Codex binary below.")
+                .foregroundStyle(.secondary)
+        case .rerunDiagnosis:
+            Button("Run Diagnosis") { model.refreshExecutorProbeAndStoredDiagnoses() }
+                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+        case .signInCodex:
+            Text("Sign in to Codex from the Codex app or CLI, then refresh.")
+                .foregroundStyle(.secondary)
+        case .openProfileSettings, .viewLog, .none:
+            EmptyView()
+        }
+    }
+
+    private func isLoginRequired(_ error: String?) -> Bool {
+        guard let error else { return false }
+        let text = error.lowercased()
+        return text.contains("login")
+            || text.contains("log in")
+            || text.contains("sign in")
+            || text.contains("signin")
+            || text.contains("auth")
     }
 }
 

@@ -124,6 +124,25 @@ final class ExecutorSettingsClientTests: XCTestCase {
         }
     }
 
+    func testStreamingRunnerDeliversOutputLines() throws {
+        let script = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("newbro-streaming-\(UUID().uuidString).sh")
+        try "#!/bin/sh\necho first\necho second\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let lines = LockedLineCollector()
+        let output = try ExecutorSettingsClient.runProcessStreaming(
+            argv: [script.path],
+            environment: nil,
+            onLine: { line in
+                lines.append(line)
+            }
+        )
+
+        XCTAssertEqual(lines.snapshot(), ["first", "second"])
+        XCTAssertEqual(output, "first\nsecond\n")
+    }
+
     func testProbeReportsRuntimeTooOldWhenProbeSubcommandIsUnsupported() throws {
         var calls: [[String]] = []
         let oldRuntimeOutput = """
@@ -197,5 +216,23 @@ final class ExecutorSettingsClientTests: XCTestCase {
             ExecutorSettingsClientError.runtimeTooOld(installedVersion: nil).localizedDescription,
             "Codex settings require a newer Newbro CLI. Update CLI, then reopen Settings."
         )
+    }
+}
+
+private final class LockedLineCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+
+    func append(_ line: String) {
+        lock.lock()
+        lines.append(line)
+        lock.unlock()
+    }
+
+    func snapshot() -> [String] {
+        lock.lock()
+        let current = lines
+        lock.unlock()
+        return current
     }
 }
