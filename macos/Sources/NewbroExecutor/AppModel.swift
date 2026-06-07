@@ -627,6 +627,11 @@ final class AppModel: ObservableObject {
         controlQueue.async { [supervisor] in supervisor.start(profile) }
     }
 
+    func startProfileAfterMaintenanceDiagnosis(profileID id: String) {
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        _ = requestStart(profile)
+    }
+
     func useCodexCandidate(_ candidate: ExecutorCandidateProbe) {
         guard candidate.ok else { return }
         let candidatePath = candidate.path
