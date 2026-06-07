@@ -43,6 +43,7 @@ final class AppModel: ObservableObject {
     private var executorProbeInFlight: Bool = false
     private var codexSetupRequestID: Int = 0
     private var cliVersionRequestID: Int = 0
+    private var runtimeDiagnosisRefreshRequestID: Int = 0
     private let windows = WindowManager()
     // Blocking node lifecycle calls (stop/restart busy-wait up to 5s) run here
     // so they never freeze the main actor / menu.
@@ -324,9 +325,14 @@ final class AppModel: ObservableObject {
 
     func refreshExecutorProbe(after completion: (() -> Void)? = nil) {
         refreshCachedCLIVersion()
+        refreshExecutorProbe(resolvedNewbro: locator.resolveNewbro(), after: completion)
+    }
+
+    private func refreshExecutorProbe(resolvedNewbro newbro: String?,
+                                      after completion: (() -> Void)? = nil) {
         executorProbeRequestID += 1
         let requestID = executorProbeRequestID
-        guard let newbro = locator.resolveNewbro() else {
+        guard let newbro else {
             executorProbe = nil
             executorSettingsError = "newbro CLI not found"
             executorSettingsCanUpdateCLI = false
@@ -352,9 +358,25 @@ final class AppModel: ObservableObject {
     }
 
     func refreshExecutorProbeAndStoredDiagnoses() {
-        refreshRuntime()
-        refreshExecutorProbe { [weak self] in
-            self?.refreshStoredProfileDiagnoses()
+        runtimeDiagnosisRefreshRequestID += 1
+        let requestID = runtimeDiagnosisRefreshRequestID
+        executorSettingsBusy = true
+        executorProbeInFlight = true
+        let loc = locator
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let newbro = loc.resolveNewbro()
+            let cliVersion = newbro.flatMap { Self.readInstalledCLIVersion(newbroPath: $0) }
+            let codex = loc.codexRuntimeStatus()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard requestID == self.runtimeDiagnosisRefreshRequestID else { return }
+                self.runtimeAvailable = newbro != nil
+                self.cachedCLIVersion = cliVersion
+                self.codexStatus = codex
+                self.refreshExecutorProbe(resolvedNewbro: newbro) { [weak self] in
+                    self?.refreshStoredProfileDiagnoses()
+                }
+            }
         }
     }
 
