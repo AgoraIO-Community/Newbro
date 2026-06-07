@@ -252,9 +252,7 @@ final class AppModel: ObservableObject {
         controlQueue.async { [supervisor] in supervisor.stop(profile.id) }
     }
     func restart(_ profile: Profile) {
-        perform(restartProfileAction(for: profile,
-                                     runtimeAvailable: runtimeAvailable,
-                                     codexRuntimeAvailable: codexRuntimeAvailable))
+        _ = requestRestartAfterDiagnosis(profile)
     }
 
     func refreshExecutorProbe(after completion: (() -> Void)? = nil) {
@@ -411,18 +409,34 @@ final class AppModel: ObservableObject {
                     self.executorProbeInFlight = false
                     self.executorSettingsError = error.localizedDescription
                     self.executorSettingsCanUpdateCLI = isRuntimeTooOld
-                    if let profileID {
-                        self.pendingStartProfileIDs.remove(profileID)
-                        self.profileDiagnoses[profileID] = ProfileStartDiagnosis(
-                            status: .blocked,
-                            reason: isRuntimeTooOld ? .newbroTooOldForProbe : .installerFailed,
-                            title: isRuntimeTooOld ? "Codex setup requires a newer Newbro CLI" : "Codex setup failed",
-                            detail: error.localizedDescription,
-                            primaryAction: isRuntimeTooOld ? .updateNewbroCLI : .setUpCodex
-                        )
-                    }
+                    self.blockPendingProfilesAfterCodexSetupFailure(
+                        error: error,
+                        isRuntimeTooOld: isRuntimeTooOld,
+                        profileID: profileID
+                    )
                 }
             }
+        }
+    }
+
+    private func blockPendingProfilesAfterCodexSetupFailure(error: Error,
+                                                            isRuntimeTooOld: Bool,
+                                                            profileID: String?) {
+        var ids = pendingStartProfileIDs.union(pendingRestartProfileIDs)
+        if let profileID { ids.insert(profileID) }
+        let diagnosis = ProfileStartDiagnosis(
+            status: .blocked,
+            reason: isRuntimeTooOld ? .newbroTooOldForProbe : .installerFailed,
+            title: isRuntimeTooOld ? "Codex setup requires a newer Newbro CLI" : "Codex setup failed",
+            detail: error.localizedDescription,
+            primaryAction: isRuntimeTooOld ? .updateNewbroCLI : .setUpCodex
+        )
+        for id in ids {
+            pendingStartProfileIDs.remove(id)
+            pendingRestartProfileIDs.remove(id)
+            pendingSilentStartProfileIDs.remove(id)
+            pendingSilentRestartProfileIDs.remove(id)
+            profileDiagnoses[id] = diagnosis
         }
     }
 
@@ -456,14 +470,18 @@ final class AppModel: ObservableObject {
 
     private func restoreProfilesAfterMaintenance(activeIDs: [String]) {
         for id in activeIDs {
-            guard let profile = profiles.first(where: { $0.id == id }) else { continue }
-            pendingStartProfileIDs.remove(id)
-            pendingRestartProfileIDs.remove(id)
-            pendingSilentStartProfileIDs.remove(id)
-            pendingSilentRestartProfileIDs.remove(id)
-            profileDiagnoses.removeValue(forKey: id)
-            perform(.start(profile))
+            restoreProfileAfterMaintenance(profileID: id)
         }
+    }
+
+    func restoreProfileAfterMaintenance(profileID id: String) {
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        pendingStartProfileIDs.remove(id)
+        pendingRestartProfileIDs.remove(id)
+        pendingSilentStartProfileIDs.remove(id)
+        pendingSilentRestartProfileIDs.remove(id)
+        profileDiagnoses.removeValue(forKey: id)
+        controlQueue.async { [supervisor] in supervisor.start(profile) }
     }
 
     func useCodexCandidate(_ candidate: ExecutorCandidateProbe) {
@@ -479,12 +497,12 @@ final class AppModel: ObservableObject {
                 case .success:
                     self.executorSettingsError = nil
                     self.executorSettingsCanUpdateCLI = false
-                    self.refreshExecutorProbe()
                     for id in activeIDs {
-                        if let profile = self.profiles.first(where: { $0.id == id }) {
-                            self.restart(profile)
-                        }
+                        self.pendingStartProfileIDs.remove(id)
+                        self.pendingSilentStartProfileIDs.remove(id)
+                        self.pendingRestartProfileIDs.insert(id)
                     }
+                    self.refreshExecutorProbe()
                 case .failure(let error):
                     self.executorSettingsBusy = false
                     self.executorSettingsError = error.localizedDescription
@@ -562,6 +580,7 @@ final class AppModel: ObservableObject {
     @discardableResult
     private func requestRestartAfterDiagnosis(_ profile: Profile,
                                               suppressRestartNotification: Bool = false) -> Bool {
+        refreshRuntime()
         let diagnosis = diagnoseStart(for: profile)
         switch diagnosis.status {
         case .ready:

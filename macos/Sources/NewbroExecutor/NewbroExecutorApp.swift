@@ -81,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             appVersion: { [weak model] in model?.appVersion },
             activeProfileIDs: { [weak model] in model?.activeProfileIDs() ?? [] },
             stopProfile: { [weak model] id in model?.stop(profileID: id) },
-            startProfile: { [weak model] id in model?.start(profileID: id) },
+            startProfile: { [weak model] id in model?.restoreProfileAfterMaintenance(profileID: id) },
             runInstaller: { [weak model] completion in model?.runInstaller(completion) },
             onEvent: { [weak model] event in model?.notifyUpdateEvent(event) })
         self.updates = updates
