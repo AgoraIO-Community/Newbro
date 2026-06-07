@@ -1,15 +1,71 @@
 import asyncio
-from typing import Any
+from pathlib import Path
 
 import pytest
 
 from newbro.communication.models import ScriptedCommunicationModel
 from newbro.communication.models.scripted import ScriptedPlan
-from newbro.protocol import AgentResumeHandle, BroThread, ExecutorNodeExecutor, Persona
+from newbro.protocol import AgentResumeHandle, BroThread, CodexThreadListItem, ExecutorNodeExecutor, Persona
 from newbro.runtime import Settings
 from newbro.runtime.bro_detail_thread_projection import BroDetailThreadProjection
-from newbro.runtime.executor_node_manager import NodeConnectionState
+from newbro.runtime.executor_node_manager import CodexThreadListPage, CodexThreadTurnPage, NodeConnectionState
 from newbro.runtime.session import create_session_runtime
+
+
+def test_projection_module_does_not_import_session_runtime_helpers():
+    source = Path("src/newbro/runtime/bro_detail_thread_projection.py").read_text()
+
+    assert "from newbro.runtime.session import" not in source
+
+
+def test_session_runtime_does_not_proxy_projection_private_methods():
+    source = Path("src/newbro/runtime/session.py").read_text()
+    proxy_names = [
+        "_sync_imported_codex_threads",
+        "_subscribe_bro_thread_locked",
+        "_should_load_bro_thread_timeline",
+        "_load_bro_thread_timeline",
+        "_replace_selected_codex_thread_subscription",
+        "_stop_selected_codex_thread_subscription",
+        "_attach_outbound_new_thread_resume_handle",
+        "_client_request_id_for_selected_thread_turn",
+        "_apply_codex_thread_timeline_event",
+        "_pop_selected_thread_pending_user_turn",
+        "_upsert_bro_thread_executor_turn",
+        "_resolve_bro_thread_target",
+        "_validate_new_codex_thread_workspace",
+        "_known_codex_workspaces_for_persona",
+        "_find_codex_thread_session_for_persona",
+        "_find_direct_task_thread_for_persona",
+        "_session_belongs_to_persona",
+    ]
+
+    for name in proxy_names:
+        assert f"def {name}" not in source
+        assert f"async def {name}" not in source
+
+
+def test_session_runtime_does_not_proxy_projection_state():
+    source = Path("src/newbro/runtime/session.py").read_text()
+    proxy_names = [
+        "_imported_codex_threads",
+        "_imported_codex_thread_resume_handles",
+        "_codex_thread_public_id_aliases",
+        "_codex_thread_sync_lock",
+        "_last_codex_thread_sync_monotonic",
+        "_selected_codex_thread_subscriptions",
+        "_subscribe_bro_thread_locks",
+        "_bro_thread_executor_turns",
+        "_bro_thread_timeline_status",
+        "_bro_thread_timeline_errors",
+        "_bro_thread_live_message_deltas",
+        "_bro_thread_live_plan_deltas",
+        "_bro_thread_live_plan_emitted_text",
+        "_bro_thread_goals",
+    ]
+
+    for name in proxy_names:
+        assert f"def {name}" not in source
 
 
 async def _projection_harness():
@@ -108,6 +164,182 @@ async def test_projection_snapshot_uses_cached_imported_codex_threads_without_sy
 
 
 @pytest.mark.anyio
+async def test_imported_codex_threads_snapshot_uses_first_page_only(monkeypatch: pytest.MonkeyPatch):
+    session, persona, projection, _publish_calls = await _projection_harness()
+    session.executor_node_manager._connections_by_node["node-forge"] = NodeConnectionState(
+        websocket=object(),
+        node_id="node-forge",
+        connected_at="2026-06-05T00:00:00+00:00",
+        executors={"codex": ExecutorNodeExecutor(executor_type="codex", supports_thread_list=True)},
+    )
+
+    async def fake_request_codex_threads(**kwargs):
+        assert kwargs["limit"] == 15
+        assert kwargs["cursor"] is None
+        return CodexThreadListPage(
+            threads=[
+                CodexThreadListItem(thread_id="native-1", preview="Task: One", updated_at=1780650000),
+            ],
+            next_cursor="next-page",
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_threads", fake_request_codex_threads)
+
+    snapshot = await projection.snapshot_parts(
+        tasks=[],
+        sessions=[],
+        runs=[],
+        summaries=[],
+        personas=[persona],
+        sync_imported_codex_threads=True,
+    )
+
+    assert [thread.title for thread in snapshot.bro_threads] == ["One"]
+    assert projection.imported_codex_thread_page_info[persona.persona_id].next_cursor == "next-page"
+    assert projection.imported_codex_thread_page_info[persona.persona_id].has_more is True
+
+
+@pytest.mark.anyio
+async def test_list_bro_thread_page_appends_cached_imported_threads(monkeypatch: pytest.MonkeyPatch):
+    session, persona, projection, _publish_calls = await _projection_harness()
+
+    async def fake_request_codex_threads(**kwargs):
+        assert kwargs["limit"] == 25
+        assert kwargs["cursor"] == "next-page"
+        return CodexThreadListPage(
+            threads=[CodexThreadListItem(thread_id="native-2", preview="Task: Two", updated_at=1780650100)],
+            next_cursor=None,
+            previous_cursor="first-page",
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_threads", fake_request_codex_threads)
+    page = await projection.list_bro_thread_page(
+        persona=persona,
+        sessions=[],
+        limit=25,
+        cursor="next-page",
+    )
+
+    assert [thread.title for thread in page.threads] == ["Two"]
+    assert page.page.next_cursor is None
+    assert page.page.previous_cursor == "first-page"
+    assert any(
+        thread.diagnostics["codex_thread_id"] == "native-2"
+        for thread in projection.imported_codex_threads.values()
+    )
+
+
+@pytest.mark.anyio
+async def test_list_bro_timeline_page_uses_codex_turn_cursor(monkeypatch: pytest.MonkeyPatch):
+    session, persona, projection, _publish_calls = await _projection_harness()
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id=persona.persona_id,
+        persona_name=persona.name,
+        executor_id="codex",
+        executor_node_id="node-forge",
+        title="Imported thread",
+        has_resume_handle=True,
+    )
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        assert kwargs["node_id"] == "node-forge"
+        assert kwargs["thread_id"] == "native-thread-1"
+        assert kwargs["limit"] == 100
+        assert kwargs["cursor"] == "older"
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-old",
+                    "status": "completed",
+                    "items": [
+                        {"type": "agentMessage", "id": "agent-old", "text": "Old answer", "phase": "final_answer"}
+                    ],
+                    "startedAt": 1780650000,
+                    "completedAt": 1780650010,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor="newer",
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+
+    page = await projection.list_bro_timeline_page(
+        persona=persona,
+        public_thread_id="codex-import-1",
+        node_id="node-forge",
+        cursor="older",
+        limit=100,
+    )
+
+    assert page.thread_id == "codex-import-1"
+    assert [turn.executor_turn_id for turn in page.turns] == ["turn-old"]
+    assert page.page.next_cursor is None
+    assert page.page.previous_cursor == "newer"
+
+
+@pytest.mark.anyio
+async def test_list_bro_timeline_page_returns_thread_summary(monkeypatch: pytest.MonkeyPatch):
+    session, persona, projection, _publish_calls = await _projection_harness()
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id=persona.persona_id,
+        persona_name=persona.name,
+        executor_id="codex",
+        executor_node_id="node-forge",
+        workspace_id="/tmp/workspace",
+        workspace_name="workspace",
+        title="Thread summary",
+        has_resume_handle=True,
+    )
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        assert kwargs["thread_id"] == "native-thread-1"
+        return CodexThreadTurnPage(thread_id="native-thread-1", turns=[])
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+
+    page = await projection.list_bro_timeline_page(
+        persona=persona,
+        public_thread_id="codex-import-1",
+        node_id="node-forge",
+    )
+
+    assert page.thread.thread_id == "codex-import-1"
+    assert page.thread.title == "Thread summary"
+    assert page.thread.workspace_id == "/tmp/workspace"
+    assert page.thread.timeline_status == "loaded"
+    assert page.thread.timeline_error is None
+
+
+@pytest.mark.anyio
+async def test_list_bro_timeline_page_requires_loaded_thread_summary():
+    _session, persona, projection, _publish_calls = await _projection_harness()
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+
+    with pytest.raises(ValueError, match="Thread is not loaded; list thread page first."):
+        await projection.list_bro_timeline_page(
+            persona=persona,
+            public_thread_id="codex-import-1",
+            node_id="node-forge",
+        )
+
+
+@pytest.mark.anyio
 async def test_concurrent_timeline_loads_share_one_codex_history_request(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -127,16 +359,16 @@ async def test_concurrent_timeline_loads_share_one_codex_history_request(
             shared_wait_started.set()
         return original_shield(awaitable)
 
-    async def fake_request_codex_thread(
-        *, node_id: str, thread_id: str, timeout_seconds: float = 8.0
-    ) -> dict[str, Any]:
+    async def fake_request_codex_thread_turns(
+        *, node_id: str, thread_id: str, limit: int = 100, cursor: str | None = None, timeout_seconds: float = 8.0
+    ) -> CodexThreadTurnPage:
         read_calls.append((node_id, thread_id))
         read_started.set()
         await release_read.wait()
-        return {"id": thread_id, "turns": []}
+        return CodexThreadTurnPage(thread_id=thread_id, turns=[])
 
     monkeypatch.setattr(asyncio, "shield", tracking_shield)
-    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fake_request_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
 
     first: asyncio.Task[None] | None = None
     second: asyncio.Task[None] | None = None
@@ -197,16 +429,16 @@ async def test_cancelled_timeline_waiter_does_not_cancel_shared_history_load(
             shared_wait_started.set()
         return original_shield(awaitable)
 
-    async def fake_request_codex_thread(
-        *, node_id: str, thread_id: str, timeout_seconds: float = 8.0
-    ) -> dict[str, Any]:
+    async def fake_request_codex_thread_turns(
+        *, node_id: str, thread_id: str, limit: int = 100, cursor: str | None = None, timeout_seconds: float = 8.0
+    ) -> CodexThreadTurnPage:
         read_calls.append((node_id, thread_id))
         read_started.set()
         await release_read.wait()
-        return {"id": thread_id, "turns": []}
+        return CodexThreadTurnPage(thread_id=thread_id, turns=[])
 
     monkeypatch.setattr(asyncio, "shield", tracking_shield)
-    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fake_request_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
 
     first: asyncio.Task[None] | None = None
     second: asyncio.Task[None] | None = None
@@ -264,13 +496,13 @@ async def test_loaded_timeline_load_skips_codex_history_request(
     resume_handle = AgentResumeHandle(executor_id="codex", session_handle="native-thread-1")
     read_calls: list[tuple[str, str]] = []
 
-    async def fake_request_codex_thread(
-        *, node_id: str, thread_id: str, timeout_seconds: float = 8.0
-    ) -> dict[str, Any]:
+    async def fake_request_codex_thread_turns(
+        *, node_id: str, thread_id: str, limit: int = 100, cursor: str | None = None, timeout_seconds: float = 8.0
+    ) -> CodexThreadTurnPage:
         read_calls.append((node_id, thread_id))
-        return {"id": thread_id, "turns": []}
+        return CodexThreadTurnPage(thread_id=thread_id, turns=[])
 
-    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fake_request_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
 
     await projection.load_bro_thread_timeline(
         persona=persona,
@@ -295,13 +527,13 @@ async def test_failed_timeline_load_retries_codex_history_request(
     resume_handle = AgentResumeHandle(executor_id="codex", session_handle="native-thread-1")
     read_calls: list[tuple[str, str]] = []
 
-    async def fake_request_codex_thread(
-        *, node_id: str, thread_id: str, timeout_seconds: float = 8.0
-    ) -> dict[str, Any]:
+    async def fake_request_codex_thread_turns(
+        *, node_id: str, thread_id: str, limit: int = 100, cursor: str | None = None, timeout_seconds: float = 8.0
+    ) -> CodexThreadTurnPage:
         read_calls.append((node_id, thread_id))
-        return {"id": thread_id, "turns": []}
+        return CodexThreadTurnPage(thread_id=thread_id, turns=[])
 
-    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fake_request_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
 
     await projection.load_bro_thread_timeline(
         persona=persona,
@@ -317,7 +549,7 @@ async def test_failed_timeline_load_retries_codex_history_request(
 
 
 @pytest.mark.anyio
-async def test_open_loaded_imported_thread_skips_history_read_but_subscribes(
+async def test_subscribe_loaded_imported_thread_skips_history_read(
     monkeypatch: pytest.MonkeyPatch,
 ):
     session, persona, projection, _publish_calls = await _projection_harness()
@@ -363,8 +595,14 @@ async def test_open_loaded_imported_thread_skips_history_read_but_subscribes(
     subscription_started = asyncio.Event()
     subscription_release = asyncio.Event()
 
-    async def fail_request_codex_thread(**kwargs):
-        raise AssertionError("loaded open must not read Codex history again")
+    async def fail_sync_imported_codex_threads(**kwargs):
+        raise AssertionError("subscribe must not sync imported Codex threads")
+
+    async def fail_load_bro_thread_timeline(**kwargs):
+        raise AssertionError("subscribe must not hydrate Codex history")
+
+    async def fail_request_codex_thread_turns(**kwargs):
+        raise AssertionError("subscribe must not read Codex history")
 
     async def fake_subscribe_codex_thread(
         *,
@@ -392,16 +630,23 @@ async def test_open_loaded_imported_thread_skips_history_read_but_subscribes(
         subscription_started.set()
         await subscription_release.wait()
 
-    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread", fail_request_codex_thread)
+    monkeypatch.setattr(projection, "sync_imported_codex_threads", fail_sync_imported_codex_threads)
+    monkeypatch.setattr(projection, "load_bro_thread_timeline", fail_load_bro_thread_timeline)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fail_request_codex_thread_turns)
     monkeypatch.setattr(session.executor_node_manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
 
-    await projection.open_bro_thread(target_persona_id="forge", thread_id="codex-import-1")
+    response_task = asyncio.create_task(
+        projection.subscribe_bro_thread(target_persona_id="forge", thread_id="codex-import-1")
+    )
     await asyncio.wait_for(subscription_started.wait(), timeout=1.0)
     subscription_release.set()
-    task = projection.selected_codex_thread_subscription_tasks.get("forge")
-    if task is not None:
-        await asyncio.wait_for(task, timeout=1.0)
+    response = await asyncio.wait_for(response_task, timeout=1.0)
 
+    assert response.thread_id == "codex-import-1"
+    assert response.persona_id == "forge"
+    assert response.subscribed is True
+    assert response.timeline_status == "loaded"
+    assert response.timeline_error is None
     assert len(subscription_calls) == 1
     call = subscription_calls[0]
     assert isinstance(call["subscription_id"], str)
@@ -426,3 +671,158 @@ async def test_open_loaded_imported_thread_skips_history_read_but_subscribes(
     assert selected.codex_thread_id == "native-thread-1"
     assert selected.resume_handle == projection.imported_codex_thread_resume_handles["codex-import-1"]
     assert selected.fallback_timestamp == "2026-05-26T22:00:00+00:00"
+
+
+@pytest.mark.anyio
+async def test_subscribe_unknown_imported_thread_requires_list_page_first(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session, _persona, projection, _publish_calls = await _projection_harness()
+    session.executor_node_manager._connections_by_node["node-forge"] = NodeConnectionState(
+        websocket=object(),
+        node_id="node-forge",
+        connected_at="2026-06-03T00:00:00+00:00",
+        executors={
+            "codex": ExecutorNodeExecutor(
+                executor_type="codex",
+                supports_resume=True,
+                supports_follow_up=True,
+                supports_audio_instruction=True,
+                supports_thread_list=True,
+            )
+        },
+    )
+
+    async def fail_sync_imported_codex_threads(**kwargs):
+        raise AssertionError("subscribe must not sync imported Codex threads")
+
+    async def fail_request_codex_thread_turns(**kwargs):
+        raise AssertionError("subscribe must not read Codex history")
+
+    monkeypatch.setattr(projection, "sync_imported_codex_threads", fail_sync_imported_codex_threads)
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fail_request_codex_thread_turns)
+
+    with pytest.raises(ValueError, match="Thread is not loaded; list thread page first."):
+        await projection.subscribe_bro_thread(target_persona_id="forge", thread_id="codex-import-missing")
+
+
+@pytest.mark.anyio
+async def test_unsubscribe_waits_for_in_flight_subscribe_before_stopping(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session, persona, projection, _publish_calls = await _projection_harness()
+    session.executor_node_manager._connections_by_node["node-forge"] = NodeConnectionState(
+        websocket=object(),
+        node_id="node-forge",
+        connected_at="2026-06-03T00:00:00+00:00",
+        executors={
+            "codex": ExecutorNodeExecutor(
+                executor_type="codex",
+                supports_resume=True,
+                supports_follow_up=True,
+                supports_audio_instruction=True,
+                supports_thread_list=True,
+            )
+        },
+    )
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id=persona.persona_id,
+        persona_name=persona.name,
+        executor_id="codex",
+        executor_node_id="node-forge",
+        title="Imported thread",
+        has_resume_handle=True,
+    )
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+    subscribe_started = asyncio.Event()
+    subscribe_release = asyncio.Event()
+    unsubscribe_calls: list[tuple[str, str]] = []
+
+    async def fake_subscribe_codex_thread(**_kwargs):
+        subscribe_started.set()
+        await subscribe_release.wait()
+
+    async def fake_unsubscribe_codex_thread(*, subscription_id: str, thread_id: str, **_kwargs):
+        unsubscribe_calls.append((subscription_id, thread_id))
+
+    monkeypatch.setattr(session.executor_node_manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
+
+    subscribe_task = asyncio.create_task(
+        projection.subscribe_bro_thread(target_persona_id="forge", thread_id="codex-import-1")
+    )
+    await asyncio.wait_for(subscribe_started.wait(), timeout=1.0)
+    unsubscribe_task = asyncio.create_task(
+        projection.unsubscribe_bro_thread(target_persona_id="forge", thread_id="codex-import-1")
+    )
+    await asyncio.sleep(0)
+
+    assert unsubscribe_calls == []
+
+    subscribe_release.set()
+    subscribe_response = await asyncio.wait_for(subscribe_task, timeout=1.0)
+    unsubscribe_response = await asyncio.wait_for(unsubscribe_task, timeout=1.0)
+
+    assert subscribe_response.subscribed is True
+    assert unsubscribe_response.subscribed is False
+    assert len(unsubscribe_calls) == 1
+    assert unsubscribe_calls[0][0]
+    assert unsubscribe_calls[0][1] == "native-thread-1"
+    assert "forge" not in projection.selected_codex_thread_subscriptions
+
+
+@pytest.mark.anyio
+async def test_subscribe_failure_cleans_up_provisional_executor_subscription(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session, persona, projection, _publish_calls = await _projection_harness()
+    session.executor_node_manager._connections_by_node["node-forge"] = NodeConnectionState(
+        websocket=object(),
+        node_id="node-forge",
+        connected_at="2026-06-03T00:00:00+00:00",
+        executors={
+            "codex": ExecutorNodeExecutor(
+                executor_type="codex",
+                supports_resume=True,
+                supports_follow_up=True,
+                supports_audio_instruction=True,
+                supports_thread_list=True,
+            )
+        },
+    )
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id=persona.persona_id,
+        persona_name=persona.name,
+        executor_id="codex",
+        executor_node_id="node-forge",
+        title="Imported thread",
+        has_resume_handle=True,
+    )
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+    subscribe_calls: list[str] = []
+    unsubscribe_calls: list[tuple[str, str]] = []
+
+    async def fake_subscribe_codex_thread(*, subscription_id: str, **_kwargs):
+        subscribe_calls.append(subscription_id)
+        raise TimeoutError("Timed out subscribing to Codex thread updates.")
+
+    async def fake_unsubscribe_codex_thread(*, subscription_id: str, thread_id: str, **_kwargs):
+        unsubscribe_calls.append((subscription_id, thread_id))
+
+    monkeypatch.setattr(session.executor_node_manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
+    monkeypatch.setattr(session.executor_node_manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
+
+    with pytest.raises(TimeoutError, match="Timed out subscribing"):
+        await projection.subscribe_bro_thread(target_persona_id="forge", thread_id="codex-import-1")
+
+    assert subscribe_calls
+    assert unsubscribe_calls == [(subscribe_calls[0], "native-thread-1")]
+    assert "forge" not in projection.selected_codex_thread_subscriptions

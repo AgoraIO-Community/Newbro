@@ -12,3 +12,6 @@ class ExecutorCapabilities(BaseModel):
     supports_pause: bool = False
     supports_cancel: bool = True
     supports_setup: bool = False
+    version: str | None = None
+    minimum_version: str | None = None
+    availability_reason: str | None = None

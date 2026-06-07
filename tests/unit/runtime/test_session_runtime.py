@@ -4,6 +4,7 @@ import pytest
 
 from newbro.communication.models import ScriptedCommunicationModel
 from newbro.communication.models.scripted import ScriptedPlan
+from newbro.executors.node.registry import ExecutorNodeRegistry
 from newbro.protocol import (
     AgentResumeHandle,
     AttentionItem,
@@ -11,6 +12,7 @@ from newbro.protocol import (
     AttentionItemStatus,
     AttentionPriority,
     BindingStatus,
+    BroThread,
     CodexThreadEventMessage,
     CodexTurnEventMessage,
     ExecutionMode,
@@ -34,13 +36,32 @@ from newbro.protocol import (
 from newbro.executors.core import ExecutorCapabilities, ExecutorEvent, ExecutorEventType, ExecutorSession
 from newbro.protocol import Task, TaskStatus
 from newbro.runtime import Settings
+from newbro.runtime.models import CursorPageInfo
 from newbro.protocol.session import BroTimelineMessage, BroTimelineTurn
-from newbro.runtime.session import (
-    SelectedCodexThreadSubscription,
+from newbro.runtime.bro_detail_thread_helpers import (
     _merge_timeline_turn,
     _timeline_turns_from_codex_thread,
+)
+from newbro.runtime.bro_detail_thread_projection import SelectedCodexThreadSubscription
+from newbro.runtime.executor_node_manager import ExecutorNodeManager
+from newbro.runtime.session import (
     create_session_runtime,
 )
+
+
+def build_session_runtime(tmp_path):
+    executor_node_manager = ExecutorNodeManager(
+        detached_executor_types=("codex",),
+        registry=ExecutorNodeRegistry(path=tmp_path / "executor_nodes.yaml"),
+    )
+    return create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+        executor_node_manager=executor_node_manager,
+    )
 
 
 def _executor_turn(status: str, *, assistant_status: str | None, text: str = "hi") -> BroTimelineTurn:
@@ -136,12 +157,14 @@ async def test_session_runtime_publish_snapshot_uses_cached_codex_threads_by_def
     )
     calls = 0
 
-    async def fail_if_synced(self, *args, **kwargs):
+    projection = session._bro_detail_thread_projection()
+
+    async def fail_if_synced(*args, **kwargs):
         nonlocal calls
         calls += 1
         raise AssertionError("publish_snapshot must not refresh Codex threads")
 
-    monkeypatch.setattr(type(session), "_sync_imported_codex_threads", fail_if_synced)
+    monkeypatch.setattr(projection, "sync_imported_codex_threads", fail_if_synced)
     queue = session.subscribe()
 
     snapshot = await session.publish_snapshot()
@@ -154,6 +177,68 @@ async def test_session_runtime_publish_snapshot_uses_cached_codex_threads_by_def
     assert initial.type == "snapshot"
 
     session.unsubscribe(queue)
+
+
+@pytest.mark.anyio
+async def test_bro_list_returns_compact_persona_node_rows_without_full_node_data(tmp_path):
+    session = build_session_runtime(tmp_path)
+    manager = session.executor_node_manager
+    issue = await manager.create_node(name="Mac Studio", enabled_executors=["codex"])
+    await session.blackboard.put_persona(
+        Persona(persona_id="forge", name="Forge", executor_node_id=issue.node.node_id)
+    )
+
+    rows = await session.bro_list()
+
+    assert rows.bros[0].persona_id == "forge"
+    assert rows.bros[0].name == "Forge"
+    assert rows.bros[0].executor_node is not None
+    assert rows.bros[0].executor_node.node_id == issue.node.node_id
+    assert rows.bros[0].executor_node.name == "Mac Studio"
+    assert rows.bros[0].executor_node.enabled_executors == ["codex"]
+    assert rows.bros[0].executor_node.last_connected_at is None
+    dumped = rows.model_dump(mode="json")
+    assert "token_hint" not in dumped["bros"][0]["executor_node"]
+    assert "last_seen_at" not in dumped["bros"][0]["executor_node"]
+
+
+@pytest.mark.anyio
+async def test_session_snapshot_does_not_sync_imported_codex_threads(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    session = build_session_runtime(tmp_path)
+    manager = session.executor_node_manager
+    issue = await manager.create_node(name="Mac Studio", enabled_executors=["codex"])
+    await session.blackboard.put_persona(
+        Persona(persona_id="forge", name="Forge", executor_node_id=issue.node.node_id)
+    )
+    projection = session._bro_detail_thread_projection()
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id="forge",
+        title="Cached thread",
+    )
+    projection.imported_codex_thread_page_info["forge"] = CursorPageInfo(
+        status="loaded",
+        next_cursor="next-page",
+        has_more=True,
+    )
+    projection.bro_thread_timeline_page_info["codex-import-1"] = CursorPageInfo(status="loaded")
+    calls = 0
+
+    async def fail_if_synced(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("snapshot must not refresh imported Codex threads")
+
+    monkeypatch.setattr(projection, "sync_imported_codex_threads", fail_if_synced)
+
+    snapshot = await session.snapshot()
+
+    assert calls == 0
+    assert [thread.thread_id for thread in snapshot.bro_threads] == ["codex-import-1"]
+    assert snapshot.bro_thread_pages == {}
+    assert snapshot.bro_timeline_pages == {}
+    assert snapshot.personas == []
+    assert snapshot.executor_nodes == []
 
 
 @pytest.mark.anyio
@@ -996,7 +1081,7 @@ async def test_selected_codex_thread_events_do_not_read_history_on_control_path(
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1028,7 +1113,7 @@ async def test_selected_codex_thread_events_do_not_read_history_on_control_path(
     )
 
     assert calls == 0
-    assert "forge" in session._selected_codex_thread_subscriptions
+    assert "forge" in session._bro_detail_thread_projection().selected_codex_thread_subscriptions
 
 
 @pytest.mark.anyio
@@ -1040,7 +1125,7 @@ async def test_selected_codex_thread_message_events_replace_latest_assistant_tur
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1089,7 +1174,7 @@ async def test_selected_codex_thread_message_events_replace_latest_assistant_tur
         )
     )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].turn_id == "thread-public:codex:turn-1"
     assert turns[0].assistant is not None
@@ -1106,7 +1191,7 @@ async def test_selected_codex_thread_delta_events_replace_previous_turn_item():
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1135,7 +1220,7 @@ async def test_selected_codex_thread_delta_events_replace_previous_turn_item():
             )
         )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].turn_id == "thread-public:codex:turn-1"
     assert turns[0].assistant is not None
@@ -1153,7 +1238,7 @@ async def test_selected_codex_thread_projects_plan_and_goal_without_reasoning():
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1213,7 +1298,7 @@ async def test_selected_codex_thread_projects_plan_and_goal_without_reasoning():
         )
     )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].metadata["codex_goal"] == "Ship plan projection"
     assert turns[0].metadata["codex_plan"] == {"text": "Use documented plan events.", "steps": []}
@@ -1261,7 +1346,7 @@ async def test_selected_codex_thread_events_merge_with_newbro_owned_task_timelin
             },
         )
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1291,7 +1376,7 @@ async def test_selected_codex_thread_events_merge_with_newbro_owned_task_timelin
         )
     )
 
-    assert len(session._bro_thread_executor_turns["thread-public"]) == 1
+    assert len(session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]) == 1
     snapshot = await session.snapshot()
     timeline_turns = [turn for turn in snapshot.bro_timeline_turns if turn.thread_id == "thread-public"]
     assert len(timeline_turns) == 1
@@ -1326,7 +1411,7 @@ async def test_selected_codex_thread_events_merge_with_pending_newbro_turn_by_cl
             },
         )
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1356,7 +1441,7 @@ async def test_selected_codex_thread_events_merge_with_pending_newbro_turn_by_cl
         )
     )
 
-    executor_turns = session._bro_thread_executor_turns["thread-public"]
+    executor_turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(executor_turns) == 1
     assert executor_turns[0].client_request_id == "text-client-1"
     snapshot = await session.snapshot()
@@ -1376,7 +1461,7 @@ async def test_selected_codex_thread_plan_deltas_are_coalesced_but_final_plan_is
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1404,7 +1489,7 @@ async def test_selected_codex_thread_plan_deltas_are_coalesced_but_final_plan_is
             )
         )
 
-    assert session._bro_thread_executor_turns.get("thread-public") is None
+    assert session._bro_detail_thread_projection().bro_thread_executor_turns.get("thread-public") is None
 
     await session.handle_codex_thread_event(
         CodexThreadEventMessage(
@@ -1426,7 +1511,7 @@ async def test_selected_codex_thread_plan_deltas_are_coalesced_but_final_plan_is
         )
     )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].metadata["codex_plan"] == {
         "text": "Final selected-thread plan.",
@@ -1444,7 +1529,7 @@ async def test_selected_codex_thread_split_user_turn_pairs_with_final_plan_item(
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1495,7 +1580,7 @@ async def test_selected_codex_thread_split_user_turn_pairs_with_final_plan_item(
         )
     )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].executor_turn_id == "turn-plan"
     assert turns[0].metadata["original_user_executor_turn_id"] == "turn-user"
@@ -1523,7 +1608,7 @@ async def test_selected_codex_thread_same_turn_plan_marks_existing_user_message_
         ),
         settings=Settings(),
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1554,7 +1639,7 @@ async def test_selected_codex_thread_same_turn_plan_marks_existing_user_message_
             )
         )
 
-    turns = session._bro_thread_executor_turns["thread-public"]
+    turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(turns) == 1
     assert turns[0].metadata["plan_mode"] is True
     assert turns[0].user is not None
@@ -1603,7 +1688,7 @@ async def test_selected_codex_thread_late_event_merges_with_completed_direct_tur
             metadata={},
         )
     )
-    session._selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+    session._bro_detail_thread_projection().selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
         subscription_id="codex-sub-1",
         persona_id="forge",
         public_thread_id="thread-public",
@@ -1635,7 +1720,7 @@ async def test_selected_codex_thread_late_event_merges_with_completed_direct_tur
         )
     )
 
-    executor_turns = session._bro_thread_executor_turns["thread-public"]
+    executor_turns = session._bro_detail_thread_projection().bro_thread_executor_turns["thread-public"]
     assert len(executor_turns) == 1
     assert executor_turns[0].client_request_id == "audio-client-1"
     assert executor_turns[0].created_at == "2026-05-26T22:01:12+00:00"
@@ -1647,6 +1732,219 @@ async def test_selected_codex_thread_late_event_merges_with_completed_direct_tur
     assert timeline_turns[0].user.kind == "audio"
     assert timeline_turns[0].assistant is not None
     assert timeline_turns[0].assistant.text == "Late native response."
+
+
+@pytest.mark.anyio
+async def test_completed_turn_is_not_unsettled_by_late_streaming_delta():
+    """A finished turn must not flip back to running on a stale streaming echo.
+
+    Channel A (codex turn-event 'completed' with the real final answer) settles
+    the turn. Codex then re-streams the same answer over the thread subscription
+    (channel B item/agentMessage/delta, still 'running') for the SAME executor
+    turn. That late delta must not replace the final answer or un-settle the
+    turn, otherwise the bubble settles to the final text and then jumps back to
+    a partial streaming state (the second-turn settle -> un-settle flicker).
+    """
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    projection = session._bro_detail_thread_projection()
+    projection.selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+    await session.blackboard.put_outbound_turn_request(
+        OutboundTurnRequest(
+            request_id="out-1",
+            persona_id="forge",
+            executor_id="codex",
+            executor_node_id="node-forge",
+            target_thread_id="thread-public",
+            client_request_id="cr-1",
+            input_modality="text",
+            text="summary devx contents as a report",
+            status="accepted",
+            created_at="2026-06-04T07:48:26+00:00",
+            updated_at="2026-06-04T07:48:26+00:00",
+            metadata={"source": "bro_detail_text", "client_request_id": "cr-1"},
+        )
+    )
+
+    await session.handle_codex_turn_event(
+        CodexTurnEventMessage(
+            request_id="out-1",
+            node_id="node-forge",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            event_type="completed",
+            message="Here is the full devx report. [final]",
+            executor_thread_id="codex-thread-1",
+            executor_turn_id="turn-1",
+            ok=True,
+        )
+    )
+
+    turns = projection.bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].status == "completed"
+    assert turns[0].assistant is not None
+    assert turns[0].assistant.text == "Here is the full devx report. [final]"
+
+    await session.handle_codex_thread_event(
+        CodexThreadEventMessage(
+            subscription_id="codex-sub-1",
+            node_id="node-forge",
+            session_id="session-1",
+            target_persona_id="forge",
+            target_thread_id="thread-public",
+            thread_id="codex-thread-1",
+            method="item/agentMessage/delta",
+            params={"turnId": "turn-1", "itemId": "msg-1", "delta": "Here is the full"},
+        )
+    )
+
+    turns = projection.bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].status == "completed", f"turn flipped back to {turns[0].status!r}"
+    assert turns[0].assistant is not None
+    assert turns[0].assistant.text == "Here is the full devx report. [final]"
+
+
+@pytest.mark.anyio
+async def test_commentary_phases_keep_turn_live_until_final_answer():
+    """Codex streams several agentMessage items per turn: 'commentary' phases are
+    intermediate narration, only 'final_answer' is the answer. Each commentary
+    completion must keep the turn live; settling per commentary is the visible
+    "settle then jump back to working" flicker, and only the final answer settles.
+    """
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    projection = session._bro_detail_thread_projection()
+    projection.selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    async def thread_event(method, params):
+        await session.handle_codex_thread_event(
+            CodexThreadEventMessage(
+                subscription_id="codex-sub-1",
+                node_id="node-forge",
+                session_id="session-1",
+                target_persona_id="forge",
+                target_thread_id="thread-public",
+                thread_id="codex-thread-1",
+                method=method,
+                params=params,
+            )
+        )
+
+    def turn():
+        return projection.bro_thread_executor_turns["thread-public"][0]
+
+    for cid, ctext in [("c1", "Working on it."), ("c2", "Still working.")]:
+        await thread_event(
+            "item/started",
+            {"turnId": "turn-1", "item": {"type": "agentMessage", "id": cid, "text": "", "phase": "commentary"}},
+        )
+        await thread_event("item/agentMessage/delta", {"turnId": "turn-1", "itemId": cid, "delta": ctext})
+        assert turn().status == "running"
+        assert turn().assistant is None, "commentary must not fill the answer slot (it is a step)"
+        await thread_event(
+            "item/completed",
+            {"turnId": "turn-1", "item": {"type": "agentMessage", "id": cid, "text": ctext, "phase": "commentary"}},
+        )
+        assert turn().status == "running", "commentary completion must not settle the turn"
+        assert turn().assistant is None
+
+    # The final answer streams into the answer slot and settles the turn.
+    await thread_event(
+        "item/started",
+        {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "final", "text": "", "phase": "final_answer"}},
+    )
+    await thread_event("item/agentMessage/delta", {"turnId": "turn-1", "itemId": "final", "delta": "The report"})
+    assert turn().status == "running"
+    assert turn().assistant is not None and turn().assistant.text == "The report"
+    await thread_event(
+        "item/completed",
+        {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "final", "text": "The full report.", "phase": "final_answer"}},
+    )
+
+    turns = projection.bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].status == "completed"
+    assert turns[0].assistant is not None
+    assert turns[0].assistant.text == "The full report."
+
+
+@pytest.mark.anyio
+async def test_turn_completed_event_settles_turn_without_final_answer_phase():
+    """A turn-level completion settles the turn even if no item carried a
+    'final_answer' phase, so a commentary-only turn does not hang on 'working'.
+    """
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    projection = session._bro_detail_thread_projection()
+    projection.selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="codex-sub-1",
+        persona_id="forge",
+        public_thread_id="thread-public",
+        thread_continuity_key="thread-public",
+        node_id="node-forge",
+        codex_thread_id="codex-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="codex-thread-1"),
+    )
+
+    async def thread_event(method, params):
+        await session.handle_codex_thread_event(
+            CodexThreadEventMessage(
+                subscription_id="codex-sub-1",
+                node_id="node-forge",
+                session_id="session-1",
+                target_persona_id="forge",
+                target_thread_id="thread-public",
+                thread_id="codex-thread-1",
+                method=method,
+                params=params,
+            )
+        )
+
+    await thread_event(
+        "item/started",
+        {"turnId": "turn-1", "item": {"type": "agentMessage", "id": "c1", "text": "", "phase": "commentary"}},
+    )
+    await thread_event("item/agentMessage/delta", {"turnId": "turn-1", "itemId": "c1", "delta": "Narrating."})
+    assert projection.bro_thread_executor_turns["thread-public"][0].status == "running"
+
+    await thread_event("turn/completed", {"turn": {"id": "turn-1", "status": "completed"}})
+
+    turns = projection.bro_thread_executor_turns["thread-public"]
+    assert len(turns) == 1
+    assert turns[0].status == "completed"
 
 
 @pytest.mark.anyio

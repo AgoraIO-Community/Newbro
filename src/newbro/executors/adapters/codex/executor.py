@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from newbro.protocol import (
 
 from .client import CodexAppServerClient
 from .jsonrpc import JsonRpcPeer
+from .probe import CODEX_MINIMUM_SUPPORTED_VERSION_TEXT, probe_codex_command
 from .session import CodexExecutorSession
 
 
@@ -29,6 +31,21 @@ LOGGER = logging.getLogger(__name__)
 CODEX_APP_SERVER_STREAM_LIMIT = 16 * 1024 * 1024
 THREAD_LIST_PAGE_LIMIT = 100
 THREAD_READ_TURNS_PAGE_LIMIT = 100
+
+
+@dataclass(frozen=True, slots=True)
+class CodexNativeThreadListPage:
+    items: list[dict[str, object]]
+    next_cursor: str | None = None
+    previous_cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CodexNativeThreadTurnPage:
+    turns: list[dict[str, object]]
+    goal: str | None = None
+    next_cursor: str | None = None
+    previous_cursor: str | None = None
 
 
 class CodexExecutor:
@@ -60,11 +77,23 @@ class CodexExecutor:
             str,
             tuple[str, asyncio.Queue[dict[str, object]]],
         ] = {}
+        self._last_detected_version: str | None = None
 
     def get_capabilities(self) -> ExecutorCapabilities:
         return self._capabilities
 
     async def refresh_capabilities(self) -> ExecutorCapabilities:
+        probe = await asyncio.to_thread(probe_codex_command, self._command)
+        self._last_detected_version = probe.version
+        supported = probe.ok
+        self._capabilities.version = probe.version
+        self._capabilities.minimum_version = CODEX_MINIMUM_SUPPORTED_VERSION_TEXT
+        self._capabilities.availability_reason = None if supported else "unsupported_codex_version"
+        self._capabilities.supports_resume = supported
+        self._capabilities.supports_follow_up = supported
+        self._capabilities.supports_thread_list = supported
+        self._capabilities.supports_pause = supported
+        self._capabilities.supports_cancel = supported
         return self._capabilities
 
     async def create_session(self, workspace_id: str | None = None) -> CodexExecutorSession:
@@ -177,77 +206,45 @@ class CodexExecutor:
             self._turn_event_queues.pop(turn_id, None)
 
     async def list_threads(self, workspace_id: str | None = None) -> list[dict[str, object]]:
-        last_error: Exception | None = None
-        for mode in ("sorted_paged", "paged", "legacy"):
-            try:
-                threads = await self._list_threads_once(workspace_id, mode=mode)
-                return _sort_codex_threads(threads)
-            except Exception as exc:
-                last_error = exc
-                LOGGER.warning(
-                    "Codex thread/list %s request failed; retrying compatibility path: %s",
-                    mode,
-                    exc,
-                )
-        if last_error is not None:
-            # The compatibility tiers can't help when the app-server pipe is gone;
-            # surface the codex process's own stderr so the real cause is visible.
-            stderr = self._app_session.stderr_text() if self._app_session is not None else ""
-            if stderr:
-                LOGGER.warning(
-                    "Codex thread/list failed on all compatibility paths; "
-                    "last codex app-server stderr:\n%s",
-                    stderr,
-                )
-            raise last_error
-        return []
+        page = await self.list_threads_page(
+            workspace_id,
+            limit=THREAD_LIST_PAGE_LIMIT,
+            cursor=None,
+        )
+        return _sort_codex_threads(page.items)
 
-    async def _list_threads_once(
+    async def list_threads_page(
         self,
-        workspace_id: str | None,
+        workspace_id: str | None = None,
         *,
-        mode: str,
-    ) -> list[dict[str, object]]:
+        limit: int = THREAD_LIST_PAGE_LIMIT,
+        cursor: str | None = None,
+    ) -> CodexNativeThreadListPage:
         session = await self.create_session(workspace_id)
-        threads: list[dict[str, object]] = []
-        cursor: str | None = None
-        seen_cursors: set[str] = set()
-        while True:
-            if mode == "legacy":
-                response = await session.client.thread_list()
-            else:
-                response = await session.client.thread_list(
-                    cursor=cursor,
-                    limit=THREAD_LIST_PAGE_LIMIT,
-                    sort_key="updated_at" if mode == "sorted_paged" else None,
-                    sort_direction="desc" if mode == "sorted_paged" else None,
-                )
-            data = response.get("data")
-            if not isinstance(data, list):
-                raise RuntimeError("Codex thread/list returned an unsupported response shape.")
-            next_cursor = response.get("nextCursor")
-            LOGGER.info(
-                "Codex thread/list page received",
-                extra={
-                    "mode": mode,
-                    "cursor_in": cursor,
-                    "cursor_out": next_cursor if isinstance(next_cursor, str) else None,
-                    "page_size": len(data),
-                },
-            )
-            for item in data:
-                if isinstance(item, dict):
-                    threads.append(dict(item))
-            if (
-                mode == "legacy"
-                or not isinstance(next_cursor, str)
-                or not next_cursor
-                or next_cursor in seen_cursors
-            ):
-                break
-            seen_cursors.add(next_cursor)
-            cursor = next_cursor
-        return threads
+        response = await session.client.thread_list(
+            cursor=cursor,
+            limit=limit,
+            sort_key="updated_at",
+            sort_direction="desc",
+        )
+        data = response.get("data")
+        if not isinstance(data, list):
+            raise RuntimeError("Codex thread/list returned an unsupported response shape.")
+        next_cursor = response.get("nextCursor")
+        previous_cursor = response.get("backwardsCursor")
+        LOGGER.info(
+            "Codex thread/list page received",
+            extra={
+                "cursor_in": cursor,
+                "cursor_out": next_cursor if isinstance(next_cursor, str) else None,
+                "page_size": len(data),
+            },
+        )
+        return CodexNativeThreadListPage(
+            items=[dict(item) for item in data if isinstance(item, dict)],
+            next_cursor=next_cursor if isinstance(next_cursor, str) else None,
+            previous_cursor=previous_cursor if isinstance(previous_cursor, str) else None,
+        )
 
     async def read_thread(self, thread_id: str) -> dict[str, object]:
         session = await self.create_session(None)
@@ -255,26 +252,47 @@ class CodexExecutor:
             thread_id=thread_id,
             include_turns=False,
         )
-        goal_response = await session.client.thread_goal_get(thread_id=thread_id)
-        turns_response = await session.client.thread_turns_list(
-            thread_id=thread_id,
-            limit=THREAD_READ_TURNS_PAGE_LIMIT,
-            sort_direction="desc",
-            items_view="full",
-        )
         thread = response.get("thread")
         if not isinstance(thread, dict):
             raise RuntimeError("Codex thread/read returned an unsupported response shape.")
+        turn_page = await self.list_thread_turns_page(
+            thread_id=thread_id,
+            limit=THREAD_READ_TURNS_PAGE_LIMIT,
+            cursor=None,
+        )
+        thread = dict(thread)
+        thread["turns"] = list(reversed(turn_page.turns))
+        if turn_page.goal is not None:
+            thread["goal"] = turn_page.goal
+        return thread
+
+    async def list_thread_turns_page(
+        self,
+        *,
+        thread_id: str,
+        limit: int = THREAD_READ_TURNS_PAGE_LIMIT,
+        cursor: str | None = None,
+    ) -> CodexNativeThreadTurnPage:
+        session = await self.create_session(None)
+        goal_response = await session.client.thread_goal_get(thread_id=thread_id)
+        turns_response = await session.client.thread_turns_list(
+            thread_id=thread_id,
+            cursor=cursor,
+            limit=limit,
+            sort_direction="desc",
+            items_view="full",
+        )
         turns_data = turns_response.get("data")
         if not isinstance(turns_data, list):
             raise RuntimeError("Codex thread/turns/list returned an unsupported response shape.")
-        turns = [dict(item) for item in turns_data if isinstance(item, dict)]
-        thread = dict(thread)
-        thread["turns"] = list(reversed(turns))
-        goal = _extract_codex_goal(goal_response)
-        if goal is not None:
-            thread["goal"] = goal
-        return thread
+        next_cursor = turns_response.get("nextCursor")
+        previous_cursor = turns_response.get("backwardsCursor")
+        return CodexNativeThreadTurnPage(
+            turns=[dict(item) for item in turns_data if isinstance(item, dict)],
+            goal=_extract_codex_goal(goal_response),
+            next_cursor=next_cursor if isinstance(next_cursor, str) else None,
+            previous_cursor=previous_cursor if isinstance(previous_cursor, str) else None,
+        )
 
     async def subscribe_thread(
         self,

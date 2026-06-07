@@ -3335,6 +3335,18 @@
      newlines between <li>/<p> nodes don't become preserved vertical whitespace. */
   white-space: normal;
 }
+
+/* Streaming commentary line (mobile) — prominent working narration above the
+   compact step list; collapses into the steps once done. */
+.thr-commentary {
+  display: block;
+  padding: 1px 0 3px;
+}
+.thr-commentary-text {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--nb-ink);
+}
 .thr-answer-text > div {
   display: flex;
   flex-direction: column;

@@ -32,6 +32,7 @@ from newbro.protocol import (
     CodexThreadListItem,
     CodexThreadReadMessage,
     CodexThreadSubscribedMessage,
+    CodexThreadTurnsListedMessage,
     CodexThreadsListedMessage,
     CodexThreadUnsubscribedMessage,
     CodexTurnEventMessage,
@@ -41,6 +42,7 @@ from newbro.protocol import (
     ExecutorNodeExecutor,
     ExecutorTextInstruction,
     EXECUTOR_CONTROL_MAX_MESSAGE_BYTES,
+    ListCodexThreadTurnsCommand,
     ListCodexThreadsCommand,
     ReadCodexThreadCommand,
     ReadWorkspaceFileCommand,
@@ -236,6 +238,10 @@ class ExecutorNodeService:
             command = ListCodexThreadsCommand.model_validate(payload)
             self._schedule_background_command(self._list_codex_threads(websocket, command))
             return
+        if message_type == "list_codex_thread_turns":
+            command = ListCodexThreadTurnsCommand.model_validate(payload)
+            self._schedule_background_command(self._list_codex_thread_turns(websocket, command))
+            return
         if message_type == "read_codex_thread":
             command = ReadCodexThreadCommand.model_validate(payload)
             self._schedule_background_command(self._read_codex_thread(websocket, command))
@@ -351,8 +357,8 @@ class ExecutorNodeService:
 
     async def _list_codex_threads(self, websocket: Any, command: ListCodexThreadsCommand) -> None:
         executor = self._executors.get(command.executor_type)
-        list_threads = getattr(executor, "list_threads", None)
-        if list_threads is None:
+        list_threads_page = getattr(executor, "list_threads_page", None)
+        if list_threads_page is None:
             await self._send_json(
                 websocket,
                 CodexThreadsListedMessage(
@@ -364,8 +370,12 @@ class ExecutorNodeService:
             )
             return
         try:
-            raw_threads = await list_threads(command.workspace_id)
-            threads = [_codex_thread_list_item(item) for item in raw_threads]
+            raw_page = await list_threads_page(
+                command.workspace_id,
+                limit=command.limit,
+                cursor=command.cursor,
+            )
+            threads = [_codex_thread_list_item(item) for item in raw_page.items]
             for item in threads:
                 if item.cwd:
                     self._codex_thread_workspaces[item.thread_id] = item.cwd
@@ -375,6 +385,8 @@ class ExecutorNodeService:
                     request_id=command.request_id,
                     node_id=self._settings.node_id,
                     threads=threads,
+                    next_cursor=raw_page.next_cursor,
+                    previous_cursor=raw_page.previous_cursor,
                 ).model_dump(mode="json"),
             )
         except Exception as exc:
@@ -383,6 +395,51 @@ class ExecutorNodeService:
                 CodexThreadsListedMessage(
                     request_id=command.request_id,
                     node_id=self._settings.node_id,
+                    ok=False,
+                    error=str(exc),
+                ).model_dump(mode="json"),
+            )
+
+    async def _list_codex_thread_turns(self, websocket: Any, command: ListCodexThreadTurnsCommand) -> None:
+        executor = self._executors.get(command.executor_type)
+        list_turns = getattr(executor, "list_thread_turns_page", None)
+        if list_turns is None:
+            await self._send_json(
+                websocket,
+                CodexThreadTurnsListedMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    thread_id=command.thread_id,
+                    ok=False,
+                    error="Codex executor does not support thread/turns/list.",
+                ).model_dump(mode="json"),
+            )
+            return
+        try:
+            raw_page = await list_turns(
+                thread_id=command.thread_id,
+                limit=command.limit,
+                cursor=command.cursor,
+            )
+            await self._send_json(
+                websocket,
+                CodexThreadTurnsListedMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    thread_id=command.thread_id,
+                    turns=raw_page.turns,
+                    goal=raw_page.goal,
+                    next_cursor=raw_page.next_cursor,
+                    previous_cursor=raw_page.previous_cursor,
+                ).model_dump(mode="json"),
+            )
+        except Exception as exc:
+            await self._send_json(
+                websocket,
+                CodexThreadTurnsListedMessage(
+                    request_id=command.request_id,
+                    node_id=self._settings.node_id,
+                    thread_id=command.thread_id,
                     ok=False,
                     error=str(exc),
                 ).model_dump(mode="json"),
@@ -1059,9 +1116,16 @@ class ExecutorNodeService:
             supports_follow_up=capabilities.supports_follow_up,
             supports_audio_instruction=capabilities.supports_audio_instruction
             or (capabilities.supports_follow_up and self._audio_transcriber.available),
-            supports_thread_list=bool(executor_type == "codex" and hasattr(executor, "list_threads")),
+            supports_thread_list=bool(
+                executor_type == "codex"
+                and hasattr(executor, "list_threads_page")
+                and capabilities.availability_reason is None
+            ),
             supports_pause=capabilities.supports_pause,
             supports_cancel=capabilities.supports_cancel,
+            version=capabilities.version,
+            minimum_version=capabilities.minimum_version,
+            availability_reason=capabilities.availability_reason,
         )
 
     async def _cancel_active_runs(self) -> None:

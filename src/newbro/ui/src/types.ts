@@ -213,6 +213,64 @@ export interface BroTimelineTurn {
   metadata: Record<string, unknown>;
 }
 
+export interface CursorPageInfo {
+  next_cursor: string | null;
+  previous_cursor: string | null;
+  has_more: boolean;
+  status: "not_loaded" | "loading" | "loaded" | "failed";
+  error: string | null;
+}
+
+export interface BroThreadPageResponse {
+  persona_id: string;
+  threads: BroThread[];
+  page: CursorPageInfo;
+}
+
+export interface BroTimelineTurnPageResponse {
+  thread_id: string;
+  thread: BroThread;
+  turns: BroTimelineTurn[];
+  page: CursorPageInfo;
+}
+
+export interface BroExecutorCapabilitySummary {
+  version: string | null;
+  minimum_version: string | null;
+  availability_reason: string | null;
+  supports_thread_list: boolean;
+  supports_audio_instruction: boolean;
+}
+
+export interface BroExecutorNodeSummary {
+  node_id: string;
+  name: string;
+  connection_status: "connected" | "disconnected";
+  enabled_executors: string[];
+  last_connected_at: string | null;
+  codex: BroExecutorCapabilitySummary | null;
+}
+
+export interface BroSummary {
+  persona_id: string;
+  name: string;
+  avatar: string;
+  status: "idle" | "busy";
+  executor_node: BroExecutorNodeSummary | null;
+}
+
+export interface BroListResponse {
+  bros: BroSummary[];
+}
+
+export interface BroThreadSubscriptionResponse {
+  thread_id: string;
+  persona_id: string;
+  subscribed: boolean;
+  timeline_status: "not_loaded" | "loading" | "loaded" | "failed";
+  timeline_error: string | null;
+}
+
 export interface OutboundTurnRequest {
   request_id: string;
   persona_id: string;
@@ -460,6 +518,8 @@ export interface SessionSnapshot {
   outbound_turn_requests: OutboundTurnRequest[];
   bro_threads: BroThread[];
   bro_timeline_turns: BroTimelineTurn[];
+  bro_thread_pages?: Record<string, CursorPageInfo>;
+  bro_timeline_pages?: Record<string, CursorPageInfo>;
   personas: Persona[];
   interaction_requests: InteractionRequest[];
   attention_items: AttentionItem[];
@@ -538,6 +598,12 @@ export interface StreamEventBase {
 export interface SnapshotStreamEvent extends StreamEventBase {
   type: "snapshot";
   snapshot: SessionSnapshot;
+}
+
+export interface BroListInvalidatedStreamEvent extends StreamEventBase {
+  type: "bro_list_invalidated";
+  reason: "executor_node_connected" | "executor_node_disconnected" | "executor_node_changed" | "persona_changed";
+  node_id: string | null;
 }
 
 export interface ActionAcceptedStreamEvent extends StreamEventBase {
@@ -625,6 +691,7 @@ export interface ConversationAppendedStreamEvent extends StreamEventBase {
 
 export type SessionStreamEvent =
   | SnapshotStreamEvent
+  | BroListInvalidatedStreamEvent
   | ActionAcceptedStreamEvent
   | ActionRejectedStreamEvent
   | UserMessageAppendedStreamEvent

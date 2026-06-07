@@ -8,8 +8,9 @@ from httpx import ASGITransport, AsyncClient
 from newbro.api.app import create_app
 from newbro.api.public_auth import PublicAuthStore
 from newbro.blackboard.store import BlackboardWriteEvent, BlackboardWriteKind
-from newbro.protocol import AgentResumeHandle, BroThread, CodexThreadListItem, ExecutionRun, ExecutionSession, ExecutorNodeExecutor, Persona, RunStatus, Task, TaskStatus
-from newbro.runtime.executor_node_manager import NodeConnectionState
+from newbro.executors.node.registry import ExecutorNodeRegistry
+from newbro.protocol import AgentResumeHandle, BroThread, CodexThreadListItem, ExecutionRun, ExecutionSession, ExecutorNodeExecutor, Persona, RegisterNodeMessage, RunStatus, Task, TaskStatus
+from newbro.runtime.executor_node_manager import CodexThreadListPage, CodexThreadTurnPage, ExecutorNodeManager, NodeConnectionState
 
 
 class FakeWebSocket:
@@ -54,6 +55,84 @@ async def _put_connected_forge(runtime_session, manager, websocket: FakeWebSocke
 
 
 @pytest.mark.anyio
+async def test_bro_list_api_returns_compact_bro_node_rows(tmp_path):
+    app = create_app()
+    app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
+    app.state.runtime_container.executor_node_manager = ExecutorNodeManager(
+        detached_executor_types=("codex",),
+        registry=ExecutorNodeRegistry(path=tmp_path / "executor_nodes.yaml"),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        await _redeem(client, app, code="invite-bro-list")
+        session_id = (await client.post("/api/sessions")).json()["session_id"]
+        manager = app.state.runtime_container.executor_node_manager
+        create_node = await client.post(
+            f"/api/sessions/{session_id}/executor-nodes",
+            json={"name": "Mac Studio", "enabled_executors": ["codex"]},
+        )
+        assert create_node.status_code == 201
+        node_id = create_node.json()["node"]["node_id"]
+        await manager.register_connection(
+            websocket=FakeWebSocket(),
+            register=RegisterNodeMessage(
+                node_id=node_id,
+                token=create_node.json()["token"],
+                executors=[
+                    ExecutorNodeExecutor(
+                        executor_type="codex",
+                        supports_resume=True,
+                        supports_follow_up=True,
+                        supports_audio_instruction=True,
+                        supports_thread_list=True,
+                        version="0.135.0",
+                        minimum_version="0.135.0",
+                    )
+                ],
+            ),
+        )
+        create_persona = await client.post(
+            f"/api/sessions/{session_id}/personas",
+            json={
+                "name": "Forge",
+                "avatar": "bro",
+                "base_prompt": "",
+                "executor_node_id": node_id,
+            },
+        )
+        assert create_persona.status_code == 201
+
+        response = await client.get(f"/api/sessions/{session_id}/bros")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bros"] == [
+        {
+            "persona_id": create_persona.json()["persona_id"],
+            "name": "Forge",
+            "avatar": "bro",
+            "status": "idle",
+            "executor_node": {
+                "node_id": node_id,
+                "name": "Mac Studio",
+                "connection_status": "connected",
+                "enabled_executors": ["codex"],
+                "last_connected_at": body["bros"][0]["executor_node"]["last_connected_at"],
+                "codex": {
+                    "version": "0.135.0",
+                    "minimum_version": "0.135.0",
+                    "availability_reason": None,
+                    "supports_thread_list": True,
+                    "supports_audio_instruction": True,
+                },
+            },
+        }
+    ]
+    assert body["bros"][0]["executor_node"]["last_connected_at"] is not None
+    assert "token_hint" not in body["bros"][0]["executor_node"]
+    assert "last_seen_at" not in body["bros"][0]["executor_node"]
+
+
+@pytest.mark.anyio
 async def test_direct_text_selected_imported_thread_does_not_create_task_before_executor_acceptance(tmp_path):
     app = create_app()
     app.state.public_auth_store = PublicAuthStore(path=tmp_path / "public_auth.sqlite3")
@@ -64,14 +143,14 @@ async def test_direct_text_selected_imported_thread_does_not_create_task_before_
         runtime_session = app.state.runtime_container.get_session(session_id)
         await _put_connected_forge(runtime_session, app.state.runtime_container.executor_node_manager, websocket)
 
-        runtime_session._imported_codex_threads["codex-import-1"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["codex-import-1"] = BroThread(
             thread_id="codex-import-1",
             persona_id="forge",
             title="Imported",
             status="completed",
             has_resume_handle=True,
         )
-        runtime_session._imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        runtime_session._bro_detail_thread_projection().imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
             executor_id="codex",
             session_handle="native-thread-1",
             opaque={"cwd": "/tmp/work"},
@@ -170,7 +249,7 @@ async def test_executor_text_instruction_rejects_unknown_new_thread_workspace(tm
         session_id = (await client.post("/api/sessions")).json()["session_id"]
         runtime_session = app.state.runtime_container.get_session(session_id)
         await _put_connected_forge(runtime_session, app.state.runtime_container.executor_node_manager)
-        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["workspace-thread"] = BroThread(
             thread_id="workspace-thread",
             persona_id="forge",
             persona_name="Forge",
@@ -326,7 +405,7 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
                 status="idle",
             )
         )
-        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["workspace-thread"] = BroThread(
             thread_id="workspace-thread",
             persona_id="forge",
             persona_name="Forge",
@@ -336,7 +415,7 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
             workspace_name="work",
             title="Known workspace",
         )
-        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["workspace-thread"] = BroThread(
             thread_id="workspace-thread",
             persona_id="forge",
             persona_name="Forge",
@@ -386,7 +465,7 @@ async def test_executor_text_instruction_starts_direct_task_for_connected_idle_b
 
 
 @pytest.mark.anyio
-async def test_open_new_direct_thread_does_not_duplicate_sent_text_as_history(
+async def test_subscribe_new_direct_thread_without_executor_thread_returns_conflict(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -422,7 +501,7 @@ async def test_open_new_direct_thread_does_not_duplicate_sent_text_as_history(
                 status="idle",
             )
         )
-        runtime_session._imported_codex_threads["workspace-thread"] = BroThread(
+        runtime_session._bro_detail_thread_projection().imported_codex_threads["workspace-thread"] = BroThread(
             thread_id="workspace-thread",
             persona_id="forge",
             persona_name="Forge",
@@ -436,14 +515,14 @@ async def test_open_new_direct_thread_does_not_duplicate_sent_text_as_history(
         def mark_scheduled(self) -> None:
             return None
 
-        async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
+        async def fake_request_codex_thread_turns(**kwargs):
             raise AssertionError("opening a direct thread must not read Codex history")
 
         async def fake_subscribe_codex_thread(**kwargs):
             return None
 
         monkeypatch.setattr(type(runtime_session), "schedule_execution", mark_scheduled)
-        monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+        monkeypatch.setattr(manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
         monkeypatch.setattr(manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
 
         response = await client.post(
@@ -455,7 +534,7 @@ async def test_open_new_direct_thread_does_not_duplicate_sent_text_as_history(
         assert await runtime_session.blackboard.list_tasks() == []
 
         opened = await client.post(
-            f"/api/sessions/{session_id}/bro-threads/{target_thread_id}/open",
+            f"/api/sessions/{session_id}/bro-threads/{target_thread_id}/subscribe",
             json={"target_persona_id": "forge"},
         )
 
@@ -633,24 +712,28 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
 
         list_calls = 0
 
-        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+        async def fake_request_codex_threads(
+            *, node_id: str, workspace_id=None, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
             nonlocal list_calls
             assert node_id == "node-forge"
             list_calls += 1
-            return [
-                CodexThreadListItem(
-                    thread_id="codex-imported-native-1",
-                    session_id="codex-imported-native-1",
-                    preview="Task: Imported outside Newbro\nGoal: keep context",
-                    status="notLoaded",
-                    cwd="/Users/zhangqianze/Documents/Synopse",
-                    path="/Users/zhangqianze/.codex/sessions/import.jsonl",
-                    created_at=1779850000,
-                    updated_at=1779850100,
-                    cli_version="0.133.0",
-                    source="vscode",
-                )
-            ]
+            return CodexThreadListPage(
+                threads=[
+                    CodexThreadListItem(
+                        thread_id="codex-imported-native-1",
+                        session_id="codex-imported-native-1",
+                        preview="Task: Imported outside Newbro\nGoal: keep context",
+                        status="notLoaded",
+                        cwd="/Users/zhangqianze/Documents/Synopse",
+                        path="/Users/zhangqianze/.codex/sessions/import.jsonl",
+                        created_at=1779850000,
+                        updated_at=1779850100,
+                        cli_version="0.133.0",
+                        source="vscode",
+                    )
+                ]
+            )
 
         monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
         scheduled = False
@@ -661,10 +744,15 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
 
         monkeypatch.setattr(type(runtime_session), "schedule_execution", mark_scheduled)
 
-        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
+        page_response = await client.get(
+            f"/api/sessions/{session_id}/bro-threads",
+            params={"target_persona_id": "forge"},
+        )
+        assert page_response.status_code == 200
+        page = page_response.json()
         imported_thread = next(
             thread
-            for thread in snapshot["bro_threads"]
+            for thread in page["threads"]
             if thread["diagnostics"].get("codex_thread_id") == "codex-imported-native-1"
         )
         response = await client.post(
@@ -702,7 +790,7 @@ async def test_executor_text_instruction_targets_imported_codex_thread(
 
 
 @pytest.mark.anyio
-async def test_open_imported_codex_thread_loads_native_messages_without_task_hydration(
+async def test_subscribe_imported_codex_thread_returns_subscription_without_history_hydration(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -742,44 +830,58 @@ async def test_open_imported_codex_thread_loads_native_messages_without_task_hyd
 
         list_calls = 0
 
-        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+        async def fake_request_codex_threads(
+            *, node_id: str, workspace_id=None, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
             nonlocal list_calls
             assert node_id == "node-forge"
             list_calls += 1
-            return [
-                CodexThreadListItem(
-                    thread_id="codex-imported-newer-history",
-                    session_id="codex-imported-newer-history",
-                    preview="Task: Newer imported history",
-                    status="notLoaded",
-                    cwd="/tmp/newer",
-                    path="/tmp/codex-newer-history.jsonl",
-                    created_at=1779850200,
-                    updated_at=1779850300,
-                    cli_version="0.133.0",
-                    source="vscode",
-                ),
-                CodexThreadListItem(
-                    thread_id="codex-imported-native-history",
-                    session_id="codex-imported-native-history",
-                    preview="Task: Imported history",
-                    status="notLoaded",
-                    cwd="/tmp/elsewhere",
-                    path="/tmp/codex-history.jsonl",
-                    created_at=1779850000,
-                    updated_at=1779850100,
-                    cli_version="0.133.0",
-                    source="vscode",
-                )
-            ]
+            return CodexThreadListPage(
+                threads=[
+                    CodexThreadListItem(
+                        thread_id="codex-imported-newer-history",
+                        session_id="codex-imported-newer-history",
+                        preview="Task: Newer imported history",
+                        status="notLoaded",
+                        cwd="/tmp/newer",
+                        path="/tmp/codex-newer-history.jsonl",
+                        created_at=1779850200,
+                        updated_at=1779850300,
+                        cli_version="0.133.0",
+                        source="vscode",
+                    ),
+                    CodexThreadListItem(
+                        thread_id="codex-imported-native-history",
+                        session_id="codex-imported-native-history",
+                        preview="Task: Imported history",
+                        status="notLoaded",
+                        cwd="/tmp/elsewhere",
+                        path="/tmp/codex-history.jsonl",
+                        created_at=1779850000,
+                        updated_at=1779850100,
+                        cli_version="0.133.0",
+                        source="vscode",
+                    ),
+                ]
+            )
 
         read_calls: list[tuple[str, str]] = []
 
-        async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
+        async def fake_request_codex_thread_turns(
+            *, node_id: str, thread_id: str, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
             read_calls.append((node_id, thread_id))
-            return {
-                "id": thread_id,
-                "turns": [
+            return CodexThreadTurnPage(
+                thread_id=thread_id,
+                turns=[
+                    {
+                        "id": "turn-assistant",
+                        "createdAt": 1779850120,
+                        "items": [
+                            {"type": "agentMessage", "id": "assistant-commentary", "text": "Checking imported context."},
+                            {"type": "agentMessage", "id": "assistant-1", "text": "Imported context is ready."}
+                        ],
+                    },
                     {
                         "id": "turn-user",
                         "createdAt": 1779850110,
@@ -791,16 +893,8 @@ async def test_open_imported_codex_thread_loads_native_messages_without_task_hyd
                             }
                         ],
                     },
-                    {
-                        "id": "turn-assistant",
-                        "createdAt": 1779850120,
-                        "items": [
-                            {"type": "agentMessage", "id": "assistant-commentary", "text": "Checking imported context."},
-                            {"type": "agentMessage", "id": "assistant-1", "text": "Imported context is ready."}
-                        ],
-                    },
                 ],
-            }
+            )
 
         subscription_calls: list[tuple[str, str, str]] = []
         unsubscribe_calls: list[tuple[str, str]] = []
@@ -840,63 +934,67 @@ async def test_open_imported_codex_thread_loads_native_messages_without_task_hyd
             unsubscribe_calls.append((subscription_id, thread_id))
 
         monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
-        monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+        monkeypatch.setattr(manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
         monkeypatch.setattr(manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
         monkeypatch.setattr(manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
 
-        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
+        page_response = await client.get(
+            f"/api/sessions/{session_id}/bro-threads",
+            params={"target_persona_id": "forge"},
+        )
+        assert page_response.status_code == 200
+        page = page_response.json()
         assert list_calls == 1
-        runtime_session._last_codex_thread_sync_monotonic = 0
-        original_thread_ids = [thread["thread_id"] for thread in snapshot["bro_threads"]]
+        runtime_session._bro_detail_thread_projection().last_codex_thread_sync_monotonic = 0
         imported_thread = next(
             thread
-            for thread in snapshot["bro_threads"]
+            for thread in page["threads"]
             if thread["diagnostics"]["codex_thread_id"] == "codex-imported-native-history"
         )
-        response = await asyncio.wait_for(
-            client.post(
-                f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
-                json={"target_persona_id": "forge"},
-            ),
-            timeout=0.5,
-        )
-        await asyncio.wait_for(subscription_started.wait(), timeout=1.0)
-        subscription_release.set()
-        await asyncio.sleep(0)
-        close_response = await client.request(
-            "DELETE",
+        old_open_response = await client.post(
             f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
             json={"target_persona_id": "forge"},
         )
+        response_task = asyncio.create_task(
+            client.post(
+                f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/subscribe",
+                json={"target_persona_id": "forge"},
+            )
+        )
+        await asyncio.wait_for(subscription_started.wait(), timeout=1.0)
+        subscription_release.set()
+        response = await asyncio.wait_for(response_task, timeout=1.0)
+        close_response = await client.request(
+            "DELETE",
+            f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/subscribe",
+            json={"target_persona_id": "forge"},
+        )
 
+    assert old_open_response.status_code == 404
     assert response.status_code == 200
     assert close_response.status_code == 200
     assert list_calls == 1
-    assert read_calls == [("node-forge", "codex-imported-native-history")]
+    assert read_calls == []
     assert len(subscription_calls) == 1
     assert unsubscribe_calls == [(subscription_calls[0][0], "codex-imported-native-history")]
-    opened = response.json()
-    assert [thread["thread_id"] for thread in opened["bro_threads"]] == original_thread_ids
-    opened_thread = next(thread for thread in opened["bro_threads"] if thread["thread_id"] == imported_thread["thread_id"])
-    assert opened_thread["thread_id"] == imported_thread["thread_id"]
-    assert opened_thread["title"] == imported_thread["title"]
-    assert opened_thread["task_ids"] == []
-    assert opened_thread["timeline_status"] == "loaded"
-    assert opened_thread["timeline_error"] is None
-    assert "history_hydrated" not in opened_thread["diagnostics"]
-    assert opened_thread["diagnostics"]["codex_cwd"] == "/tmp/elsewhere"
-    assert [
-        (turn["user"]["text"] if turn["user"] else None, turn["assistant"]["text"] if turn["assistant"] else None, turn["thread_id"])
-        for turn in opened["bro_timeline_turns"]
-        if turn["thread_id"] == imported_thread["thread_id"]
-    ] == [
-        ("Open the imported context.", "Imported context is ready.", imported_thread["thread_id"]),
-    ]
-    assert not any(task["metadata"].get("source_kind") == "codex_thread_history" for task in opened["tasks"])
+    assert response.json() == {
+        "thread_id": imported_thread["thread_id"],
+        "persona_id": "forge",
+        "subscribed": True,
+        "timeline_status": "not_loaded",
+        "timeline_error": None,
+    }
+    assert close_response.json() == {
+        "thread_id": imported_thread["thread_id"],
+        "persona_id": "forge",
+        "subscribed": False,
+        "timeline_status": "not_loaded",
+        "timeline_error": None,
+    }
 
 
 @pytest.mark.anyio
-async def test_open_imported_codex_thread_history_timeout_marks_messages_failed(
+async def test_subscribe_imported_codex_thread_does_not_read_timeline_history(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -934,24 +1032,33 @@ async def test_open_imported_codex_thread_history_timeout_marks_messages_failed(
             )
         )
 
-        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
-            return [
-                CodexThreadListItem(
-                    thread_id="codex-timeout-history",
-                    session_id="codex-timeout-history",
-                    preview="Task: Timeout history",
-                    status="notLoaded",
-                    cwd="/tmp/elsewhere",
-                    path="/tmp/codex-timeout.jsonl",
-                    created_at=1779850000,
-                    updated_at=1779850100,
-                    cli_version="0.133.0",
-                    source="vscode",
-                )
-            ]
+        async def fake_request_codex_threads(
+            *, node_id: str, workspace_id=None, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
+            return CodexThreadListPage(
+                threads=[
+                    CodexThreadListItem(
+                        thread_id="codex-timeout-history",
+                        session_id="codex-timeout-history",
+                        preview="Task: Timeout history",
+                        status="notLoaded",
+                        cwd="/tmp/elsewhere",
+                        path="/tmp/codex-timeout.jsonl",
+                        created_at=1779850000,
+                        updated_at=1779850100,
+                        cli_version="0.133.0",
+                        source="vscode",
+                    )
+                ]
+            )
 
-        async def fake_request_codex_thread(*, node_id: str, thread_id: str, timeout_seconds: float = 8.0):
-            raise TimeoutError("Timed out reading Codex thread history.")
+        read_calls: list[tuple[str, str]] = []
+
+        async def fake_request_codex_thread_turns(
+            *, node_id: str, thread_id: str, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
+            read_calls.append((node_id, thread_id))
+            raise AssertionError("subscribe must not read Codex thread history")
 
         subscription_calls: list[str] = []
         unsubscribe_calls: list[tuple[str, str]] = []
@@ -981,14 +1088,18 @@ async def test_open_imported_codex_thread_history_timeout_marks_messages_failed(
             unsubscribe_calls.append((subscription_id, thread_id))
 
         monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
-        monkeypatch.setattr(manager, "request_codex_thread", fake_request_codex_thread)
+        monkeypatch.setattr(manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
         monkeypatch.setattr(manager, "subscribe_codex_thread", fake_subscribe_codex_thread)
         monkeypatch.setattr(manager, "unsubscribe_codex_thread", fake_unsubscribe_codex_thread)
 
-        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
-        imported_thread = snapshot["bro_threads"][0]
+        page_response = await client.get(
+            f"/api/sessions/{session_id}/bro-threads",
+            params={"target_persona_id": "forge"},
+        )
+        assert page_response.status_code == 200
+        imported_thread = page_response.json()["threads"][0]
         response = await client.post(
-            f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/open",
+            f"/api/sessions/{session_id}/bro-threads/{imported_thread['thread_id']}/subscribe",
             json={"target_persona_id": "forge"},
         )
         await asyncio.wait_for(subscription_started.wait(), timeout=1.0)
@@ -996,12 +1107,14 @@ async def test_open_imported_codex_thread_history_timeout_marks_messages_failed(
     assert response.status_code == 200
     assert subscription_calls
     assert unsubscribe_calls == []
-    opened = response.json()
-    opened_thread = opened["bro_threads"][0]
-    assert opened_thread["timeline_status"] == "failed"
-    assert opened_thread["timeline_error"] == "Timed out reading Codex thread history."
-    assert opened["bro_timeline_turns"] == []
-    assert not any(task["metadata"].get("source_kind") == "codex_thread_history" for task in opened["tasks"])
+    assert read_calls == []
+    assert response.json() == {
+        "thread_id": imported_thread["thread_id"],
+        "persona_id": "forge",
+        "subscribed": True,
+        "timeline_status": "not_loaded",
+        "timeline_error": None,
+    }
 
 
 @pytest.mark.anyio
@@ -1122,48 +1235,57 @@ async def test_sync_imported_codex_threads_skips_ephemeral_entries(
             )
         )
 
-        async def fake_request_codex_threads(*, node_id: str, workspace_id=None, timeout_seconds: float = 8.0):
+        async def fake_request_codex_threads(
+            *, node_id: str, workspace_id=None, limit: int = 100, cursor=None, timeout_seconds: float = 8.0
+        ):
             assert node_id == "node-forge"
-            return [
-                CodexThreadListItem(
-                    thread_id="codex-real",
-                    session_id="codex-real",
-                    preview="Real project work",
-                    status="notLoaded",
-                    cwd="/Users/zhangqianze/Documents/Synopse",
-                    created_at=1779850000,
-                    updated_at=1779850100,
-                    cli_version="0.133.0",
-                    source="vscode",
-                    diagnostics={"ephemeral": False},
-                ),
-                CodexThreadListItem(
-                    thread_id="codex-scratch",
-                    session_id="codex-scratch",
-                    preview="Scratch turn",
-                    status="notLoaded",
-                    cwd="/Users/zhangqianze/.codex/scratch/abc",
-                    created_at=1779850200,
-                    updated_at=1779850300,
-                    cli_version="0.133.0",
-                    source="cli",
-                    diagnostics={"ephemeral": True},
-                ),
-            ]
+            return CodexThreadListPage(
+                threads=[
+                    CodexThreadListItem(
+                        thread_id="codex-real",
+                        session_id="codex-real",
+                        preview="Real project work",
+                        status="notLoaded",
+                        cwd="/Users/zhangqianze/Documents/Synopse",
+                        created_at=1779850000,
+                        updated_at=1779850100,
+                        cli_version="0.133.0",
+                        source="vscode",
+                        diagnostics={"ephemeral": False},
+                    ),
+                    CodexThreadListItem(
+                        thread_id="codex-scratch",
+                        session_id="codex-scratch",
+                        preview="Scratch turn",
+                        status="notLoaded",
+                        cwd="/Users/zhangqianze/.codex/scratch/abc",
+                        created_at=1779850200,
+                        updated_at=1779850300,
+                        cli_version="0.133.0",
+                        source="cli",
+                        diagnostics={"ephemeral": True},
+                    ),
+                ]
+            )
 
         monkeypatch.setattr(manager, "request_codex_threads", fake_request_codex_threads)
 
-        snapshot = (await client.get(f"/api/sessions/{session_id}")).json()
+        page_response = await client.get(
+            f"/api/sessions/{session_id}/bro-threads",
+            params={"target_persona_id": "forge"},
+        )
+        assert page_response.status_code == 200
+        page = page_response.json()
         imported = [
             thread
-            for thread in snapshot["bro_threads"]
+            for thread in page["threads"]
             if thread.get("diagnostics", {}).get("imported_from_codex_thread_list") is True
         ]
         assert len(imported) == 1, imported
         assert imported[0]["workspace_id"] == "/Users/zhangqianze/Documents/Synopse"
         assert imported[0]["diagnostics"].get("ephemeral") is False
 
-        workspaces = await runtime_session._known_codex_workspaces_for_persona(
+        workspaces = await runtime_session._bro_detail_thread_projection().known_codex_workspaces_for_persona(
             await runtime_session.blackboard.get_persona("forge")
         )
         assert "/Users/zhangqianze/Documents/Synopse" in workspaces

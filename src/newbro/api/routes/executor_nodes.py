@@ -47,6 +47,10 @@ async def create_executor_node(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await store.claim_executor_node(user_id=user.user_id, node_id=issue.node.node_id)
     await container.publish_session_snapshots()
+    await container.publish_bro_list_invalidations(
+        reason="executor_node_changed",
+        node_id=issue.node.node_id,
+    )
     return issue
 
 
@@ -74,6 +78,10 @@ async def update_executor_node(
         status_code = 404 if "not found" in detail.lower() else 400
         raise HTTPException(status_code=status_code, detail=detail) from exc
     await container.publish_session_snapshots()
+    await container.publish_bro_list_invalidations(
+        reason="executor_node_changed",
+        node_id=node_id,
+    )
     return record
 
 
@@ -145,4 +153,8 @@ async def delete_executor_node(
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Executor node '{node_id}' not found.")
     await container.publish_session_snapshots()
+    await container.publish_bro_list_invalidations(
+        reason="executor_node_changed",
+        node_id=node_id,
+    )
     return {"deleted": node_id}

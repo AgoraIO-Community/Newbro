@@ -9,6 +9,7 @@ from newbro.protocol import (
     CodexThreadEventMessage,
     CodexThreadReadMessage,
     CodexThreadSubscribedMessage,
+    CodexThreadTurnsListedMessage,
     CodexThreadsListedMessage,
     CodexThreadUnsubscribedMessage,
     CodexTurnEventMessage,
@@ -30,11 +31,13 @@ async def executor_control(websocket: WebSocket):
     container = websocket.app.state.runtime_container
     await websocket.accept()
     registered = False
+    registered_node_id: str | None = None
     try:
         payload = await websocket.receive_json()
         register = RegisterNodeMessage.model_validate(payload)
         ack = await container.executor_node_manager.register_connection(websocket, register)
         registered = True
+        registered_node_id = register.node_id
         await websocket.send_json(ack.model_dump(mode="json"))
         await container.handle_executor_node_connected(register.node_id)
 
@@ -51,7 +54,7 @@ async def executor_control(websocket: WebSocket):
     finally:
         if registered:
             await container.executor_node_manager.disconnect(websocket=websocket, reason="connection_closed")
-            await container.handle_executor_node_disconnected()
+            await container.handle_executor_node_disconnected(registered_node_id)
 
 
 async def _handle_control_message(container, websocket: WebSocket, payload: object) -> AckMessage:
@@ -93,6 +96,12 @@ async def _handle_control_message(container, websocket: WebSocket, payload: obje
         except ValidationError:
             return AckMessage(message_type="codex_thread_read", ok=False, detail="invalid_payload")
         return container.executor_node_manager.publish_codex_thread_read(message)
+    if message_type == "codex_thread_turns_listed":
+        try:
+            message = CodexThreadTurnsListedMessage.model_validate(payload)
+        except ValidationError:
+            return AckMessage(message_type="codex_thread_turns_listed", ok=False, detail="invalid_payload")
+        return container.executor_node_manager.publish_codex_thread_turns_listed(message)
     if message_type == "codex_thread_subscribed":
         try:
             message = CodexThreadSubscribedMessage.model_validate(payload)

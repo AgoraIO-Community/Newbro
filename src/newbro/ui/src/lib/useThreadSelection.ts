@@ -87,6 +87,10 @@ export function useThreadSelection<T extends { threadId: string }>(
   }, [broId, broSource]);
 
   function selectThread(threadId: string) {
+    if (broId && broSource === "runtime" && activeThreadId && activeThreadId !== threadId) {
+      closeThreadRef.current(broId, activeThreadId);
+      activeThreadRef.current = null;
+    }
     setPendingNewThread(false);
     setPendingWorkspaceId(null);
     setWorkspacePickerOpen(false);
@@ -105,7 +109,8 @@ export function useThreadSelection<T extends { threadId: string }>(
 
   function selectWorkspace(workspaceId: string) {
     if (broId && broSource === "runtime") {
-      closeThread(broId, activeThreadId);
+      closeThreadRef.current(broId, activeThreadId);
+      activeThreadRef.current = null;
     }
     setPendingNewThread(true);
     setPendingWorkspaceId(workspaceId);
