@@ -8,6 +8,12 @@ final class UpdateStatusTests: XCTestCase {
         XCTAssertNil(s.appUpdate)
     }
 
+    func testUnknownCLIVersionShowsUpdateWhenLatestIsKnown() {
+        let s = updateStatus(installedCLI: nil, installedApp: "0.2.0", latestTag: "v0.2.0")
+        XCTAssertEqual(s.cliUpdate, "v0.2.0")
+        XCTAssertNil(s.appUpdate)
+    }
+
     func testAppBehind() {
         let s = updateStatus(installedCLI: "0.2.0", installedApp: "0.1.0", latestTag: "v0.2.0")
         XCTAssertNil(s.cliUpdate)

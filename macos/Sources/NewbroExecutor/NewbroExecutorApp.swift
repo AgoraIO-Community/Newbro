@@ -81,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             appVersion: { [weak model] in model?.appVersion },
             activeProfileIDs: { [weak model] in model?.activeProfileIDs() ?? [] },
             stopProfile: { [weak model] id in model?.stop(profileID: id) },
-            startProfile: { [weak model] id in model?.start(profileID: id) },
+            startProfile: { [weak model] id in model?.startProfileAfterMaintenanceDiagnosis(profileID: id) },
             runInstaller: { [weak model] completion in model?.runInstaller(completion) },
             onEvent: { [weak model] event in model?.notifyUpdateEvent(event) })
         self.updates = updates
@@ -121,6 +121,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        menu.addItem(disabledMenuItem(title: newbroRuntimeMenuTitle(
+            path: model.runtimeAvailable ? "newbro" : nil,
+            version: model.cachedCLIVersion
+        )))
+        menu.addItem(disabledMenuItem(title: model.codexStatus.menuTitle))
+        menu.addItem(.separator())
+
         for profile in model.profiles {
             let status = model.status(of: profile)
             let active = model.isActive(profile)
@@ -132,18 +139,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             row.image = statusTone(status).dotImage()
 
             let sub = NSMenu()
+            var renderedDiagnosisAction: ProfileStartDiagnosisAction?
             if running {
                 sub.addItem(ActionMenuItem(title: "Stop") { [weak self] in self?.model.stop(profile) })
                 sub.addItem(ActionMenuItem(title: "Restart") { [weak self] in self?.model.restart(profile) })
             } else {
                 sub.addItem(ActionMenuItem(title: "Start") { [weak self] in self?.model.start(profile) })
+                renderedDiagnosisAction = addStartDiagnosis(for: profile, into: sub)
             }
             sub.addItem(ActionMenuItem(title: "Auto-activate at login",
                                        state: profile.autoActivate ? .on : .off) { [weak self] in
                 self?.model.toggleAutoActivate(profile)
             })
-            sub.addItem(ActionMenuItem(title: "View recent log…") { [weak self] in self?.model.viewLog(profile.id) })
-            sub.addItem(ActionMenuItem(title: "Edit…") { [weak self] in self?.model.editProfile(profile.id) })
+            if renderedDiagnosisAction != .viewLog {
+                sub.addItem(ActionMenuItem(title: "View recent log…") { [weak self] in self?.model.viewLog(profile.id) })
+            }
+            if renderedDiagnosisAction != .openProfileSettings {
+                sub.addItem(ActionMenuItem(title: "Edit…") { [weak self] in self?.model.editProfile(profile.id) })
+            }
             sub.addItem(ActionMenuItem(title: "Delete") { [weak self] in self?.model.delete(profile) })
             row.submenu = sub
             menu.addItem(row)
@@ -160,6 +173,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(ActionMenuItem(title: "Quit") { [weak self] in self?.model.quit() })
+    }
+
+    private func addStartDiagnosis(for profile: Profile, into menu: NSMenu) -> ProfileStartDiagnosisAction? {
+        guard let diagnosis = model.diagnosis(for: profile) else { return nil }
+        guard diagnosis.status == .blocked || diagnosis.status == .checking else { return nil }
+
+        menu.addItem(disabledMenuItem(title: diagnosis.title))
+        if let detail = diagnosis.detail, !detail.isEmpty {
+            menu.addItem(disabledMenuItem(title: detail))
+        }
+        if let action = diagnosisMenuItem(for: diagnosis.primaryAction, profile: profile) {
+            menu.addItem(action)
+            return diagnosis.primaryAction
+        }
+        return nil
+    }
+
+    private func diagnosisMenuItem(for action: ProfileStartDiagnosisAction,
+                                   profile: Profile) -> NSMenuItem? {
+        switch action {
+        case .setUpCodex:
+            return ActionMenuItem(title: "Set Up Codex…") { [weak self] in
+                self?.model.setUpCodex(for: profile)
+            }
+        case .installNewbroCLI, .updateNewbroCLI:
+            return ActionMenuItem(title: "Install/Update Newbro CLI…") { [weak self] in
+                self?.model.updateCLIFromExecutorSettings()
+            }
+        case .openCodexSettings, .signInCodex:
+            return ActionMenuItem(title: "Open Codex Settings…") { [weak self] in
+                guard let self else { return }
+                self.model.showSettings(updates: self.updates, initialPane: .codex)
+            }
+        case .rerunDiagnosis:
+            return ActionMenuItem(title: "Run Diagnosis") { [weak self] in
+                self?.model.rerunDiagnosis(for: profile)
+            }
+        case .openProfileSettings:
+            return ActionMenuItem(title: "Edit…") { [weak self] in
+                self?.model.editProfile(profile.id)
+            }
+        case .viewLog:
+            return ActionMenuItem(title: "View recent log…") { [weak self] in
+                self?.model.viewLog(profile.id)
+            }
+        case .none:
+            return nil
+        }
     }
 
     private func disabledMenuItem(title: String) -> NSMenuItem {

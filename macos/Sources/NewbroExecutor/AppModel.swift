@@ -19,6 +19,11 @@ final class AppModel: ObservableObject {
     @Published var executorSettingsError: String?
     @Published var executorSettingsBusy: Bool = false
     @Published var executorSettingsCanUpdateCLI: Bool = false
+    @Published var profileDiagnoses: [String: ProfileStartDiagnosis] = [:]
+    @Published var cachedCLIVersion: String?
+    @Published var codexSetupLog: String = ""
+    @Published var codexSetupBusy: Bool = false
+    @Published var selectedSettingsPane: SettingsPane = .updates
 
     private let supervisor: ProfileSupervisor
     private let notifier: AppNotifying
@@ -30,10 +35,24 @@ final class AppModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var installProcess: NodeProcess?
     private var updateInstallProcess: NodeProcess?
+    private var pendingStartProfileIDs: Set<String> = []
+    private var pendingRestartProfileIDs: Set<String> = []
+    private var pendingSilentStartProfileIDs: Set<String> = []
+    private var pendingSilentRestartProfileIDs: Set<String> = []
+    private var executorProbeRequestID: Int = 0
+    private var executorProbeInFlight: Bool = false
+    private var codexSetupRequestID: Int = 0
+    private var cliVersionRequestID: Int = 0
+    private var runtimeDiagnosisRefreshRequestID: Int = 0
     private let windows = WindowManager()
     // Blocking node lifecycle calls (stop/restart busy-wait up to 5s) run here
     // so they never freeze the main actor / menu.
     private let controlQueue = DispatchQueue(label: "newbro.ui.control")
+
+    private struct DiagnosisRuntimeContext: Sendable {
+        let newbroPath: String?
+        let cliVersion: String?
+    }
 
     /// Login-shell PATH so node subprocesses (and the `node`-based `codex`
     /// they exec) resolve under the app's otherwise-minimal launchd env.
@@ -67,8 +86,6 @@ final class AppModel: ObservableObject {
                 eventRelay.enqueue(event)
             })
         self.profiles = store.load()
-        self.runtimeAvailable = locator.isRuntimeAvailable
-        self.codexStatus = locator.codexRuntimeStatus()
         // Forward supervisor status changes so SwiftUI re-renders the menu/icon.
         supervisor.objectWillChange
             .receive(on: RunLoop.main)
@@ -76,12 +93,13 @@ final class AppModel: ObservableObject {
             .store(in: &cancellables)
         // Start auto-activate profiles at launch (login-item or manual).
         autostart()
-        refreshExecutorProbe()
+        refreshExecutorProbeAndStoredDiagnoses()
     }
 
     func refreshRuntime() {
         runtimeAvailable = locator.isRuntimeAvailable
         refreshCodexStatus()
+        refreshCachedCLIVersion()
     }
 
     @discardableResult
@@ -92,10 +110,8 @@ final class AppModel: ObservableObject {
     }
 
     func autostart() {
-        for action in autostartProfileActions(in: profiles,
-                                              runtimeAvailable: runtimeAvailable,
-                                              codexRuntimeAvailable: codexRuntimeAvailable) {
-            perform(action)
+        for profile in profiles where profile.autoActivate {
+            _ = requestStart(profile, suppressStartNotification: true)
         }
     }
 
@@ -114,21 +130,39 @@ final class AppModel: ObservableObject {
     func activeProfileIDs() -> [String] { Array(supervisor.activeIDs()) }
 
     func start(profileID id: String) {
-        perform(startProfileAction(in: profiles,
-                                   profileID: id,
-                                   runtimeAvailable: runtimeAvailable,
-                                   codexRuntimeAvailable: codexRuntimeAvailable))
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        start(profile)
     }
 
     func stop(profileID id: String) {
         controlQueue.async { [supervisor] in supervisor.stop(id) }
     }
 
-    /// The installed CLI version, read by running `newbro --version` (e.g. "0.1.2").
+    /// Cached installed CLI version for update/status UI. Background diagnosis
+    /// refreshes own the actual `newbro --version` process execution.
     func installedCLIVersion() -> String? {
-        guard let newbro = locator.resolveNewbro() else { return nil }
+        cachedCLIVersion
+    }
+
+    private func refreshCachedCLIVersion() {
+        cliVersionRequestID += 1
+        let requestID = cliVersionRequestID
+        guard let newbro = locator.resolveNewbro() else {
+            cachedCLIVersion = nil
+            return
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let version = Self.readInstalledCLIVersion(newbroPath: newbro)
+            DispatchQueue.main.async {
+                guard let self, requestID == self.cliVersionRequestID else { return }
+                self.cachedCLIVersion = version
+            }
+        }
+    }
+
+    nonisolated private static func readInstalledCLIVersion(newbroPath: String) -> String? {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: newbro)
+        process.executableURL = URL(fileURLWithPath: newbroPath)
         process.arguments = ["--version"]
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -165,48 +199,388 @@ final class AppModel: ObservableObject {
     }
 
     func start(_ profile: Profile) {
-        perform(startProfileAction(for: profile,
-                                   runtimeAvailable: runtimeAvailable,
-                                   codexRuntimeAvailable: codexRuntimeAvailable))
+        _ = requestStart(profile)
     }
+
+    @discardableResult
+    private func requestStart(_ profile: Profile,
+                              suppressStartNotification: Bool = false) -> Bool {
+        guard profileIsComplete(profile) else {
+            blockStartRequest(profile)
+            return false
+        }
+        pendingRestartProfileIDs.remove(profile.id)
+        pendingStartProfileIDs.insert(profile.id)
+        if suppressStartNotification {
+            pendingSilentStartProfileIDs.insert(profile.id)
+        } else {
+            pendingSilentStartProfileIDs.remove(profile.id)
+        }
+        pendingSilentRestartProfileIDs.remove(profile.id)
+        profileDiagnoses[profile.id] = checkingLocalSetupDiagnosis()
+        objectWillChange.send()
+        refreshExecutorProbeAndStoredDiagnoses()
+        return true
+    }
+
+    func diagnosis(for profile: Profile) -> ProfileStartDiagnosis? {
+        profileDiagnoses[profile.id]
+    }
+
+    @discardableResult
+    private func diagnoseStart(for profile: Profile,
+                               runtime: DiagnosisRuntimeContext) -> ProfileStartDiagnosis {
+        let diagnosis = diagnoseProfileStart(
+            profile,
+            newbroPath: runtime.newbroPath,
+            cliVersion: runtime.newbroPath == nil ? nil : runtime.cliVersion,
+            probe: runtime.newbroPath == nil ? nil : executorProbe,
+            probeError: runtime.newbroPath == nil ? nil : executorSettingsError
+        )
+        profileDiagnoses[profile.id] = diagnosis
+        return diagnosis
+    }
+
+    private func checkingLocalSetupDiagnosis() -> ProfileStartDiagnosis {
+        ProfileStartDiagnosis(
+            status: .checking,
+            reason: .ready,
+            title: "Checking local setup",
+            primaryAction: .none
+        )
+    }
+
+    private func blockStartRequest(_ profile: Profile) {
+        let diagnosis = diagnoseProfileStart(
+            profile,
+            newbroPath: "newbro",
+            cliVersion: nil,
+            probe: nil,
+            probeError: nil
+        )
+        pendingStartProfileIDs.remove(profile.id)
+        pendingRestartProfileIDs.remove(profile.id)
+        pendingSilentStartProfileIDs.remove(profile.id)
+        pendingSilentRestartProfileIDs.remove(profile.id)
+        profileDiagnoses[profile.id] = diagnosis
+        objectWillChange.send()
+    }
+
+    func rerunDiagnosis(for profile: Profile) {
+        profileDiagnoses[profile.id] = ProfileStartDiagnosis(
+            status: .checking,
+            reason: .ready,
+            title: "Checking Codex setup",
+            primaryAction: .none
+        )
+        refreshExecutorProbeAndStoredDiagnoses()
+    }
+
+    private func refreshStoredDiagnosis(for profile: Profile,
+                                        runtime: DiagnosisRuntimeContext) {
+        let diagnosis = diagnoseProfileStart(
+            profile,
+            newbroPath: runtime.newbroPath,
+            cliVersion: runtime.newbroPath == nil ? nil : runtime.cliVersion,
+            probe: runtime.newbroPath == nil ? nil : executorProbe,
+            probeError: runtime.newbroPath == nil ? nil : executorSettingsError
+        )
+        switch diagnosis.status {
+        case .ready:
+            profileDiagnoses.removeValue(forKey: profile.id)
+        case .blocked, .checking:
+            profileDiagnoses[profile.id] = diagnosis
+        }
+    }
+
+    private func refreshStoredProfileDiagnoses(runtime: DiagnosisRuntimeContext) {
+        let diagnosedIDs = Array(profileDiagnoses.keys)
+        guard !diagnosedIDs.isEmpty else { return }
+
+        for profileID in diagnosedIDs {
+            guard let profile = profiles.first(where: { $0.id == profileID }) else {
+                profileDiagnoses.removeValue(forKey: profileID)
+                continue
+            }
+            refreshStoredDiagnosis(for: profile, runtime: runtime)
+        }
+    }
+
     func stop(_ profile: Profile) {
         controlQueue.async { [supervisor] in supervisor.stop(profile.id) }
     }
     func restart(_ profile: Profile) {
-        perform(restartProfileAction(for: profile,
-                                     runtimeAvailable: runtimeAvailable,
-                                     codexRuntimeAvailable: codexRuntimeAvailable))
+        _ = requestRestartAfterDiagnosis(profile)
     }
 
-    func refreshExecutorProbe() {
-        guard let newbro = locator.resolveNewbro() else {
+    private func refreshExecutorProbe(resolvedNewbro newbro: String?,
+                                      pendingDiagnosisRuntime: DiagnosisRuntimeContext? = nil,
+                                      after completion: (() -> Void)? = nil) {
+        executorProbeRequestID += 1
+        let requestID = executorProbeRequestID
+        guard let newbro else {
             executorProbe = nil
             executorSettingsError = "newbro CLI not found"
             executorSettingsCanUpdateCLI = false
+            executorSettingsBusy = false
+            executorProbeInFlight = false
+            continuePendingStarts(runtime: pendingDiagnosisRuntime)
+            completion?()
             return
         }
         executorSettingsBusy = true
+        executorProbeInFlight = true
         let client = ExecutorSettingsClient(newbroPath: newbro)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try client.probe() }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.executorSettingsBusy = false
-                switch result {
-                case .success(let probe):
-                    self.executorProbe = probe
-                    self.executorSettingsError = nil
-                    self.executorSettingsCanUpdateCLI = false
-                case .failure(let error):
-                    self.executorProbe = nil
-                    self.executorSettingsError = error.localizedDescription
-                    if case ExecutorSettingsClientError.runtimeTooOld = error {
-                        self.executorSettingsCanUpdateCLI = true
-                    } else {
-                        self.executorSettingsCanUpdateCLI = false
+                guard requestID == self.executorProbeRequestID else { return }
+                self.applyExecutorProbeResult(result)
+                self.continuePendingStarts(runtime: pendingDiagnosisRuntime)
+                completion?()
+            }
+        }
+    }
+
+    func refreshExecutorProbeAndStoredDiagnoses() {
+        runtimeDiagnosisRefreshRequestID += 1
+        let requestID = runtimeDiagnosisRefreshRequestID
+        executorProbeRequestID += 1
+        cliVersionRequestID += 1
+        let versionRequestID = cliVersionRequestID
+        executorSettingsBusy = true
+        executorProbeInFlight = true
+        let loc = locator
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let newbro = loc.resolveNewbro()
+            let cliVersion = newbro.flatMap { Self.readInstalledCLIVersion(newbroPath: $0) }
+            let codex = loc.codexRuntimeStatus()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard requestID == self.runtimeDiagnosisRefreshRequestID else { return }
+                let runtime = DiagnosisRuntimeContext(newbroPath: newbro, cliVersion: cliVersion)
+                self.runtimeAvailable = newbro != nil
+                if versionRequestID == self.cliVersionRequestID {
+                    self.cachedCLIVersion = cliVersion
+                }
+                self.codexStatus = codex
+                self.refreshExecutorProbe(
+                    resolvedNewbro: runtime.newbroPath,
+                    pendingDiagnosisRuntime: runtime
+                ) { [weak self] in
+                    self?.refreshStoredProfileDiagnoses(runtime: runtime)
+                }
+            }
+        }
+    }
+
+    private func applyMissingRuntimeDiagnosisState(codexStatus: CommandStatus) {
+        runtimeDiagnosisRefreshRequestID += 1
+        executorProbeRequestID += 1
+        cliVersionRequestID += 1
+        let runtime = DiagnosisRuntimeContext(newbroPath: nil, cliVersion: nil)
+        runtimeAvailable = false
+        cachedCLIVersion = nil
+        self.codexStatus = codexStatus
+        executorProbe = nil
+        executorSettingsError = "newbro CLI not found"
+        executorSettingsCanUpdateCLI = false
+        executorSettingsBusy = false
+        executorProbeInFlight = false
+        continuePendingStarts(runtime: runtime)
+        refreshStoredProfileDiagnoses(runtime: runtime)
+    }
+
+    private func applyExecutorProbeResult(_ result: Result<ExecutorProbe, Error>) {
+        executorSettingsBusy = false
+        executorProbeInFlight = false
+        switch result {
+        case .success(let probe):
+            executorProbe = probe
+            executorSettingsError = nil
+            executorSettingsCanUpdateCLI = false
+        case .failure(let error):
+            executorProbe = nil
+            executorSettingsError = error.localizedDescription
+            executorSettingsCanUpdateCLI = isRuntimeTooOld(error)
+        }
+    }
+
+    private func continuePendingStarts(runtime: DiagnosisRuntimeContext? = nil) {
+        guard !pendingStartProfileIDs.isEmpty || !pendingRestartProfileIDs.isEmpty else { return }
+        for profileID in Array(pendingStartProfileIDs) {
+            guard let profile = profiles.first(where: { $0.id == profileID }) else {
+                pendingStartProfileIDs.remove(profileID)
+                pendingSilentStartProfileIDs.remove(profileID)
+                profileDiagnoses.removeValue(forKey: profileID)
+                continue
+            }
+            continueStartIfReady(profile, runtime: runtime)
+        }
+        for profileID in Array(pendingRestartProfileIDs) {
+            guard let profile = profiles.first(where: { $0.id == profileID }) else {
+                pendingRestartProfileIDs.remove(profileID)
+                pendingSilentRestartProfileIDs.remove(profileID)
+                profileDiagnoses.removeValue(forKey: profileID)
+                continue
+            }
+            continueRestartIfReady(profile, runtime: runtime)
+        }
+    }
+
+    private func continueStartIfReady(_ profile: Profile,
+                                      runtime: DiagnosisRuntimeContext? = nil) {
+        guard let runtime else {
+            profileDiagnoses[profile.id] = checkingLocalSetupDiagnosis()
+            refreshExecutorProbeAndStoredDiagnoses()
+            return
+        }
+        let diagnosis = diagnoseStart(for: profile, runtime: runtime)
+        switch diagnosis.status {
+        case .ready:
+            pendingStartProfileIDs.remove(profile.id)
+            if pendingSilentStartProfileIDs.remove(profile.id) != nil {
+                notificationController.suppressNextStart(profileID: profile.id)
+            }
+            profileDiagnoses.removeValue(forKey: profile.id)
+            perform(.start(profile))
+        case .blocked:
+            pendingStartProfileIDs.remove(profile.id)
+            pendingSilentStartProfileIDs.remove(profile.id)
+        case .checking:
+            pendingStartProfileIDs.insert(profile.id)
+        }
+    }
+
+    private func continueRestartIfReady(_ profile: Profile,
+                                        runtime: DiagnosisRuntimeContext? = nil) {
+        guard let runtime else {
+            profileDiagnoses[profile.id] = checkingLocalSetupDiagnosis()
+            refreshExecutorProbeAndStoredDiagnoses()
+            return
+        }
+        let diagnosis = diagnoseStart(for: profile, runtime: runtime)
+        switch diagnosis.status {
+        case .ready:
+            pendingRestartProfileIDs.remove(profile.id)
+            if pendingSilentRestartProfileIDs.remove(profile.id) != nil {
+                notificationController.suppressNextRestart(profileID: profile.id)
+            }
+            profileDiagnoses.removeValue(forKey: profile.id)
+            perform(.restart(profile))
+        case .blocked:
+            pendingRestartProfileIDs.remove(profile.id)
+            pendingSilentRestartProfileIDs.remove(profile.id)
+        case .checking:
+            pendingRestartProfileIDs.insert(profile.id)
+        }
+    }
+
+    private func isRuntimeTooOld(_ error: Error) -> Bool {
+        if case ExecutorSettingsClientError.runtimeTooOld = error {
+            return true
+        }
+        return false
+    }
+
+    private func profileRequiresCodex(_ profile: Profile) -> Bool {
+        profile.enabledExecutors.contains("codex")
+    }
+
+    func setUpCodex(for profile: Profile?) {
+        guard !codexSetupBusy else { return }
+        let profileID = profile?.id
+        codexSetupRequestID += 1
+        let setupRequestID = codexSetupRequestID
+        executorProbeRequestID += 1
+        if let profileID {
+            if profile.map(isActive) == true {
+                pendingStartProfileIDs.remove(profileID)
+                pendingRestartProfileIDs.insert(profileID)
+            } else {
+                pendingRestartProfileIDs.remove(profileID)
+                pendingStartProfileIDs.insert(profileID)
+            }
+        }
+        executorProbeInFlight = true
+        codexSetupBusy = true
+        codexSetupLog = "Preparing Codex setup...\n"
+        executorSettingsBusy = true
+        let loc = locator
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let newbro = loc.resolveNewbro() else {
+                let codex = loc.codexRuntimeStatus()
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    guard setupRequestID == self.codexSetupRequestID else { return }
+                    self.codexSetupBusy = false
+                    self.codexSetupLog += "newbro CLI not found\n"
+                    self.applyMissingRuntimeDiagnosisState(codexStatus: codex)
+                }
+                return
+            }
+            let client = ExecutorSettingsClient(newbroPath: newbro)
+            let result = Result {
+                try client.installCodexStreaming { line in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        guard setupRequestID == self.codexSetupRequestID else { return }
+                        self.appendCodexSetupLog(line)
                     }
                 }
             }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard setupRequestID == self.codexSetupRequestID else { return }
+                self.executorProbeRequestID += 1
+                self.codexSetupBusy = false
+                switch result {
+                case .success:
+                    self.refreshExecutorProbeAndStoredDiagnoses()
+                case .failure(let error):
+                    self.codexSetupLog += error.localizedDescription + "\n"
+                    let isRuntimeTooOld = self.isRuntimeTooOld(error)
+                    self.executorProbeRequestID += 1
+                    self.executorSettingsBusy = false
+                    self.executorProbeInFlight = false
+                    self.executorSettingsError = error.localizedDescription
+                    self.executorSettingsCanUpdateCLI = isRuntimeTooOld
+                    self.blockPendingProfilesAfterCodexSetupFailure(
+                        error: error,
+                        isRuntimeTooOld: isRuntimeTooOld,
+                        profileID: profileID
+                    )
+                }
+            }
+        }
+    }
+
+    private func appendCodexSetupLog(_ line: String) {
+        codexSetupLog += line
+        if !line.hasSuffix("\n") {
+            codexSetupLog += "\n"
+        }
+    }
+
+    private func blockPendingProfilesAfterCodexSetupFailure(error: Error,
+                                                            isRuntimeTooOld: Bool,
+                                                            profileID: String?) {
+        var ids = pendingStartProfileIDs.union(pendingRestartProfileIDs)
+        if let profileID { ids.insert(profileID) }
+        let diagnosis = ProfileStartDiagnosis(
+            status: .blocked,
+            reason: isRuntimeTooOld ? .newbroTooOldForProbe : .installerFailed,
+            title: isRuntimeTooOld ? "Codex setup requires a newer Newbro CLI" : "Codex setup failed",
+            detail: error.localizedDescription,
+            primaryAction: isRuntimeTooOld ? .updateNewbroCLI : .setUpCodex
+        )
+        for id in ids {
+            pendingStartProfileIDs.remove(id)
+            pendingRestartProfileIDs.remove(id)
+            pendingSilentStartProfileIDs.remove(id)
+            pendingSilentRestartProfileIDs.remove(id)
+            profileDiagnoses[id] = diagnosis
         }
     }
 
@@ -214,14 +588,22 @@ final class AppModel: ObservableObject {
         guard !executorSettingsBusy else { return }
         let activeIDs = self.activeProfileIDs()
         executorSettingsBusy = true
-        for id in activeIDs { stop(profileID: id) }
+        controlQueue.async { [supervisor] in
+            for id in activeIDs { supervisor.stop(id) }
+            Task { @MainActor [weak self] in
+                self?.runCLIUpdateInstallerAfterStops(activeIDs: activeIDs)
+            }
+        }
+    }
+
+    private func runCLIUpdateInstallerAfterStops(activeIDs: [String]) {
         runInstaller { [weak self] code in
             guard let self else { return }
-            for id in activeIDs { self.start(profileID: id) }
             if code == 0 {
-                self.refreshRuntime()
-                self.refreshExecutorProbe()
+                for id in activeIDs { self.pendingStartProfileIDs.insert(id) }
+                self.refreshExecutorProbeAndStoredDiagnoses()
             } else {
+                self.restoreProfilesAfterMaintenance(activeIDs: activeIDs)
                 self.executorSettingsBusy = false
                 self.executorSettingsError = "Update failed (exit \(code)). Nodes restarted."
                 self.executorSettingsCanUpdateCLI = true
@@ -229,25 +611,56 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func restoreProfilesAfterMaintenance(activeIDs: [String]) {
+        for id in activeIDs {
+            restoreProfileAfterMaintenance(profileID: id)
+        }
+    }
+
+    func restoreProfileAfterMaintenance(profileID id: String) {
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        pendingStartProfileIDs.remove(id)
+        pendingRestartProfileIDs.remove(id)
+        pendingSilentStartProfileIDs.remove(id)
+        pendingSilentRestartProfileIDs.remove(id)
+        profileDiagnoses.removeValue(forKey: id)
+        controlQueue.async { [supervisor] in supervisor.start(profile) }
+    }
+
+    func startProfileAfterMaintenanceDiagnosis(profileID id: String) {
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        _ = requestStart(profile)
+    }
+
     func useCodexCandidate(_ candidate: ExecutorCandidateProbe) {
-        guard candidate.ok, let newbro = locator.resolveNewbro() else { return }
+        guard candidate.ok else { return }
+        let candidatePath = candidate.path
         let activeIDs = self.activeProfileIDs()
         executorSettingsBusy = true
-        let client = ExecutorSettingsClient(newbroPath: newbro)
+        let loc = locator
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { try client.useCodex(path: candidate.path) }
+            guard let newbro = loc.resolveNewbro() else {
+                let codex = loc.codexRuntimeStatus()
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.applyMissingRuntimeDiagnosisState(codexStatus: codex)
+                }
+                return
+            }
+            let client = ExecutorSettingsClient(newbroPath: newbro)
+            let result = Result { try client.useCodex(path: candidatePath) }
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
                 case .success:
                     self.executorSettingsError = nil
                     self.executorSettingsCanUpdateCLI = false
-                    self.refreshExecutorProbe()
                     for id in activeIDs {
-                        if let profile = self.profiles.first(where: { $0.id == id }) {
-                            self.restart(profile)
-                        }
+                        self.pendingStartProfileIDs.remove(id)
+                        self.pendingSilentStartProfileIDs.remove(id)
+                        self.pendingRestartProfileIDs.insert(id)
                     }
+                    self.refreshExecutorProbeAndStoredDiagnoses()
                 case .failure(let error):
                     self.executorSettingsBusy = false
                     self.executorSettingsError = error.localizedDescription
@@ -315,20 +728,31 @@ final class AppModel: ObservableObject {
     }
 
     private func autoStartPastedProfile(_ profile: Profile) -> Bool {
-        let action = pastedProfileAction(for: profile,
-                                         runtimeAvailable: runtimeAvailable,
-                                         isActive: isActive(profile),
-                                         codexRuntimeAvailable: codexRuntimeAvailable)
-        switch action {
-        case .start(let profile):
-            notificationController.suppressNextStart(profileID: profile.id)
-        case .restart(let profile):
-            notificationController.suppressNextRestart(profileID: profile.id)
-        case nil:
-            break
+        if isActive(profile) {
+            return requestRestartAfterDiagnosis(profile, suppressRestartNotification: true)
         }
-        perform(action)
-        return action != nil
+        return requestStart(profile, suppressStartNotification: true)
+    }
+
+    @discardableResult
+    private func requestRestartAfterDiagnosis(_ profile: Profile,
+                                              suppressRestartNotification: Bool = false) -> Bool {
+        guard profileIsComplete(profile) else {
+            blockStartRequest(profile)
+            return false
+        }
+        pendingStartProfileIDs.remove(profile.id)
+        pendingRestartProfileIDs.insert(profile.id)
+        pendingSilentStartProfileIDs.remove(profile.id)
+        if suppressRestartNotification {
+            pendingSilentRestartProfileIDs.insert(profile.id)
+        } else {
+            pendingSilentRestartProfileIDs.remove(profile.id)
+        }
+        profileDiagnoses[profile.id] = checkingLocalSetupDiagnosis()
+        objectWillChange.send()
+        refreshExecutorProbeAndStoredDiagnoses()
+        return true
     }
 
     private func pasteNotificationTitle(wasUpdate: Bool, started: Bool) -> String {
@@ -341,11 +765,7 @@ final class AppModel: ObservableObject {
     }
 
     func canStart(_ profile: Profile) -> Bool {
-        return profileCanStart(profile, codexRuntimeAvailable: codexRuntimeAvailable)
-    }
-
-    private func codexRuntimeAvailable() -> Bool {
-        refreshCodexStatus().isAvailable
+        return profileCanStart(profile, codexRuntimeAvailable: { codexStatus.isAvailable })
     }
 
     private func perform(_ action: ProfileLifecycleAction?) {
@@ -384,8 +804,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func showSettings(updates: UpdateService) {
-        refreshExecutorProbe()
+    func showSettings(updates: UpdateService, initialPane: SettingsPane = .updates) {
+        selectedSettingsPane = initialPane
+        refreshExecutorProbeAndStoredDiagnoses()
         windows.show(id: "settings", title: "Settings",
                      size: NSSize(width: 760, height: 480)) { [self] in
             NewbroSettingsView(model: self, updates: updates)
@@ -432,6 +853,7 @@ final class AppModel: ObservableObject {
     func notifyUpdateEvent(_ event: UpdateServiceEvent) {
         switch event {
         case .cliUpdateSucceeded:
+            refreshExecutorProbeAndStoredDiagnoses()
             notifier.notify(title: "Newbro CLI updated", body: "Executor nodes restarted.")
         case let .cliUpdateFailed(code, _):
             notifier.notify(title: "Newbro CLI update failed", body: "Exit \(code). Executor nodes restarted.")

@@ -15,11 +15,20 @@ The app resolves the `newbro` CLI at runtime (override → `~/.local/bin/newbro`
 "Node runtime not found" with an "Install runtime…" action that runs the public
 `install-newbro-cli.sh`.
 
-On launch the app probes `codex` through the login-shell PATH. The menu stays
-focused on profile operations; Codex version, binary selection, and broken
-install diagnostics live in **Settings → Executors → Codex**. The CLI can
-auto-write the minimal Codex executor config on first run. Use
-`newbro executor setup` for custom Codex paths, ACPX, or recovery.
+On launch and before profile Start/Restart, the app diagnoses local readiness:
+Newbro CLI presence/version, profile completeness, and Codex executor setup
+when the profile enables Codex. A blocked Start leaves the profile stopped with
+the gray status dot and shows the reason/action in the menu and in
+**Settings → Executors → Codex**. The menu stays focused on profile operations;
+Codex version, binary selection, and broken install diagnostics live in
+Settings.
+
+When Codex is missing or broken, **Set Up Codex** runs the CLI-owned
+`newbro executor install-codex` repair flow, streams progress in Settings,
+reruns diagnosis, and starts or restarts the pending profile once the diagnosis
+is ready. The Swift app does not edit `~/.newbro/config.yaml` executor entries
+directly; it calls CLI probe/use/install commands. Use `newbro executor setup`
+for custom Codex paths, ACPX, or deeper interactive recovery.
 
 The **Settings → Updates** pane reports separate components:
 

@@ -50,10 +50,16 @@ Executor-node note:
   connection profiles. While running, it monitors the clipboard for
   `newbro://connect?...` settings copied by the web UI and applies those
   settings automatically; the manual paste action accepts the same settings URL
-  and not raw shell commands. The app probes Codex during launch, displays the
-  detected Codex version or `No Codex found. Newbro may not work properly.`,
-  and relies on the CLI to auto-configure the minimal Codex executor runtime
-  when Codex is detectable. `newbro executor setup` remains the
+  and not raw shell commands. User-triggered profile Start/Restart first runs a
+  local readiness diagnosis across the Newbro CLI, profile settings, and the
+  enabled executor families. When the CLI or Codex setup is missing or broken,
+  the profile remains stopped and the app surfaces a repair action instead of
+  launching a node that cannot become ready. The app probes Codex during launch
+  and Settings refresh, displays the detected Codex version or
+  `No Codex found. Newbro may not work properly.`, and delegates Codex repair to
+  the CLI-owned `newbro executor install-codex` command. The Swift app does not
+  edit executor YAML directly; it uses CLI probe/use/install commands and only
+  owns connection profiles. `newbro executor setup` remains the
   advanced/recovery path for custom Codex paths, ACPX, and broken local config.
   A rejected `node_id`/`token` shows as a continuous connecting/retrying state
   because the node service reconnects unboundedly.

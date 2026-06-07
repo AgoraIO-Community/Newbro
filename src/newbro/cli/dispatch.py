@@ -75,6 +75,8 @@ def cmd_connector(args: Any, app: Any) -> int:
 def cmd_executor(args: Any, app: Any) -> int:
     if args.executor_command == "setup":
         return setup_command.run_executor_setup(args, cli_factories.setup_context(app), cli_factories.setup_callbacks(app))
+    if args.executor_command == "install-codex":
+        return executor_settings_command.run_executor_install_codex(args, app)
     if args.executor_command == "probe":
         return executor_settings_command.run_executor_probe(args, app)
     if args.executor_command == "use":

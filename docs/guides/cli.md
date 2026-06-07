@@ -107,10 +107,21 @@ newbro executor run \
 ```
 
 For the macOS menu-bar app, `newbro executor setup` is not required on the
-happy path when Codex is already installed and discoverable. On first
-`newbro executor run`, a non-interactive app launch may auto-write the minimal
-Codex executor config. Use `newbro executor setup` for custom Codex paths,
-ACPX, or recovery when Codex is not on the app/login-shell PATH.
+happy path when Codex is already installed and discoverable. Profile Start runs
+a local readiness diagnosis before launching `newbro executor run`; if Newbro
+or Codex is missing, the app keeps the profile stopped and shows the matching
+repair action. The normal missing-Codex recovery from Settings is **Set Up
+Codex**, which runs:
+
+```bash
+newbro executor install-codex
+```
+
+That command installs or repairs a machine-local Codex CLI when needed,
+validates it, and records the selected executable through the same
+`newbro executor use --executor codex --command ...` config path used by manual
+selection. Use `newbro executor setup` for custom Codex paths, ACPX, or deeper
+interactive recovery.
 
 The run command also accepts per-run executor overrides:
 

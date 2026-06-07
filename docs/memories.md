@@ -327,3 +327,7 @@ Short log of important design decisions and changes for Newbro.
 - Reduced Bro Detail thread-list defaults and web page size from 25 to 15 while preserving explicit `limit` and cursor support for smaller clients.
 - Added `bro_list_invalidated` on `WS /api/sessions/{session_id}/stream`; it is a payload-light signal for clients to refetch `/bros` when executor connection status, node metadata, or Bro/persona bindings change.
 - The web UI reconnects the session stream after unexpected close/error and refreshes `/bros` on reconnect so executor status changes after backend restarts or socket drops are reflected without a page reload.
+
+## 2026-06-06
+
+- Added macOS executor app profile-start diagnosis: Start/Restart now checks Newbro CLI and Codex readiness before launching, keeps blocked profiles stopped with a visible repair action, and routes Codex repair through the CLI-owned `newbro executor install-codex` flow.

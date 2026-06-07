@@ -94,6 +94,10 @@ def build_parser(
     executor_parser = subparsers.add_parser("executor", help="Configure and run the detached executor node.")
     executor_subparsers = executor_parser.add_subparsers(dest="executor_command", required=True)
     executor_subparsers.add_parser("setup", help="Interactively configure the detached executor node.")
+    executor_subparsers.add_parser(
+        "install-codex",
+        help="Install or repair the local Codex CLI used by executor nodes.",
+    )
     executor_probe_parser = executor_subparsers.add_parser(
         "probe",
         help="Probe local executor binaries.",
