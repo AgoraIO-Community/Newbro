@@ -117,6 +117,9 @@ private struct CodexSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            let installedCLIVersion = model.installedCLIVersion()
+            let diagnosed = firstDiagnosedProfile
+
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Codex")
@@ -130,6 +133,45 @@ private struct CodexSettingsPane: View {
                 Button("Refresh") { model.refreshExecutorProbe() }
                     .disabled(model.executorSettingsBusy)
             }
+
+            VStack(alignment: .leading, spacing: 10) {
+                SettingsInfoRow(
+                    title: "Newbro CLI",
+                    detail: newbroRuntimeMenuTitle(
+                        path: model.runtimeAvailable ? "newbro" : nil,
+                        version: installedCLIVersion
+                    )
+                )
+                SettingsInfoRow(title: "Codex", detail: model.codexStatus.menuTitle)
+
+                if let diagnosed {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(diagnosed.diagnosis.title)
+                            .font(.body.weight(.medium))
+                            .textSelection(.enabled)
+                        if let detail = diagnosed.diagnosis.detail, !detail.isEmpty {
+                            Text(detail)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    diagnosisActionButton(
+                        action: diagnosed.diagnosis.primaryAction,
+                        profile: diagnosed.profile
+                    )
+                }
+
+                if model.codexSetupBusy || !model.codexSetupLog.isEmpty {
+                    Text(model.codexSetupLog.isEmpty ? "Codex setup is running…" : model.codexSetupLog)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(10)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
             if let error = model.executorSettingsError {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -168,6 +210,42 @@ private struct CodexSettingsPane: View {
         let version = current.version ?? "version unavailable"
         let path = current.resolvedPath ?? current.command
         return current.ok ? "\(version) · \(path)" : "Unavailable · \(path)"
+    }
+
+    private var firstDiagnosedProfile: (profile: Profile, diagnosis: ProfileStartDiagnosis)? {
+        for profile in model.profiles {
+            if let diagnosis = model.diagnosis(for: profile) {
+                return (profile, diagnosis)
+            }
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private func diagnosisActionButton(action: ProfileStartDiagnosisAction, profile: Profile) -> some View {
+        switch action {
+        case .installNewbroCLI, .updateNewbroCLI:
+            Button("Install/Update Newbro CLI…") { model.updateCLIFromExecutorSettings() }
+                .disabled(model.executorSettingsBusy)
+        case .setUpCodex:
+            Button("Set Up Codex…") { model.setUpCodex(for: profile) }
+                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+        case .openCodexSettings:
+            Button("Choose Codex Binary") {}
+                .disabled(true)
+        case .rerunDiagnosis:
+            Button("Run Diagnosis") { model.diagnoseStart(for: profile) }
+                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+        case .openProfileSettings:
+            Button("Edit Profile…") { model.editProfile(profile.id) }
+        case .viewLog:
+            Button("View Log…") { model.viewLog(profile.id) }
+        case .signInCodex:
+            Button("Open Codex Settings…") {}
+                .disabled(true)
+        case .none:
+            EmptyView()
+        }
     }
 }
 
