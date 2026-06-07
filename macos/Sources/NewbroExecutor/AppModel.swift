@@ -49,6 +49,11 @@ final class AppModel: ObservableObject {
     // so they never freeze the main actor / menu.
     private let controlQueue = DispatchQueue(label: "newbro.ui.control")
 
+    private struct DiagnosisRuntimeContext: Sendable {
+        let newbroPath: String?
+        let cliVersion: String?
+    }
+
     /// Login-shell PATH so node subprocesses (and the `node`-based `codex`
     /// they exec) resolve under the app's otherwise-minimal launchd env.
     private let childEnv = RuntimeLocator.childEnvironment()
@@ -274,6 +279,20 @@ final class AppModel: ObservableObject {
         return diagnosis
     }
 
+    @discardableResult
+    private func diagnoseStart(for profile: Profile,
+                               runtime: DiagnosisRuntimeContext) -> ProfileStartDiagnosis {
+        let diagnosis = diagnoseProfileStart(
+            profile,
+            newbroPath: runtime.newbroPath,
+            cliVersion: runtime.newbroPath == nil ? nil : runtime.cliVersion,
+            probe: runtime.newbroPath == nil ? nil : executorProbe,
+            probeError: runtime.newbroPath == nil ? nil : executorSettingsError
+        )
+        profileDiagnoses[profile.id] = diagnosis
+        return diagnosis
+    }
+
     func rerunDiagnosis(for profile: Profile) {
         profileDiagnoses[profile.id] = ProfileStartDiagnosis(
             status: .checking,
@@ -286,12 +305,23 @@ final class AppModel: ObservableObject {
 
     private func refreshStoredDiagnosis(for profile: Profile) {
         let newbro = locator.resolveNewbro()
+        refreshStoredDiagnosis(
+            for: profile,
+            runtime: DiagnosisRuntimeContext(
+                newbroPath: newbro,
+                cliVersion: newbro == nil ? nil : cachedCLIVersion
+            )
+        )
+    }
+
+    private func refreshStoredDiagnosis(for profile: Profile,
+                                        runtime: DiagnosisRuntimeContext) {
         let diagnosis = diagnoseProfileStart(
             profile,
-            newbroPath: newbro,
-            cliVersion: newbro == nil ? nil : cachedCLIVersion,
-            probe: newbro == nil ? nil : executorProbe,
-            probeError: newbro == nil ? nil : executorSettingsError
+            newbroPath: runtime.newbroPath,
+            cliVersion: runtime.newbroPath == nil ? nil : runtime.cliVersion,
+            probe: runtime.newbroPath == nil ? nil : executorProbe,
+            probeError: runtime.newbroPath == nil ? nil : executorSettingsError
         )
         switch diagnosis.status {
         case .ready:
@@ -314,6 +344,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func refreshStoredProfileDiagnoses(runtime: DiagnosisRuntimeContext) {
+        let diagnosedIDs = Array(profileDiagnoses.keys)
+        guard !diagnosedIDs.isEmpty else { return }
+
+        for profileID in diagnosedIDs {
+            guard let profile = profiles.first(where: { $0.id == profileID }) else {
+                profileDiagnoses.removeValue(forKey: profileID)
+                continue
+            }
+            refreshStoredDiagnosis(for: profile, runtime: runtime)
+        }
+    }
+
     func stop(_ profile: Profile) {
         controlQueue.async { [supervisor] in supervisor.stop(profile.id) }
     }
@@ -327,6 +370,7 @@ final class AppModel: ObservableObject {
     }
 
     private func refreshExecutorProbe(resolvedNewbro newbro: String?,
+                                      pendingDiagnosisRuntime: DiagnosisRuntimeContext? = nil,
                                       after completion: (() -> Void)? = nil) {
         executorProbeRequestID += 1
         let requestID = executorProbeRequestID
@@ -336,7 +380,7 @@ final class AppModel: ObservableObject {
             executorSettingsCanUpdateCLI = false
             executorSettingsBusy = false
             executorProbeInFlight = false
-            continuePendingStarts()
+            continuePendingStarts(runtime: pendingDiagnosisRuntime)
             completion?()
             return
         }
@@ -349,7 +393,7 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 guard requestID == self.executorProbeRequestID else { return }
                 self.applyExecutorProbeResult(result)
-                self.continuePendingStarts()
+                self.continuePendingStarts(runtime: pendingDiagnosisRuntime)
                 completion?()
             }
         }
@@ -359,6 +403,7 @@ final class AppModel: ObservableObject {
         runtimeDiagnosisRefreshRequestID += 1
         let requestID = runtimeDiagnosisRefreshRequestID
         executorProbeRequestID += 1
+        cliVersionRequestID += 1
         executorSettingsBusy = true
         executorProbeInFlight = true
         let loc = locator
@@ -369,11 +414,15 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard requestID == self.runtimeDiagnosisRefreshRequestID else { return }
+                let runtime = DiagnosisRuntimeContext(newbroPath: newbro, cliVersion: cliVersion)
                 self.runtimeAvailable = newbro != nil
                 self.cachedCLIVersion = cliVersion
                 self.codexStatus = codex
-                self.refreshExecutorProbe(resolvedNewbro: newbro) { [weak self] in
-                    self?.refreshStoredProfileDiagnoses()
+                self.refreshExecutorProbe(
+                    resolvedNewbro: runtime.newbroPath,
+                    pendingDiagnosisRuntime: runtime
+                ) { [weak self] in
+                    self?.refreshStoredProfileDiagnoses(runtime: runtime)
                 }
             }
         }
@@ -394,7 +443,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func continuePendingStarts() {
+    private func continuePendingStarts(runtime: DiagnosisRuntimeContext? = nil) {
         guard !pendingStartProfileIDs.isEmpty || !pendingRestartProfileIDs.isEmpty else { return }
         for profileID in Array(pendingStartProfileIDs) {
             guard let profile = profiles.first(where: { $0.id == profileID }) else {
@@ -403,7 +452,7 @@ final class AppModel: ObservableObject {
                 profileDiagnoses.removeValue(forKey: profileID)
                 continue
             }
-            continueStartIfReady(profile)
+            continueStartIfReady(profile, runtime: runtime)
         }
         for profileID in Array(pendingRestartProfileIDs) {
             guard let profile = profiles.first(where: { $0.id == profileID }) else {
@@ -412,12 +461,14 @@ final class AppModel: ObservableObject {
                 profileDiagnoses.removeValue(forKey: profileID)
                 continue
             }
-            continueRestartIfReady(profile)
+            continueRestartIfReady(profile, runtime: runtime)
         }
     }
 
-    private func continueStartIfReady(_ profile: Profile) {
-        let diagnosis = diagnoseStart(for: profile)
+    private func continueStartIfReady(_ profile: Profile,
+                                      runtime: DiagnosisRuntimeContext? = nil) {
+        let diagnosis = runtime.map { diagnoseStart(for: profile, runtime: $0) }
+            ?? diagnoseStart(for: profile)
         switch diagnosis.status {
         case .ready:
             pendingStartProfileIDs.remove(profile.id)
@@ -434,8 +485,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func continueRestartIfReady(_ profile: Profile) {
-        let diagnosis = diagnoseStart(for: profile)
+    private func continueRestartIfReady(_ profile: Profile,
+                                        runtime: DiagnosisRuntimeContext? = nil) {
+        let diagnosis = runtime.map { diagnoseStart(for: profile, runtime: $0) }
+            ?? diagnoseStart(for: profile)
         switch diagnosis.status {
         case .ready:
             pendingRestartProfileIDs.remove(profile.id)
