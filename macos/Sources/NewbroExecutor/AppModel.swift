@@ -34,6 +34,9 @@ final class AppModel: ObservableObject {
     private var installProcess: NodeProcess?
     private var updateInstallProcess: NodeProcess?
     private var pendingStartProfileIDs: Set<String> = []
+    private var pendingRestartProfileIDs: Set<String> = []
+    private var pendingSilentStartProfileIDs: Set<String> = []
+    private var pendingSilentRestartProfileIDs: Set<String> = []
     private var executorProbeRequestID: Int = 0
     private var executorProbeInFlight: Bool = false
     private var codexSetupRequestID: Int = 0
@@ -99,10 +102,9 @@ final class AppModel: ObservableObject {
     }
 
     func autostart() {
-        for action in autostartProfileActions(in: profiles,
-                                              runtimeAvailable: runtimeAvailable,
-                                              codexRuntimeAvailable: codexRuntimeAvailable) {
-            perform(action)
+        refreshRuntime()
+        for profile in profiles where profile.autoActivate {
+            _ = requestStart(profile, suppressStartNotification: true)
         }
     }
 
@@ -170,19 +172,44 @@ final class AppModel: ObservableObject {
     }
 
     func start(_ profile: Profile) {
+        _ = requestStart(profile)
+    }
+
+    @discardableResult
+    private func requestStart(_ profile: Profile,
+                              suppressStartNotification: Bool = false) -> Bool {
         refreshRuntime()
         let diagnosis = diagnoseStart(for: profile)
         switch diagnosis.status {
         case .ready:
             pendingStartProfileIDs.remove(profile.id)
+            pendingRestartProfileIDs.remove(profile.id)
+            pendingSilentStartProfileIDs.remove(profile.id)
+            pendingSilentRestartProfileIDs.remove(profile.id)
             profileDiagnoses.removeValue(forKey: profile.id)
+            if suppressStartNotification {
+                notificationController.suppressNextStart(profileID: profile.id)
+            }
             perform(.start(profile))
+            return true
         case .checking:
+            pendingRestartProfileIDs.remove(profile.id)
             pendingStartProfileIDs.insert(profile.id)
+            if suppressStartNotification {
+                pendingSilentStartProfileIDs.insert(profile.id)
+            } else {
+                pendingSilentStartProfileIDs.remove(profile.id)
+            }
+            pendingSilentRestartProfileIDs.remove(profile.id)
             objectWillChange.send()
+            return true
         case .blocked:
             pendingStartProfileIDs.remove(profile.id)
+            pendingRestartProfileIDs.remove(profile.id)
+            pendingSilentStartProfileIDs.remove(profile.id)
+            pendingSilentRestartProfileIDs.remove(profile.id)
             objectWillChange.send()
+            return false
         }
     }
 
@@ -274,14 +301,24 @@ final class AppModel: ObservableObject {
     }
 
     private func continuePendingStarts() {
-        guard !pendingStartProfileIDs.isEmpty else { return }
+        guard !pendingStartProfileIDs.isEmpty || !pendingRestartProfileIDs.isEmpty else { return }
         for profileID in Array(pendingStartProfileIDs) {
             guard let profile = profiles.first(where: { $0.id == profileID }) else {
                 pendingStartProfileIDs.remove(profileID)
+                pendingSilentStartProfileIDs.remove(profileID)
                 profileDiagnoses.removeValue(forKey: profileID)
                 continue
             }
             continueStartIfReady(profile)
+        }
+        for profileID in Array(pendingRestartProfileIDs) {
+            guard let profile = profiles.first(where: { $0.id == profileID }) else {
+                pendingRestartProfileIDs.remove(profileID)
+                pendingSilentRestartProfileIDs.remove(profileID)
+                profileDiagnoses.removeValue(forKey: profileID)
+                continue
+            }
+            continueRestartIfReady(profile)
         }
     }
 
@@ -290,12 +327,34 @@ final class AppModel: ObservableObject {
         switch diagnosis.status {
         case .ready:
             pendingStartProfileIDs.remove(profile.id)
+            if pendingSilentStartProfileIDs.remove(profile.id) != nil {
+                notificationController.suppressNextStart(profileID: profile.id)
+            }
             profileDiagnoses.removeValue(forKey: profile.id)
             perform(.start(profile))
         case .blocked:
             pendingStartProfileIDs.remove(profile.id)
+            pendingSilentStartProfileIDs.remove(profile.id)
         case .checking:
             pendingStartProfileIDs.insert(profile.id)
+        }
+    }
+
+    private func continueRestartIfReady(_ profile: Profile) {
+        let diagnosis = diagnoseStart(for: profile)
+        switch diagnosis.status {
+        case .ready:
+            pendingRestartProfileIDs.remove(profile.id)
+            if pendingSilentRestartProfileIDs.remove(profile.id) != nil {
+                notificationController.suppressNextRestart(profileID: profile.id)
+            }
+            profileDiagnoses.removeValue(forKey: profile.id)
+            perform(.restart(profile))
+        case .blocked:
+            pendingRestartProfileIDs.remove(profile.id)
+            pendingSilentRestartProfileIDs.remove(profile.id)
+        case .checking:
+            pendingRestartProfileIDs.insert(profile.id)
         }
     }
 
@@ -399,6 +458,9 @@ final class AppModel: ObservableObject {
         for id in activeIDs {
             guard let profile = profiles.first(where: { $0.id == id }) else { continue }
             pendingStartProfileIDs.remove(id)
+            pendingRestartProfileIDs.remove(id)
+            pendingSilentStartProfileIDs.remove(id)
+            pendingSilentRestartProfileIDs.remove(id)
             profileDiagnoses.removeValue(forKey: id)
             perform(.start(profile))
         }
@@ -490,20 +552,48 @@ final class AppModel: ObservableObject {
     }
 
     private func autoStartPastedProfile(_ profile: Profile) -> Bool {
-        let action = pastedProfileAction(for: profile,
-                                         runtimeAvailable: runtimeAvailable,
-                                         isActive: isActive(profile),
-                                         codexRuntimeAvailable: codexRuntimeAvailable)
-        switch action {
-        case .start(let profile):
-            notificationController.suppressNextStart(profileID: profile.id)
-        case .restart(let profile):
-            notificationController.suppressNextRestart(profileID: profile.id)
-        case nil:
-            break
+        refreshRuntime()
+        if isActive(profile) {
+            return requestRestartAfterDiagnosis(profile, suppressRestartNotification: true)
         }
-        perform(action)
-        return action != nil
+        return requestStart(profile, suppressStartNotification: true)
+    }
+
+    @discardableResult
+    private func requestRestartAfterDiagnosis(_ profile: Profile,
+                                              suppressRestartNotification: Bool = false) -> Bool {
+        let diagnosis = diagnoseStart(for: profile)
+        switch diagnosis.status {
+        case .ready:
+            pendingStartProfileIDs.remove(profile.id)
+            pendingRestartProfileIDs.remove(profile.id)
+            pendingSilentStartProfileIDs.remove(profile.id)
+            pendingSilentRestartProfileIDs.remove(profile.id)
+            profileDiagnoses.removeValue(forKey: profile.id)
+            if suppressRestartNotification {
+                notificationController.suppressNextRestart(profileID: profile.id)
+            }
+            perform(.restart(profile))
+            return true
+        case .checking:
+            pendingStartProfileIDs.remove(profile.id)
+            pendingRestartProfileIDs.insert(profile.id)
+            pendingSilentStartProfileIDs.remove(profile.id)
+            if suppressRestartNotification {
+                pendingSilentRestartProfileIDs.insert(profile.id)
+            } else {
+                pendingSilentRestartProfileIDs.remove(profile.id)
+            }
+            objectWillChange.send()
+            return true
+        case .blocked:
+            pendingStartProfileIDs.remove(profile.id)
+            pendingRestartProfileIDs.remove(profile.id)
+            pendingSilentStartProfileIDs.remove(profile.id)
+            pendingSilentRestartProfileIDs.remove(profile.id)
+            objectWillChange.send()
+            return false
+        }
     }
 
     private func pasteNotificationTitle(wasUpdate: Bool, started: Bool) -> String {
