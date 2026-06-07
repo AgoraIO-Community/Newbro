@@ -2266,7 +2266,7 @@ describe("Newbro artboard shell", () => {
   });
 
   it("does not record when Space is pressed inside the composer input", async () => {
-    setupHoldSpaceAudioSnapshot();
+    const { getUserMedia } = setupHoldSpaceAudioSnapshot();
     vi.stubGlobal("MediaRecorder", MockMediaRecorder);
     vi.stubGlobal("AudioContext", MockAudioContext);
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
@@ -2282,6 +2282,9 @@ describe("Newbro artboard shell", () => {
     input.focus();
     fireEvent.keyDown(input, { code: "Space" });
 
+    // Give any (incorrectly-triggered) async recording a chance to start.
+    await act(async () => { await Promise.resolve(); });
+    expect(getUserMedia).not.toHaveBeenCalled();
     expect(screen.getByTestId("voice-session-start")).not.toHaveClass("dt-cmp-mic-free");
     expect(clientMock.submitExecutorAudioInstruction).not.toHaveBeenCalled();
   });
@@ -2305,6 +2308,31 @@ describe("Newbro artboard shell", () => {
     fireEvent.keyUp(window, { code: "Space" });
 
     await waitFor(() => expect(clientMock.submitExecutorAudioInstruction).toHaveBeenCalledTimes(1));
+  });
+
+  it("hold-Space is ignored in hands-free mode", async () => {
+    const { getUserMedia } = setupHoldSpaceAudioSnapshot();
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Hands-free" }));
+
+    fireEvent.keyDown(window, { code: "Space" });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(screen.getByTestId("voice-session-start")).not.toHaveClass("dt-cmp-mic-free");
+    expect(clientMock.submitExecutorAudioInstruction).not.toHaveBeenCalled();
+
+    fireEvent.keyUp(window, { code: "Space" });
   });
 
   it("hold-Space does not double-start when the mic button is focused", async () => {
