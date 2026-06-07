@@ -3509,6 +3509,10 @@
 
 .nb-rename-dialog {
   width: min(390px, 100%);
+  /* Content is always compact (title + one field + actions), so bounding the
+     card and scrolling it as a whole keeps Save/Cancel reachable on short
+     windows. A pinned-footer grid (see .nb-workspace-dialog) is unnecessary
+     here. */
   max-height: calc(100dvh - 48px);
   overflow-y: auto;
   display: flex;
