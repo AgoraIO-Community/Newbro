@@ -3479,34 +3479,6 @@ function DesktopActivityRail({
   );
 }
 
-function DesktopVoiceDock({
-  phase,
-  disabled,
-  onToggle,
-}: {
-  phase: ReturnType<typeof useNewbroShell>["voiceSession"]["phase"];
-  disabled: boolean;
-  onToggle: () => void;
-}) {
-  const connected = phase === "connected";
-  return (
-    <div className="nb-talk-dock">
-      <div className="nb-talk-hint"><span className="nb-talk-key">space</span><span>{connected ? "voice channel open" : "push to talk anywhere"}</span></div>
-      <button
-        type="button"
-        className={`nb-talk-btn${connected ? " nb-talk-btn-listening" : ""}`}
-        data-testid={connected ? "voice-session-stop" : "voice-session-start"}
-        aria-label={connected ? "Stop voice session" : "Start voice session"}
-        disabled={disabled || phase === "loading"}
-        onClick={onToggle}
-      >
-        <Mic size={18} aria-hidden="true" />
-        <span>{connected ? "Stop voice" : "Start voice"}</span>
-      </button>
-    </div>
-  );
-}
-
 function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void }) {
   const shell = useNewbroShell();
   const [textTurns, setTextTurns] = useState<TextTurn[]>([]);
