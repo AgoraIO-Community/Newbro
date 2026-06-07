@@ -138,6 +138,12 @@ final class AppModel: ObservableObject {
         controlQueue.async { [supervisor] in supervisor.stop(id) }
     }
 
+    /// Cached installed CLI version for update/status UI. Background diagnosis
+    /// refreshes own the actual `newbro --version` process execution.
+    func installedCLIVersion() -> String? {
+        cachedCLIVersion
+    }
+
     private func refreshCachedCLIVersion() {
         cliVersionRequestID += 1
         let requestID = cliVersionRequestID
