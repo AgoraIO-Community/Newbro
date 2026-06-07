@@ -1979,7 +1979,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
               <header className="dt-page-head">
                 <div>
                   <h1 className="dt-page-title">Home</h1>
-                  <p className="dt-page-sub">Hold space anywhere, talk to any bro, or open one to read their thread. Sessions persist as long as the node stays online.</p>
+                  <p className="dt-page-sub">Open a bro to talk or read their thread. Sessions persist as long as the node stays online.</p>
                 </div>
                 <div className="dt-page-actions">
                   <button type="button" className="dt-page-action dt-page-action-primary" onClick={() => setSheetOpen(true)}>
@@ -2003,7 +2003,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
                 <section className="dt-home-section">
                   <div className="dt-home-section-head">
                     <span className="ob-eyebrow">STANDING BY · {standingByBros.length}</span>
-                    <span className="dt-home-section-sub">Quiet for now - hold space to wake one</span>
+                    <span className="dt-home-section-sub">Quiet for now — open one to start talking</span>
                   </div>
                   <div className="dt-bro-roster">
                     {standingByBros.map((bro) => <DesktopRosterRow key={bro.id} bro={bro} onOpen={onOpenBro} onSetup={setSetupBro} onRename={setRenameBro} />)}
