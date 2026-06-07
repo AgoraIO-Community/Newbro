@@ -626,6 +626,7 @@
 
 .ob-sheet-body {
   overflow-y: auto;
+  min-height: 0;
   padding: 16px 22px 20px;
   display: flex; flex-direction: column;
   gap: 18px;
