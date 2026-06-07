@@ -3122,6 +3122,60 @@ function DesktopComposerBar({
     recorder.cancel();
   };
 
+  // Hold-Space push-to-talk: record while Space is held (when not typing), send on
+  // release. Latest handlers/state live in refs so the window listener attaches once
+  // and never runs against stale closures.
+  const spaceHeldRef = useRef(false);
+  const micDisabledRef = useRef(micDisabled);
+  const voiceModeRef = useRef(voiceMode);
+  const phaseRef = useRef(recorder.phase);
+  const startRecRef = useRef(startRec);
+  const stopRecRef = useRef(stopRec);
+  const cancelRecRef = useRef(cancelRec);
+  useEffect(() => {
+    micDisabledRef.current = micDisabled;
+    voiceModeRef.current = voiceMode;
+    phaseRef.current = recorder.phase;
+    startRecRef.current = startRec;
+    stopRecRef.current = stopRec;
+    cancelRecRef.current = cancelRec;
+  });
+  useEffect(() => {
+    function isEditableTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.code !== "Space" || event.repeat) return;
+      if (isEditableTarget(event.target)) return;
+      if (voiceModeRef.current !== "ptt" || micDisabledRef.current) return;
+      if (phaseRef.current !== "idle") return;
+      event.preventDefault();
+      spaceHeldRef.current = true;
+      startRecRef.current();
+    }
+    function onKeyUp(event: KeyboardEvent) {
+      if (event.code !== "Space" || !spaceHeldRef.current) return;
+      event.preventDefault();
+      spaceHeldRef.current = false;
+      stopRecRef.current();
+    }
+    function onBlur() {
+      if (!spaceHeldRef.current) return;
+      spaceHeldRef.current = false;
+      cancelRecRef.current();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   async function submitText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = draft.trim();
