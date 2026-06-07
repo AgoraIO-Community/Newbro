@@ -404,6 +404,7 @@ final class AppModel: ObservableObject {
         let requestID = runtimeDiagnosisRefreshRequestID
         executorProbeRequestID += 1
         cliVersionRequestID += 1
+        let versionRequestID = cliVersionRequestID
         executorSettingsBusy = true
         executorProbeInFlight = true
         let loc = locator
@@ -416,7 +417,9 @@ final class AppModel: ObservableObject {
                 guard requestID == self.runtimeDiagnosisRefreshRequestID else { return }
                 let runtime = DiagnosisRuntimeContext(newbroPath: newbro, cliVersion: cliVersion)
                 self.runtimeAvailable = newbro != nil
-                self.cachedCLIVersion = cliVersion
+                if versionRequestID == self.cliVersionRequestID {
+                    self.cachedCLIVersion = cliVersion
+                }
                 self.codexStatus = codex
                 self.refreshExecutorProbe(
                     resolvedNewbro: runtime.newbroPath,
@@ -633,12 +636,23 @@ final class AppModel: ObservableObject {
     }
 
     func useCodexCandidate(_ candidate: ExecutorCandidateProbe) {
-        guard candidate.ok, let newbro = locator.resolveNewbro() else { return }
+        guard candidate.ok else { return }
+        let candidatePath = candidate.path
         let activeIDs = self.activeProfileIDs()
         executorSettingsBusy = true
-        let client = ExecutorSettingsClient(newbroPath: newbro)
+        let loc = locator
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { try client.useCodex(path: candidate.path) }
+            guard let newbro = loc.resolveNewbro() else {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.executorSettingsBusy = false
+                    self.executorSettingsError = "newbro CLI not found"
+                    self.executorSettingsCanUpdateCLI = false
+                }
+                return
+            }
+            let client = ExecutorSettingsClient(newbroPath: newbro)
+            let result = Result { try client.useCodex(path: candidatePath) }
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
@@ -650,9 +664,7 @@ final class AppModel: ObservableObject {
                         self.pendingSilentStartProfileIDs.remove(id)
                         self.pendingRestartProfileIDs.insert(id)
                     }
-                    self.refreshExecutorProbe {
-                        self.refreshStoredProfileDiagnoses()
-                    }
+                    self.refreshExecutorProbeAndStoredDiagnoses()
                 case .failure(let error):
                     self.executorSettingsBusy = false
                     self.executorSettingsError = error.localizedDescription
