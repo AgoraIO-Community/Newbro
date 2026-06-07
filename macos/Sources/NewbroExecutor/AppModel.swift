@@ -481,6 +481,7 @@ final class AppModel: ObservableObject {
                     self.refreshRuntime()
                     self.applyExecutorProbeResult(probeResult)
                     self.continuePendingStarts()
+                    self.refreshStoredProfileDiagnoses()
                 case .failure(let error):
                     self.codexSetupLog += error.localizedDescription + "\n"
                     let isRuntimeTooOld = self.isRuntimeTooOld(error)
