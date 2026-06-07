@@ -123,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(disabledMenuItem(title: newbroRuntimeMenuTitle(
             path: model.runtimeAvailable ? "newbro" : nil,
-            version: model.installedCLIVersion()
+            version: model.cachedCLIVersion
         )))
         menu.addItem(disabledMenuItem(title: model.codexStatus.menuTitle))
         menu.addItem(.separator())

@@ -129,7 +129,7 @@ private struct CodexSettingsPane: View {
                         .textSelection(.enabled)
                 }
                 Spacer()
-                Button("Refresh") { model.refreshExecutorProbe() }
+                Button("Refresh") { model.refreshExecutorProbeAndStoredDiagnoses() }
                     .disabled(model.executorSettingsBusy)
             }
 

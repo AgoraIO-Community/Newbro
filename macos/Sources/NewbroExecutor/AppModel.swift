@@ -351,6 +351,12 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func refreshExecutorProbeAndStoredDiagnoses() {
+        refreshExecutorProbe { [weak self] in
+            self?.refreshStoredProfileDiagnoses()
+        }
+    }
+
     private func applyExecutorProbeResult(_ result: Result<ExecutorProbe, Error>) {
         executorSettingsBusy = false
         executorProbeInFlight = false
