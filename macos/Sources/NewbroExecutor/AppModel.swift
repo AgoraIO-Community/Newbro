@@ -753,7 +753,7 @@ final class AppModel: ObservableObject {
 
     func showSettings(updates: UpdateService, initialPane: SettingsPane = .updates) {
         selectedSettingsPane = initialPane
-        refreshExecutorProbe()
+        refreshExecutorProbeAndStoredDiagnoses()
         windows.show(id: "settings", title: "Settings",
                      size: NSSize(width: 760, height: 480)) { [self] in
             NewbroSettingsView(model: self, updates: updates)
@@ -800,6 +800,8 @@ final class AppModel: ObservableObject {
     func notifyUpdateEvent(_ event: UpdateServiceEvent) {
         switch event {
         case .cliUpdateSucceeded:
+            refreshRuntime()
+            refreshExecutorProbeAndStoredDiagnoses()
             notifier.notify(title: "Newbro CLI updated", body: "Executor nodes restarted.")
         case let .cliUpdateFailed(code, _):
             notifier.notify(title: "Newbro CLI update failed", body: "Exit \(code). Executor nodes restarted.")
