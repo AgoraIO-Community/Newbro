@@ -2224,10 +2224,12 @@ describe("Newbro artboard shell", () => {
       };
     });
     const track = { stop: vi.fn() };
+    const getUserMedia = vi.fn(async () => ({ getTracks: () => [track] }));
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
-      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [track] })) },
+      value: { getUserMedia },
     });
+    return { getUserMedia };
   }
 
   it("records and sends desktop audio via hold-Space", async () => {
@@ -2303,6 +2305,52 @@ describe("Newbro artboard shell", () => {
     fireEvent.keyUp(window, { code: "Space" });
 
     await waitFor(() => expect(clientMock.submitExecutorAudioInstruction).toHaveBeenCalledTimes(1));
+  });
+
+  it("hold-Space does not double-start when the mic button is focused", async () => {
+    const { getUserMedia } = setupHoldSpaceAudioSnapshot();
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    const button = screen.getByTestId("voice-session-start");
+    button.focus();
+    fireEvent.keyDown(button, { key: " ", code: "Space" });
+
+    await waitFor(() => expect(screen.getByTestId("voice-session-start")).toHaveClass("dt-cmp-mic-free"));
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyUp(button, { key: " ", code: "Space" });
+
+    await waitFor(() => expect(clientMock.submitExecutorAudioInstruction).toHaveBeenCalledTimes(1));
+  });
+
+  it("Escape during hold-Space cancels without sending", async () => {
+    setupHoldSpaceAudioSnapshot();
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { code: "Space" });
+    await waitFor(() => expect(screen.getByTestId("voice-session-start")).toHaveClass("dt-cmp-mic-free"));
+    fireEvent.keyDown(window, { code: "Escape" });
+    fireEvent.keyUp(window, { code: "Space" });
+
+    expect(clientMock.submitExecutorAudioInstruction).not.toHaveBeenCalled();
   });
 
   it("enables desktop typed send for a connected idle Bro", async () => {
@@ -3658,45 +3706,6 @@ describe("Newbro artboard shell", () => {
       configurable: true,
       value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [track] })) },
     });
-    class MockMediaRecorder {
-      static isTypeSupported = vi.fn(() => true);
-      state = "inactive";
-      mimeType = "audio/webm;codecs=opus";
-      private listeners: Record<string, Array<(event?: any) => void>> = {};
-
-      constructor(_stream: MediaStream, _options: { mimeType: string }) {}
-
-      addEventListener(type: string, listener: (event?: any) => void) {
-        this.listeners[type] = [...(this.listeners[type] ?? []), listener];
-      }
-
-      start() {
-        this.state = "recording";
-      }
-
-      stop() {
-        this.state = "inactive";
-        for (const listener of this.listeners.dataavailable ?? []) {
-          listener({ data: new Blob([new Uint8Array([0, 0, 1, 0])], { type: this.mimeType }) });
-        }
-        for (const listener of this.listeners.stop ?? []) {
-          listener();
-        }
-      }
-    }
-    class MockAudioContext {
-      async decodeAudioData(_buffer: ArrayBuffer) {
-        return {
-          duration: 0.001,
-          length: 16,
-          numberOfChannels: 1,
-          sampleRate: 16000,
-          getChannelData: () => new Float32Array(16),
-        };
-      }
-
-      async close() {}
-    }
     vi.stubGlobal("MediaRecorder", MockMediaRecorder);
     vi.stubGlobal("AudioContext", MockAudioContext);
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");

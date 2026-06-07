@@ -1303,9 +1303,11 @@ function usePushToTalkAudio({
     createdAt: string;
     turnId: string;
   } | null>(null);
+  const startingRef = useRef(false);
 
   async function start() {
-    if (disabled || !sessionId || activeRef.current) return;
+    if (disabled || !sessionId || activeRef.current || startingRef.current) return;
+    startingRef.current = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -1330,6 +1332,8 @@ function usePushToTalkAudio({
       recorder.start();
     } catch (error: unknown) {
       onError(describeError(error, "Microphone could not be started."));
+    } finally {
+      startingRef.current = false;
     }
   }
 
@@ -3147,6 +3151,7 @@ function DesktopComposerBar({
       return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
     }
     function onKeyDown(event: KeyboardEvent) {
+      if (event.code === "Escape") { spaceHeldRef.current = false; return; }
       if (event.code !== "Space" || event.repeat) return;
       if (isEditableTarget(event.target)) return;
       if (voiceModeRef.current !== "ptt" || micDisabledRef.current) return;
