@@ -33,6 +33,8 @@ final class AppModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var installProcess: NodeProcess?
     private var updateInstallProcess: NodeProcess?
+    private var pendingStartProfileIDs: Set<String> = []
+    private var executorProbeRequestID: Int = 0
     private let windows = WindowManager()
     // Blocking node lifecycle calls (stop/restart busy-wait up to 5s) run here
     // so they never freeze the main actor / menu.
@@ -168,12 +170,18 @@ final class AppModel: ObservableObject {
     func start(_ profile: Profile) {
         refreshRuntime()
         let diagnosis = diagnoseStart(for: profile)
-        guard diagnosis.status == .ready else {
+        switch diagnosis.status {
+        case .ready:
+            pendingStartProfileIDs.remove(profile.id)
+            profileDiagnoses.removeValue(forKey: profile.id)
+            perform(.start(profile))
+        case .checking:
+            pendingStartProfileIDs.insert(profile.id)
             objectWillChange.send()
-            return
+        case .blocked:
+            pendingStartProfileIDs.remove(profile.id)
+            objectWillChange.send()
         }
-        profileDiagnoses.removeValue(forKey: profile.id)
-        perform(.start(profile))
     }
 
     func diagnosis(for profile: Profile) -> ProfileStartDiagnosis? {
@@ -206,11 +214,16 @@ final class AppModel: ObservableObject {
                                      codexRuntimeAvailable: codexRuntimeAvailable))
     }
 
-    func refreshExecutorProbe() {
+    func refreshExecutorProbe(after completion: (() -> Void)? = nil) {
+        executorProbeRequestID += 1
+        let requestID = executorProbeRequestID
         guard let newbro = locator.resolveNewbro() else {
             executorProbe = nil
             executorSettingsError = "newbro CLI not found"
             executorSettingsCanUpdateCLI = false
+            executorSettingsBusy = false
+            continuePendingStarts()
+            completion?()
             return
         }
         executorSettingsBusy = true
@@ -219,28 +232,65 @@ final class AppModel: ObservableObject {
             let result = Result { try client.probe() }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.executorSettingsBusy = false
-                switch result {
-                case .success(let probe):
-                    self.executorProbe = probe
-                    self.executorSettingsError = nil
-                    self.executorSettingsCanUpdateCLI = false
-                case .failure(let error):
-                    self.executorProbe = nil
-                    self.executorSettingsError = error.localizedDescription
-                    if case ExecutorSettingsClientError.runtimeTooOld = error {
-                        self.executorSettingsCanUpdateCLI = true
-                    } else {
-                        self.executorSettingsCanUpdateCLI = false
-                    }
-                }
+                guard requestID == self.executorProbeRequestID else { return }
+                self.applyExecutorProbeResult(result)
+                self.continuePendingStarts()
+                completion?()
             }
         }
+    }
+
+    private func applyExecutorProbeResult(_ result: Result<ExecutorProbe, Error>) {
+        executorSettingsBusy = false
+        switch result {
+        case .success(let probe):
+            executorProbe = probe
+            executorSettingsError = nil
+            executorSettingsCanUpdateCLI = false
+        case .failure(let error):
+            executorProbe = nil
+            executorSettingsError = error.localizedDescription
+            executorSettingsCanUpdateCLI = isRuntimeTooOld(error)
+        }
+    }
+
+    private func continuePendingStarts() {
+        guard !pendingStartProfileIDs.isEmpty else { return }
+        for profileID in Array(pendingStartProfileIDs) {
+            guard let profile = profiles.first(where: { $0.id == profileID }) else {
+                pendingStartProfileIDs.remove(profileID)
+                profileDiagnoses.removeValue(forKey: profileID)
+                continue
+            }
+            continueStartIfReady(profile)
+        }
+    }
+
+    private func continueStartIfReady(_ profile: Profile) {
+        let diagnosis = diagnoseStart(for: profile)
+        switch diagnosis.status {
+        case .ready:
+            pendingStartProfileIDs.remove(profile.id)
+            profileDiagnoses.removeValue(forKey: profile.id)
+            perform(.start(profile))
+        case .blocked:
+            pendingStartProfileIDs.remove(profile.id)
+        case .checking:
+            pendingStartProfileIDs.insert(profile.id)
+        }
+    }
+
+    private func isRuntimeTooOld(_ error: Error) -> Bool {
+        if case ExecutorSettingsClientError.runtimeTooOld = error {
+            return true
+        }
+        return false
     }
 
     func setUpCodex(for profile: Profile?) {
         guard !codexSetupBusy, let newbro = locator.resolveNewbro() else { return }
         let profileID = profile?.id
+        executorProbeRequestID += 1
         codexSetupBusy = true
         codexSetupLog = "Preparing Codex setup...\n"
         executorSettingsBusy = true
@@ -252,6 +302,7 @@ final class AppModel: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.executorProbeRequestID += 1
                 self.codexSetupBusy = false
                 switch result {
                 case .success(let (output, probeResult)):
@@ -262,38 +313,26 @@ final class AppModel: ObservableObject {
                     self.executorSettingsError = nil
                     self.executorSettingsCanUpdateCLI = false
                     self.refreshRuntime()
-                    switch probeResult {
-                    case .success(let probe):
-                        self.executorProbe = probe
-                        self.executorSettingsBusy = false
-                    case .failure(let error):
-                        self.executorProbe = nil
-                        self.executorSettingsError = error.localizedDescription
-                        if case ExecutorSettingsClientError.runtimeTooOld = error {
-                            self.executorSettingsCanUpdateCLI = true
-                        }
-                        self.executorSettingsBusy = false
-                    }
-                    self.refreshExecutorProbe()
+                    self.applyExecutorProbeResult(probeResult)
                     if let profileID,
                        let profile = self.profiles.first(where: { $0.id == profileID }) {
-                        let diagnosis = self.diagnoseStart(for: profile)
-                        if diagnosis.status == .ready {
-                            self.profileDiagnoses.removeValue(forKey: profile.id)
-                            self.perform(.start(profile))
-                        }
+                        self.continueStartIfReady(profile)
                     }
+                    self.continuePendingStarts()
                 case .failure(let error):
                     self.executorSettingsBusy = false
                     self.executorSettingsError = error.localizedDescription
                     self.codexSetupLog += error.localizedDescription + "\n"
+                    let isRuntimeTooOld = self.isRuntimeTooOld(error)
+                    self.executorSettingsCanUpdateCLI = isRuntimeTooOld
                     if let profileID {
+                        self.pendingStartProfileIDs.remove(profileID)
                         self.profileDiagnoses[profileID] = ProfileStartDiagnosis(
                             status: .blocked,
-                            reason: .installerFailed,
-                            title: "Codex setup failed",
+                            reason: isRuntimeTooOld ? .newbroTooOldForProbe : .installerFailed,
+                            title: isRuntimeTooOld ? "Codex setup requires a newer Newbro CLI" : "Codex setup failed",
                             detail: error.localizedDescription,
-                            primaryAction: .setUpCodex
+                            primaryAction: isRuntimeTooOld ? .updateNewbroCLI : .setUpCodex
                         )
                     }
                 }
@@ -308,11 +347,12 @@ final class AppModel: ObservableObject {
         for id in activeIDs { stop(profileID: id) }
         runInstaller { [weak self] code in
             guard let self else { return }
-            for id in activeIDs { self.start(profileID: id) }
             if code == 0 {
+                for id in activeIDs { self.pendingStartProfileIDs.insert(id) }
                 self.refreshRuntime()
                 self.refreshExecutorProbe()
             } else {
+                for id in activeIDs { self.start(profileID: id) }
                 self.executorSettingsBusy = false
                 self.executorSettingsError = "Update failed (exit \(code)). Nodes restarted."
                 self.executorSettingsCanUpdateCLI = true
