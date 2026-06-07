@@ -373,7 +373,15 @@ final class AppModel: ObservableObject {
         codexSetupRequestID += 1
         let setupRequestID = codexSetupRequestID
         executorProbeRequestID += 1
-        if let profileID { pendingStartProfileIDs.insert(profileID) }
+        if let profileID {
+            if profile.map(isActive) == true {
+                pendingStartProfileIDs.remove(profileID)
+                pendingRestartProfileIDs.insert(profileID)
+            } else {
+                pendingRestartProfileIDs.remove(profileID)
+                pendingStartProfileIDs.insert(profileID)
+            }
+        }
         executorProbeInFlight = true
         codexSetupBusy = true
         codexSetupLog = "Preparing Codex setup...\n"
@@ -397,14 +405,11 @@ final class AppModel: ObservableObject {
                     }
                     self.refreshRuntime()
                     self.applyExecutorProbeResult(probeResult)
-                    if let profileID,
-                       let profile = self.profiles.first(where: { $0.id == profileID }) {
-                        self.continueStartIfReady(profile)
-                    }
                     self.continuePendingStarts()
                 case .failure(let error):
                     self.codexSetupLog += error.localizedDescription + "\n"
                     let isRuntimeTooOld = self.isRuntimeTooOld(error)
+                    self.executorProbeRequestID += 1
                     self.executorSettingsBusy = false
                     self.executorProbeInFlight = false
                     self.executorSettingsError = error.localizedDescription
