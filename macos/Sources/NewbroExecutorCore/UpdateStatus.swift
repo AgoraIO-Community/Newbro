@@ -33,13 +33,16 @@ private func appVersionMenuRow(_ installedApp: String?) -> String {
     return "Menu bar app: v\(installedApp)"
 }
 
-/// Compute which components have an update available. Never reports a false
-/// positive: any nil/unparseable input leaves that field nil. The app's
-/// dev-default version ("1.0") is treated as "not a real release" and suppressed.
+/// Compute which components have an update available. Unknown CLI versions are
+/// updateable when a latest release is known; unparseable explicit versions are
+/// not. The app's dev-default version ("1.0") is treated as "not a real
+/// release" and suppressed.
 public func updateStatus(installedCLI: String?, installedApp: String?, latestTag: String?) -> UpdateStatus {
     guard let latestTag, let latest = SemanticVersion(latestTag) else { return UpdateStatus() }
     var result = UpdateStatus()
-    if let installed = installedCLI.flatMap(SemanticVersion.init), latest > installed {
+    if installedCLI == nil {
+        result.cliUpdate = latestTag
+    } else if let installed = installedCLI.flatMap(SemanticVersion.init), latest > installed {
         result.cliUpdate = latestTag
     }
     if let appString = installedApp, appString != "1.0",
