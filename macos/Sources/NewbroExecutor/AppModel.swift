@@ -35,6 +35,8 @@ final class AppModel: ObservableObject {
     private var updateInstallProcess: NodeProcess?
     private var pendingStartProfileIDs: Set<String> = []
     private var executorProbeRequestID: Int = 0
+    private var executorProbeInFlight: Bool = false
+    private var codexSetupRequestID: Int = 0
     private let windows = WindowManager()
     // Blocking node lifecycle calls (stop/restart busy-wait up to 5s) run here
     // so they never freeze the main actor / menu.
@@ -191,6 +193,20 @@ final class AppModel: ObservableObject {
     @discardableResult
     func diagnoseStart(for profile: Profile) -> ProfileStartDiagnosis {
         let newbro = locator.resolveNewbro()
+        if let newbro,
+           profileRequiresCodex(profile),
+           profileIsComplete(profile),
+           executorProbeInFlight || codexSetupBusy {
+            let diagnosis = diagnoseProfileStart(
+                profile,
+                newbroPath: newbro,
+                cliVersion: nil,
+                probe: nil,
+                probeError: nil
+            )
+            profileDiagnoses[profile.id] = diagnosis
+            return diagnosis
+        }
         if executorProbe == nil && executorSettingsError == nil {
             refreshExecutorProbe()
         }
@@ -222,11 +238,13 @@ final class AppModel: ObservableObject {
             executorSettingsError = "newbro CLI not found"
             executorSettingsCanUpdateCLI = false
             executorSettingsBusy = false
+            executorProbeInFlight = false
             continuePendingStarts()
             completion?()
             return
         }
         executorSettingsBusy = true
+        executorProbeInFlight = true
         let client = ExecutorSettingsClient(newbroPath: newbro)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try client.probe() }
@@ -242,6 +260,7 @@ final class AppModel: ObservableObject {
 
     private func applyExecutorProbeResult(_ result: Result<ExecutorProbe, Error>) {
         executorSettingsBusy = false
+        executorProbeInFlight = false
         switch result {
         case .success(let probe):
             executorProbe = probe
@@ -287,10 +306,19 @@ final class AppModel: ObservableObject {
         return false
     }
 
+    private func profileRequiresCodex(_ profile: Profile) -> Bool {
+        profile.enabledExecutors.contains("codex")
+    }
+
     func setUpCodex(for profile: Profile?) {
         guard !codexSetupBusy, let newbro = locator.resolveNewbro() else { return }
         let profileID = profile?.id
+        codexSetupRequestID += 1
+        let setupRequestID = codexSetupRequestID
         executorProbeRequestID += 1
+        let setupProbeRequestID = executorProbeRequestID
+        if let profileID { pendingStartProfileIDs.insert(profileID) }
+        executorProbeInFlight = true
         codexSetupBusy = true
         codexSetupLog = "Preparing Codex setup...\n"
         executorSettingsBusy = true
@@ -302,7 +330,8 @@ final class AppModel: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.executorProbeRequestID += 1
+                guard setupRequestID == self.codexSetupRequestID else { return }
+                let canApplySetupState = setupProbeRequestID == self.executorProbeRequestID
                 self.codexSetupBusy = false
                 switch result {
                 case .success(let (output, probeResult)):
@@ -310,21 +339,24 @@ final class AppModel: ObservableObject {
                     if !output.hasSuffix("\n") {
                         self.codexSetupLog += "\n"
                     }
-                    self.executorSettingsError = nil
-                    self.executorSettingsCanUpdateCLI = false
                     self.refreshRuntime()
-                    self.applyExecutorProbeResult(probeResult)
+                    if canApplySetupState {
+                        self.applyExecutorProbeResult(probeResult)
+                    }
                     if let profileID,
                        let profile = self.profiles.first(where: { $0.id == profileID }) {
                         self.continueStartIfReady(profile)
                     }
                     self.continuePendingStarts()
                 case .failure(let error):
-                    self.executorSettingsBusy = false
-                    self.executorSettingsError = error.localizedDescription
                     self.codexSetupLog += error.localizedDescription + "\n"
                     let isRuntimeTooOld = self.isRuntimeTooOld(error)
-                    self.executorSettingsCanUpdateCLI = isRuntimeTooOld
+                    if canApplySetupState {
+                        self.executorSettingsBusy = false
+                        self.executorProbeInFlight = false
+                        self.executorSettingsError = error.localizedDescription
+                        self.executorSettingsCanUpdateCLI = isRuntimeTooOld
+                    }
                     if let profileID {
                         self.pendingStartProfileIDs.remove(profileID)
                         self.profileDiagnoses[profileID] = ProfileStartDiagnosis(
@@ -344,7 +376,15 @@ final class AppModel: ObservableObject {
         guard !executorSettingsBusy else { return }
         let activeIDs = self.activeProfileIDs()
         executorSettingsBusy = true
-        for id in activeIDs { stop(profileID: id) }
+        controlQueue.async { [supervisor] in
+            for id in activeIDs { supervisor.stop(id) }
+            Task { @MainActor [weak self] in
+                self?.runCLIUpdateInstallerAfterStops(activeIDs: activeIDs)
+            }
+        }
+    }
+
+    private func runCLIUpdateInstallerAfterStops(activeIDs: [String]) {
         runInstaller { [weak self] code in
             guard let self else { return }
             if code == 0 {
