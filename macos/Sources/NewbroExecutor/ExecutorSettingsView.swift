@@ -117,7 +117,6 @@ private struct CodexSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            let installedCLIVersion = model.installedCLIVersion()
             let diagnosed = firstDiagnosedProfile
 
             HStack {
@@ -139,7 +138,7 @@ private struct CodexSettingsPane: View {
                     title: "Newbro CLI",
                     detail: newbroRuntimeMenuTitle(
                         path: model.runtimeAvailable ? "newbro" : nil,
-                        version: installedCLIVersion
+                        version: model.cachedCLIVersion
                     )
                 )
                 SettingsInfoRow(title: "Codex", detail: model.codexStatus.menuTitle)
@@ -163,10 +162,14 @@ private struct CodexSettingsPane: View {
                 }
 
                 if model.codexSetupBusy || !model.codexSetupLog.isEmpty {
-                    Text(model.codexSetupLog.isEmpty ? "Codex setup is running…" : model.codexSetupLog)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                    ScrollView {
+                        Text(model.codexSetupLog.isEmpty ? "Codex setup is running…" : model.codexSetupLog)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 72)
                 }
             }
             .padding(10)
@@ -231,8 +234,8 @@ private struct CodexSettingsPane: View {
             Button("Set Up Codex…") { model.setUpCodex(for: profile) }
                 .disabled(model.executorSettingsBusy || model.codexSetupBusy)
         case .openCodexSettings:
-            Button("Choose Codex Binary") {}
-                .disabled(true)
+            Text("Choose a Codex binary below.")
+                .foregroundStyle(.secondary)
         case .rerunDiagnosis:
             Button("Run Diagnosis") { model.diagnoseStart(for: profile) }
                 .disabled(model.executorSettingsBusy || model.codexSetupBusy)
@@ -241,8 +244,8 @@ private struct CodexSettingsPane: View {
         case .viewLog:
             Button("View Log…") { model.viewLog(profile.id) }
         case .signInCodex:
-            Button("Open Codex Settings…") {}
-                .disabled(true)
+            Button("Run Diagnosis") { model.diagnoseStart(for: profile) }
+                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
         case .none:
             EmptyView()
         }

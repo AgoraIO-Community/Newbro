@@ -20,6 +20,7 @@ final class AppModel: ObservableObject {
     @Published var executorSettingsBusy: Bool = false
     @Published var executorSettingsCanUpdateCLI: Bool = false
     @Published var profileDiagnoses: [String: ProfileStartDiagnosis] = [:]
+    @Published var cachedCLIVersion: String?
     @Published var codexSetupLog: String = ""
     @Published var codexSetupBusy: Bool = false
     @Published var selectedSettingsPane: SettingsPane = .updates
@@ -41,6 +42,7 @@ final class AppModel: ObservableObject {
     private var executorProbeRequestID: Int = 0
     private var executorProbeInFlight: Bool = false
     private var codexSetupRequestID: Int = 0
+    private var cliVersionRequestID: Int = 0
     private let windows = WindowManager()
     // Blocking node lifecycle calls (stop/restart busy-wait up to 5s) run here
     // so they never freeze the main actor / menu.
@@ -80,6 +82,7 @@ final class AppModel: ObservableObject {
         self.profiles = store.load()
         self.runtimeAvailable = locator.isRuntimeAvailable
         self.codexStatus = locator.codexRuntimeStatus()
+        refreshCachedCLIVersion()
         // Forward supervisor status changes so SwiftUI re-renders the menu/icon.
         supervisor.objectWillChange
             .receive(on: RunLoop.main)
@@ -93,6 +96,7 @@ final class AppModel: ObservableObject {
     func refreshRuntime() {
         runtimeAvailable = locator.isRuntimeAvailable
         refreshCodexStatus()
+        refreshCachedCLIVersion()
     }
 
     @discardableResult
@@ -135,8 +139,28 @@ final class AppModel: ObservableObject {
     /// The installed CLI version, read by running `newbro --version` (e.g. "0.1.2").
     func installedCLIVersion() -> String? {
         guard let newbro = locator.resolveNewbro() else { return nil }
+        return Self.readInstalledCLIVersion(newbroPath: newbro)
+    }
+
+    private func refreshCachedCLIVersion() {
+        cliVersionRequestID += 1
+        let requestID = cliVersionRequestID
+        guard let newbro = locator.resolveNewbro() else {
+            cachedCLIVersion = nil
+            return
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let version = Self.readInstalledCLIVersion(newbroPath: newbro)
+            DispatchQueue.main.async {
+                guard let self, requestID == self.cliVersionRequestID else { return }
+                self.cachedCLIVersion = version
+            }
+        }
+    }
+
+    nonisolated private static func readInstalledCLIVersion(newbroPath: String) -> String? {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: newbro)
+        process.executableURL = URL(fileURLWithPath: newbroPath)
         process.arguments = ["--version"]
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -257,6 +281,7 @@ final class AppModel: ObservableObject {
     }
 
     func refreshExecutorProbe(after completion: (() -> Void)? = nil) {
+        refreshCachedCLIVersion()
         executorProbeRequestID += 1
         let requestID = executorProbeRequestID
         guard let newbro = locator.resolveNewbro() else {
