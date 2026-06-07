@@ -244,8 +244,8 @@ private struct CodexSettingsPane: View {
         case .viewLog:
             Button("View Log…") { model.viewLog(profile.id) }
         case .signInCodex:
-            Button("Run Diagnosis") { model.rerunDiagnosis(for: profile) }
-                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+            Text("Sign in to Codex from the Codex app or CLI, then refresh.")
+                .foregroundStyle(.secondary)
         case .none:
             EmptyView()
         }

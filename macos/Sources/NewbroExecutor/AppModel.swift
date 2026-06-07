@@ -352,6 +352,7 @@ final class AppModel: ObservableObject {
     }
 
     func refreshExecutorProbeAndStoredDiagnoses() {
+        refreshCodexStatus()
         refreshExecutorProbe { [weak self] in
             self?.refreshStoredProfileDiagnoses()
         }
