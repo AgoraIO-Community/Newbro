@@ -208,7 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         case .rerunDiagnosis:
             return ActionMenuItem(title: "Run Diagnosis") { [weak self] in
-                self?.model.diagnoseStart(for: profile)
+                self?.model.rerunDiagnosis(for: profile)
             }
         case .openProfileSettings:
             return ActionMenuItem(title: "Edit…") { [weak self] in

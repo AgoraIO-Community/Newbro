@@ -273,29 +273,45 @@ final class AppModel: ObservableObject {
         return diagnosis
     }
 
+    func rerunDiagnosis(for profile: Profile) {
+        profileDiagnoses[profile.id] = ProfileStartDiagnosis(
+            status: .checking,
+            reason: .ready,
+            title: "Checking Codex setup",
+            primaryAction: .none
+        )
+        refreshExecutorProbe { [weak self] in
+            self?.refreshStoredDiagnosis(for: profile)
+        }
+    }
+
+    private func refreshStoredDiagnosis(for profile: Profile) {
+        let newbro = locator.resolveNewbro()
+        let diagnosis = diagnoseProfileStart(
+            profile,
+            newbroPath: newbro,
+            cliVersion: newbro == nil ? nil : cachedCLIVersion,
+            probe: newbro == nil ? nil : executorProbe,
+            probeError: newbro == nil ? nil : executorSettingsError
+        )
+        switch diagnosis.status {
+        case .ready:
+            profileDiagnoses.removeValue(forKey: profile.id)
+        case .blocked, .checking:
+            profileDiagnoses[profile.id] = diagnosis
+        }
+    }
+
     private func refreshStoredProfileDiagnoses() {
         let diagnosedIDs = Array(profileDiagnoses.keys)
         guard !diagnosedIDs.isEmpty else { return }
 
-        let newbro = locator.resolveNewbro()
         for profileID in diagnosedIDs {
             guard let profile = profiles.first(where: { $0.id == profileID }) else {
                 profileDiagnoses.removeValue(forKey: profileID)
                 continue
             }
-            let diagnosis = diagnoseProfileStart(
-                profile,
-                newbroPath: newbro,
-                cliVersion: newbro == nil ? nil : cachedCLIVersion,
-                probe: newbro == nil ? nil : executorProbe,
-                probeError: newbro == nil ? nil : executorSettingsError
-            )
-            switch diagnosis.status {
-            case .ready:
-                profileDiagnoses.removeValue(forKey: profileID)
-            case .blocked, .checking:
-                profileDiagnoses[profileID] = diagnosis
-            }
+            refreshStoredDiagnosis(for: profile)
         }
     }
 

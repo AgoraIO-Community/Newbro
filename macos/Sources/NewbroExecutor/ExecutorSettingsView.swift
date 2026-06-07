@@ -237,14 +237,14 @@ private struct CodexSettingsPane: View {
             Text("Choose a Codex binary below.")
                 .foregroundStyle(.secondary)
         case .rerunDiagnosis:
-            Button("Run Diagnosis") { model.diagnoseStart(for: profile) }
+            Button("Run Diagnosis") { model.rerunDiagnosis(for: profile) }
                 .disabled(model.executorSettingsBusy || model.codexSetupBusy)
         case .openProfileSettings:
             Button("Edit Profile…") { model.editProfile(profile.id) }
         case .viewLog:
             Button("View Log…") { model.viewLog(profile.id) }
         case .signInCodex:
-            Button("Run Diagnosis") { model.diagnoseStart(for: profile) }
+            Button("Run Diagnosis") { model.rerunDiagnosis(for: profile) }
                 .disabled(model.executorSettingsBusy || model.codexSetupBusy)
         case .none:
             EmptyView()
