@@ -403,6 +403,102 @@ function ThrTextComposer({ value, onChange, onSend, disabled }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// Skills (mobile) — packaged capabilities the bro can run a turn with.
+// Picked from the composer chip, or by typing "/" in the input. On
+// mobile the picker is a bottom sheet, not a popover (thumb-reachable,
+// full-width rows). A chosen skill rides along with the next message.
+// ─────────────────────────────────────────────────────────────
+const THR_SKILLS = [
+  {
+    id: "deep-research", name: "Deep research", desc: "Multi-source dig with cited findings",
+    hint: "what should I get to the bottom of?",
+    icon: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg>,
+  },
+  {
+    id: "flight-search", name: "Flight search", desc: "Compare fares across airlines",
+    hint: "route + dates, e.g. SFO → JFK Fri",
+    icon: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V18l-2 1.5V21l3.5-1 3.5 1v-1.5L13 18v-4.5z"/></svg>,
+  },
+  {
+    id: "stays", name: "Find stays", desc: "Rank hotels near a point",
+    hint: "where, and what matters most?",
+    icon: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21V8l9-5 9 5v13M3 21h18M9 21v-6h6v6"/></svg>,
+  },
+  {
+    id: "itinerary", name: "Build itinerary", desc: "Day-by-day plan you can edit",
+    hint: "trip length + the vibe you want",
+    icon: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>,
+  },
+  {
+    id: "price-watch", name: "Price watch", desc: "Track and ping on drops",
+    hint: "what to watch, and your ceiling",
+    icon: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17l5-5 4 4 8-9M16 7h4v4"/></svg>,
+  },
+  {
+    id: "summarize", name: "Summarize", desc: "Condense a thread or document",
+    hint: "paste or point me at the source",
+    icon: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 11h16M4 16h10"/></svg>,
+  },
+];
+
+// Bottom-sheet skill picker. Mounts always (for slide animation); the
+// `open` class drives the transform. Query filters the list live when
+// the user is typing "/…" in the composer.
+function ThrSkillSheet({ open, query = "", selected, broName = "Atlas", onChoose, onClose }) {
+  const q = (query || "").trim().toLowerCase();
+  const list = q ? THR_SKILLS.filter((s) => (s.name + " " + s.desc).toLowerCase().includes(q)) : THR_SKILLS;
+  return (
+    <React.Fragment>
+      <div className={`thr-skill-backdrop${open ? " thr-skill-backdrop-open" : ""}`} onClick={onClose} aria-hidden="true" />
+      <div className={`thr-skill-sheet${open ? " thr-skill-sheet-open" : ""}`} role="dialog" aria-label="Run with a skill" aria-hidden={!open}>
+        <div className="thr-skill-grip" aria-hidden="true" />
+        <header className="thr-skill-head">
+          <div className="thr-skill-head-text">
+            <div className="thr-skill-title">Run with a skill</div>
+            <div className="thr-skill-sub">
+              {query ? <React.Fragment>filtering <span className="thr-skill-q">/{query}</span></React.Fragment>
+                     : <React.Fragment>shapes how {broName} works this turn</React.Fragment>}
+            </div>
+          </div>
+          <button type="button" className="thr-skill-close" onClick={onClose} aria-label="Close">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </header>
+        {list.length === 0 ? (
+          <div className="thr-skill-empty">No skill matches “{query}”.<br />Just send and {broName} figures it out.</div>
+        ) : (
+          <ul className="thr-skill-list">
+            {list.map((s) => {
+              const on = selected && selected.id === s.id;
+              return (
+                <li key={s.id}>
+                  <button type="button" className={`thr-skill-opt${on ? " thr-skill-opt-on" : ""}`} onClick={() => onChoose(s)} aria-pressed={!!on}>
+                    <span className="thr-skill-opt-ic" aria-hidden="true">{s.icon}</span>
+                    <span className="thr-skill-opt-body">
+                      <span className="thr-skill-opt-name">{s.name}</span>
+                      <span className="thr-skill-opt-desc">{s.desc}</span>
+                    </span>
+                    {on ? (
+                      <span className="thr-skill-opt-check" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12.5L10 18L20 6"/></svg>
+                      </span>
+                    ) : (
+                      <span className="thr-skill-opt-go" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </React.Fragment>
+  );
+}
+
 // ═════════════════════════════════════════════════════════════
 // HOME — bros list / workspace overview. Lives alongside the chat
 // thread; tapping a bro would navigate INTO a thread in a real app.
@@ -1330,6 +1426,25 @@ function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {
   // composer through it would leak state between artboards.
   const [localText, setLocalText] = React.useState("");
 
+  // Skill picker — a packaged capability to run this turn with. Opens
+  // from the toolbar chip, or inline the instant the input starts with "/".
+  const [skill, setSkill] = React.useState(null);
+  const [skillSheet, setSkillSheet] = React.useState(false);
+  const [skillQuery, setSkillQuery] = React.useState("");
+  const chooseSkill = (s) => {
+    setSkill(s);
+    setSkillSheet(false);
+    setSkillQuery("");
+    if (localText.startsWith("/")) setLocalText("");
+  };
+  const clearSkill = () => setSkill(null);
+  // "/" at the start of the input opens the sheet and filters by the rest.
+  const onComposerInput = (val) => {
+    setLocalText(val);
+    if (val.startsWith("/")) { setSkillSheet(true); setSkillQuery(val.slice(1)); }
+    else if (skillSheet) { setSkillSheet(false); setSkillQuery(""); }
+  };
+
   const handleSend = (raw) => {
     const text = (raw || "").trim();
     if (!text) return;
@@ -1672,6 +1787,44 @@ function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {
                 <span className="thr-planchip-label">Plan mode</span>
               </button>
             )}
+            {inputMode !== "free" && (
+              skill ? (
+                <span className="thr-skillpill">
+                  <button
+                    type="button"
+                    className="thr-skillpill-body"
+                    onClick={() => setSkillSheet(true)}
+                    aria-label={`Skill: ${skill.name} — tap to change`}
+                  >
+                    <span className="thr-skillpill-ic" aria-hidden="true">{skill.icon}</span>
+                    <span className="thr-skillpill-name">{skill.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="thr-skillpill-x"
+                    onClick={clearSkill}
+                    aria-label={`Remove ${skill.name} skill`}
+                  >
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={`thr-skillchip${skillSheet ? " thr-skillchip-on" : ""}`}
+                  onClick={() => setSkillSheet(true)}
+                  aria-label="Run with a skill"
+                  title="Run this turn with a skill"
+                >
+                  <span className="thr-skillchip-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 3l1.9 4.7L19 9l-4.1 2.3L13 16l-1-4.5L7 9l4.1-1.3z"/>
+                    </svg>
+                  </span>
+                  <span className="thr-skillchip-label">Skill</span>
+                </button>
+              )
+            )}
           </div>
           {/* free-mode sub-toggle (only visible in free mode) */}
           {inputMode === "free" && (
@@ -1705,12 +1858,25 @@ function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {
                       type="text"
                       className={`thr-ptt-input-field${planMode ? " thr-ptt-input-field-plan" : ""}`}
                       placeholder={
-                        planMode ? "Describe the task — Atlas will plan first…"
-                        : "Message Atlas — or hold the mic to talk"
+                        skill ? `${skill.name} — ${skill.hint}`
+                        : planMode ? "Describe the task — Atlas will plan first…"
+                        : "Message Atlas — “/” for a skill, or hold the mic"
                       }
                       value={localText}
-                      onChange={(e) => setLocalText(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter" && localText.trim()) { e.preventDefault(); handleSend(localText); } }}
+                      onChange={(e) => onComposerInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (skillSheet) {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            const qq = skillQuery.trim().toLowerCase();
+                            const m = qq ? THR_SKILLS.filter((s) => (s.name + " " + s.desc).toLowerCase().includes(qq)) : THR_SKILLS;
+                            if (m[0]) chooseSkill(m[0]);
+                            return;
+                          }
+                          if (e.key === "Escape") { e.preventDefault(); setSkillSheet(false); if (localText.startsWith("/")) setLocalText(""); return; }
+                        }
+                        if (e.key === "Enter" && localText.trim()) { e.preventDefault(); handleSend(localText); }
+                      }}
                     />
                   </div>
                 )}
@@ -1768,6 +1934,15 @@ function ThreadsVariant({ initialPlanMode = false, initialProposal = false } = {
             )}
           </div>
         </footer>
+
+        <ThrSkillSheet
+          open={skillSheet}
+          query={skillQuery}
+          selected={skill}
+          broName={M_BRO.name}
+          onChoose={chooseSkill}
+          onClose={() => { setSkillSheet(false); if (localText.startsWith("/")) setLocalText(""); }}
+        />
       </div>
     </IOSDevice>
   );
