@@ -24,6 +24,7 @@ from newbro.protocol import (
     TaskExecutionDetailEntry,
     TaskSummary,
 )
+from newbro.protocol.executor_node import ExecutorSkill
 
 
 class ConversationHistoryEntryModel(BaseModel):
@@ -60,6 +61,7 @@ class BroExecutorCapabilitySummary(BaseModel):
     availability_reason: str | None = None
     supports_thread_list: bool = False
     supports_audio_instruction: bool = False
+    skills: list[ExecutorSkill] = Field(default_factory=list)
 
 
 class BroExecutorNodeSummary(BaseModel):
