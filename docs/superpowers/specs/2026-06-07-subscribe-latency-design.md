@@ -88,8 +88,12 @@ Edge cases:
 - Unsubscribe arriving before resume completes must cancel the in-flight resume and clean
   up any partially created session/process (no leak). `_stop_codex_thread_subscription`
   cancels the background task; ensure cancellation mid-resume closes the session.
-- Resume failure: since the synchronous `ok=False` path is gone, emit an async error
-  event on the thread-event channel so the UI can mark the subscription failed.
+- Resume failure: since the synchronous `ok=False` path is gone, the node **logs a
+  warning** and the subscription degrades gracefully — the thread stays open with its
+  already-loaded history and the live stream simply does not attach. (A UI "subscription
+  failed / retry" affordance is deferred: the runtime currently ignores thread-event
+  methods outside a fixed whitelist (`bro_detail_thread_projection.py:840`), so surfacing
+  a failure to the UI needs new runtime + UI plumbing beyond this latency fix.)
 
 ### Timeout behavior (fixes "opens time out too easily")
 
@@ -130,8 +134,8 @@ bounded by Codex resume, but nothing blocks. Instrumentation tells us whether a 
 
 - **Node (pytest):** `_subscribe_codex_thread` sends the ack before `subscribe_thread`
   resolves (mock a slow `subscribe_thread`, assert ack ordering); unsubscribe during a
-  pending resume cancels cleanly with no leaked session; resume failure emits an error
-  event on the thread-event channel.
+  pending resume cancels cleanly with no leaked session; resume failure logs a warning and
+  does not crash (subscription inert, no stream).
 - **Runtime (pytest):** subscribe still returns a subscribed response; replacing a
   different thread still stops the previous subscription (fire-and-forget) — existing
   `selected_codex_thread` tests stay green.
