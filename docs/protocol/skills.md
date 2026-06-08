@@ -82,13 +82,16 @@ A real 55-skill catalog is ~40 KB raw and ~15 KB as the lean projection.
 A chosen skill rides turn metadata like `plan_mode`. The propagation chain:
 
 ```
-ExecutorTextInstructionRequest.skill            (api/routes/executor_text.py)
-  → session.submit_executor_text_instruction(skill=…)
-  → ExecutorTextInstruction.metadata["skill"]
+ExecutorTextInstructionRequest.skill_name       (api/routes/executor_text.py)
+  → session.submit_executor_text_instruction(skill_name=…)
+  → direct_executor validates against the catalog, writes the skill ref into
+    ExecutorTextInstruction.metadata["skill"] / task.metadata["skill"]
   → direct_turn_starter outbound_metadata["skill"]
   → StartCodexTurnCommand.metadata["skill"] / DispatchTextInstructionCommand
-  → CodexExecutor (three turn_start sites): run_task / handle_text_instruction /
-    start_turn_request → _turn_start_for_request
+  → CodexExecutor reads skill from metadata at three turn_start sites:
+      • run_task                → session.client.turn_start(skill=…)
+      • handle_text_instruction → session.client.turn_start(skill=…)
+      • start_turn_request      → _turn_start_for_request(skill=…) → turn_start
 ```
 
 At each `turn_start` site, the executor:
