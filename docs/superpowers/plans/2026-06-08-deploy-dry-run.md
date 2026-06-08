@@ -181,7 +181,7 @@ Expected: command exits zero.
 Run:
 
 ```bash
-python - <<'PY'
+.venv/bin/python - <<'PY'
 from pathlib import Path
 
 path = Path(".github/workflows/deploy-dry-run.yml")
@@ -362,7 +362,7 @@ Expected: no unstaged changes to `.github/workflows/deploy-dry-run.yml` after th
 Run:
 
 ```bash
-python - <<'PY'
+.venv/bin/python - <<'PY'
 from pathlib import Path
 
 workflow = Path(".github/workflows/deploy-dry-run.yml").read_text()
