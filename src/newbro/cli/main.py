@@ -254,6 +254,7 @@ def run_checked(cmd: list[str], cwd: Path) -> int:
         cwd=cwd,
         subprocess_module=subprocess,
         signal_module=signal,
+        time_module=time,
     )
 
 

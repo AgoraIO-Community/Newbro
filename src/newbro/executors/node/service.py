@@ -150,6 +150,19 @@ class ExecutorNodeService:
         self._send_lock = asyncio.Lock()
         self._reporter = reporter or ExecutorNodeLifecycleReporter()
 
+    async def aclose(self) -> None:
+        """Shut down all executors that expose an async aclose() hook."""
+        for executor in self._executors.values():
+            aclose = getattr(executor, "aclose", None)
+            if aclose is None:
+                continue
+            try:
+                await aclose()
+            except Exception:
+                # Best-effort teardown: one executor failing must not block
+                # the others or the process exit.
+                pass
+
     async def run_forever(self) -> None:
         control_url = self._ws_url()
         retry_delay_seconds = 1.0

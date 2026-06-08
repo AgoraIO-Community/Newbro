@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import signal
 from dataclasses import replace
 
 from .config import load_executor_node_config
@@ -34,6 +36,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override local Whisper model for executor-node audio transcription, for example base or small.",
     )
     return parser
+
+
+async def _serve(service: ExecutorNodeService) -> None:
+    """Run the node until cancelled, installing SIGTERM/SIGINT handlers that
+    request a graceful shutdown, and always closing executors on exit."""
+    loop = asyncio.get_running_loop()
+    task = asyncio.ensure_future(service.run_forever())
+
+    def _request_stop() -> None:
+        print("[stop] executor node interrupted")
+        task.cancel()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, _request_stop)
+
+    try:
+        await task
+    finally:
+        await service.aclose()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -69,9 +91,11 @@ def main(argv: list[str] | None = None) -> int:
         audio_config=effective_audio,
     )
     try:
-        asyncio.run(service.run_forever())
+        asyncio.run(_serve(service))
     except KeyboardInterrupt:
         print("[stop] executor node interrupted")
+        return 130
+    except asyncio.CancelledError:
         return 130
     return 0
 

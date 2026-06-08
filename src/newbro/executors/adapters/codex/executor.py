@@ -164,6 +164,13 @@ class CodexExecutor:
             return
         self._event_task = asyncio.create_task(self._dispatch_app_events(app_session))
 
+    async def aclose(self) -> None:
+        """Shut down the executor: close the app-session so the codex
+        app-server child process is terminated. Safe to call when idle
+        (`_close_app_session` is a no-op when nothing is running)."""
+        async with self._app_lock:
+            await self._close_app_session()
+
     async def _close_app_session(self) -> None:
         if self._event_task is not None:
             self._event_task.cancel()
