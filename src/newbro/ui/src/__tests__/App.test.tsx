@@ -657,6 +657,44 @@ function planProposalThreadSnapshot(
 }
 
 describe("Newbro artboard shell", () => {
+  class MockMediaRecorder {
+    static isTypeSupported = vi.fn(() => true);
+    state = "inactive";
+    mimeType = "audio/webm;codecs=opus";
+    private listeners: Record<string, Array<(event?: any) => void>> = {};
+
+    constructor(_stream: MediaStream, _options: { mimeType: string }) {}
+
+    addEventListener(type: string, listener: (event?: any) => void) {
+      this.listeners[type] = [...(this.listeners[type] ?? []), listener];
+    }
+
+    start() {
+      this.state = "recording";
+    }
+
+    stop() {
+      this.state = "inactive";
+      for (const listener of this.listeners.dataavailable ?? []) {
+        listener({ data: new Blob([new Uint8Array([0, 0, 1, 0])], { type: this.mimeType }) });
+      }
+      for (const listener of this.listeners.stop ?? []) listener();
+    }
+  }
+  class MockAudioContext {
+    async decodeAudioData(_buffer: ArrayBuffer) {
+      return {
+        duration: 0.001,
+        length: 16,
+        numberOfChannels: 1,
+        sampleRate: 16000,
+        getChannelData: () => new Float32Array(16),
+      };
+    }
+
+    async close() {}
+  }
+
   afterEach(async () => {
     cleanup();
     await act(async () => {
@@ -2096,43 +2134,6 @@ describe("Newbro artboard shell", () => {
       configurable: true,
       value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [track] })) },
     });
-    class MockMediaRecorder {
-      static isTypeSupported = vi.fn(() => true);
-      state = "inactive";
-      mimeType = "audio/webm;codecs=opus";
-      private listeners: Record<string, Array<(event?: any) => void>> = {};
-
-      constructor(_stream: MediaStream, _options: { mimeType: string }) {}
-
-      addEventListener(type: string, listener: (event?: any) => void) {
-        this.listeners[type] = [...(this.listeners[type] ?? []), listener];
-      }
-
-      start() {
-        this.state = "recording";
-      }
-
-      stop() {
-        this.state = "inactive";
-        for (const listener of this.listeners.dataavailable ?? []) {
-          listener({ data: new Blob([new Uint8Array([0, 0, 1, 0])], { type: this.mimeType }) });
-        }
-        for (const listener of this.listeners.stop ?? []) listener();
-      }
-    }
-    class MockAudioContext {
-      async decodeAudioData(_buffer: ArrayBuffer) {
-        return {
-          duration: 0.001,
-          length: 16,
-          numberOfChannels: 1,
-          sampleRate: 16000,
-          getChannelData: () => new Float32Array(16),
-        };
-      }
-
-      async close() {}
-    }
     vi.stubGlobal("MediaRecorder", MockMediaRecorder);
     vi.stubGlobal("AudioContext", MockAudioContext);
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
@@ -2174,6 +2175,210 @@ describe("Newbro artboard shell", () => {
     await waitFor(() => expect(window.location.search).toContain("thread=thread-new"));
     expect(screen.queryByText("Existing thread response.")).not.toBeInTheDocument();
     expect(document.querySelector(".nb-audio-transcript")).toHaveTextContent("fresh audio request");
+  });
+
+  function setupHoldSpaceAudioSnapshot() {
+    const initial = {
+      ...activeForgeSnapshot("session-existing"),
+      bro_timeline_turns: [
+        timelineTurn({
+          thread_id: "exec-1",
+          executor_turn_id: "history-1",
+          userText: "Existing thread request",
+          assistantText: "Existing thread response.",
+        }),
+      ],
+    };
+    const afterSubmit = {
+      ...initial,
+      bro_threads: [
+        ...(initial.bro_threads as any[]),
+        {
+          ...(initial.bro_threads[0] as any),
+          thread_id: "thread-new",
+          execution_session_id: null,
+          status: "queued",
+          title: "Fresh audio thread",
+          task_ids: ["task-new"],
+          active_task_id: "task-new",
+          latest_task_id: "task-new",
+        },
+      ],
+      bro_timeline_turns: [],
+    };
+    let audioSubmitted = false;
+    clientMock.getSessionSnapshot.mockImplementation(async (sessionId: string) => {
+      return sessionId === "session-existing" && audioSubmitted ? afterSubmit : initial;
+    });
+    clientMock.subscribeBroThread.mockResolvedValue(initial);
+    clientMock.submitExecutorAudioInstruction.mockImplementationOnce(async () => {
+      audioSubmitted = true;
+      return {
+        audio_instruction_id: "aud-new",
+        target_persona_id: "forge",
+        target_thread_id: "thread-new",
+        status: "accepted",
+        duration_ms: 1,
+        size_bytes: 32,
+        transcript_text: "fresh audio request",
+      };
+    });
+    const track = { stop: vi.fn() };
+    const getUserMedia = vi.fn(async () => ({ getTracks: () => [track] }));
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    return { getUserMedia };
+  }
+
+  it("records and sends desktop audio via hold-Space", async () => {
+    setupHoldSpaceAudioSnapshot();
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { code: "Space" });
+    await waitFor(() => expect(screen.getByTestId("voice-session-start")).toHaveClass("dt-cmp-mic-free"));
+    fireEvent.keyUp(window, { code: "Space" });
+
+    await waitFor(() => {
+      expect(clientMock.submitExecutorAudioInstruction).toHaveBeenCalledWith("session-existing", {
+        targetPersonaId: "forge",
+        targetThreadId: null,
+        createNewThread: true,
+        workspaceId: "/tmp/work",
+        pcm16: expect.any(Blob),
+        durationMs: 1,
+        sampleRate: 16000,
+        numChannels: 1,
+        samplesPerChannel: 16,
+        clientRequestId: expect.stringMatching(/^audio-/),
+      });
+    });
+  });
+
+  it("does not record when Space is pressed inside the composer input", async () => {
+    const { getUserMedia } = setupHoldSpaceAudioSnapshot();
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    const input = screen.getByLabelText("Message");
+    input.focus();
+    fireEvent.keyDown(input, { code: "Space" });
+
+    // Give any (incorrectly-triggered) async recording a chance to start.
+    await act(async () => { await Promise.resolve(); });
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(screen.getByTestId("voice-session-start")).not.toHaveClass("dt-cmp-mic-free");
+    expect(clientMock.submitExecutorAudioInstruction).not.toHaveBeenCalled();
+  });
+
+  it("ignores auto-repeat so hold-Space records once", async () => {
+    setupHoldSpaceAudioSnapshot();
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { code: "Space" });
+    await waitFor(() => expect(screen.getByTestId("voice-session-start")).toHaveClass("dt-cmp-mic-free"));
+    fireEvent.keyDown(window, { code: "Space", repeat: true });
+    fireEvent.keyUp(window, { code: "Space" });
+
+    await waitFor(() => expect(clientMock.submitExecutorAudioInstruction).toHaveBeenCalledTimes(1));
+  });
+
+  it("hold-Space is ignored in hands-free mode", async () => {
+    const { getUserMedia } = setupHoldSpaceAudioSnapshot();
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Hands-free" }));
+
+    fireEvent.keyDown(window, { code: "Space" });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(screen.getByTestId("voice-session-start")).not.toHaveClass("dt-cmp-mic-free");
+    expect(clientMock.submitExecutorAudioInstruction).not.toHaveBeenCalled();
+
+    fireEvent.keyUp(window, { code: "Space" });
+  });
+
+  it("hold-Space does not double-start when the mic button is focused", async () => {
+    const { getUserMedia } = setupHoldSpaceAudioSnapshot();
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    const button = screen.getByTestId("voice-session-start");
+    button.focus();
+    fireEvent.keyDown(button, { key: " ", code: "Space" });
+
+    await waitFor(() => expect(screen.getByTestId("voice-session-start")).toHaveClass("dt-cmp-mic-free"));
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyUp(button, { key: " ", code: "Space" });
+
+    await waitFor(() => expect(clientMock.submitExecutorAudioInstruction).toHaveBeenCalledTimes(1));
+  });
+
+  it("Escape during hold-Space cancels without sending", async () => {
+    setupHoldSpaceAudioSnapshot();
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
+
+    render(<RouterProvider router={getRouter()} />);
+
+    expect(await screen.findByText("Existing thread response.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New thread with Forge" }));
+    selectWorkWorkspaceAndConfirm();
+    expect(await screen.findByText("No messages with Forge yet")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { code: "Space" });
+    await waitFor(() => expect(screen.getByTestId("voice-session-start")).toHaveClass("dt-cmp-mic-free"));
+    fireEvent.keyDown(window, { code: "Escape" });
+    fireEvent.keyUp(window, { code: "Space" });
+
+    expect(clientMock.submitExecutorAudioInstruction).not.toHaveBeenCalled();
   });
 
   it("enables desktop typed send for a connected idle Bro", async () => {
@@ -3529,45 +3734,6 @@ describe("Newbro artboard shell", () => {
       configurable: true,
       value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [track] })) },
     });
-    class MockMediaRecorder {
-      static isTypeSupported = vi.fn(() => true);
-      state = "inactive";
-      mimeType = "audio/webm;codecs=opus";
-      private listeners: Record<string, Array<(event?: any) => void>> = {};
-
-      constructor(_stream: MediaStream, _options: { mimeType: string }) {}
-
-      addEventListener(type: string, listener: (event?: any) => void) {
-        this.listeners[type] = [...(this.listeners[type] ?? []), listener];
-      }
-
-      start() {
-        this.state = "recording";
-      }
-
-      stop() {
-        this.state = "inactive";
-        for (const listener of this.listeners.dataavailable ?? []) {
-          listener({ data: new Blob([new Uint8Array([0, 0, 1, 0])], { type: this.mimeType }) });
-        }
-        for (const listener of this.listeners.stop ?? []) {
-          listener();
-        }
-      }
-    }
-    class MockAudioContext {
-      async decodeAudioData(_buffer: ArrayBuffer) {
-        return {
-          duration: 0.001,
-          length: 16,
-          numberOfChannels: 1,
-          sampleRate: 16000,
-          getChannelData: () => new Float32Array(16),
-        };
-      }
-
-      async close() {}
-    }
     vi.stubGlobal("MediaRecorder", MockMediaRecorder);
     vi.stubGlobal("AudioContext", MockAudioContext);
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing");

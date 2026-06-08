@@ -1303,9 +1303,11 @@ function usePushToTalkAudio({
     createdAt: string;
     turnId: string;
   } | null>(null);
+  const startingRef = useRef(false);
 
   async function start() {
-    if (disabled || !sessionId || activeRef.current) return;
+    if (disabled || !sessionId || activeRef.current || startingRef.current) return;
+    startingRef.current = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -1330,6 +1332,8 @@ function usePushToTalkAudio({
       recorder.start();
     } catch (error: unknown) {
       onError(describeError(error, "Microphone could not be started."));
+    } finally {
+      startingRef.current = false;
     }
   }
 
@@ -1975,7 +1979,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
               <header className="dt-page-head">
                 <div>
                   <h1 className="dt-page-title">Home</h1>
-                  <p className="dt-page-sub">Hold space anywhere, talk to any bro, or open one to read their thread. Sessions persist as long as the node stays online.</p>
+                  <p className="dt-page-sub">Open a bro to talk or read their thread. Sessions persist as long as the node stays online.</p>
                 </div>
                 <div className="dt-page-actions">
                   <button type="button" className="dt-page-action dt-page-action-primary" onClick={() => setSheetOpen(true)}>
@@ -1999,7 +2003,7 @@ function DesktopHome({ onOpenBro }: { onOpenBro: (id: string, threadId?: string)
                 <section className="dt-home-section">
                   <div className="dt-home-section-head">
                     <span className="ob-eyebrow">STANDING BY · {standingByBros.length}</span>
-                    <span className="dt-home-section-sub">Quiet for now - hold space to wake one</span>
+                    <span className="dt-home-section-sub">Quiet for now — open one to start talking</span>
                   </div>
                   <div className="dt-bro-roster">
                     {standingByBros.map((bro) => <DesktopRosterRow key={bro.id} bro={bro} onOpen={onOpenBro} onSetup={setSetupBro} onRename={setRenameBro} />)}
@@ -3122,6 +3126,61 @@ function DesktopComposerBar({
     recorder.cancel();
   };
 
+  // Hold-Space push-to-talk: record while Space is held (when not typing), send on
+  // release. Latest handlers/state live in refs so the window listener attaches once
+  // and never runs against stale closures.
+  const spaceHeldRef = useRef(false);
+  const micDisabledRef = useRef(micDisabled);
+  const voiceModeRef = useRef(voiceMode);
+  const phaseRef = useRef(recorder.phase);
+  const startRecRef = useRef(startRec);
+  const stopRecRef = useRef(stopRec);
+  const cancelRecRef = useRef(cancelRec);
+  useEffect(() => {
+    micDisabledRef.current = micDisabled;
+    voiceModeRef.current = voiceMode;
+    phaseRef.current = recorder.phase;
+    startRecRef.current = startRec;
+    stopRecRef.current = stopRec;
+    cancelRecRef.current = cancelRec;
+  });
+  useEffect(() => {
+    function isEditableTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.code === "Escape") { spaceHeldRef.current = false; return; }
+      if (event.code !== "Space" || event.repeat) return;
+      if (isEditableTarget(event.target)) return;
+      if (voiceModeRef.current !== "ptt" || micDisabledRef.current) return;
+      if (phaseRef.current !== "idle") return;
+      event.preventDefault();
+      spaceHeldRef.current = true;
+      startRecRef.current();
+    }
+    function onKeyUp(event: KeyboardEvent) {
+      if (event.code !== "Space" || !spaceHeldRef.current) return;
+      event.preventDefault();
+      spaceHeldRef.current = false;
+      stopRecRef.current();
+    }
+    function onBlur() {
+      if (!spaceHeldRef.current) return;
+      spaceHeldRef.current = false;
+      cancelRecRef.current();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   async function submitText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = draft.trim();
@@ -3417,34 +3476,6 @@ function DesktopActivityRail({
         </button>
       </section>
     </aside>
-  );
-}
-
-function DesktopVoiceDock({
-  phase,
-  disabled,
-  onToggle,
-}: {
-  phase: ReturnType<typeof useNewbroShell>["voiceSession"]["phase"];
-  disabled: boolean;
-  onToggle: () => void;
-}) {
-  const connected = phase === "connected";
-  return (
-    <div className="nb-talk-dock">
-      <div className="nb-talk-hint"><span className="nb-talk-key">space</span><span>{connected ? "voice channel open" : "push to talk anywhere"}</span></div>
-      <button
-        type="button"
-        className={`nb-talk-btn${connected ? " nb-talk-btn-listening" : ""}`}
-        data-testid={connected ? "voice-session-stop" : "voice-session-start"}
-        aria-label={connected ? "Stop voice session" : "Start voice session"}
-        disabled={disabled || phase === "loading"}
-        onClick={onToggle}
-      >
-        <Mic size={18} aria-hidden="true" />
-        <span>{connected ? "Stop voice" : "Start voice"}</span>
-      </button>
-    </div>
   );
 }
 
