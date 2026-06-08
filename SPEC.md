@@ -219,7 +219,7 @@ Frontend checks when command/docs behavior touches frontend scripts or build
 expectations:
 
 ```bash
-cd src/newbro/ui
+cd clients/web
 bun run test
 bun run build
 ```
@@ -271,7 +271,7 @@ process lifecycle through tests rather than leaving real servers running.
 - Focused CLI/config/process tests cover the refactored modules and key edge
   cases.
 - `.venv/bin/python -m pytest` passes.
-- `bun run test` and `bun run build` pass from `src/newbro/ui` if frontend
+- `bun run test` and `bun run build` pass from `clients/web` if frontend
   scripts/build expectations are changed; otherwise the reason for skipping
   frontend checks is documented.
 

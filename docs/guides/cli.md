@@ -266,7 +266,7 @@ covered by tests.
 Frontend build check:
 
 ```bash
-cd src/newbro/ui
+cd clients/web
 npm run build
 ```
 

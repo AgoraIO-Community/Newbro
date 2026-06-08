@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${SYNAPSE_INSTALL_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
-FRONTEND_DIR="$ROOT/src/newbro/ui"
+FRONTEND_DIR="$ROOT/clients/web"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=12
 

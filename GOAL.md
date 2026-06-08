@@ -32,7 +32,7 @@ Primary implementation areas:
 - `tests/unit/cli/test_main.py`
 - `tests/unit/runtime/test_config.py`
 - `tests/unit/connectors/host/test_config_loader.py`
-- frontend package scripts in `src/newbro/ui/package.json` only if command/build expectations change
+- frontend package scripts in `clients/web/package.json` only if command/build expectations change
 
 Useful discovery commands:
 - `rg -n "def cmd_|build_parser|run_managed_processes|run_checked|doctor|status|setup|connector|executor|service|frontend|backend|start" src/newbro/cli tests/unit/cli`
@@ -89,7 +89,7 @@ Current problem shape:
 - `.venv/bin/python -m pytest tests/unit/cli/test_main.py` passes.
 - `.venv/bin/python -m pytest tests/unit/runtime/test_config.py tests/unit/connectors/host/test_config_loader.py` passes if config loading behavior changes.
 - `.venv/bin/python -m pytest` passes, or any remaining failure is shown to be unrelated with concrete evidence.
-- If frontend scripts or build expectations change, `bun run test` and `bun run build` pass from `src/newbro/ui`; otherwise the reason for skipping frontend checks is documented.
+- If frontend scripts or build expectations change, `bun run test` and `bun run build` pass from `clients/web`; otherwise the reason for skipping frontend checks is documented.
 - Final review confirms no runtime/product rewrite was mixed into the operations refactor, no hidden startup fallback was introduced, and the project is simpler to start and inspect than before.
 </done_when>
 
@@ -125,8 +125,8 @@ Broad backend check:
 - `.venv/bin/python -m pytest`
 
 Frontend checks, only if frontend scripts/build expectations change:
-- `cd src/newbro/ui && bun run test`
-- `cd src/newbro/ui && bun run build`
+- `cd clients/web && bun run test`
+- `cd clients/web && bun run build`
 
 Manual/read-only CLI checks, preferably with temporary `HOME`/config paths where tests do not already cover them:
 - `./newbro --help`

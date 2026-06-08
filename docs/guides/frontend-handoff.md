@@ -1,6 +1,6 @@
 # Frontend Handoff
 
-This document records the current handoff state for `src/newbro/ui/` after the
+This document records the current handoff state for `clients/web/` after the
 active shell was refactored toward the design prototype in `design/` while
 keeping the Newbro runtime clients wired.
 
@@ -66,15 +66,15 @@ The current root page does **not** expose:
 
 ## Important Files
 
-- `src/newbro/ui/src/App.tsx`
-- `src/newbro/ui/src/components/newbro/*`
-- `src/newbro/ui/src/__tests__/App.test.tsx`
-- `src/newbro/ui/src/routes/__root.tsx`
+- `clients/web/src/App.tsx`
+- `clients/web/src/components/newbro/*`
+- `clients/web/src/__tests__/App.test.tsx`
+- `clients/web/src/routes/__root.tsx`
 
 ## Verified Commands
 
 ```bash
-cd src/newbro/ui
+cd clients/web
 bun run test
 bun run build
 ```

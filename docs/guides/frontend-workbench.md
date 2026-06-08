@@ -1,6 +1,6 @@
 # Frontend Workbench
 
-The main frontend under `src/newbro/ui/` renders the active `Newbro` runtime
+The main frontend under `clients/web/` renders the active `Newbro` runtime
 shell at `/`.
 
 It keeps the protocol-first runtime behavior, but the active shell now follows
@@ -238,6 +238,6 @@ The visual language should stay close to the `design/` prototype:
 - Keep the transport/runtime separation intact: the left-pane interaction
   memory comes from Newbro conversation state, while the voice connector owns
   RTC/RTM/session lifecycle and browser-local microphone/media behavior.
-- Treat `src/newbro/ui/` as the only active frontend.
+- Treat `clients/web/` as the only active frontend.
 - Do not reintroduce the old chat/workbench root experience unless a later task
   explicitly broadens scope.

@@ -157,7 +157,7 @@ def test_service_command_sets_executor_control_websocket_limit():
 
 def configure_repo_paths(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(cli_main, "ROOT", root)
-    monkeypatch.setattr(cli_main, "FRONTEND", root / "src" / "newbro" / "ui")
+    monkeypatch.setattr(cli_main, "FRONTEND", root / "clients" / "web")
     monkeypatch.setattr(cli_main, "VENV_DIR", root / ".venv")
     monkeypatch.setattr(cli_main, "LEGACY_SYNAPSE_HOME_DIR", root / ".synapse")
     monkeypatch.setattr(cli_main, "NEWBRO_HOME_DIR", root / ".newbro")
@@ -235,7 +235,7 @@ def test_invite_create_writes_public_auth_store(monkeypatch, tmp_path: Path, cap
 
 def test_setup_interactive_updates_env_file(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
     (root / ".newbro" / ".env").write_text(
         "SYNAPSE_OPENAI_MODEL=gpt-4.1-mini\nEXTRA_FLAG=keep-me\n",
@@ -267,7 +267,7 @@ def test_setup_interactive_updates_env_file(monkeypatch, tmp_path: Path):
 
 def test_setup_interactive_can_configure_connector_host(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
 
     configure_repo_paths(monkeypatch, root)
@@ -313,7 +313,7 @@ def test_setup_interactive_can_configure_connector_host(monkeypatch, tmp_path: P
 
 def test_executor_setup_uses_detected_codex_command_default(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
     (root / ".newbro" / "config.yaml").write_text(
         "\n".join(
@@ -366,7 +366,7 @@ def test_executor_setup_migrates_legacy_codex_command_over_detected_default(
     tmp_path: Path,
 ):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
     (root / ".newbro" / ".env").write_text(
         "\n".join(
@@ -425,7 +425,7 @@ def test_executor_setup_migrates_legacy_codex_command_over_detected_default(
 
 def test_connector_setup_writes_connector_module_env(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
 
     configure_repo_paths(monkeypatch, root)
     monkeypatch.setattr(cli_main, "setup_can_prompt", lambda: True)
@@ -477,7 +477,7 @@ def test_connector_setup_writes_connector_module_env(monkeypatch, tmp_path: Path
 
 def test_connector_setup_decline_disables_existing_connector_config(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     configure_repo_paths(monkeypatch, root)
     monkeypatch.setattr(cli_main, "setup_can_prompt", lambda: True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
@@ -514,7 +514,7 @@ def test_connector_setup_reads_existing_legacy_empty_connectors_config_with_yaml
     tmp_path: Path,
 ):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
     (root / ".newbro" / "config.yaml").write_text(
         "\n".join(
@@ -578,7 +578,7 @@ def test_connector_setup_reads_existing_legacy_empty_connectors_config_with_yaml
 
 def test_connector_listing_and_settings_do_not_require_fastapi(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
     (root / ".newbro" / ".env").write_text(
         "\n".join(
@@ -623,7 +623,7 @@ def test_connector_listing_and_settings_do_not_require_fastapi(monkeypatch, tmp_
 
 def test_setup_non_interactive_uses_existing_and_env(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
 
     configure_repo_paths(monkeypatch, root)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
@@ -642,7 +642,7 @@ def test_setup_non_interactive_uses_existing_and_env(monkeypatch, tmp_path: Path
 
 def test_executor_setup_migrates_legacy_codex_command_to_config(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
     (root / ".newbro" / ".env").write_text(
         "\n".join(
@@ -699,7 +699,7 @@ def test_executor_setup_migrates_legacy_codex_command_to_config(monkeypatch, tmp
 
 def test_executor_setup_works_without_runtime_config(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
 
     configure_repo_paths(monkeypatch, root)
@@ -718,7 +718,7 @@ def test_executor_setup_works_without_runtime_config(monkeypatch, tmp_path: Path
 
 def test_setup_non_interactive_tolerates_malformed_existing_config(monkeypatch, tmp_path: Path, capsys):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
     (root / ".newbro" / ".env").write_text(
         "\n".join(
@@ -748,7 +748,7 @@ def test_setup_non_interactive_tolerates_malformed_existing_config(monkeypatch, 
 
 def test_setup_non_interactive_requires_openai(monkeypatch, tmp_path: Path, capsys):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
 
     configure_repo_paths(monkeypatch, root)
 
@@ -758,7 +758,7 @@ def test_setup_non_interactive_requires_openai(monkeypatch, tmp_path: Path, caps
 
 def test_setup_bootstrap_defaults_creates_env_and_connector_config(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
 
     configure_repo_paths(monkeypatch, root)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-shell-secret")
@@ -792,7 +792,7 @@ def test_setup_bootstrap_defaults_creates_env_and_connector_config(monkeypatch, 
 
 def test_setup_bootstrap_defaults_preserves_existing_files(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
     (root / ".newbro").mkdir(parents=True, exist_ok=True)
     (root / ".newbro" / ".env").write_text("OPENAI_API_KEY=existing\n", encoding="utf-8")
     (root / ".newbro" / "config.yaml").write_text("version: 1\n", encoding="utf-8")
@@ -806,7 +806,7 @@ def test_setup_bootstrap_defaults_preserves_existing_files(monkeypatch, tmp_path
 
 def test_setup_bootstrap_defaults_ignores_malformed_codex_shell_env(monkeypatch, tmp_path: Path):
     root = tmp_path
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    (root / "clients" / "web").mkdir(parents=True)
 
     configure_repo_paths(monkeypatch, root)
     monkeypatch.setenv("SYNAPSE_CODEX_EXECUTOR_ENABLED", "not-a-bool")
@@ -979,7 +979,7 @@ def test_start_runs_single_service_process(monkeypatch, tmp_path: Path):
     venv_python = tmp_path / ".venv" / "bin" / "python"
     venv_python.parent.mkdir(parents=True, exist_ok=True)
     venv_python.write_text("", encoding="utf-8")
-    dist_dir = tmp_path / "src" / "newbro" / "ui" / "dist"
+    dist_dir = tmp_path / "clients" / "web" / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
     (dist_dir / "index.html").write_text("<html>ok</html>", encoding="utf-8")
 
@@ -1035,7 +1035,7 @@ def test_start_runs_single_service_process(monkeypatch, tmp_path: Path):
 
 
 def test_start_uses_current_python_when_no_repo_venv(monkeypatch, tmp_path: Path):
-    dist_dir = tmp_path / "src" / "newbro" / "ui" / "dist"
+    dist_dir = tmp_path / "clients" / "web" / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
     (dist_dir / "index.html").write_text("<html>ok</html>", encoding="utf-8")
 
@@ -1137,8 +1137,8 @@ def test_service_install_bootstraps_runtime_and_enables_unit(monkeypatch, tmp_pa
     assert commands[0] == ([cli_main.sys.executable, "-m", "venv", str(tmp_path / ".venv")], tmp_path)
     assert commands[1] == ([str(venv_python), "-m", "pip", "install", "--upgrade", "pip"], tmp_path)
     assert commands[2] == ([str(venv_python), "-m", "pip", "install", "-e", "."], tmp_path)
-    assert commands[3] == (["bun", "install"], tmp_path / "src" / "newbro" / "ui")
-    assert commands[4] == (["bun", "run", "build"], tmp_path / "src" / "newbro" / "ui")
+    assert commands[3] == (["bun", "install"], tmp_path / "clients" / "web")
+    assert commands[4] == (["bun", "run", "build"], tmp_path / "clients" / "web")
     assert commands[5][0][0:8] == ["sudo", "install", "-o", "root", "-g", "root", "-m", "0644"]
     assert commands[5][0][-1] == str(cli_main.service_unit_path())
     assert commands[6] == (["sudo", "systemctl", "daemon-reload"], tmp_path)
@@ -1186,8 +1186,8 @@ def test_service_install_allows_root_and_uses_direct_systemctl(monkeypatch, tmp_
     assert commands[0] == ([cli_main.sys.executable, "-m", "venv", str(tmp_path / ".venv")], tmp_path)
     assert commands[1] == ([str(venv_python), "-m", "pip", "install", "--upgrade", "pip"], tmp_path)
     assert commands[2] == ([str(venv_python), "-m", "pip", "install", "-e", "."], tmp_path)
-    assert commands[3] == (["bun", "install"], tmp_path / "src" / "newbro" / "ui")
-    assert commands[4] == (["bun", "run", "build"], tmp_path / "src" / "newbro" / "ui")
+    assert commands[3] == (["bun", "install"], tmp_path / "clients" / "web")
+    assert commands[4] == (["bun", "run", "build"], tmp_path / "clients" / "web")
     assert commands[5][0][0:7] == ["install", "-o", "root", "-g", "root", "-m", "0644"]
     assert commands[5][0][-1] == str(cli_main.service_unit_path())
     assert commands[6] == (["systemctl", "daemon-reload"], tmp_path)

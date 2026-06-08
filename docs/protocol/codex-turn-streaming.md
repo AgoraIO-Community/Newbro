@@ -52,7 +52,7 @@ A direct Bro Detail turn is reconciled from two event streams that merge into on
   `apply_codex_thread_timeline_event` (phase tracking via `item/started`, commentary →
   `_keep_selected_thread_turn_live`, `final_answer` → answer), `settle_selected_thread_turn`.
 - `src/newbro/runtime/session.py` — `_record_native_turn_reasoning` (skips `final_answer`).
-- `src/newbro/ui/src/lib/splitLiveSteps.ts` + `LiveTurnBubble.tsx` — the UI split.
+- `clients/web/src/lib/splitLiveSteps.ts` + `LiveTurnBubble.tsx` — the UI split.
 
 ## Tests & fixture
 
@@ -60,7 +60,7 @@ A direct Bro Detail turn is reconciled from two event streams that merge into on
   and asserts invariants 1–3.
 - `tests/unit/runtime/test_session_runtime.py` — the `selected_codex_thread*`,
   `commentary*`, `turn_completed*`, and `_merge_timeline_turn` cases.
-- `src/newbro/ui/src/lib/splitLiveSteps.test.ts` and `LiveTurnBubble.test.tsx` — invariant 4.
+- `clients/web/src/lib/splitLiveSteps.test.ts` and `LiveTurnBubble.test.tsx` — invariant 4.
 - Fixture: `docs/protocol/fixtures/codex-multi-message-turn-sample.jsonl` (masked real wire:
   paths → `/Users/USER`, content → `<masked:N>`, persona → `persona-A`; `phase` preserved).
 

@@ -165,7 +165,7 @@ Expected: command exits 0 and the listed files refer to `clients/web`.
 
 - [ ] **Step 3: Update Docker runtime asset target**
 
-In `Dockerfile`, keep the frontend build stage at `/app/clients/web` and copy the built web assets into the runtime package location expected by the backend:
+In `Dockerfile`, keep the frontend build stage at `/app/clients/web` and copy the built web assets into the runtime client location expected by the backend:
 
 ```dockerfile
 FROM oven/bun:1.3.13-debian AS frontend
@@ -183,10 +183,10 @@ RUN bun run build
 The runtime stage should keep:
 
 ```dockerfile
-COPY --from=frontend /app/clients/web/dist ./src/newbro/ui/dist
+COPY --from=frontend /app/clients/web/dist ./clients/web/dist
 ```
 
-Rationale: the source client moves to `clients/web`, but the installed Python runtime can still serve static UI from `src/newbro/ui/dist` if existing backend code expects that package-relative output path.
+Rationale: the source client and built frontend dist both live under `clients/web`, and the local service default should serve `clients/web/dist`.
 
 - [ ] **Step 4: Run path grep for old web path**
 
@@ -198,7 +198,7 @@ rg -n "src/newbro/ui" \
   --glob '!docs/superpowers/**'
 ```
 
-Expected: no output.
+Expected: output is limited to historical `docs/memories.md` entries.
 
 - [ ] **Step 5: Run frontend checks from new path**
 
@@ -661,7 +661,7 @@ rg -n '(^|[[:space:]"'"'"'(])design/' \
   --glob '!docs/superpowers/**'
 ```
 
-Expected: no output. If a hit describes pre-migration history, move that historical note under `docs/rfcs/` or `docs/superpowers/`, or rewrite it to current paths if it is operational.
+Expected for `src/newbro/ui`: output is limited to historical `docs/memories.md` entries. For other old paths, no output. If any other hit describes pre-migration history, move that historical note under `docs/rfcs/` or `docs/superpowers/`, or rewrite it to current paths if it is operational.
 
 - [ ] **Step 2: Remove ignored local generated directories and files**
 

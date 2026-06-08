@@ -82,6 +82,8 @@ code.
 `clients` contains user-facing surfaces that talk to the Newbro runtime.
 
 - `clients/web`: React/Vite web UI, moved from `src/newbro/ui`.
+  The built frontend assets live at `clients/web/dist`; local service defaults
+  and Docker runtime copies should serve that path directly.
 - `clients/cardputer`: Cardputer firmware/client, moved from `cardputer`.
 
 Cardputer is client-side, analogous to the web UI, even though it has a
