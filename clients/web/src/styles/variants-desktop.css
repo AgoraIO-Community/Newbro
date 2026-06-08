@@ -4401,6 +4401,10 @@
 }
 .dt-cmp-skillpill-x:hover { background: rgba(255,255,255,0.26); color: #fff; }
 .dt-cmp-skillpill-open { box-shadow: 0 4px 12px -5px rgba(59,130,246,0.6), 0 0 0 3px rgba(59,130,246,0.18); }
+/* name-only label inside a read-only bubble pill */
+.dt-cmp-skillpill-name { padding: 6px 10px; font-size: 11.5px; font-weight: 600; color: #fff; }
+/* read-only skill pill on the timeline user bubble */
+.dt-bubble-skillpill { align-self: flex-end; margin-top: 6px; }
 
 /* a soft blue ring on the whole bar while a skill rides along */
 .dt-cmp-bar-skill { border-color: var(--nb-info-edge); }

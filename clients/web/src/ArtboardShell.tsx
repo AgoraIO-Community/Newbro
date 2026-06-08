@@ -27,6 +27,8 @@ import { timelineRowKey } from "./lib/timelineRowKey";
 import { timelineMessageText } from "./lib/timelineMessage";
 import { buildTurnRenderModel } from "./lib/turnRenderModel";
 import { MobileSkillSheet, SkillLeadCluster } from "./components/newbro/SkillPicker";
+import { skillFromMessageMetadata } from "./lib/skill-metadata";
+export { skillFromMessageMetadata };
 import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, ExecutorSkill, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
@@ -77,6 +79,7 @@ type ChatMessage = {
   text: string;
   id: string;
   planMode?: boolean;
+  skill?: { name: string; display_name: string } | null;
   createdAt?: string;
 };
 
@@ -979,6 +982,11 @@ function ConversationMessageBubble({ bro, message, mobile = false }: { bro: BroC
           Plan mode
         </span>
       ) : null}
+      {isUser && message.skill ? (
+        <span className="dt-cmp-skillpill dt-bubble-skillpill" aria-label={`Skill: ${message.skill.display_name}`}>
+          <span className="dt-cmp-skillpill-name">{message.skill.display_name}</span>
+        </span>
+      ) : null}
       <div className={`${prefix}-bubble ${isUser ? `${prefix}-bubble-you${message.planMode ? ` ${prefix}-bubble-plan` : ""}` : `${prefix}-bubble-bro`}`}>
         <MarkdownText>{message.text}</MarkdownText>
       </div>
@@ -1009,6 +1017,10 @@ function timelineMetadataText(turn: BroTimelineTurn, key: string): string {
 
 function timelinePlanMode(turn: BroTimelineTurn): boolean {
   return turn.metadata?.plan_mode === true || turn.user?.metadata?.plan_mode === true || turn.task?.metadata?.plan_mode === true;
+}
+
+function timelineSkill(turn: BroTimelineTurn): { name: string; display_name: string } | null {
+  return skillFromMessageMetadata(turn.metadata) ?? skillFromMessageMetadata(turn.user?.metadata);
 }
 
 function normalizePlanStatus(value: unknown): NonNullable<BroTaskRecord["plan"]>["steps"][number]["status"] {
@@ -1071,6 +1083,7 @@ function TimelineUserMessage({ bro, turn, mobile = false }: { bro: BroCardModel;
         text,
         id: message.message_id,
         planMode: timelinePlanMode(turn),
+        skill: timelineSkill(turn),
         createdAt: message.created_at ?? undefined,
       }}
       mobile={mobile}
