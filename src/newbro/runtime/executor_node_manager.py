@@ -701,7 +701,7 @@ class ExecutorNodeManager:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
             LOGGER.info(
-                "codex_thread subscribe round-trip node_id=%s thread_id=%s elapsed_ms=%d",
+                "codex_thread subscribe round-trip node_id=%s thread_id=%s elapsed_ms=%d outcome=ok",
                 node_id,
                 thread_id,
                 int((time.perf_counter() - started) * 1000),
@@ -711,6 +711,12 @@ class ExecutorNodeManager:
             raise
         except TimeoutError as exc:
             self._codex_thread_subscribe_requests.pop(request_id, None)
+            LOGGER.warning(
+                "codex_thread subscribe round-trip node_id=%s thread_id=%s elapsed_ms=%d outcome=timeout",
+                node_id,
+                thread_id,
+                int((time.perf_counter() - started) * 1000),
+            )
             raise TimeoutError("Timed out subscribing to Codex thread updates.") from exc
         except Exception:
             self._codex_thread_subscribe_requests.pop(request_id, None)

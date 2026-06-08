@@ -45,11 +45,13 @@ describe("useThreadSelection", () => {
   });
 
   it("selectWorkspace enters new-thread mode and marks the url", () => {
-    const { result } = renderHook(() => useThreadSelection<T>(defaults()));
+    const closeThread = vi.fn();
+    const { result } = renderHook(() => useThreadSelection<T>(defaults({ closeThread })));
     act(() => result.current.selectWorkspace("ws-1"));
     expect(result.current.pendingNewThread).toBe(true);
     expect(result.current.selectedThreadId).toBeNull();
     expect(threadParam()).toBe("new");
+    expect(closeThread).not.toHaveBeenCalled();
   });
 
   it("resolveThread to an id not yet in threads → activeThreadId is that id, selectedThread null (no threads[0])", () => {
