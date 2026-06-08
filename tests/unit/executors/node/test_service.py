@@ -809,9 +809,13 @@ async def test_subscribe_codex_thread_streams_events_and_unsubscribes(monkeypatc
     )
 
     await service._subscribe_codex_thread(websocket, command)
-    assert executor.subscribed == [("codex-thread-1", "/tmp/workspace")]
     assert websocket.sent[0]["type"] == "codex_thread_subscribed"
     assert websocket.sent[0]["metadata"] == {"source": "thread/resume"}
+    for _ in range(20):
+        if executor.subscribed:
+            break
+        await asyncio.sleep(0)
+    assert executor.subscribed == [("codex-thread-1", "/tmp/workspace")]
 
     await executor.client.events.put(
         {
@@ -843,3 +847,102 @@ async def test_subscribe_codex_thread_streams_events_and_unsubscribes(monkeypatc
     assert websocket.sent[-1]["type"] == "codex_thread_unsubscribed"
     assert websocket.sent[-1]["status"] == "unsubscribed"
     assert service._codex_thread_subscriptions == {}
+
+
+@pytest.mark.anyio
+async def test_subscribe_codex_thread_acks_before_resume(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+
+    resume_gate = asyncio.Event()
+
+    class SlowExecutor(FakeThreadSubscribingExecutor):
+        async def subscribe_thread(self, thread_id: str, *, workspace_id: str | None = None):
+            await resume_gate.wait()
+            return await super().subscribe_thread(thread_id, workspace_id=workspace_id)
+
+    executor = SlowExecutor()
+    service._executors["codex"] = executor
+    websocket = FakeWebSocket([])
+    command = SubscribeCodexThreadCommand(
+        request_id="req-sub-2", subscription_id="sub-2", session_id="session-1",
+        target_persona_id="forge", target_thread_id="public-thread-1",
+        thread_id="codex-thread-1", workspace_id="/tmp/workspace",
+    )
+
+    await service._subscribe_codex_thread(websocket, command)
+    assert executor.subscribed == []
+    assert websocket.sent[0]["type"] == "codex_thread_subscribed"
+
+    resume_gate.set()
+    for _ in range(20):
+        if executor.subscribed:
+            break
+        await asyncio.sleep(0)
+    assert executor.subscribed == [("codex-thread-1", "/tmp/workspace")]
+    await service._unsubscribe_codex_thread(
+        websocket,
+        UnsubscribeCodexThreadCommand(request_id="req-unsub-2", subscription_id="sub-2", thread_id="codex-thread-1"),
+    )
+
+
+@pytest.mark.anyio
+async def test_unsubscribe_during_pending_resume_cancels_cleanly(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+
+    resume_gate = asyncio.Event()
+
+    class HangingExecutor(FakeThreadSubscribingExecutor):
+        async def subscribe_thread(self, thread_id: str, *, workspace_id: str | None = None):
+            await resume_gate.wait()  # never set
+            return await super().subscribe_thread(thread_id, workspace_id=workspace_id)
+
+    executor = HangingExecutor()
+    service._executors["codex"] = executor
+    websocket = FakeWebSocket([])
+    command = SubscribeCodexThreadCommand(
+        request_id="req-sub-3", subscription_id="sub-3", session_id="session-1",
+        target_persona_id="forge", target_thread_id="public-thread-1",
+        thread_id="codex-thread-1", workspace_id=None,
+    )
+
+    await service._subscribe_codex_thread(websocket, command)
+    await service._unsubscribe_codex_thread(
+        websocket,
+        UnsubscribeCodexThreadCommand(request_id="req-unsub-3", subscription_id="sub-3", thread_id="codex-thread-1"),
+    )
+    assert service._codex_thread_subscriptions == {}
+    assert websocket.sent[-1]["type"] == "codex_thread_unsubscribed"
+    assert executor.subscribed == []
+
+
+@pytest.mark.anyio
+async def test_subscribe_codex_thread_resume_failure_is_logged(monkeypatch: pytest.MonkeyPatch, caplog):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+
+    class FailingResumeExecutor(FakeThreadSubscribingExecutor):
+        async def subscribe_thread(self, thread_id: str, *, workspace_id: str | None = None):
+            raise RuntimeError("resume boom")
+
+    service._executors["codex"] = FailingResumeExecutor()
+    websocket = FakeWebSocket([])
+    command = SubscribeCodexThreadCommand(
+        request_id="req-sub-4", subscription_id="sub-4", session_id="session-1",
+        target_persona_id="forge", target_thread_id="public-thread-1",
+        thread_id="codex-thread-1", workspace_id=None,
+    )
+
+    caplog.set_level(logging.WARNING, logger="newbro.executors.node.service")
+    await service._subscribe_codex_thread(websocket, command)
+    assert websocket.sent[0]["type"] == "codex_thread_subscribed"
+    for _ in range(20):
+        if any("resume" in r.message.lower() for r in caplog.records):
+            break
+        await asyncio.sleep(0)
+    assert any("resume boom" in r.message or "resume" in r.message.lower() for r in caplog.records)
+    assert "sub-4" not in service._codex_thread_subscriptions or service._codex_thread_subscriptions["sub-4"].session is None
