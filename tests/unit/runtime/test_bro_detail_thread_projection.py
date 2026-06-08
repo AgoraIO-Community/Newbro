@@ -999,3 +999,115 @@ async def test_resubscribe_commentary_delta_without_item_started_stays_live(monk
     turns = projection.bro_thread_executor_turns.get("codex-import-1") or []
     turn = next(t for t in turns if t.executor_turn_id == "turn-live")
     assert turn.assistant is None, "commentary delta after re-subscribe must not fill the answer slot"
+
+
+@pytest.mark.anyio
+async def test_in_flight_commentary_seeds_native_reasoning(monkeypatch: pytest.MonkeyPatch):
+    # An in-flight turn opened from codex history has no answer (commentary is kept
+    # out of the answer slot) and no live reasoning stream on a fresh page. Its
+    # commentary must be seeded as native reasoning so the bubble renders the
+    # reasoning line instead of a perpetual "connecting" shimmer.
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    persona = Persona(
+        persona_id="forge",
+        name="Forge",
+        avatar="bro",
+        base_prompt="",
+        executor_node_id="node-forge",
+        bro_detail_session_id="detail-forge",
+        status="idle",
+    )
+    await session.blackboard.put_persona(persona)
+    projection = session._bro_detail_thread_projection()
+    _register_imported_codex_thread(projection, persona)
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-live",
+                    "status": "inProgress",
+                    "items": [
+                        {"type": "agentMessage", "id": "c1", "text": "Reading the files", "phase": "commentary"},
+                        {"type": "agentMessage", "id": "c2", "text": "Now editing", "phase": "commentary"},
+                    ],
+                    "startedAt": 1780650000,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+
+    await projection.list_bro_timeline_page(
+        persona=persona,
+        public_thread_id="codex-import-1",
+        node_id="node-forge",
+    )
+
+    recent = session._recent_native_turn_reasoning()
+    key = "codex::native-thread-1::turn-live"
+    assert key in recent, f"native reasoning was not seeded; keys={list(recent)}"
+    assert [step.text for step in recent[key]] == ["Reading the files", "Now editing"]
+
+
+@pytest.mark.anyio
+async def test_completed_turn_does_not_seed_native_reasoning(monkeypatch: pytest.MonkeyPatch):
+    # Completed turns settle on their final answer and must not gain synthetic
+    # reasoning steps from history seeding.
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    persona = Persona(
+        persona_id="forge",
+        name="Forge",
+        avatar="bro",
+        base_prompt="",
+        executor_node_id="node-forge",
+        bro_detail_session_id="detail-forge",
+        status="idle",
+    )
+    await session.blackboard.put_persona(persona)
+    projection = session._bro_detail_thread_projection()
+    _register_imported_codex_thread(projection, persona)
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-done",
+                    "status": "completed",
+                    "items": [
+                        {"type": "agentMessage", "id": "c1", "text": "Working", "phase": "commentary"},
+                        {"type": "agentMessage", "id": "a1", "text": "Done", "phase": "final_answer"},
+                    ],
+                    "startedAt": 1780650000,
+                    "completedAt": 1780650010,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+
+    await projection.list_bro_timeline_page(
+        persona=persona,
+        public_thread_id="codex-import-1",
+        node_id="node-forge",
+    )
+
+    assert session._recent_native_turn_reasoning() == {}
