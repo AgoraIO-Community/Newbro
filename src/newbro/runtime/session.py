@@ -62,6 +62,7 @@ from newbro.protocol import (
     ExecutionRun,
     ExecutionSession,
     ExecutorAudioInstruction,
+    ExecutorNodeExecutor,
     ExecutorTextInstruction,
     InteractionType,
     InteractionRequest,
@@ -137,6 +138,17 @@ FALLBACK_ASSISTANT_ERROR_MESSAGE = "Sorry, something went wrong while generating
 LOGGER = logging.getLogger(__name__)
 PLAN_APPROVAL_VISIBLE_TEXT = "Implement it"
 MAX_TASK_INSTRUCTION_CHARS = 4000
+
+
+def _codex_summary_from_capability(capability: ExecutorNodeExecutor) -> BroExecutorCapabilitySummary:
+    return BroExecutorCapabilitySummary(
+        version=capability.version,
+        minimum_version=capability.minimum_version,
+        availability_reason=capability.availability_reason,
+        supports_thread_list=capability.supports_thread_list,
+        supports_audio_instruction=capability.supports_audio_instruction,
+        skills=capability.skills,
+    )
 
 
 def _task_instruction_from_draft(draft) -> str:
@@ -437,13 +449,7 @@ class SessionRuntime:
                         enabled_executors=list(node.enabled_executors),
                         last_connected_at=node.last_connected_at,
                         codex=(
-                            BroExecutorCapabilitySummary(
-                                version=codex_capability.version,
-                                minimum_version=codex_capability.minimum_version,
-                                availability_reason=codex_capability.availability_reason,
-                                supports_thread_list=codex_capability.supports_thread_list,
-                                supports_audio_instruction=codex_capability.supports_audio_instruction,
-                            )
+                            _codex_summary_from_capability(codex_capability)
                             if codex_capability is not None
                             else None
                         ),
