@@ -4445,6 +4445,8 @@
   transition: background 0.12s;
 }
 .dt-skill-opt:hover { background: var(--nb-wash); }
+.dt-skill-opt-disabled { opacity: 0.45; cursor: not-allowed; }
+.dt-skill-opt-disabled:hover { background: transparent; }
 .dt-skill-opt-ic {
   flex-shrink: 0;
   width: 34px; height: 34px;

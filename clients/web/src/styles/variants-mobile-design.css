@@ -3545,6 +3545,8 @@
   transition: background 0.14s;
 }
 .thr-skill-opt:active { background: var(--nb-wash); }
+.thr-skill-opt-disabled { opacity: 0.45; cursor: not-allowed; }
+.thr-skill-opt-disabled:active { background: transparent; }
 .thr-skill-opt-ic {
   flex-shrink: 0;
   width: 42px; height: 42px;
