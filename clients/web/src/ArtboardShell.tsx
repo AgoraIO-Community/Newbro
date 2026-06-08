@@ -26,6 +26,7 @@ import { deriveLiveTurnState } from "./lib/reasoningPhase";
 import { splitLiveSteps } from "./lib/splitLiveSteps";
 import { LiveTurnBubble } from "./LiveTurnBubble";
 import { timelineRowKey } from "./lib/timelineRowKey";
+import { timelineMessageText } from "./lib/timelineMessage";
 import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
@@ -1000,10 +1001,6 @@ function timelineTaskStatus(status: string): BroTaskRecord["status"] {
   return "completed";
 }
 
-function timelineMessageText(message: BroTimelineMessage | null): string {
-  if (!message) return "";
-  return (message.kind === "audio" ? message.transcript : message.text)?.trim() ?? "";
-}
 
 function timelineMetadataText(turn: BroTimelineTurn, key: string): string {
   const value = turn.metadata?.[key];
