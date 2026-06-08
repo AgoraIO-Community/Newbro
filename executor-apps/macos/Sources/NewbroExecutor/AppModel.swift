@@ -671,9 +671,15 @@ final class AppModel: ObservableObject {
     }
 
     func quit() {
-        // Stop every node before exiting so no orphaned subprocess survives.
-        supervisor.stopAll()
-        NSApplication.shared.terminate(nil)
+        // Stop every node off the main thread so the menu-bar UI never freezes,
+        // then terminate. A deadline guarantees we exit even if a stop lags.
+        DispatchQueue.global().async { [supervisor] in
+            supervisor.stopAll()
+            DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            NSApplication.shared.terminate(nil)
+        }
     }
 
     func toggleAutoActivate(_ profile: Profile) {
