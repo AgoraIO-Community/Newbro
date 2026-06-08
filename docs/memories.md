@@ -331,3 +331,7 @@ Short log of important design decisions and changes for Newbro.
 ## 2026-06-06
 
 - Added macOS executor app profile-start diagnosis: Start/Restart now checks Newbro CLI and Codex readiness before launching, keeps blocked profiles stopped with a visible repair action, and routes Codex repair through the CLI-owned `newbro executor install-codex` flow.
+
+## 2026-06-08
+
+- Moved first-party clients to `clients/`, the macOS executor supervisor to `executor-apps/macos`, and design prototypes to `prototypes/design`, while keeping the Python runtime, executor CLI, executor node, and adapters under `src/newbro`.
