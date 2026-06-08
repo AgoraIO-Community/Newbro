@@ -338,4 +338,17 @@ Remaining to confirm during implementation:
 - Multiple skills per turn (one skill rides one turn).
 - Voice-mode skill selection (composer chip is text/PTT composer first; voice
   parity is a follow-up).
+
+## Known follow-ups (deferred during implementation)
+
+- **Inline `/` filter trigger.** The picker filters via the `query` prop, but the
+  composer does not yet feed a slash-query into it; the picker opens via the chip
+  click. The `/` affordance was removed from the chip/popover to avoid implying
+  unwired behavior. Wiring `/` requires giving the composer external control of
+  the picker's open + query state.
+- **Surfacing `skill_dropped` in the UI.** The vanished-skill contract records an
+  observable `skill_dropped` marker on instruction/task metadata and correctly
+  never renders a skill pill for a dropped turn (so the UI never implies the skill
+  ran). A positive "ran without skill X" notice is not yet rendered — the marker
+  is written but not yet read by a timeline projection / web component.
 ```
