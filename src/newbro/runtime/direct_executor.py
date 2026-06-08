@@ -328,8 +328,13 @@ class DirectExecutorInteraction:
                 task.metadata["skill"] = skill_ref
             else:
                 task.metadata.pop("skill", None)
+            # Keep the observable drop marker per-turn: a valid skill must clear a
+            # stale marker from a previous turn on the same active task, so the UI
+            # never shows "ran without skill X" for a turn that did use a skill.
             if skill_dropped:
                 task.metadata["skill_dropped"] = skill_dropped
+            else:
+                task.metadata.pop("skill_dropped", None)
             await self.blackboard.put_task(task)
 
         dispatch_started_at = time.perf_counter()
