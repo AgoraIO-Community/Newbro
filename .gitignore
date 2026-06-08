@@ -27,15 +27,3 @@ clients/web/*.tsbuildinfo
 clients/web/*.d.ts
 clients/web/vite.config.js
 src/synapse/
-example-ui/node_modules/
-example-ui/.vite/
-example-ui/dist/
-example-ui/*.tsbuildinfo
-example-ui/*.d.ts
-example-ui/vite.config.js
-examples/agora_conversational_ai/frontend/.vite/
-examples/agora_conversational_ai/frontend/node_modules/
-examples/agora_conversational_ai/frontend/dist/
-examples/agora_conversational_ai/frontend/*.tsbuildinfo
-examples/agora_conversational_ai/frontend/*.d.ts
-examples/agora_conversational_ai/frontend/vite.config.js
