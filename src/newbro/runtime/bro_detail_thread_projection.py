@@ -636,6 +636,7 @@ class BroDetailThreadProjection:
             return
         if page.goal:
             self.bro_thread_goals[public_thread_id] = page.goal
+        self._seed_live_item_phases_from_codex_turns(public_thread_id, page.turns)
         for turn in _timeline_turns_from_codex_thread(
             thread={"id": page.thread_id, "goal": page.goal, "turns": list(reversed(page.turns))},
             public_thread_id=public_thread_id,
@@ -682,6 +683,7 @@ class BroDetailThreadProjection:
         )
         if page.goal:
             self.bro_thread_goals[public_thread_id] = page.goal
+        self._seed_live_item_phases_from_codex_turns(public_thread_id, page.turns)
         turns = list(
             _timeline_turns_from_codex_thread(
                 thread={"id": page.thread_id, "goal": page.goal, "turns": list(reversed(page.turns))},
@@ -1425,6 +1427,34 @@ class BroDetailThreadProjection:
         if changed:
             self.bro_thread_executor_turns[public_thread_id] = updated
         return changed
+
+    def _seed_live_item_phases_from_codex_turns(self, public_thread_id: str, raw_turns: object) -> None:
+        # Re-subscribing to a thread mid-turn (e.g. after a page refresh) misses the
+        # phase-bearing item/started for the in-flight item: the codex node resumes
+        # with phase-less item/agentMessage/delta events. Seed the phase map from the
+        # freshly fetched thread history (which carries each item's phase) so those
+        # deltas are still classified as commentary vs final answer instead of
+        # defaulting into the answer slot.
+        if not isinstance(raw_turns, list):
+            return
+        for turn in raw_turns:
+            if not isinstance(turn, dict):
+                continue
+            turn_id = turn.get("id")
+            if not isinstance(turn_id, str) or not turn_id:
+                continue
+            items = turn.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") not in {"assistantMessage", "agentMessage"}:
+                    continue
+                item_id = item.get("id")
+                phase = item.get("phase")
+                if isinstance(item_id, str) and item_id and isinstance(phase, str) and phase:
+                    self.bro_thread_live_item_phase[(public_thread_id, turn_id, item_id)] = phase
 
     def upsert_bro_thread_executor_turn(self, turn: BroTimelineTurn) -> None:
         turns = list(self.bro_thread_executor_turns.get(turn.thread_id, []))
