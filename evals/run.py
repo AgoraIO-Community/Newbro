@@ -11,13 +11,13 @@ for path in (ROOT, SRC):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from synapse.runtime import load_settings
+from newbro.runtime import load_settings
 
 from evals.communication.runner import format_results, run_communication_eval
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run Synapse behavior-quality evals.")
+    parser = argparse.ArgumentParser(description="Run Newbro behavior-quality evals.")
     parser.add_argument(
         "suite",
         choices=["communication"],

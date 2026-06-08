@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from synapse.protocol import Task, TaskStatus, TaskSummary
+from newbro.protocol import Task, TaskStatus, TaskSummary
 
 
 @dataclass(slots=True)
