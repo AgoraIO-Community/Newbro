@@ -375,6 +375,7 @@ class CodexExecutor:
                 turn = await session.client.turn_start(
                     thread_id=thread_id,
                     prompt=prompt,
+                    skill=_skill_from_metadata(task.metadata),
                     **collaboration_kwargs,
                 )
                 turn_id = _get_nested(turn, "turn", "id")
@@ -434,6 +435,7 @@ class CodexExecutor:
                     f"{text}\n\n"
                     "Act on this instruction in the existing execution thread."
                 ),
+                skill=_skill_from_metadata(instruction.metadata),
                 **collaboration_kwargs,
             )
             turn_id = _get_nested(turn, "turn", "id")
@@ -490,11 +492,15 @@ class CodexExecutor:
                     command.metadata.get("plan_mode") is True
                     or command.instruction.metadata.get("plan_mode") is True
                 )
+                skill = _skill_from_metadata(command.metadata) or _skill_from_metadata(
+                    command.instruction.metadata
+                )
                 turn = await _turn_start_for_request(
                     session,
                     thread_id=thread_id,
                     prompt=text,
                     plan_mode=plan_mode,
+                    skill=skill,
                 )
                 turn_id = _get_nested(turn, "turn", "id")
                 if not isinstance(turn_id, str):
@@ -930,18 +936,30 @@ def _thread_id_from_resume_handle(handle: AgentResumeHandle | None) -> str | Non
     return handle.session_handle if isinstance(handle.session_handle, str) and handle.session_handle else None
 
 
+def _skill_from_metadata(metadata: dict[str, object]) -> dict[str, object] | None:
+    skill = metadata.get("skill")
+    if not isinstance(skill, dict):
+        return None
+    name = skill.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    return skill
+
+
 async def _turn_start_for_request(
     session: CodexExecutorSession,
     *,
     thread_id: str,
     prompt: str,
     plan_mode: bool,
+    skill: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if plan_mode:
         collaboration_kwargs = await _collaboration_kwargs_for_turn(session, plan_mode=True)
         return await session.client.turn_start(
             thread_id=thread_id,
             prompt=prompt,
+            skill=skill,
             **collaboration_kwargs,
         )
 
@@ -949,6 +967,7 @@ async def _turn_start_for_request(
     return await session.client.turn_start(
         thread_id=thread_id,
         prompt=prompt,
+        skill=skill,
         collaboration_mode="default",
         model=model,
         reasoning_effort=(
