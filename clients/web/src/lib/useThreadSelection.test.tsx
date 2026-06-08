@@ -45,11 +45,13 @@ describe("useThreadSelection", () => {
   });
 
   it("selectWorkspace enters new-thread mode and marks the url", () => {
-    const { result } = renderHook(() => useThreadSelection<T>(defaults()));
+    const closeThread = vi.fn();
+    const { result } = renderHook(() => useThreadSelection<T>(defaults({ closeThread })));
     act(() => result.current.selectWorkspace("ws-1"));
     expect(result.current.pendingNewThread).toBe(true);
     expect(result.current.selectedThreadId).toBeNull();
     expect(threadParam()).toBe("new");
+    expect(closeThread).not.toHaveBeenCalled();
   });
 
   it("resolveThread to an id not yet in threads → activeThreadId is that id, selectedThread null (no threads[0])", () => {
@@ -79,14 +81,15 @@ describe("useThreadSelection", () => {
     expect(threadParam()).toBe("b");
   });
 
-  it("selectThread closes the previously active runtime thread before switching", () => {
+  it("selectThread does not close the previous thread on switch (POST replaces server-side)", () => {
     const closeThread = vi.fn();
     const threads: T[] = [{ threadId: "a" }, { threadId: "b" }];
     setUrl("thread=a");
     const { result } = renderHook(() => useThreadSelection<T>(defaults({ threads, closeThread })));
+    expect(result.current.activeThreadId).toBe("a");
+    closeThread.mockClear();
     act(() => result.current.selectThread("b"));
-    expect(closeThread).toHaveBeenCalledWith("bro-1", "a");
-    expect(closeThread).toHaveBeenCalledTimes(1);
+    expect(closeThread).not.toHaveBeenCalled();
   });
 
   it("newThread with no workspaces calls onNoWorkspace and does not open the picker", () => {

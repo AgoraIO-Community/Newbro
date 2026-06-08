@@ -80,9 +80,9 @@ class LocalRunContext:
 @dataclass(slots=True)
 class CodexThreadSubscriptionContext:
     executor: Any
-    session: CodexExecutorSession
     command: SubscribeCodexThreadCommand
     background_task: asyncio.Task[None]
+    session: CodexExecutorSession | None = None
 
 
 @dataclass(slots=True)
@@ -544,30 +544,9 @@ class ExecutorNodeService:
                 ).model_dump(mode="json"),
             )
             return
-        try:
-            session = await subscribe_thread(command.thread_id, workspace_id=command.workspace_id)
-        except Exception as exc:
-            await self._send_json(
-                websocket,
-                CodexThreadSubscribedMessage(
-                    request_id=command.request_id,
-                    subscription_id=command.subscription_id,
-                    node_id=self._settings.node_id,
-                    session_id=command.session_id,
-                    target_persona_id=command.target_persona_id,
-                    target_thread_id=command.target_thread_id,
-                    thread_id=command.thread_id,
-                    ok=False,
-                    error=str(exc),
-                ).model_dump(mode="json"),
-            )
-            return
-        if command.workspace_id:
-            self._thread_workspaces[command.thread_id] = str(resolve_workspace(command.workspace_id))
-        task = asyncio.create_task(self._stream_codex_thread_events(websocket, session, command))
+        task = asyncio.create_task(self._resume_and_stream_codex_thread(websocket, executor, command))
         self._codex_thread_subscriptions[command.subscription_id] = CodexThreadSubscriptionContext(
             executor=executor,
-            session=session,
             command=command,
             background_task=task,
         )
@@ -602,6 +581,11 @@ class ExecutorNodeService:
         context = self._codex_thread_subscriptions.pop(subscription_id, None)
         if context is None:
             return "notSubscribed"
+        context.background_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await context.background_task
+        if context.session is None:
+            return "notLoaded"
         status = "unsubscribed"
         unsubscribe_thread = getattr(context.executor, "unsubscribe_thread", None)
         try:
@@ -616,10 +600,48 @@ class ExecutorNodeService:
             status = f"error:{exc}"
             with contextlib.suppress(Exception):
                 await context.session.close()
-        context.background_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await context.background_task
         return status
+
+    async def _resume_and_stream_codex_thread(
+        self,
+        websocket: Any,
+        executor: Any,
+        command: SubscribeCodexThreadCommand,
+    ) -> None:
+        subscribe_thread = getattr(executor, "subscribe_thread", None)
+        if subscribe_thread is None:
+            return
+        try:
+            started = time.perf_counter()
+            session = await subscribe_thread(command.thread_id, workspace_id=command.workspace_id)
+            LOGGER.info(
+                "codex thread resume subscription_id=%s thread_id=%s elapsed_ms=%d",
+                command.subscription_id,
+                command.thread_id,
+                int((time.perf_counter() - started) * 1000),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning(
+                "Codex thread resume failed subscription_id=%s thread_id=%s: %s",
+                command.subscription_id,
+                command.thread_id,
+                exc,
+            )
+            self._codex_thread_subscriptions.pop(command.subscription_id, None)
+            return
+        if command.workspace_id:
+            self._thread_workspaces[command.thread_id] = str(resolve_workspace(command.workspace_id))
+        context = self._codex_thread_subscriptions.get(command.subscription_id)
+        if context is None:
+            # Unsubscribed during resume; close the just-created session. Shield so a
+            # pending task cancellation can't abort the close and leak the session.
+            with contextlib.suppress(Exception):
+                await asyncio.shield(session.close())
+            return
+        context.session = session
+        await self._stream_codex_thread_events(websocket, session, command)
 
     async def _stream_codex_thread_events(
         self,

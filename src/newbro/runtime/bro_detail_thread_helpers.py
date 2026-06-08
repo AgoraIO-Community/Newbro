@@ -654,6 +654,7 @@ def _timeline_turns_from_codex_thread(
         latest_assistant_message: BroTimelineMessage | None = None
         latest_plan: dict[str, object] | None = None
         has_plan_item = False
+        has_assistant_item = False
         for item_index, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
@@ -670,6 +671,15 @@ def _timeline_turns_from_codex_thread(
             item_id = item.get("id")
             item_id_text = str(item_id) if isinstance(item_id, str) and item_id else f"item-{item_index}"
             status = item.get("status")
+            if role == "assistant":
+                has_assistant_item = True
+                if item.get("phase") == "commentary":
+                    # Commentary is intermediate working narration surfaced as a
+                    # reasoning step, never the settled answer. Keeping it out of
+                    # the answer slot stops an in-flight turn's commentary from
+                    # rendering as a frozen answer below the steps when the
+                    # timeline is reloaded (e.g. after a page refresh).
+                    continue
             message = BroTimelineMessage(
                 message_id=f"{public_thread_id}:{turn_id_text}:{role}",
                 role=role,
@@ -697,7 +707,12 @@ def _timeline_turns_from_codex_thread(
             turn_status = "failed"
         elif status_text in {"cancelled", "canceled"}:
             turn_status = "cancelled"
-        if latest_assistant_message is None and latest_user_message is not None and not has_plan_item:
+        if (
+            latest_assistant_message is None
+            and latest_user_message is not None
+            and not has_plan_item
+            and not has_assistant_item
+        ):
             append_user_only_turn()
             pending_user_message = latest_user_message
             pending_user_turn_id = turn_id_text
@@ -715,7 +730,7 @@ def _timeline_turns_from_codex_thread(
             pending_user_message = None
             pending_user_turn_id = None
             pending_user_timestamp = None
-        elif latest_assistant_message is not None:
+        elif latest_assistant_message is not None or has_assistant_item:
             append_user_only_turn()
         if has_plan_item:
             paired_user_message = _mark_timeline_message_plan_mode(paired_user_message)
