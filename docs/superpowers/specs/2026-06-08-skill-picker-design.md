@@ -24,7 +24,9 @@ data contract, and end-to-end wiring needed to make the prototype's picker real.
 - **Skill unit:** agent-native Codex skills via the app-server
   ([`skills/list`](https://developers.openai.com/codex/app-server#skills),
   `skills/changed`, skill input items).
-- **Freshness:** snapshot + `skills/changed` (Approach A). No new fetch endpoint.
+- **Freshness:** snapshot, catalog **loaded once at executor start** and carried
+  on the existing `register_node` payload; refreshed on executor reconnect. No new
+  fetch endpoint, no `skills/changed` wiring, no new protocol message in v1.
 - **Scope:** one spec, end-to-end.
 
 ## Background — what already exists
@@ -86,9 +88,11 @@ data contract, and end-to-end wiring needed to make the prototype's picker real.
 ```
 Codex app-server                Newbro executor node           Backend                          Web UI
  skills/list ──────────────►  CodexExecutor.skills_list()  ─►  ExecutorCapabilities.skills
-                              + ExecutorNodeExecutor.skills  → ExecutorNodeRecord ───────────► snapshot.executor_capabilities
- skills/changed (notif) ────►  node_capabilities message ───►  registry update + snapshot     → BroExecutorCapabilitySummary.skills
-                                                                refresh (no reconnect)            → per-bro picker catalog
+ (once, at executor start)    + cached on executor           + ExecutorNodeExecutor.skills
+                              → register_node payload ───────► ExecutorNodeRecord ───────────► snapshot.executor_capabilities
+                                                                                              → BroExecutorCapabilitySummary.skills
+                                                                                                → per-bro picker catalog
+                                (refresh = executor reconnect; no live skills/changed wiring in v1)
 
  turn/start input:
   [{type:text,"$<name> …"},    ◄── outbound_metadata["skill"] ◄── instruction {skill}        ◄── composer: chosen skill
@@ -167,24 +171,24 @@ backend or the UI snapshot:
   and multiple roots (`~/.codex/skills`, `~/.agents/skills`, plugin caches) —
   the node does not enumerate the filesystem itself; it trusts `skills/list`.
 - `CodexExecutor` maps the response into `ExecutorCapabilities.skills`, carrying
-  `enabled` through (UI greys out disabled skills — see §5). `CodexExecutor`
-  already exposes `refresh_capabilities()` (`executor.py:85`), which
-  `_descriptor` calls at descriptor-build time — `skills_list` is invoked there
-  so the catalog is populated whenever capabilities are (re)built.
-- **Freshness requires a capability-update message — the current protocol has
-  none.** Capabilities only reach the backend at `register_node`; `node_status`
-  is validated and acked but does **not** update registry state
-  (`api/ws/executors.py:81`). So `skills/changed` cannot simply "re-report".
-  This spec adds an explicit node→backend message:
-  - New `NodeCapabilitiesMessage { type:"node_capabilities", node_id,
-    executors: list[ExecutorNodeExecutor] }` sent by the node when capabilities
-    change (debounced on `skills/changed`).
-  - Backend handler in `_handle_control_message` updates the registry/connection
-    state for the node and triggers a snapshot refresh, so the new catalog flows
-    to the UI without a reconnect.
-  - (Alternative considered: have the node re-send `register_node`. Rejected —
-    `register_node` carries auth/registration semantics and re-running it for a
-    capability delta conflates two concerns.)
+  `enabled` through (UI greys out disabled skills — see §5).
+- **Load-once-at-start freshness model (no live refresh, no new protocol).**
+  Skills are loaded a single time when the executor starts up — on the first
+  capability build / app-session init — and **cached on the executor**.
+  `CodexExecutor` already exposes `refresh_capabilities()` (`executor.py:85`)
+  which `_descriptor` calls when building the registration descriptor; the cached
+  skills are included there, so the catalog rides the existing `register_node`
+  capability payload to the backend with **zero protocol additions**.
+  - **Consequence (intentional, documented):** the catalog is as fresh as the
+    last executor (re)connect. Installing or enabling a skill is picked up by
+    restarting / reconnecting that bro's computer. There is **no** `skills/changed`
+    subscription and **no** `node_capabilities` message — capabilities reaching
+    the backend only at `register_node` (`api/ws/executors.py:81` acks
+    `node_status` without updating state) is now a fit, not a gap.
+  - This is the simplest variant of the approved snapshot model: snapshot-carried
+    catalog, refreshed on reconnect rather than on a live notification. A live
+    `skills/changed` → push refresh is a documented future enhancement
+    (see Out of scope), not part of v1.
 - `acpx` / `mock` / `hosted` adapters report `skills: []` (no behavior change).
   The picker is Codex-only for now, gated on `bro.executor_node.codex` present.
 
@@ -279,15 +283,13 @@ pretends success).** Per the repo golden rules:
   is a real `skills/list` result (codex-cli 0.137.0) covering every shape variant
   (plain, interface+null icons, interface+real icons, structured `dependencies`,
   top-level `shortDescription`, grouped+errors). All adapter mapping tests replay
-  against it rather than prose-inferred shapes. Still to capture when wiring
-  freshness: a `skills/changed` notification payload.
+  against it rather than prose-inferred shapes.
 - **Adapter unit:** `skills_list` request/response mapping (against the fixture);
+  skills loaded once at start and cached (not re-fetched per capability build);
   `turn_start` builds the `{type:"skill"}` input item + `$name` marker when `path`
-  is present, and marker-only when it is not; `skills/changed` triggers the
-  `node_capabilities` message.
+  is present, and marker-only when it is not.
 - **Protocol/wire unit:** `ExecutorNodeExecutor` round-trips `skills`;
-  `_descriptor` copies skills across; `node_capabilities` message validates and
-  updates registry state (`api/ws/executors.py`).
+  `_descriptor` copies cached skills across into the `register_node` payload.
 - **Runtime unit:** skill threads through API → `submit_executor_text_instruction`
   → instruction/command metadata; `direct_turn_starter` writes
   `outbound_metadata["skill"]`; **each** of the three turn_start sites applies the
@@ -295,8 +297,8 @@ pretends success).** Per the repo golden rules:
   skill combine; **vanished-skill contract** — no metadata, no pill, notice
   present (alongside `test_session_runtime.py`).
 - **Capability/snapshot:** `executor_capabilities` surfaces `skills`;
-  `BroExecutorCapabilitySummary.skills` populated; `node_capabilities` refreshes
-  the snapshot without reconnect.
+  `BroExecutorCapabilitySummary.skills` populated from the `register_node`
+  payload.
 - **Web unit:** picker reads catalog from snapshot (not hardcoded); `/` filter;
   selection rides on `submitExecutorTextInstruction`; pill renders from timeline
   metadata; chip hidden when empty; disabled skills greyed. Target the new test
@@ -322,13 +324,15 @@ Captured to `docs/protocol/fixtures/codex-skills-list-sample.json`:
 Remaining to confirm during implementation:
 - **`cwds` for discovery** matches the cwd Codex turns actually run in for the
   bro, so the discovered catalog is the activatable one.
-- Exact **`skills/changed` notification payload** (capture into the fixture set
-  when wiring the `node_capabilities` refresh).
 
 ## Out of scope
 
+- **Live catalog refresh** via the Codex `skills/changed` notification + a
+  node→backend capability-update message. v1 loads once at executor start and
+  refreshes on reconnect; live refresh is a documented future enhancement.
 - Skill discovery for non-Codex executors (acpx/mock/hosted).
-- Per-skill icons / custom artwork.
+- Per-skill icons / custom artwork (icons exist as node-local paths; rendering
+  them needs an icon-bytes transport).
 - Editing, installing, or configuring skills from the UI
   (`skills/config/write`).
 - Multiple skills per turn (one skill rides one turn).
