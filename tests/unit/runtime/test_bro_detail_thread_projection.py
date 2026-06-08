@@ -5,9 +5,19 @@ import pytest
 
 from newbro.communication.models import ScriptedCommunicationModel
 from newbro.communication.models.scripted import ScriptedPlan
-from newbro.protocol import AgentResumeHandle, BroThread, CodexThreadListItem, ExecutorNodeExecutor, Persona
+from newbro.protocol import (
+    AgentResumeHandle,
+    BroThread,
+    CodexThreadEventMessage,
+    CodexThreadListItem,
+    ExecutorNodeExecutor,
+    Persona,
+)
 from newbro.runtime import Settings
-from newbro.runtime.bro_detail_thread_projection import BroDetailThreadProjection
+from newbro.runtime.bro_detail_thread_projection import (
+    BroDetailThreadProjection,
+    SelectedCodexThreadSubscription,
+)
 from newbro.runtime.executor_node_manager import CodexThreadListPage, CodexThreadTurnPage, NodeConnectionState
 from newbro.runtime.session import create_session_runtime
 
@@ -826,3 +836,166 @@ async def test_subscribe_failure_cleans_up_provisional_executor_subscription(
     assert subscribe_calls
     assert unsubscribe_calls == [(subscribe_calls[0], "native-thread-1")]
     assert "forge" not in projection.selected_codex_thread_subscriptions
+
+
+def _register_imported_codex_thread(projection: BroDetailThreadProjection, persona: Persona) -> None:
+    projection.imported_codex_threads["codex-import-1"] = BroThread(
+        thread_id="codex-import-1",
+        persona_id=persona.persona_id,
+        persona_name=persona.name,
+        executor_id="codex",
+        executor_node_id="node-forge",
+        title="Imported thread",
+        has_resume_handle=True,
+    )
+    projection.imported_codex_thread_resume_handles["codex-import-1"] = AgentResumeHandle(
+        executor_id="codex",
+        session_handle="native-thread-1",
+    )
+
+
+@pytest.mark.anyio
+async def test_in_flight_turn_commentary_does_not_fill_answer_slot(monkeypatch: pytest.MonkeyPatch):
+    # An in-flight codex turn that has only streamed commentary (no final_answer
+    # item yet) must NOT place that commentary text in the assistant answer slot
+    # when its history is reloaded — e.g. after a page refresh. Otherwise the
+    # commentary renders below the reasoning steps (answer region) and freezes.
+    session, persona, projection, _publish_calls = await _projection_harness()
+    _register_imported_codex_thread(projection, persona)
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-live",
+                    "status": "inProgress",
+                    "items": [
+                        {"type": "userMessage", "id": "u1", "text": "Do the thing"},
+                        {"type": "agentMessage", "id": "c1", "text": "Reading the files", "phase": "commentary"},
+                        {"type": "agentMessage", "id": "c2", "text": "Now editing", "phase": "commentary"},
+                    ],
+                    "startedAt": 1780650000,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+
+    page = await projection.list_bro_timeline_page(
+        persona=persona,
+        public_thread_id="codex-import-1",
+        node_id="node-forge",
+    )
+
+    turn = next(t for t in page.turns if t.executor_turn_id == "turn-live")
+    assert turn.status == "running"
+    assert turn.assistant is None, "commentary must not fill the answer slot for an in-flight turn"
+
+
+@pytest.mark.anyio
+async def test_final_answer_still_fills_answer_slot(monkeypatch: pytest.MonkeyPatch):
+    # Regression guard: a completed turn whose final agentMessage is phase
+    # final_answer must still settle into the assistant answer slot.
+    session, persona, projection, _publish_calls = await _projection_harness()
+    _register_imported_codex_thread(projection, persona)
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-done",
+                    "status": "completed",
+                    "items": [
+                        {"type": "userMessage", "id": "u1", "text": "Do it"},
+                        {"type": "agentMessage", "id": "c1", "text": "Working on it", "phase": "commentary"},
+                        {"type": "agentMessage", "id": "a1", "text": "Done — here is the result", "phase": "final_answer"},
+                    ],
+                    "startedAt": 1780650000,
+                    "completedAt": 1780650010,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+
+    page = await projection.list_bro_timeline_page(
+        persona=persona,
+        public_thread_id="codex-import-1",
+        node_id="node-forge",
+    )
+
+    turn = next(t for t in page.turns if t.executor_turn_id == "turn-done")
+    assert turn.status == "completed"
+    assert turn.assistant is not None
+    assert turn.assistant.text == "Done — here is the result"
+
+
+@pytest.mark.anyio
+async def test_resubscribe_commentary_delta_without_item_started_stays_live(monkeypatch: pytest.MonkeyPatch):
+    # After a refresh the thread is re-subscribed mid-turn: the codex node resumes
+    # streaming the in-flight commentary item with deltas only — the phase-bearing
+    # item/started is in the past and is not replayed. Loading the timeline first
+    # must seed the item phase so that those phase-less deltas are still recognised
+    # as commentary and never fill the answer slot.
+    session, persona, projection, _publish_calls = await _projection_harness()
+    _register_imported_codex_thread(projection, persona)
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-live",
+                    "status": "inProgress",
+                    "items": [
+                        {"type": "agentMessage", "id": "c1", "text": "Reading", "phase": "commentary"},
+                    ],
+                    "startedAt": 1780650000,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+
+    await projection.list_bro_timeline_page(
+        persona=persona,
+        public_thread_id="codex-import-1",
+        node_id="node-forge",
+    )
+
+    projection.selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="sub-1",
+        persona_id="forge",
+        public_thread_id="codex-import-1",
+        thread_continuity_key="codex-import-1",
+        node_id="node-forge",
+        codex_thread_id="native-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="native-thread-1"),
+    )
+
+    await projection.handle_codex_thread_event(
+        CodexThreadEventMessage.model_validate(
+            {
+                "subscription_id": "sub-1",
+                "node_id": "node-forge",
+                "session_id": session.session_id,
+                "target_persona_id": "forge",
+                "target_thread_id": "codex-import-1",
+                "thread_id": "native-thread-1",
+                "method": "item/agentMessage/delta",
+                "params": {"turnId": "turn-live", "itemId": "c1", "delta": " the files"},
+            }
+        )
+    )
+
+    turns = projection.bro_thread_executor_turns.get("codex-import-1") or []
+    turn = next(t for t in turns if t.executor_turn_id == "turn-live")
+    assert turn.assistant is None, "commentary delta after re-subscribe must not fill the answer slot"
