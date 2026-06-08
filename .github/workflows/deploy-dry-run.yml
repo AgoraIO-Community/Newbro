@@ -1,0 +1,120 @@
+name: Deploy Dry Run
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/deploy-dry-run.yml"
+      - ".github/workflows/deploy-vps.yml"
+      - "Dockerfile"
+      - "README.md"
+      - "clients/web/**"
+      - "src/**"
+      - "tests/**"
+      - "docs/**"
+      - "pyproject.toml"
+      - "install.sh"
+      - "newbro"
+      - "package*.json"
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - ".github/workflows/deploy-dry-run.yml"
+      - ".github/workflows/deploy-vps.yml"
+      - "Dockerfile"
+      - "README.md"
+      - "clients/web/**"
+      - "src/**"
+      - "tests/**"
+      - "docs/**"
+      - "pyproject.toml"
+      - "install.sh"
+      - "newbro"
+      - "package*.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE_NAME: newbro-dry-run:${{ github.sha }}
+      CONTAINER_NAME: newbro-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+      HOST_PORT: "18000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare CI runtime home
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/newbro-home"
+          cat > "$RUNNER_TEMP/newbro-home/.env" <<'EOF'
+          SYNAPSE_COMMUNICATION_BACKEND=scripted
+          SYNAPSE_CODEX_EXECUTOR_ENABLED=false
+          SYNAPSE_ACPX_EXECUTOR_ENABLED=false
+          SYNAPSE_PUBLIC_COOKIE_SECURE=false
+          SYNAPSE_LOG_FORMAT=plain
+          NEWBRO_SIGNUP_INVITE_CODE=dry-run
+          EOF
+          cat > "$RUNNER_TEMP/newbro-home/config.yaml" <<'EOF'
+          version: 1
+          connector_host:
+            enabled: false
+            public_base_url: http://127.0.0.1:8000
+            synapse_base_url: http://127.0.0.1:8000
+            cors_allowed_origins: []
+            enabled_connectors: []
+          connectors: {}
+          EOF
+
+      - name: Build Docker image
+        run: docker build -t "$IMAGE_NAME" .
+
+      - name: Start container
+        run: |
+          set -euxo pipefail
+          docker run \
+            --detach \
+            --name "$CONTAINER_NAME" \
+            --publish "127.0.0.1:${HOST_PORT}:8000" \
+            --volume "$RUNNER_TEMP/newbro-home:/root/.newbro" \
+            "$IMAGE_NAME"
+
+      - name: Verify API health
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl --noproxy "*" --fail --show-error --silent "http://127.0.0.1:${HOST_PORT}/api/health"; then
+              exit 0
+            fi
+            echo "health check attempt ${attempt} failed"
+            sleep 2
+          done
+          echo "container did not become healthy" >&2
+          exit 1
+
+      - name: Verify served UI
+        run: |
+          set -euo pipefail
+          curl --noproxy "*" --fail --show-error --silent "http://127.0.0.1:${HOST_PORT}/" > "$RUNNER_TEMP/newbro-root.html"
+          grep -qi "<html" "$RUNNER_TEMP/newbro-root.html"
+
+      - name: Show container diagnostics on failure
+        if: failure()
+        run: |
+          docker ps -a
+          docker inspect "$CONTAINER_NAME" || true
+          docker logs "$CONTAINER_NAME" || true
+
+      - name: Cleanup container
+        if: always()
+        run: |
+          docker rm -f "$CONTAINER_NAME" || true
