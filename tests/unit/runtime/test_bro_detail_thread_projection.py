@@ -11,6 +11,7 @@ from newbro.protocol import (
     CodexThreadEventMessage,
     CodexThreadListItem,
     ExecutorNodeExecutor,
+    NativeReasoningStep,
     Persona,
 )
 from newbro.runtime import Settings
@@ -1300,3 +1301,59 @@ async def test_list_bro_timeline_page_publishes_only_when_it_seeds_reasoning(
     )
     # No new seed -> no new publish.
     assert len(publish_calls) == 1
+
+
+@pytest.mark.anyio
+async def test_history_seeding_does_not_clobber_live_native_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # If the live native-reasoning store already holds a turn (in-session dispatch),
+    # loading history must NOT overwrite it with the (possibly staler) history items.
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    persona = Persona(
+        persona_id="forge",
+        name="Forge",
+        avatar="bro",
+        base_prompt="",
+        executor_node_id="node-forge",
+        bro_detail_session_id="detail-forge",
+        status="idle",
+    )
+    await session.blackboard.put_persona(persona)
+    projection = session._bro_detail_thread_projection()
+    _register_imported_codex_thread(projection, persona)
+
+    key = "codex::native-thread-1::turn-live"
+    session._native_turn_reasoning[key] = [
+        NativeReasoningStep(item_id="live", text="LIVE step", kind="progress", created_at="t9"),
+    ]
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-live",
+                    "status": "inProgress",
+                    "items": [
+                        {"type": "agentMessage", "id": "c1", "text": "HISTORY step", "phase": "commentary"},
+                    ],
+                    "startedAt": 1780650000,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+    await projection.list_bro_timeline_page(
+        persona=persona, public_thread_id="codex-import-1", node_id="node-forge"
+    )
+
+    assert [s.text for s in session._native_turn_reasoning[key]] == ["LIVE step"]
