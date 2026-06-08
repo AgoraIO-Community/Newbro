@@ -92,7 +92,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 30); do
-            if curl --fail --show-error --silent "http://127.0.0.1:${HOST_PORT}/api/health"; then
+            if curl --noproxy "*" --fail --show-error --silent "http://127.0.0.1:${HOST_PORT}/api/health"; then
               exit 0
             fi
             echo "health check attempt ${attempt} failed"
@@ -104,7 +104,7 @@ jobs:
       - name: Verify served UI
         run: |
           set -euo pipefail
-          curl --fail --show-error --silent "http://127.0.0.1:${HOST_PORT}/" > "$RUNNER_TEMP/newbro-root.html"
+          curl --noproxy "*" --fail --show-error --silent "http://127.0.0.1:${HOST_PORT}/" > "$RUNNER_TEMP/newbro-root.html"
           grep -qi "<html" "$RUNNER_TEMP/newbro-root.html"
 
       - name: Show container diagnostics on failure

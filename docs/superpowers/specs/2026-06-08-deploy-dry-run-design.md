@@ -61,6 +61,8 @@ The job runs on `ubuntu-latest` and:
 
 The polling URL is local to the GitHub Actions runner. It does not depend on the
 VPS or public DNS.
+Loopback `curl` checks bypass proxies explicitly so a local proxy environment
+cannot mask whether the container itself is healthy.
 
 ## Runtime Inputs
 

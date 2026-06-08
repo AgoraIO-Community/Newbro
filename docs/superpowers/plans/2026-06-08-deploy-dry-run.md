@@ -133,7 +133,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 30); do
-            if curl --fail --show-error --silent "http://127.0.0.1:${HOST_PORT}/api/health"; then
+            if curl --noproxy "*" --fail --show-error --silent "http://127.0.0.1:${HOST_PORT}/api/health"; then
               exit 0
             fi
             echo "health check attempt ${attempt} failed"
@@ -145,7 +145,7 @@ jobs:
       - name: Verify served UI
         run: |
           set -euo pipefail
-          curl --fail --show-error --silent "http://127.0.0.1:${HOST_PORT}/" > "$RUNNER_TEMP/newbro-root.html"
+          curl --noproxy "*" --fail --show-error --silent "http://127.0.0.1:${HOST_PORT}/" > "$RUNNER_TEMP/newbro-root.html"
           grep -qi "<html" "$RUNNER_TEMP/newbro-root.html"
 
       - name: Show container diagnostics on failure
@@ -194,8 +194,8 @@ required = [
     "\"README.md\"",
     "docker build -t \"$IMAGE_NAME\" .",
     "--publish \"127.0.0.1:${HOST_PORT}:8000\"",
-    "http://127.0.0.1:${HOST_PORT}/api/health",
-    "http://127.0.0.1:${HOST_PORT}/",
+    "curl --noproxy \"*\" --fail --show-error --silent \"http://127.0.0.1:${HOST_PORT}/api/health\"",
+    "curl --noproxy \"*\" --fail --show-error --silent \"http://127.0.0.1:${HOST_PORT}/\"",
     "docker logs \"$CONTAINER_NAME\" || true",
     "docker rm -f \"$CONTAINER_NAME\" || true",
 ]
@@ -308,7 +308,7 @@ Run:
 
 ```bash
 for attempt in $(seq 1 30); do
-  if curl --fail --show-error --silent http://127.0.0.1:18000/api/health; then
+  if curl --noproxy "*" --fail --show-error --silent http://127.0.0.1:18000/api/health; then
     exit 0
   fi
   echo "health check attempt ${attempt} failed"
@@ -325,7 +325,7 @@ Expected: command exits zero after printing the health response.
 Run:
 
 ```bash
-curl --fail --show-error --silent http://127.0.0.1:18000/ > /tmp/newbro-dry-run-root.html
+curl --noproxy "*" --fail --show-error --silent http://127.0.0.1:18000/ > /tmp/newbro-dry-run-root.html
 grep -qi "<html" /tmp/newbro-dry-run-root.html
 ```
 
@@ -376,6 +376,7 @@ checks = {
     "loopback container port": "--publish \"127.0.0.1:${HOST_PORT}:8000\"" in workflow,
     "api health check": "/api/health" in workflow,
     "ui root check": "newbro-root.html" in workflow and "grep -qi \"<html\"" in workflow,
+    "loopback curl proxy bypass": "curl --noproxy \"*\" --fail --show-error --silent" in workflow,
     "failure diagnostics": "docker inspect \"$CONTAINER_NAME\" || true" in workflow and "docker logs \"$CONTAINER_NAME\" || true" in workflow,
     "cleanup": "docker rm -f \"$CONTAINER_NAME\" || true" in workflow,
     "no ghcr push": "docker push" not in workflow and "GHCR_TOKEN" not in workflow,
