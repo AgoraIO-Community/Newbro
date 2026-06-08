@@ -2,14 +2,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from newbro.protocol.executor_node import ExecutorSkill
 
-class ExecutorSkill(BaseModel):
-    name: str
-    display_name: str
-    description: str = ""
-    hint: str | None = None
-    path: str
-    enabled: bool = True
+__all__ = ["ExecutorSkill", "ExecutorCapabilities"]
 
 
 class ExecutorCapabilities(BaseModel):
