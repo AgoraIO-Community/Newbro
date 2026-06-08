@@ -16,3 +16,4 @@ Use these docs when you need object-level clarity rather than broad architecture
 - [Summary and Notification](./summary-notification.md)
 - [Interaction Request and Attention](./interaction-request-and-attention.md)
 - [Interruption](./interruption.md)
+- [Codex Skill Discovery and Activation](./skills.md)
