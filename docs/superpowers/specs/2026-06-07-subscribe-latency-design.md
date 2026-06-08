@@ -5,9 +5,12 @@ Status: Approved design
 
 ## Problem
 
-Opening a bro thread feels slow (~3s), and switching threads issues a redundant
-DELETE+POST pair. The `/subscribe` POST blocks the UI longer than necessary, and the
-client serializes work that could run in parallel.
+Opening a bro thread feels slow (~3s), **and frequently times out**: switching threads
+issues a redundant DELETE+POST pair, the `/subscribe` POST blocks the UI longer than
+necessary, and the client serializes work that could run in parallel. Because the awaited
+node round-trip is capped at 2s (see below) while Codex `thread/resume` regularly takes
+longer, the POST raises `TimeoutError` → HTTP 409 ("Timed out subscribing to this
+thread.") and the thread open fails outright.
 
 ## Audit of the `/subscribe` path (POST)
 
@@ -49,9 +52,9 @@ switch.
 ## Goal
 
 Make opening/switching a thread fast for both the visible history and the live
-subscription, without blocking the UI on Codex `thread/resume`. (User priority: live
-updates fast too, accepting that a cold thread's live stream attaches ~resume-time later
-as long as nothing is blocked.)
+subscription, **and stop opens from timing out**, without blocking the UI on Codex
+`thread/resume`. (User priority: live updates fast too, accepting that a cold thread's
+live stream attaches ~resume-time later as long as nothing is blocked.)
 
 ## Approach A (chosen)
 
@@ -88,6 +91,23 @@ Edge cases:
 - Resume failure: since the synchronous `ok=False` path is gone, emit an async error
   event on the thread-event channel so the UI can mark the subscription failed.
 
+### Timeout behavior (fixes "opens time out too easily")
+
+Because the ack is now sent before resume, the awaited round-trip in
+`subscribe_codex_thread` only confirms "the node received and registered the
+subscription" — a fast operation. So:
+- The ack round-trip keeps a short timeout (the existing 2s is fine; it no longer gates
+  Codex resume), so a genuinely unreachable/dead node still fails fast rather than hanging
+  the open.
+- The background `create_session` + `thread_resume` runs under its own, more generous
+  budget (the manager's existing 8s default, or a dedicated longer bound) and never
+  surfaces as a hard open failure. If it exceeds that budget or errors, it emits the async
+  error event from the edge-cases section above; the thread stays open with its history
+  and the live subscription is marked failed/retryable.
+
+Net: opening a thread no longer returns HTTP 409 "Timed out subscribing" when Codex
+resume is slow — the open succeeds and live attaches when ready.
+
 ### 3. Client: drop the redundant switch-DELETE + parallel open
 
 - In `ui/src/lib/useThreadSelection.ts`, stop calling `closeThread` on thread switch in
@@ -115,6 +135,10 @@ bounded by Codex resume, but nothing blocks. Instrumentation tells us whether a 
 - **Runtime (pytest):** subscribe still returns a subscribed response; replacing a
   different thread still stops the previous subscription (fire-and-forget) — existing
   `selected_codex_thread` tests stay green.
+- **Timeout (pytest):** a slow `thread_resume` (longer than the ack timeout) no longer
+  raises `TimeoutError`/HTTP 409 from `subscribe_bro_thread`; the subscribe returns
+  subscribed and resume continues in the background. A genuinely unresponsive node (no
+  ack) still fails fast within the ack timeout.
 - **Client (vitest):** opening a thread loads the timeline without awaiting subscribe;
   switching threads issues no DELETE (only POST); leaving the detail issues a DELETE.
 - **Instrumentation:** timing spans/logs present on handler, round-trip, create_session,
