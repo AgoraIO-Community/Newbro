@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class ExecutorSkill(BaseModel):
+    name: str
+    display_name: str
+    description: str = ""
+    hint: str | None = None
+    path: str
+    enabled: bool = True
 
 
 class ExecutorCapabilities(BaseModel):
@@ -15,3 +24,4 @@ class ExecutorCapabilities(BaseModel):
     version: str | None = None
     minimum_version: str | None = None
     availability_reason: str | None = None
+    skills: list[ExecutorSkill] = Field(default_factory=list)
