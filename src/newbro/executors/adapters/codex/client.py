@@ -161,6 +161,18 @@ class CodexAppServerClient:
         result = await self._peer.request("collaborationMode/list", {})
         return _as_dict(result)
 
+    async def skills_list(
+        self,
+        *,
+        cwds: list[str],
+        force_reload: bool = False,
+    ) -> dict[str, object]:
+        result = await self._peer.request(
+            "skills/list",
+            {"cwds": cwds, "forceReload": force_reload},
+        )
+        return _as_dict(result)
+
     async def turn_start(
         self,
         *,
