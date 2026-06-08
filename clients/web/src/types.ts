@@ -234,12 +234,22 @@ export interface BroTimelineTurnPageResponse {
   page: CursorPageInfo;
 }
 
+export interface ExecutorSkill {
+  name: string;
+  display_name: string;
+  description: string;
+  hint: string | null;
+  path: string;
+  enabled: boolean;
+}
+
 export interface BroExecutorCapabilitySummary {
   version: string | null;
   minimum_version: string | null;
   availability_reason: string | null;
   supports_thread_list: boolean;
   supports_audio_instruction: boolean;
+  skills: ExecutorSkill[];
 }
 
 export interface BroExecutorNodeSummary {
