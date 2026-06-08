@@ -97,9 +97,7 @@ export function DesktopSkillMenu({
               filtering <span className="dt-skill-pop-q">/{query}</span>
             </>
           ) : (
-            <>
-              type <kbd className="dt-kbd">/</kbd> to filter
-            </>
+            <>choose a skill</>
           )}
         </span>
       </div>
@@ -403,7 +401,6 @@ export function SkillLeadCluster({
             {SKILL_DEFAULT_ICON}
           </span>
           <span className="dt-cmp-skillchip-label">Skill</span>
-          <kbd className="dt-kbd dt-cmp-skillchip-kbd">/</kbd>
         </button>
       )}
       {skillOpen && (

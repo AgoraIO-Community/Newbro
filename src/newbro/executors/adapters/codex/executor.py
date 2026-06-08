@@ -173,6 +173,10 @@ class CodexExecutor:
         if self._app_session is not None:
             await self._app_session.close()
             self._app_session = None
+        # Re-discover skills on the next capability build after a reconnect, so a
+        # skill installed/enabled while disconnected is picked up without a full
+        # process restart (matches docs/protocol/skills.md).
+        self._skills_loaded = False
         self._turn_event_queues.clear()
         self._turn_event_backlog.clear()
         self._thread_subscription_queues.clear()

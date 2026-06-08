@@ -259,7 +259,9 @@ def _apply_skill_marker(prompt: str, skill: dict[str, object] | None) -> str:
     if not isinstance(name, str) or not name:
         return prompt
     marker = f"${name}"
-    if prompt.startswith(marker):
+    # Only treat the marker as already-present when it stands as its own token,
+    # so a skill named "doc" does not suppress its marker on "$document …".
+    if prompt == marker or prompt.startswith(f"{marker} ") or prompt.startswith(f"{marker}\n"):
         return prompt
     return f"{marker} {prompt}"
 
