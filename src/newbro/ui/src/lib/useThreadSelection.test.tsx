@@ -82,7 +82,10 @@ describe("useThreadSelection", () => {
   it("selectThread does not close the previous thread on switch (POST replaces server-side)", () => {
     const closeThread = vi.fn();
     const threads: T[] = [{ threadId: "a" }, { threadId: "b" }];
+    setUrl("thread=a");
     const { result } = renderHook(() => useThreadSelection<T>(defaults({ threads, closeThread })));
+    expect(result.current.activeThreadId).toBe("a");
+    closeThread.mockClear();
     act(() => result.current.selectThread("b"));
     expect(closeThread).not.toHaveBeenCalled();
   });
