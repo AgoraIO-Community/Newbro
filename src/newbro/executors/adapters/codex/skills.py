@@ -16,7 +16,8 @@ def _project_skill(raw: dict[str, Any]) -> ExecutorSkill | None:
     path = _coerce_str(raw.get("path"))
     if name is None or path is None:
         return None
-    interface = raw.get("interface") if isinstance(raw.get("interface"), dict) else {}
+    interface_raw = raw.get("interface")
+    interface: dict[str, Any] = interface_raw if isinstance(interface_raw, dict) else {}
     display_name = _coerce_str(interface.get("displayName")) or name
     short = _coerce_str(interface.get("shortDescription")) or _coerce_str(raw.get("shortDescription"))
     if short is not None:
