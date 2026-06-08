@@ -513,6 +513,15 @@ def _mark_timeline_message_plan_mode(message: BroTimelineMessage | None) -> BroT
     return message.model_copy(update={"metadata": {**message.metadata, "plan_mode": True}})
 
 
+def _mark_timeline_message_skill(
+    message: BroTimelineMessage | None,
+    skill: dict[str, object] | None,
+) -> BroTimelineMessage | None:
+    if message is None or not skill:
+        return message
+    return message.model_copy(update={"metadata": {**message.metadata, "skill": skill}})
+
+
 def _codex_thread_goal(thread: dict[str, object]) -> str | None:
     for key in ("goal", "objective"):
         value = thread.get(key)
@@ -734,6 +743,10 @@ def _timeline_turns_from_codex_thread(
             append_user_only_turn()
         if has_plan_item:
             paired_user_message = _mark_timeline_message_plan_mode(paired_user_message)
+        _skill_meta = turn.get("skill")
+        paired_user_message = _mark_timeline_message_skill(
+            paired_user_message, _skill_meta if isinstance(_skill_meta, dict) else None
+        )
         metadata = {
             "source": "native_history",
             "executor_thread_id": executor_thread_id,
@@ -1250,6 +1263,10 @@ def _merge_timeline_turn(existing: BroTimelineTurn, incoming: BroTimelineTurn) -
             metadata[key] = value
     if metadata.get("plan_mode") is True:
         user = _mark_timeline_message_plan_mode(user)
+    _skill_meta = metadata.get("skill")
+    user = _mark_timeline_message_skill(
+        user, _skill_meta if isinstance(_skill_meta, dict) else None
+    )
     return existing.model_copy(
         update={
             "user": user,

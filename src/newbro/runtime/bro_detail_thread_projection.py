@@ -53,6 +53,7 @@ from .bro_detail_thread_helpers import (
     _is_ephemeral_codex_thread,
     _iso_from_epoch_seconds,
     _mark_timeline_message_plan_mode,
+    _mark_timeline_message_skill,
     _merge_timeline_turn,
     _new_bro_thread_id,
     _outbound_request_status_from_codex_event,
@@ -1128,6 +1129,11 @@ class BroDetailThreadProjection:
                     plan_turn_id=turn_id,
                     plan_timestamp=timestamp,
                 )
+                _skill_meta = (
+                    paired_user_message.metadata.get("skill")
+                    if paired_user_message is not None
+                    else None
+                )
                 self.upsert_bro_thread_executor_turn(
                     BroTimelineTurn(
                         turn_id=f"{subscription.public_thread_id}:codex:{turn_id}",
@@ -1139,7 +1145,10 @@ class BroDetailThreadProjection:
                         executor_thread_id=subscription.codex_thread_id,
                         executor_turn_id=turn_id,
                         input_modality="text" if paired_user_message is not None else "unknown",
-                        user=_mark_timeline_message_plan_mode(paired_user_message),
+                        user=_mark_timeline_message_skill(
+                            _mark_timeline_message_plan_mode(paired_user_message),
+                            _skill_meta if isinstance(_skill_meta, dict) else None,
+                        ),
                         status="running" if message.method == "item/started" else "completed",
                         created_at=paired_user_message.created_at if paired_user_message is not None else timestamp,
                         updated_at=timestamp,
