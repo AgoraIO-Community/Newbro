@@ -395,8 +395,7 @@ Expected: command exits zero.
 Run:
 
 ```bash
-git log --oneline -n 3
+git log --oneline -n 8
 ```
 
-Expected: the latest implementation commit is `ci: add deploy dry-run workflow`, and the approved design commit `docs: design deploy dry-run workflow` is still present below it.
-The plan commit `docs: plan deploy dry-run workflow` may appear between them.
+Expected: recent history includes `ci: bypass proxies in deploy dry run checks`, `docs: use project python for dry-run checks`, `ci: include README in deploy dry run paths`, `ci: add deploy dry-run workflow`, `docs: plan deploy dry-run workflow`, and `docs: design deploy dry-run workflow`.
