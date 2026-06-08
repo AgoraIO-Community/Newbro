@@ -116,10 +116,33 @@ pure-function test cannot capture, and a full RTL harness would inherit the know
 `App.test.tsx` flakiness. This is **explicitly out of scope** here and recorded on
 issue #70 as a follow-up (needs a non-flaky integration harness).
 
+## AGENTS.md alignment (codex multi-message turn contract)
+This work touches the "bubble split / answer-step routing" area governed by
+AGENTS.md Golden Rule #3. It is designed to *uphold* that contract, not change it:
+- The new UI matrix encodes invariants (2) "commentary never fills the answer slot"
+  and (4) "commentary is a prominent line collapsing into compact steps; final
+  answer is the answer" at the render seam — reinforcing, not contradicting, the
+  existing lower-level tests.
+- The extraction is behavior-preserving, so every AGENTS.md-mandated guard stays
+  green unchanged (see gate below).
+- **Owner-list update (required):** because the source-selection / answer routing
+  decision moves into `buildTurnRenderModel`, add that module to the Golden Rule #3
+  owner list in `AGENTS.md` (alongside `splitLiveSteps` + `LiveTurnBubble`) so the
+  contract doc stays accurate.
+- **No `docs/memories.md` entry:** per AGENTS.md this is a test-only +
+  behavior-preserving refactor, which is explicitly excluded from memory updates.
+
 ## Testing & verification
 - New: `turnRenderModel.test.ts` (7 cases) + 3 backend projection tests.
-- Regression gate (must stay green, unchanged): existing UI suites,
-  `npm run typecheck`/`build` in `clients/web`, and `pytest tests/unit/runtime`.
+- Regression gate — these MUST stay green **unchanged** (AGENTS.md Golden Rule #3
+  names them explicitly):
+  - `tests/unit/runtime/test_codex_multi_message_turn.py` (real-wire replay)
+  - the `commentary` / `_merge_timeline_turn` / `selected_codex_thread` tests in
+    `tests/unit/runtime/test_session_runtime.py`
+  - `clients/web/src/lib/splitLiveSteps.test.ts`, plus the existing
+    `reasoningPhase` / `LiveTurnBubble` / `adapters` suites
+  - re-verify against `docs/protocol/fixtures/codex-multi-message-turn-sample.jsonl`
+  - `clients/web` `typecheck`/`build` and `pytest tests/unit/runtime`
 - The extraction is considered correct only if the pre-existing suites pass without
   edits.
 
@@ -127,5 +150,8 @@ issue #70 as a follow-up (needs a non-flaky integration harness).
 - `buildTurnRenderModel` exists as a pure function; `TimelineTurnView` delegates to it
   with no behavior change.
 - The 7-case UI matrix and 3 backend tests pass.
-- All pre-existing thread-detail tests pass unchanged.
+- All pre-existing thread-detail tests pass unchanged (incl. the AGENTS.md-mandated
+  guard set above).
+- `AGENTS.md` Golden Rule #3 owner list updated to include `buildTurnRenderModel`.
+- No `docs/memories.md` change (test-only + behavior-preserving refactor).
 - The NewbroShell reconciliation-ordering gap is noted on #70.
