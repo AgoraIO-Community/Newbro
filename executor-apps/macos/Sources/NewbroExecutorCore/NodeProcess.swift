@@ -12,6 +12,7 @@ public final class NodeProcess: NodeProcessProtocol {
     private let onLine: (String) -> Void
     private let onExit: (Int32) -> Void
     private var process: Process?
+    private var readHandle: FileHandle?
     private let queue = DispatchQueue(label: "newbro.node-process")
     private var buffer = Data()
 
@@ -37,23 +38,29 @@ public final class NodeProcess: NodeProcessProtocol {
         proc.standardOutput = pipe
         proc.standardError = pipe
         process = proc
+        let handle = pipe.fileHandleForReading
+        readHandle = handle
         do {
             try proc.run()
         } catch {
             process = nil
+            readHandle = nil
             onExit(127)
             return
         }
         // A single serial reader owns all output consumption and the exit
-        // report. Reading to EOF, flushing, then waiting and calling onExit on
-        // the same queue guarantees every onLine is delivered strictly before
-        // onExit — no readabilityHandler/terminationHandler race.
-        let handle = pipe.fileHandleForReading
+        // report. Using POSIX read() rather than FileHandle.read(upToCount:)
+        // so that:
+        //   (a) we get data as soon as any bytes arrive (not after 65536 bytes),
+        //   (b) stop() can unblock the reader by closing the fd even when a
+        //       surviving grandchild still holds the pipe's write end.
+        let fd = handle.fileDescriptor
         queue.async { [weak self] in
+            var buf = [UInt8](repeating: 0, count: 65536)
             while true {
-                let data = handle.availableData
-                if data.isEmpty { break }  // EOF
-                self?.ingest(data)
+                let n = Darwin.read(fd, &buf, buf.count)
+                if n <= 0 { break }  // 0 = EOF, -1 = fd closed (EBADF) or error
+                self?.ingest(Data(buf[..<n]))
             }
             self?.flushPartial()
             proc.waitUntilExit()
@@ -93,11 +100,15 @@ public final class NodeProcess: NodeProcessProtocol {
                 proc.waitUntilExit()
             }
         }
-        // Block until the reader queue has drained output and delivered onExit,
-        // so callers (e.g. restart) observe a fully settled state and never race
-        // a late onExit against a fresh start.
+        // Unblock the reader even if a surviving grandchild still holds the pipe
+        // write end: closing the read handle makes Darwin.read() return -1/EBADF,
+        // so the reader loop ends and onExit fires. Idempotent via try?.
+        try? readHandle?.close()
+        // Bounded drain — never block the caller forever on the reader queue.
         if process != nil {
-            queue.sync {}
+            let drained = DispatchSemaphore(value: 0)
+            queue.async { drained.signal() }
+            _ = drained.wait(timeout: .now() + 2.0)
         }
     }
 }

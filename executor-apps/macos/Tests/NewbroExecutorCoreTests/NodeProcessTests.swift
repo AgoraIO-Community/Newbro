@@ -108,4 +108,27 @@ final class NodeProcessTests: XCTestCase {
         wait(for: [exited], timeout: 10)
         XCTAssertFalse(proc.isRunning)
     }
+
+    func testStopReturnsWhenGrandchildKeepsPipeOpen() {
+        // Regression for the quit hang: the child exits immediately but a
+        // backgrounded grandchild keeps stdout open, so the pipe never EOFs.
+        // stop() must still return promptly (reader closed) and deliver onExit.
+        let exited = expectation(description: "onExit")
+        let proc = NodeProcess(
+            argv: ["/bin/sh", "-c", "(sleep 30 &) ; printf '[start] up\\n' ; exit 0"],
+            onLine: { _ in },
+            onExit: { _ in exited.fulfill() }
+        )
+        proc.start()
+        // Give the child time to exit while the grandchild keeps the pipe open.
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let returned = expectation(description: "stop returned")
+        DispatchQueue.global().async {
+            proc.stop(timeout: 2.0)   // must NOT block forever on the wedged reader
+            returned.fulfill()
+        }
+        wait(for: [returned, exited], timeout: 5)
+        XCTAssertFalse(proc.isRunning)
+    }
 }
