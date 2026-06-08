@@ -48,6 +48,7 @@ on:
       - ".github/workflows/deploy-dry-run.yml"
       - ".github/workflows/deploy-vps.yml"
       - "Dockerfile"
+      - "README.md"
       - "clients/web/**"
       - "src/**"
       - "tests/**"
@@ -63,6 +64,7 @@ on:
       - ".github/workflows/deploy-dry-run.yml"
       - ".github/workflows/deploy-vps.yml"
       - "Dockerfile"
+      - "README.md"
       - "clients/web/**"
       - "src/**"
       - "tests/**"
@@ -189,6 +191,7 @@ required = [
     "pull_request:",
     "branches-ignore:",
     "- main",
+    "\"README.md\"",
     "docker build -t \"$IMAGE_NAME\" .",
     "--publish \"127.0.0.1:${HOST_PORT}:8000\"",
     "http://127.0.0.1:${HOST_PORT}/api/health",
@@ -368,6 +371,7 @@ checks = {
     "pull request trigger": "pull_request:" in workflow,
     "non-main push trigger": "branches-ignore:" in workflow and "- main" in workflow,
     "manual trigger": "workflow_dispatch:" in workflow,
+    "readme path filter": "\"README.md\"" in workflow,
     "docker build": "docker build -t \"$IMAGE_NAME\" ." in workflow,
     "loopback container port": "--publish \"127.0.0.1:${HOST_PORT}:8000\"" in workflow,
     "api health check": "/api/health" in workflow,

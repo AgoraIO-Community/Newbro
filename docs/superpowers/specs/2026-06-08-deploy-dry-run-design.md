@@ -33,6 +33,7 @@ Deploy-relevant paths should match the production deployment surface:
 - `.github/workflows/deploy-dry-run.yml`
 - `.github/workflows/deploy-vps.yml`
 - `Dockerfile`
+- `README.md`
 - `clients/web/**`
 - `src/**`
 - `tests/**`
