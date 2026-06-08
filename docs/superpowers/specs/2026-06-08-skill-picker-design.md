@@ -46,10 +46,16 @@ data contract, and end-to-end wiring needed to make the prototype's picker real.
     `src/newbro/runtime/bro_detail_thread_helpers.py`).
   - `CodexClient.turn_start` maps it to `collaborationMode: "plan"`
     (`src/newbro/executors/adapters/codex/client.py`).
-- **Capability reporting channel** already carries per-executor facts:
-  `ExecutorCapabilities` (`src/newbro/executors/core/capabilities.py`) →
-  node `connected_executor_capabilities` → snapshot `executor_capabilities`
-  (`src/newbro/runtime/models.py`) → `BroExecutorCapabilitySummary` per bro.
+- **Capability reporting channel** already carries per-executor facts, but
+  through **two distinct models** with a manual copy between them:
+  `ExecutorCapabilities` (`executors/core/capabilities.py`, executor-internal) is
+  hand-copied by `ExecutorNodeService._descriptor` (`executors/node/service.py:1135`)
+  into the wire model `ExecutorNodeExecutor` (`protocol/executor_node.py:10`),
+  carried in `RegisterNodeMessage.executors` → node
+  `connected_executor_capabilities` → snapshot `executor_capabilities`
+  (`runtime/models.py`) → `BroExecutorCapabilitySummary` per bro. Capabilities
+  reach the backend **only at `register_node`** — `node_status`
+  (`api/ws/executors.py:81`) is acked but does not update registry state.
 - **Codex app-server skills contract:**
   - `skills/list` params `{cwds, forceReload, perCwdExtraUserRoots}`; each skill
     has `name`, `description`, `enabled`, optional `interface.{displayName,
@@ -64,8 +70,10 @@ data contract, and end-to-end wiring needed to make the prototype's picker real.
 
 ```
 Codex app-server                Newbro executor node           Backend                          Web UI
- skills/list ──────────────►  CodexExecutor.list_skills()  ─►  ExecutorCapabilities.skills ──► snapshot.executor_capabilities
- skills/changed (notif) ────►  re-report                                                         → per-bro picker catalog
+ skills/list ──────────────►  CodexExecutor.skills_list()  ─►  ExecutorCapabilities.skills
+                              + ExecutorNodeExecutor.skills  → ExecutorNodeRecord ───────────► snapshot.executor_capabilities
+ skills/changed (notif) ────►  node_capabilities message ───►  registry update + snapshot     → BroExecutorCapabilitySummary.skills
+                                                                refresh (no reconnect)            → per-bro picker catalog
 
  turn/start input:
   [{type:text,"$<name> …"},    ◄── outbound_metadata["skill"] ◄── instruction {skill}        ◄── composer: chosen skill
@@ -79,28 +87,54 @@ New shared model `ExecutorSkill` (lean — carries **no** instruction bodies, to
 respect the snapshot-size constraint that previously bit the Cardputer client):
 
 ```
-name: str             # codex skill identifier; used for "$name" marker + skill input item
-display_name: str     # interface.displayName, falls back to name
-description: str       # interface.shortDescription or description
-path: str             # absolute SKILL.md path — required to build the turn input item
+name: str                 # codex skill identifier; used for the "$name" marker + skill input item
+display_name: str         # interface.displayName, falls back to name
+description: str          # interface.shortDescription or description
+path: str | None          # absolute SKILL.md path, IF skills/list returns it (see "Open questions").
+                          #   When present, enables full-instruction activation via a skill input item.
+                          #   When absent, the turn uses marker-only activation ($name) — see §3.
 enabled: bool
-dependencies: list[str]   # advisory: tools/MCP the skill needs
+dependencies: list[ExecutorSkillDependency]   # structured, advisory: required tools / MCP servers
 ```
 
-- Add `skills: list[ExecutorSkill] = []` to `ExecutorCapabilities`
-  (`executors/core/capabilities.py`). Rides the existing
-  `connected_executor_capabilities` → `executor_capabilities` snapshot path.
-- Add `skills: list[ExecutorSkill] = []` to `BroExecutorCapabilitySummary`
-  (`runtime/models.py`) so the per-bro picker reads
-  `bro.executor_node.codex.skills`.
-- **Turn metadata**, carried like `plan_mode`:
-  - Instruction request gains optional `skill = {name, path}` (alongside
-    `planMode`).
-  - `direct_turn_starter` writes
-    `outbound_metadata["skill"] = {name, path, display_name}`.
-  - Persisted onto `task.metadata["skill"]`, projected back into the timeline so
-    the bubble renders a **skill pill** (same plumbing pattern as
-    `_mark_timeline_message_plan_mode`).
+`ExecutorSkillDependency` is modeled as a structured object (e.g.
+`{kind, name}` or an opaque pass-through dict), **not** `list[str]` — the
+app-server reports structured dependency metadata. The exact shape is pinned by
+the captured fixture (see Testing + Open questions); until then it is carried as
+an opaque `dict[str, object]` so we neither lose data nor over-commit to a shape
+we have not observed.
+
+**The capability snapshot path crosses THREE models, not one.** "Rides the
+existing capability path" requires updating each, plus the hand-written copy
+between them — otherwise skills are discovered on the node but never reach the
+backend or the UI snapshot:
+
+1. `ExecutorCapabilities` (`executors/core/capabilities.py`) — the executor's
+   internal capability object. Add `skills: list[ExecutorSkill] = []`.
+2. `ExecutorNodeExecutor` (`protocol/executor_node.py:10`) — the **wire model**
+   carried in `RegisterNodeMessage.executors` and
+   `ExecutorNodeRecord.connected_executor_capabilities`. This is a *separate*
+   model. Add `skills: list[ExecutorSkill] = []`, and update the manual
+   field-by-field copy in `ExecutorNodeService._descriptor`
+   (`executors/node/service.py:1135`) to carry skills across. The
+   `ExecutorNodeConnectionView` copy in
+   `runtime/executor_node_manager.py:1003` is a `model_copy(deep=True)` and
+   needs no change once the field exists.
+3. `BroExecutorCapabilitySummary` (`runtime/models.py:57`) — the per-bro
+   projection the UI reads. Add `skills: list[ExecutorSkill] = []`, populated in
+   `session.py` where `codex` capability is already projected (~line 440), so the
+   picker reads `bro.executor_node.codex.skills`.
+
+**Turn metadata**, carried like `plan_mode` (which rides
+`instruction.metadata["plan_mode"]` / `command.metadata`, not a typed field):
+- Instruction request gains optional `skill = {name, path}` (alongside
+  `planMode`).
+- `direct_turn_starter` writes
+  `outbound_metadata["skill"] = {name, path, display_name}`.
+- Persisted onto `task.metadata["skill"]`, projected back into the timeline so
+  the bubble renders a **skill pill** (same plumbing pattern as
+  `_mark_timeline_message_plan_mode`), and **only after** the skill is validated
+  against the bro's current catalog (see §3 / §5).
 - Skill and plan-mode are **independent and combinable** (run a skill in plan
   mode), matching the prototype's coexisting lead-cluster chips.
 
@@ -109,26 +143,73 @@ dependencies: list[str]   # advisory: tools/MCP the skill needs
 - `CodexClient.skills_list(cwds, force_reload=False)` calls `skills/list` with the
   bro's working directory as `cwds`.
 - `CodexExecutor` maps the response into `ExecutorCapabilities.skills`, carrying
-  `enabled` through (UI greys out disabled skills — see §5).
-- Subscribe to the `skills/changed` notification → re-run `skills_list` and
-  re-report capabilities. Keeps the catalog fresh with no UI fetch.
+  `enabled` through (UI greys out disabled skills — see §5). `CodexExecutor`
+  already exposes `refresh_capabilities()` (`executor.py:85`), which
+  `_descriptor` calls at descriptor-build time — `skills_list` is invoked there
+  so the catalog is populated whenever capabilities are (re)built.
+- **Freshness requires a capability-update message — the current protocol has
+  none.** Capabilities only reach the backend at `register_node`; `node_status`
+  is validated and acked but does **not** update registry state
+  (`api/ws/executors.py:81`). So `skills/changed` cannot simply "re-report".
+  This spec adds an explicit node→backend message:
+  - New `NodeCapabilitiesMessage { type:"node_capabilities", node_id,
+    executors: list[ExecutorNodeExecutor] }` sent by the node when capabilities
+    change (debounced on `skills/changed`).
+  - Backend handler in `_handle_control_message` updates the registry/connection
+    state for the node and triggers a snapshot refresh, so the new catalog flows
+    to the UI without a reconnect.
+  - (Alternative considered: have the node re-send `register_node`. Rejected —
+    `register_node` carries auth/registration semantics and re-running it for a
+    capability delta conflates two concerns.)
 - `acpx` / `mock` / `hosted` adapters report `skills: []` (no behavior change).
   The picker is Codex-only for now, gated on `bro.executor_node.codex` present.
 
 ## Section 3 — Selection & execution (turn activation)
 
-- `CodexClient.turn_start` gains an optional `skill: {name, path}`. When present:
-  append a second input item `{type:"skill", name, path}` and prefix the prompt
-  text with the `$<name>` marker, so Codex injects full skill instructions
-  server-side.
-- Routing mirrors `plan_mode` end to end: composer →
-  `submitExecutorTextInstruction({ skill })` → `direct_turn_starter` →
-  `direct_executor` → `CodexExecutor` turn run.
-- **Vanished skill:** if the turn targets a bro whose current catalog no longer
-  contains the chosen skill (uninstalled/disabled between pick and send), the
-  runtime drops the skill, runs the plain turn, and surfaces a **non-fatal
-  notice**. Per the repo golden rules: no silent fallback that pretends the skill
-  ran.
+**Activation primitive.** `CodexClient.turn_start` gains an optional
+`skill: {name, path}`. When present:
+- If `path` is known: append a second input item `{type:"skill", name, path}`
+  **and** prefix the prompt with the `$<name>` marker, so Codex injects the full
+  skill instructions server-side (the documented behavior).
+- If `path` is unknown (`skills/list` did not return it — see Open questions):
+  **marker-only activation** — prefix the prompt with `$<name>` and send no skill
+  input item. This relies on the model resolving the skill rather than
+  server-side injection. This is an explicit, documented tradeoff, not a silent
+  degrade; the implementer must confirm which mode the real app-server requires
+  via the captured fixture.
+
+**Propagation chain (must be threaded explicitly at every hop — the API accepts
+`plan_mode` only today).** Skill rides the same metadata carriers as `plan_mode`:
+
+```
+ExecutorTextInstructionRequest.skill            (api/routes/executor_text.py:15 — NEW field)
+  → session.submit_executor_text_instruction(skill=…)   (session.py — NEW param)
+  → ExecutorTextInstruction.metadata["skill"]    (protocol/executor_node.py:257 — via metadata)
+  → direct_turn_starter outbound_metadata["skill"]
+  → StartCodexTurnCommand.metadata["skill"] / DispatchTextInstructionCommand
+  → applied at ALL THREE codex turn_start sites:
+       • CodexExecutor.run_task                 (executor.py:362  — reads task.metadata)
+       • CodexExecutor.handle_text_instruction  (executor.py:417  — reads instruction.metadata)
+       • CodexExecutor.start_turn_request        (executor.py:480 → _turn_start_for_request:920)
+```
+
+Each turn_start site already reads `*.metadata["plan_mode"]` independently; skill
+is read from the same metadata at each site and passed into the activation
+primitive. `_turn_start_for_request` / `_collaboration_kwargs_for_turn` are the
+shared helpers to extend so plan-mode + skill compose in one call.
+
+**Vanished skill — observable contract (validate before write, no fallback that
+pretends success).** Per the repo golden rules:
+1. Before a turn runs, the runtime validates the chosen skill against the bro's
+   **current** catalog (the snapshot used to render the picker).
+2. If the skill is gone (uninstalled/disabled between pick and send): the runtime
+   does **not** write `skill` into `task.metadata`, does **not** render a skill
+   pill, and runs the plain turn.
+3. It surfaces a defined, non-fatal notice on that turn (an attention/notice item
+   stating "Skill <name> is no longer available; ran without it"), so the UI
+   never implies the skill ran.
+4. Tested explicitly: metadata/pill absent + notice present on the vanished-skill
+   path (see Testing).
 
 ## Section 4 — UI (port the prototype to the real composer)
 
@@ -166,20 +247,47 @@ dependencies: list[str]   # advisory: tools/MCP the skill needs
 
 ## Section 6 — Testing
 
-- **Adapter unit:** `skills_list` request/response mapping; `turn_start` builds
-  the `{type:"skill"}` input item + `$name` marker; `skills/changed` triggers
-  re-report.
-- **Runtime unit:** `direct_turn_starter` writes `outbound_metadata["skill"]`;
-  task metadata + timeline projection render the skill pill; plan-mode + skill
-  combine; vanished-skill drop path (alongside `test_session_runtime.py`).
+- **Fixture first:** capture a real `skills/list` response (and a `skills/changed`
+  notification) from the installed Codex app-server into
+  `docs/protocol/fixtures/` (e.g. `codex-skills-list-sample.jsonl`). This pins
+  whether `path` is present and the real `dependencies` shape; all adapter
+  mapping tests replay against it rather than against prose-inferred shapes.
+- **Adapter unit:** `skills_list` request/response mapping (against the fixture);
+  `turn_start` builds the `{type:"skill"}` input item + `$name` marker when `path`
+  is present, and marker-only when it is not; `skills/changed` triggers the
+  `node_capabilities` message.
+- **Protocol/wire unit:** `ExecutorNodeExecutor` round-trips `skills`;
+  `_descriptor` copies skills across; `node_capabilities` message validates and
+  updates registry state (`api/ws/executors.py`).
+- **Runtime unit:** skill threads through API → `submit_executor_text_instruction`
+  → instruction/command metadata; `direct_turn_starter` writes
+  `outbound_metadata["skill"]`; **each** of the three turn_start sites applies the
+  skill; task metadata + timeline projection render the skill pill; plan-mode +
+  skill combine; **vanished-skill contract** — no metadata, no pill, notice
+  present (alongside `test_session_runtime.py`).
 - **Capability/snapshot:** `executor_capabilities` surfaces `skills`;
-  `BroExecutorCapabilitySummary.skills` populated.
+  `BroExecutorCapabilitySummary.skills` populated; `node_capabilities` refreshes
+  the snapshot without reconnect.
 - **Web unit:** picker reads catalog from snapshot (not hardcoded); `/` filter;
   selection rides on `submitExecutorTextInstruction`; pill renders from timeline
-  metadata; chip hidden when empty. Target the new test files, not the flaky
-  full `App.test.tsx` suite.
+  metadata; chip hidden when empty; disabled skills greyed. Target the new test
+  files, not the flaky full `App.test.tsx` suite.
 - **Docs:** add a stable doc under `docs/protocol/` (skill discovery + activation
   contract) and a one-line `docs/memories.md` note, per `AGENTS.md`.
+
+## Open questions (resolve during implementation)
+
+1. **Does the installed `skills/list` return `path`?** The public sample shows
+   `path` only in the *activation* input-item example, not the list response.
+   Resolution: capture the fixture (Testing) and pin it. `ExecutorSkill.path` is
+   optional and §3 defines marker-only activation as the fallback; the fixture
+   decides which path the implementation takes.
+2. **Real `dependencies` shape.** Modeled as structured/opaque
+   (`dict[str, object]` pass-through) until the fixture pins it; do not collapse
+   to `list[str]`.
+3. **`cwds` for discovery.** Confirm the bro's working directory used for
+   `skills/list` matches the cwd Codex turns run in, so the discovered catalog is
+   the one actually activatable for that bro.
 
 ## Out of scope
 
