@@ -946,3 +946,42 @@ async def test_subscribe_codex_thread_resume_failure_is_logged(monkeypatch: pyte
         await asyncio.sleep(0)
     assert any("resume boom" in r.message or "resume" in r.message.lower() for r in caplog.records)
     assert "sub-4" not in service._codex_thread_subscriptions or service._codex_thread_subscriptions["sub-4"].session is None
+
+
+@pytest.mark.anyio
+async def test_resume_orphan_closes_session_when_unsubscribed_during_resume(monkeypatch: pytest.MonkeyPatch):
+    stream = io.StringIO()
+    reporter = ExecutorNodeLifecycleReporter(stream=stream)
+    service = build_service(monkeypatch, reporter=reporter)
+
+    closed: list[str] = []
+
+    # CodexExecutorSession is a pydantic model that forbids reassigning `close`, so
+    # subclass it and override `close` to record the closed thread id instead.
+    class RecordingSession(CodexExecutorSession):
+        async def close(self) -> None:
+            closed.append(self.thread_id or "")
+            await super().close()
+
+    class RecordingExecutor(FakeThreadSubscribingExecutor):
+        async def subscribe_thread(self, thread_id: str, *, workspace_id: str | None = None):
+            session = RecordingSession(session_id="codex-sub-session-1", executor_type="codex")
+            session.thread_id = thread_id
+            session._client = self.client
+            return session
+
+    executor = RecordingExecutor()
+    service._executors["codex"] = executor
+    websocket = FakeWebSocket([])
+    command = SubscribeCodexThreadCommand(
+        request_id="req-orphan", subscription_id="sub-orphan", session_id="session-1",
+        target_persona_id="forge", target_thread_id="public-thread-1",
+        thread_id="codex-thread-1", workspace_id=None,
+    )
+
+    # No context is registered for "sub-orphan", so _resume_and_stream takes the
+    # orphan-close branch after resume completes.
+    await service._resume_and_stream_codex_thread(websocket, executor, command)
+
+    assert closed == ["codex-thread-1"]
+    assert "sub-orphan" not in service._codex_thread_subscriptions

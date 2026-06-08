@@ -635,8 +635,10 @@ class ExecutorNodeService:
             self._thread_workspaces[command.thread_id] = str(resolve_workspace(command.workspace_id))
         context = self._codex_thread_subscriptions.get(command.subscription_id)
         if context is None:
+            # Unsubscribed during resume; close the just-created session. Shield so a
+            # pending task cancellation can't abort the close and leak the session.
             with contextlib.suppress(Exception):
-                await session.close()
+                await asyncio.shield(session.close())
             return
         context.session = session
         await self._stream_codex_thread_events(websocket, session, command)
