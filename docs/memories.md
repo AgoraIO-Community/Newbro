@@ -335,3 +335,4 @@ Short log of important design decisions and changes for Newbro.
 ## 2026-06-08
 
 - Moved first-party clients to `clients/`, the macOS executor supervisor to `executor-apps/macos`, and design prototypes to `prototypes/design`, while keeping the Python runtime, executor CLI, executor node, and adapters under `src/newbro`.
+- Skill picker: Codex skills discovered once at executor start via `skills/list` (grouped-per-cwd response flattened + deduped by `(name, path)`), cached on the executor, and carried on `register_node` through `ExecutorCapabilities` → `ExecutorNodeExecutor` → `BroExecutorCapabilitySummary.skills`; the chosen skill rides turn metadata like `plan_mode` and activates via a `{type:"skill", name, path}` input item + `$name` marker in `turn/start`; validate-before-write drops vanished skills with an observable `skill_dropped` marker (never claims the skill ran); no live `skills/changed` refresh in v1. See `docs/protocol/skills.md`.

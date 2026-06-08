@@ -123,6 +123,7 @@ async def test_bro_list_api_returns_compact_bro_node_rows(tmp_path):
                     "availability_reason": None,
                     "supports_thread_list": True,
                     "supports_audio_instruction": True,
+                    "skills": [],
                 },
             },
         }

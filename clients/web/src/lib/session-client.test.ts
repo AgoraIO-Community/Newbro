@@ -368,6 +368,39 @@ describe("session-client transport base URL handling", () => {
     });
   });
 
+  it("sends skill_name when provided", async () => {
+    const fetchMock = vi.fn(async () =>
+      okJsonResponse({
+        instruction_id: "txt-skill",
+        target_persona_id: "forge",
+        target_thread_id: null,
+        status: "accepted",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./session-client");
+    await client.submitExecutorTextInstruction("session-1", {
+      targetPersonaId: "forge",
+      text: "use this skill",
+      skillName: "doc",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/session-1/executor-text-instructions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_persona_id: "forge",
+        target_thread_id: null,
+        create_new_thread: false,
+        workspace_id: null,
+        plan_mode: false,
+        text: "use this skill",
+        skill_name: "doc",
+      }),
+    });
+  });
+
   it("submits executor audio instructions with the selected thread target", async () => {
     const audio = new Blob([new Uint8Array([0, 0, 1, 0])], { type: "audio/pcm" });
     const fetchMock = vi.fn(async () =>

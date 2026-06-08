@@ -161,6 +161,18 @@ class CodexAppServerClient:
         result = await self._peer.request("collaborationMode/list", {})
         return _as_dict(result)
 
+    async def skills_list(
+        self,
+        *,
+        cwds: list[str],
+        force_reload: bool = False,
+    ) -> dict[str, object]:
+        result = await self._peer.request(
+            "skills/list",
+            {"cwds": cwds, "forceReload": force_reload},
+        )
+        return _as_dict(result)
+
     async def turn_start(
         self,
         *,
@@ -169,16 +181,22 @@ class CodexAppServerClient:
         collaboration_mode: Literal["plan", "default"] | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        skill: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        input_items: list[dict[str, object]] = [
+            {
+                "type": "text",
+                "text": _apply_skill_marker(prompt, skill),
+                "textElements": [],
+            }
+        ]
+        s_name = skill.get("name") if skill else None
+        s_path = skill.get("path") if skill else None
+        if skill and isinstance(s_name, str) and s_name and isinstance(s_path, str) and s_path:
+            input_items.append({"type": "skill", "name": s_name, "path": s_path})
         params: dict[str, object] = {
             "threadId": thread_id,
-            "input": [
-                {
-                    "type": "text",
-                    "text": prompt,
-                    "textElements": [],
-                }
-            ],
+            "input": input_items,
         }
         if collaboration_mode is not None:
             if not model and collaboration_mode != "default":
@@ -232,6 +250,20 @@ def _as_dict(value: object) -> dict[str, object]:
     if isinstance(value, dict):
         return value
     return {}
+
+
+def _apply_skill_marker(prompt: str, skill: dict[str, object] | None) -> str:
+    if not skill:
+        return prompt
+    name = skill.get("name")
+    if not isinstance(name, str) or not name:
+        return prompt
+    marker = f"${name}"
+    # Only treat the marker as already-present when it stands as its own token,
+    # so a skill named "doc" does not suppress its marker on "$document …".
+    if prompt == marker or prompt.startswith(f"{marker} ") or prompt.startswith(f"{marker}\n"):
+        return prompt
+    return f"{marker} {prompt}"
 
 
 def _build_request_response(

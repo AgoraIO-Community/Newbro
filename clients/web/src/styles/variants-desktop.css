@@ -4325,3 +4325,157 @@
     animation: none !important;
   }
 }
+
+/* ─── Skill picker (ported from prototypes/design/variants-desktop.css) ─── */
+
+/* ── Skill picker — leading cluster + chip + active pill + popover ──
+   Skill uses the runner-blue accent so it stays clearly distinct from
+   the coral Plan chip and the coral Send action. */
+.dt-cmp-lead {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 7px;
+  flex-shrink: 0;
+}
+.dt-cmp-skillchip {
+  display: inline-flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+  padding: 7px 9px 7px 11px;
+  margin-left: 2px;
+  border-radius: 12px;
+  background: var(--nb-paper-sub);
+  border: 1px solid var(--nb-line);
+  color: var(--nb-ink-soft);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 0.16s, border-color 0.16s, color 0.16s, box-shadow 0.16s;
+}
+.dt-cmp-skillchip:hover { border-color: var(--nb-info-edge); color: var(--nb-info-ink); background: var(--nb-info-soft); }
+.dt-cmp-skillchip .dt-cmp-skillchip-ic { display: inline-flex; color: var(--nb-ink-muted); transition: color 0.16s; }
+.dt-cmp-skillchip:hover .dt-cmp-skillchip-ic { color: var(--nb-info); }
+.dt-cmp-skillchip-kbd {
+  font-size: 10px;
+  background: rgba(0,0,0,0.05);
+  border-color: rgba(0,0,0,0.08);
+  min-width: 15px; text-align: center;
+}
+.dt-cmp-skillchip-open {
+  border-color: var(--nb-info-edge);
+  color: var(--nb-info-ink);
+  background: var(--nb-info-soft);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+.dt-cmp-skillchip-open .dt-cmp-skillchip-ic { color: var(--nb-info); }
+
+/* active selected skill — solid info pill, body + clear share one capsule */
+.dt-cmp-skillpill {
+  display: inline-flex; align-items: stretch;
+  flex-shrink: 0;
+  margin-left: 2px;
+  border-radius: 12px;
+  background: var(--nb-info-grad-btn);
+  box-shadow: 0 4px 12px -5px rgba(59,130,246,0.6);
+  overflow: hidden;
+}
+.dt-cmp-skillpill-body {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 9px 7px 11px;
+  border: 0; background: transparent;
+  color: #fff;
+  font-family: inherit; font-size: 11.5px; font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+}
+.dt-cmp-skillpill-ic { display: inline-flex; }
+.dt-cmp-skillpill-ic svg { width: 14px; height: 14px; }
+.dt-cmp-skillpill-body:hover { background: rgba(255,255,255,0.1); }
+.dt-cmp-skillpill-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px;
+  border: 0; background: rgba(255,255,255,0.14);
+  color: rgba(255,255,255,0.85);
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+.dt-cmp-skillpill-x:hover { background: rgba(255,255,255,0.26); color: #fff; }
+.dt-cmp-skillpill-open { box-shadow: 0 4px 12px -5px rgba(59,130,246,0.6), 0 0 0 3px rgba(59,130,246,0.18); }
+/* name-only label inside a read-only bubble pill */
+.dt-cmp-skillpill-name { padding: 6px 10px; font-size: 11.5px; font-weight: 600; color: #fff; }
+/* read-only skill pill on the timeline user bubble */
+.dt-bubble-skillpill { align-self: flex-end; margin-top: 6px; }
+
+/* a soft blue ring on the whole bar while a skill rides along */
+.dt-cmp-bar-skill { border-color: var(--nb-info-edge); }
+.dt-cmp-bar-skill:focus-within { box-shadow: 0 0 0 3px rgba(59,130,246,0.1), 0 4px 14px rgba(0,0,0,0.04); }
+.dt-cmp-skill .dt-cmp-channel { border-color: var(--nb-info-edge); }
+
+/* ── popover, opens upward from the lead cluster ── */
+.dt-skill-pop {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 40;
+  width: 320px;
+  background: var(--nb-paper);
+  border: 1px solid var(--nb-line);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 18px 44px -12px rgba(17,24,39,0.28);
+  overflow: hidden;
+  animation: dt-skill-pop-in 0.14s ease-out;
+}
+@keyframes dt-skill-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.dt-skill-pop-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 9px;
+  border-bottom: 1px solid var(--nb-line-soft);
+}
+.dt-skill-pop-title { font-size: 12px; font-weight: 650; color: var(--nb-ink); letter-spacing: -0.01em; }
+.dt-skill-pop-hint { font-size: 11px; color: var(--nb-ink-muted); display: inline-flex; align-items: center; gap: 5px; }
+.dt-skill-pop-hint .dt-kbd { font-size: 9.5px; }
+.dt-skill-pop-q { font-family: var(--nb-font-mono); color: var(--nb-info-ink); font-size: 10.5px; }
+.dt-skill-pop-list { list-style: none; margin: 0; padding: 6px; max-height: 280px; overflow-y: auto; }
+.dt-skill-opt {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  padding: 9px 10px;
+  border: 0; background: transparent;
+  border-radius: 11px;
+  text-align: left; cursor: pointer;
+  transition: background 0.12s;
+}
+.dt-skill-opt:hover { background: var(--nb-wash); }
+.dt-skill-opt-disabled { opacity: 0.45; cursor: not-allowed; }
+.dt-skill-opt-disabled:hover { background: transparent; }
+.dt-skill-opt-ic {
+  flex-shrink: 0;
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border-radius: 10px;
+  background: var(--nb-info-soft);
+  color: var(--nb-info-ink);
+  border: 1px solid var(--nb-info-edge);
+}
+.dt-skill-opt-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dt-skill-opt-name { font-size: 13px; font-weight: 600; color: var(--nb-ink); letter-spacing: -0.01em; }
+.dt-skill-opt-desc { font-size: 11.5px; color: var(--nb-ink-muted); letter-spacing: -0.005em; }
+.dt-skill-opt-check { flex-shrink: 0; color: var(--nb-info); margin-left: auto; }
+.dt-skill-opt-on { background: var(--nb-info-soft); }
+.dt-skill-opt-on:hover { background: var(--nb-info-soft); }
+.dt-skill-opt-on .dt-skill-opt-ic { background: var(--nb-info); color: #fff; border-color: var(--nb-info); }
+.dt-skill-empty {
+  padding: 18px 16px; font-size: 12px; color: var(--nb-ink-muted);
+  line-height: 1.5; text-align: center;
+}
+.dt-skill-pop-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--nb-line-soft);
+  background: var(--nb-paper-sub);
+  font-size: 10.5px; color: var(--nb-ink-muted);
+}
+.dt-skill-pop-foot .dt-kbd { font-size: 9.5px; }

@@ -12,6 +12,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from newbro.executors.core import ExecutorEvent, ExecutorEventType
+from newbro.protocol.executor_node import ExecutorSkill
 from newbro.protocol import (
     AckMessage,
     AgentResumeHandle,
@@ -181,6 +182,17 @@ class ExecutorNodeManager:
             return False
         executor = state.executors.get(executor_type)
         return executor is not None and executor.supports_follow_up
+
+    def codex_skills_for_node(self, node_id: str | None) -> list[ExecutorSkill]:
+        if not node_id:
+            return []
+        view = self._connection_views().get(node_id)
+        if view is None:
+            return []
+        for capability in view.executor_capabilities:
+            if capability.executor_type == "codex":
+                return list(capability.skills)
+        return []
 
     def executor_supports_thread_list(self, executor_type: str, *, node_id: str) -> bool:
         state = self._connections_by_node.get(node_id)

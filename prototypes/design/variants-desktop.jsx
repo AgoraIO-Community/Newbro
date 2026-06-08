@@ -593,10 +593,146 @@ function CreateBroDesktop() {
 window.CreateBroDesktop = CreateBroDesktop;
 
 // ─────────────────────────────────────────────────────────────
+// Skills — packaged capabilities the bro can run this turn with.
+// Picked from the composer (chip, or type "/" to filter). A chosen
+// skill rides along with the next message and shapes how the bro works.
+// ─────────────────────────────────────────────────────────────
+const SKILL_DEFAULT_ICON = (
+  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3l1.9 4.7L19 9l-4.1 2.3L13 16l-1-4.5L7 9l4.1-1.3z"/>
+    <path d="M19 15l.7 1.8L21.5 18l-1.8.7L19 21l-.7-2.3L16.5 18l1.8-1.2z"/>
+  </svg>
+);
+const SKILLS = [
+  {
+    id: "deep-research",
+    name: "Deep research",
+    desc: "Multi-source dig with cited findings",
+    hint: "what should I get to the bottom of?",
+    icon: (
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M11 8v6M8 11h6"/>
+      </svg>
+    ),
+  },
+  {
+    id: "flight-search",
+    name: "Flight search",
+    desc: "Compare fares across airlines",
+    hint: "route + dates, e.g. SFO → JFK Fri",
+    icon: (
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V18l-2 1.5V21l3.5-1 3.5 1v-1.5L13 18v-4.5z"/>
+      </svg>
+    ),
+  },
+  {
+    id: "stays",
+    name: "Find stays",
+    desc: "Rank hotels near a point",
+    hint: "where, and what matters most?",
+    icon: (
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 21V8l9-5 9 5v13"/><path d="M3 21h18M9 21v-6h6v6"/>
+      </svg>
+    ),
+  },
+  {
+    id: "itinerary",
+    name: "Build itinerary",
+    desc: "Day-by-day plan you can edit",
+    hint: "trip length + the vibe you want",
+    icon: (
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4M8 14h.01M12 14h.01M16 14h.01"/>
+      </svg>
+    ),
+  },
+  {
+    id: "price-watch",
+    name: "Price watch",
+    desc: "Track and ping on drops",
+    hint: "what to watch, and your ceiling",
+    icon: (
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 17l5-5 4 4 8-9"/><path d="M16 7h4v4"/>
+      </svg>
+    ),
+  },
+  {
+    id: "summarize",
+    name: "Summarize",
+    desc: "Condense a thread or document",
+    hint: "paste or point me at the source",
+    icon: (
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 6h16M4 11h16M4 16h10"/>
+      </svg>
+    ),
+  },
+];
+
+// Popover that floats above the composer's lead cluster. Opens on the
+// skill chip, or while typing "/" in the bar (query filters the list).
+function DTSkillMenu({ query = "", selected, broName = "Atlas", onChoose, onClose }) {
+  const q = query.trim().toLowerCase();
+  const list = q
+    ? SKILLS.filter((s) => (s.name + " " + s.desc).toLowerCase().includes(q))
+    : SKILLS;
+  return (
+    <div className="dt-skill-pop" role="menu" aria-label="Run with a skill">
+      <div className="dt-skill-pop-head">
+        <span className="dt-skill-pop-title">Run with a skill</span>
+        <span className="dt-skill-pop-hint">
+          {query ? <React.Fragment>filtering <span className="dt-skill-pop-q">/{query}</span></React.Fragment>
+                 : <React.Fragment>type <kbd className="dt-kbd">/</kbd> to filter</React.Fragment>}
+        </span>
+      </div>
+      {list.length === 0 ? (
+        <div className="dt-skill-empty">No skill matches “{query}”. Just send and {broName} figures it out.</div>
+      ) : (
+        <ul className="dt-skill-pop-list">
+          {list.map((s) => {
+            const on = selected && selected.id === s.id;
+            return (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={!!on}
+                  className={`dt-skill-opt${on ? " dt-skill-opt-on" : ""}`}
+                  onClick={() => onChoose(s)}
+                >
+                  <span className="dt-skill-opt-ic" aria-hidden="true">{s.icon}</span>
+                  <span className="dt-skill-opt-body">
+                    <span className="dt-skill-opt-name">{s.name}</span>
+                    <span className="dt-skill-opt-desc">{s.desc}</span>
+                  </span>
+                  {on && (
+                    <svg className="dt-skill-opt-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M4 12.5L10 18L20 6"/>
+                    </svg>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="dt-skill-pop-foot">
+        <span>Skills shape how {broName} works the turn</span>
+        <kbd className="dt-kbd">esc</kbd>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // DTComposerBar — horizontal full-width composer.
 // Mode chips (Push / Free / Type) sit as a small pill on the left
 // of the head row; a hint on the right. The bar itself holds the
 // text field, an optional mic button (PTT/Free), and a coral send.
+// A leading cluster carries the Skill picker + Plan-mode chip.
 // ─────────────────────────────────────────────────────────────
 function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atlas", planMode = false, onTogglePlan, onSendPlan }) {
   // Two modes:
@@ -636,6 +772,44 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
 
   // Local composer text so Enter / send / Shift+Tab can be wired.
   const [text, setText] = React.useState("");
+  const inputRef = React.useRef(null);
+
+  // Skill picker — choose a packaged capability to run this turn with.
+  // Opens from the chip, or inline the instant you type "/" in the bar.
+  const [skill, setSkill] = React.useState(null);
+  const [skillOpen, setSkillOpen] = React.useState(false);
+  const [skillQuery, setSkillQuery] = React.useState("");
+  const leadRef = React.useRef(null);
+  const filterSkills = (qq) => {
+    const q = qq.trim().toLowerCase();
+    return q ? SKILLS.filter((s) => (s.name + " " + s.desc).toLowerCase().includes(q)) : SKILLS;
+  };
+  const chooseSkill = (s) => {
+    setSkill(s);
+    setSkillOpen(false);
+    setSkillQuery("");
+    if (text.startsWith("/")) setText("");
+    requestAnimationFrame(() => { try { inputRef.current && inputRef.current.focus(); } catch (e) {} });
+  };
+  const clearSkill = () => { setSkill(null); };
+
+  // Inline "/" trigger: a leading slash opens the menu and filters by
+  // whatever follows it. Deleting back past the slash closes it again.
+  const onInputChange = (e) => {
+    const val = e.target.value;
+    setText(val);
+    if (val.startsWith("/")) { setSkillOpen(true); setSkillQuery(val.slice(1)); }
+    else if (skillOpen) { setSkillOpen(false); setSkillQuery(""); }
+  };
+
+  // Close the menu on outside click / Escape.
+  React.useEffect(() => {
+    if (!skillOpen) return;
+    const onDown = (e) => { if (leadRef.current && !leadRef.current.contains(e.target)) setSkillOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [skillOpen]);
+
   const submit = () => {
     const t = text.trim();
     if (!t) return;
@@ -645,6 +819,11 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
   const handleKey = (e) => {
     // Shift+Tab toggles plan mode (desktop shortcut)
     if (e.key === "Tab" && e.shiftKey) { e.preventDefault(); onTogglePlan && onTogglePlan(); return; }
+    // While the skill menu is open, Enter picks the top match, Esc dismisses.
+    if (skillOpen) {
+      if (e.key === "Enter") { e.preventDefault(); const m = filterSkills(skillQuery); if (m[0]) chooseSkill(m[0]); return; }
+      if (e.key === "Escape") { e.preventDefault(); setSkillOpen(false); if (text.startsWith("/")) setText(""); return; }
+    }
     if (e.key === "Enter" && text.trim()) { e.preventDefault(); submit(); }
   };
 
@@ -694,8 +873,62 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
     </button>
   );
 
+  // Leading cluster — Skill picker + Plan-mode chip, with the skill
+  // popover anchored above it. Hidden entirely when the node's offline.
+  const leadCluster = !disabled && (
+    <div className="dt-cmp-lead" ref={leadRef}>
+      {skill ? (
+        <span className={`dt-cmp-skillpill${skillOpen ? " dt-cmp-skillpill-open" : ""}`}>
+          <button
+            type="button"
+            className="dt-cmp-skillpill-body"
+            onClick={() => setSkillOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={skillOpen}
+            title={`Skill: ${skill.name} — click to change`}
+          >
+            <span className="dt-cmp-skillpill-ic" aria-hidden="true">{skill.icon}</span>
+            <span className="dt-cmp-skillpill-name">{skill.name}</span>
+          </button>
+          <button
+            type="button"
+            className="dt-cmp-skillpill-x"
+            onClick={clearSkill}
+            aria-label={`Remove ${skill.name} skill`}
+            title="Remove skill"
+          >
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </span>
+      ) : (
+        <button
+          type="button"
+          className={`dt-cmp-skillchip${skillOpen ? " dt-cmp-skillchip-open" : ""}`}
+          onClick={() => setSkillOpen((o) => !o)}
+          aria-haspopup="menu"
+          aria-expanded={skillOpen}
+          title="Run this turn with a skill"
+        >
+          <span className="dt-cmp-skillchip-ic" aria-hidden="true">{SKILL_DEFAULT_ICON}</span>
+          <span className="dt-cmp-skillchip-label">Skill</span>
+          <kbd className="dt-kbd dt-cmp-skillchip-kbd">/</kbd>
+        </button>
+      )}
+      {planChip}
+      {skillOpen && (
+        <DTSkillMenu
+          query={skillQuery}
+          selected={skill}
+          broName={broName}
+          onChoose={chooseSkill}
+          onClose={() => setSkillOpen(false)}
+        />
+      )}
+    </div>
+  );
+
   return (
-    <div className={`dt-cmp dt-cmp-${voiceMode}${disabled ? " dt-cmp-disabled" : ""}${planMode ? " dt-cmp-plan" : ""}`}>
+    <div className={`dt-cmp dt-cmp-${voiceMode}${disabled ? " dt-cmp-disabled" : ""}${planMode ? " dt-cmp-plan" : ""}${skill ? " dt-cmp-skill" : ""}`}>
       <div className="dt-cmp-head">
         <div className="dt-cmp-headl">
           <div className="dt-cmp-modewrap">
@@ -770,8 +1003,8 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
 
       {voiceMode === "ptt" ? (
         // PTT mode — merged text + voice. Type or hold to talk.
-        <div className={`dt-cmp-bar${recording ? " dt-cmp-bar-rec" : ""}`}>
-          {planChip}
+        <div className={`dt-cmp-bar${recording ? " dt-cmp-bar-rec" : ""}${skill ? " dt-cmp-bar-skill" : ""}`}>
+          {leadCluster}
           {recording ? (
             <div className="dt-cmp-rec">
               <span className="dt-cmp-rec-dot" aria-hidden="true" />
@@ -791,14 +1024,17 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
               className="dt-cmp-input"
               disabled={disabled}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              ref={inputRef}
+              onChange={onInputChange}
               onKeyDown={handleKey}
               placeholder={
                 disabled
                   ? `${broName} can't take new messages — reconnect your computer to resume`
-                  : planMode
-                    ? `Describe the task — ${broName} will plan it first…`
-                    : `Hold to talk, or type a message to ${broName}…`
+                  : skill
+                    ? `${skill.name} — ${skill.hint}`
+                    : planMode
+                      ? `Describe the task — ${broName} will plan it first…`
+                      : `Hold to talk, type “/” for a skill, or a message to ${broName}…`
               }
             />
           )}
@@ -844,7 +1080,7 @@ function DTComposerBar({ mode = "ptt", onMode, disabled = false, broName = "Atla
       ) : (
         // Free mode — voice only, no text input. Channel-open indicator + mic.
         <div className={`dt-cmp-channel dt-cmp-channel-${subMode}${disabled ? " dt-cmp-channel-off" : ""}`}>
-          {planChip}
+          {leadCluster}
           <span className={`dt-cmp-channel-led dt-cmp-channel-led-${subMode}`} aria-hidden="true" />
           <span className="dt-cmp-channel-text">
             <span className="dt-cmp-channel-title">

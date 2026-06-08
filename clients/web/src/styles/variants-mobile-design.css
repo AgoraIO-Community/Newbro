@@ -3422,3 +3422,148 @@
     animation: none !important;
   }
 }
+
+/* ─── Skill picker (ported from prototypes/design/variants-mobile.css) ─── */
+
+/* ════════════════════════════════════════════════════════════
+   Skill picker (mobile) — toolbar chip / active pill + bottom sheet
+   Uses the runner-blue accent so it reads distinct from coral Plan.
+   ════════════════════════════════════════════════════════════ */
+.thr-skillchip {
+  display: inline-flex; align-items: center;
+  height: 40px;
+  padding: 0 13px;
+  gap: 7px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--nb-paper-sub);
+  border: 1px solid var(--nb-line);
+  color: var(--nb-ink-soft);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.thr-skillchip:active { transform: scale(0.97); }
+.thr-skillchip-icon { display: inline-flex; align-items: center; justify-content: center; color: var(--nb-ink-muted); flex-shrink: 0; transition: color 0.2s; }
+.thr-skillchip-on {
+  background: var(--nb-info-soft);
+  border-color: var(--nb-info-edge);
+  color: var(--nb-info-ink);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+.thr-skillchip-on .thr-skillchip-icon { color: var(--nb-info); }
+
+/* active selected skill — solid blue capsule, body + clear share it */
+.thr-skillpill {
+  display: inline-flex; align-items: stretch;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--nb-info-grad-btn);
+  box-shadow: 0 3px 10px -4px rgba(59,130,246,0.6), inset 0 1px 0 rgba(255,255,255,0.35);
+}
+.thr-skillpill-body {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 11px 0 13px;
+  border: 0; background: transparent;
+  color: #fff;
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+}
+.thr-skillpill-body:active { background: rgba(255,255,255,0.12); }
+.thr-skillpill-ic { display: inline-flex; }
+.thr-skillpill-ic svg { width: 16px; height: 16px; }
+.thr-skillpill-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px;
+  border: 0; background: rgba(255,255,255,0.16);
+  color: rgba(255,255,255,0.9);
+  cursor: pointer;
+}
+.thr-skillpill-x:active { background: rgba(255,255,255,0.3); }
+
+/* input pill picks up a subtle blue cue while a skill is armed */
+.thr-ptt-input-field::placeholder { transition: color 0.2s; }
+
+/* ── bottom sheet ── */
+.thr-skill-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(17,24,39,0.32);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.26s var(--nb-ease-out);
+  z-index: 60;
+}
+.thr-skill-backdrop-open { opacity: 1; pointer-events: auto; }
+.thr-skill-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  z-index: 61;
+  background: var(--nb-paper);
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -10px 40px -8px rgba(17,24,39,0.3);
+  padding: 8px 0 calc(20px + env(safe-area-inset-bottom, 0px));
+  transform: translateY(100%);
+  transition: transform 0.3s var(--nb-ease-out);
+  will-change: transform;
+}
+.thr-skill-sheet-open { transform: translateY(0); }
+.thr-skill-grip {
+  width: 38px; height: 5px; border-radius: 3px;
+  background: var(--nb-line-hover);
+  margin: 4px auto 6px;
+}
+.thr-skill-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px;
+  padding: 8px 18px 12px;
+  border-bottom: 1px solid var(--nb-line-soft);
+}
+.thr-skill-title { font-size: 16px; font-weight: 700; color: var(--nb-ink); letter-spacing: -0.02em; }
+.thr-skill-sub { font-size: 12.5px; color: var(--nb-ink-muted); margin-top: 2px; }
+.thr-skill-q { font-family: var(--nb-font-mono); color: var(--nb-info-ink); font-size: 12px; }
+.thr-skill-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid var(--nb-line);
+  background: var(--nb-paper-sub);
+  color: var(--nb-ink-soft);
+  cursor: pointer;
+}
+.thr-skill-close:active { background: var(--nb-wash-alt); }
+.thr-skill-list { list-style: none; margin: 0; padding: 8px; }
+.thr-skill-opt {
+  display: flex; align-items: center; gap: 13px; width: 100%;
+  padding: 11px 12px;
+  border: 0; background: transparent;
+  border-radius: 14px;
+  text-align: left; cursor: pointer;
+  transition: background 0.14s;
+}
+.thr-skill-opt:active { background: var(--nb-wash); }
+.thr-skill-opt-disabled { opacity: 0.45; cursor: not-allowed; }
+.thr-skill-opt-disabled:active { background: transparent; }
+.thr-skill-opt-ic {
+  flex-shrink: 0;
+  width: 42px; height: 42px;
+  display: grid; place-items: center;
+  border-radius: 12px;
+  background: var(--nb-info-soft);
+  border: 1px solid var(--nb-info-edge);
+  color: var(--nb-info-ink);
+}
+.thr-skill-opt-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.thr-skill-opt-name { font-size: 15px; font-weight: 600; color: var(--nb-ink); letter-spacing: -0.01em; }
+.thr-skill-opt-desc { font-size: 12.5px; color: var(--nb-ink-muted); letter-spacing: -0.005em; }
+.thr-skill-opt-go { flex-shrink: 0; color: var(--nb-ink-muted); opacity: 0.7; }
+.thr-skill-opt-check { flex-shrink: 0; color: var(--nb-info); }
+.thr-skill-opt-on { background: var(--nb-info-soft); }
+.thr-skill-opt-on .thr-skill-opt-ic { background: var(--nb-info); border-color: var(--nb-info); color: #fff; }
+.thr-skill-empty {
+  padding: 28px 20px; text-align: center;
+  font-size: 13.5px; line-height: 1.5; color: var(--nb-ink-muted);
+}

@@ -1,0 +1,82 @@
+{
+  "_comment": "Curated sample of a real codex app-server `skills/list` result (codex-cli 0.137.0), captured 2026-06-08. Covers every observed shape variant: plain skill, interface with null icons + defaultPrompt, interface with non-null icon file paths, structured `dependencies`, top-level `shortDescription` (no interface), and the per-cwd grouping wrapper with an `errors` array. Used to pin the discovery mapping contract; do not infer shapes from prose.",
+  "data": [
+    {
+      "cwd": "/Users/example/project",
+      "skills": [
+        {
+          "name": "agent-browser",
+          "description": "Browser automation CLI for AI agents. Use when the user needs to interact with websites, including navigating pages, filling forms, clicking buttons, taking screenshots, extracting data, testing web apps, or automating any browser task.",
+          "path": "/Users/example/.codex/skills/agent-browser/SKILL.md",
+          "scope": "user",
+          "enabled": true
+        },
+        {
+          "name": "cc-design",
+          "description": "High-fidelity HTML design and prototype creation. Use whenever the user asks to design, prototype, mock up, or build visual artifacts in HTML.",
+          "interface": {
+            "displayName": "CC Design",
+            "shortDescription": "High-fidelity HTML design and prototype guidance",
+            "iconSmall": null,
+            "iconLarge": null,
+            "brandColor": null,
+            "defaultPrompt": "Use $cc-design to explore three strong HTML-based design directions for this feature, grounded in the existing product style."
+          },
+          "path": "/Users/example/.codex/skills/cc-design/SKILL.md",
+          "scope": "user",
+          "enabled": true
+        },
+        {
+          "name": "doc",
+          "description": "Use when the task involves reading, creating, or editing `.docx` documents, especially when formatting or layout fidelity matters.",
+          "interface": {
+            "displayName": "Word Docs",
+            "shortDescription": "Edit and review docx files",
+            "iconSmall": "/Users/example/.codex/skills/doc/assets/doc-small.svg",
+            "iconLarge": "/Users/example/.codex/skills/doc/assets/doc.png",
+            "brandColor": null,
+            "defaultPrompt": "Edit or review this .docx file and return the updated file plus a concise change summary."
+          },
+          "path": "/Users/example/.codex/skills/doc/SKILL.md",
+          "scope": "user",
+          "enabled": true
+        },
+        {
+          "name": "openai-docs",
+          "description": "Use when the user asks how to build with OpenAI products or APIs, asks about Codex itself, or needs up-to-date official documentation with citations.",
+          "interface": {
+            "displayName": "OpenAI Docs",
+            "shortDescription": "Reference OpenAI docs, Codex self-knowledge, and model migration guidance",
+            "iconSmall": "/Users/example/.codex/skills/.system/openai-docs/assets/openai-small.svg",
+            "iconLarge": "/Users/example/.codex/skills/.system/openai-docs/assets/openai.png",
+            "brandColor": null,
+            "defaultPrompt": "Use OpenAI Docs for official docs lookup, questions about Codex itself, model selection, and migration work."
+          },
+          "dependencies": {
+            "tools": [
+              {
+                "type": "mcp",
+                "value": "openaiDeveloperDocs",
+                "description": "OpenAI Developer Docs MCP server",
+                "transport": "streamable_http",
+                "url": "https://developers.openai.com/mcp"
+              }
+            ]
+          },
+          "path": "/Users/example/.codex/skills/.system/openai-docs/SKILL.md",
+          "scope": "system",
+          "enabled": true
+        },
+        {
+          "name": "skill-creator",
+          "shortDescription": "Create or update a skill",
+          "description": "Scaffold a new skill or edit an existing one.",
+          "path": "/Users/example/.codex/skills/.system/skill-creator/SKILL.md",
+          "scope": "system",
+          "enabled": true
+        }
+      ],
+      "errors": []
+    }
+  ]
+}

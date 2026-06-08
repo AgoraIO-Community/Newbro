@@ -422,6 +422,7 @@ export async function submitExecutorTextInstruction(
     workspaceId?: string | null;
     clientRequestId?: string | null;
     planMode?: boolean;
+    skillName?: string | null;
     text: string;
   },
 ): Promise<{ instruction_id: string; target_persona_id: string; target_thread_id: string | null; status: string }> {
@@ -435,6 +436,9 @@ export async function submitExecutorTextInstruction(
   };
   if (payload.clientRequestId) {
     body.client_request_id = payload.clientRequestId;
+  }
+  if (payload.skillName) {
+    body.skill_name = payload.skillName;
   }
   const response = await fetch(buildHttpUrl(`${API_PREFIX}/sessions/${sessionId}/executor-text-instructions`), {
     method: "POST",

@@ -26,7 +26,10 @@ import { LiveTurnBubble } from "./LiveTurnBubble";
 import { timelineRowKey } from "./lib/timelineRowKey";
 import { timelineMessageText } from "./lib/timelineMessage";
 import { buildTurnRenderModel } from "./lib/turnRenderModel";
-import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
+import { MobileSkillSheet, SkillLeadCluster } from "./components/newbro/SkillPicker";
+import { skillFromMessageMetadata } from "./lib/skill-metadata";
+export { skillFromMessageMetadata };
+import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, ExecutorSkill, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
 const APP_DOWNLOAD_URL = "https://github.com/AgoraIO-Community/Newbro/releases/latest";
@@ -76,6 +79,7 @@ type ChatMessage = {
   text: string;
   id: string;
   planMode?: boolean;
+  skill?: { name: string; display_name: string } | null;
   createdAt?: string;
 };
 
@@ -978,6 +982,11 @@ function ConversationMessageBubble({ bro, message, mobile = false }: { bro: BroC
           Plan mode
         </span>
       ) : null}
+      {isUser && message.skill ? (
+        <span className="dt-cmp-skillpill dt-bubble-skillpill" aria-label={`Skill: ${message.skill.display_name}`}>
+          <span className="dt-cmp-skillpill-name">{message.skill.display_name}</span>
+        </span>
+      ) : null}
       <div className={`${prefix}-bubble ${isUser ? `${prefix}-bubble-you${message.planMode ? ` ${prefix}-bubble-plan` : ""}` : `${prefix}-bubble-bro`}`}>
         <MarkdownText>{message.text}</MarkdownText>
       </div>
@@ -1008,6 +1017,10 @@ function timelineMetadataText(turn: BroTimelineTurn, key: string): string {
 
 function timelinePlanMode(turn: BroTimelineTurn): boolean {
   return turn.metadata?.plan_mode === true || turn.user?.metadata?.plan_mode === true || turn.task?.metadata?.plan_mode === true;
+}
+
+function timelineSkill(turn: BroTimelineTurn): { name: string; display_name: string } | null {
+  return skillFromMessageMetadata(turn.metadata) ?? skillFromMessageMetadata(turn.user?.metadata);
 }
 
 function normalizePlanStatus(value: unknown): NonNullable<BroTaskRecord["plan"]>["steps"][number]["status"] {
@@ -1070,6 +1083,7 @@ function TimelineUserMessage({ bro, turn, mobile = false }: { bro: BroCardModel;
         text,
         id: message.message_id,
         planMode: timelinePlanMode(turn),
+        skill: timelineSkill(turn),
         createdAt: message.created_at ?? undefined,
       }}
       mobile={mobile}
@@ -2599,6 +2613,7 @@ function MobileThreadSurface({
   onThreadResolved,
   disabled,
   disabledReason,
+  skills,
 }: {
   bro: BroCardModel;
   selectedThreadId: string | null;
@@ -2614,10 +2629,13 @@ function MobileThreadSurface({
   onThreadResolved: (threadId: string | null) => void;
   disabled?: boolean;
   disabledReason?: string | null;
+  skills: ExecutorSkill[];
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
   const [planMode, setPlanMode] = useState(false);
+  const [skill, setSkill] = useState<ExecutorSkill | null>(null);
+  const [skillSheetOpen, setSkillSheetOpen] = useState(false);
   const threadBodyRef = useRef<HTMLElement | null>(null);
   const draftText = draft;
   const connected = shell.voiceSession.phase === "connected";
@@ -2672,16 +2690,19 @@ function MobileThreadSurface({
       elapsed_ms: Math.round(performance.now() - startedAt),
     });
     setDraft("");
+    setSkill(null);
+    setSkillSheetOpen(false);
     try {
-      const response = await submitExecutorTextInstruction(shell.activeShellSessionId, {
+      const response = await submitExecutorTextInstruction(shell.activeShellSessionId, buildExecutorTextPayload({
         targetPersonaId: bro.id,
         targetThreadId: selectedThreadId,
         createNewThread,
-        ...(workspaceId ? { workspaceId } : {}),
+        workspaceId,
         clientRequestId: turnId,
-        ...(planMode ? { planMode: true } : {}),
+        planMode,
+        skill,
         text,
-      });
+      }));
       directExecutorMetric("ui.text.http.accepted", {
         client_request_id: turnId,
         instruction_id: response.instruction_id,
@@ -2748,6 +2769,12 @@ function MobileThreadSurface({
       element.scrollTop = element.scrollHeight;
     });
   }, [threadScrollVersion]);
+
+  // Clear skill selection when bro changes.
+  useEffect(() => {
+    setSkill(null);
+    setSkillSheetOpen(false);
+  }, [bro.id]);
 
   return (
     <>
@@ -2884,8 +2911,63 @@ function MobileThreadSurface({
                 <span className="mob-mode-label">Plan mode</span>
               </button>
             ) : null}
+            {inputMode !== "free" && skills.length > 0 ? (
+              skill ? (
+                <span className="thr-skillpill">
+                  <button
+                    type="button"
+                    className="thr-skillpill-body"
+                    onClick={() => setSkillSheetOpen(true)}
+                    aria-label={`Skill: ${skill.display_name} — tap to change`}
+                  >
+                    <span className="thr-skillpill-ic" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 3l1.9 4.7L19 9l-4.1 2.3L13 16l-1-4.5L7 9l4.1-1.3z" />
+                        <path d="M19 15l.7 1.8L21.5 18l-1.8.7L19 21l-.7-2.3L16.5 18l1.8-1.2z" />
+                      </svg>
+                    </span>
+                    <span>{skill.display_name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="thr-skillpill-x"
+                    onClick={() => setSkill(null)}
+                    aria-label={`Remove ${skill.display_name} skill`}
+                  >
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={`thr-skillchip${skillSheetOpen ? " thr-skillchip-on" : ""}`}
+                  onClick={() => setSkillSheetOpen(true)}
+                  aria-label="Run with a skill"
+                  title="Run this turn with a skill"
+                >
+                  <span className="thr-skillchip-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 3l1.9 4.7L19 9l-4.1 2.3L13 16l-1-4.5L7 9l4.1-1.3z" />
+                      <path d="M19 15l.7 1.8L21.5 18l-1.8.7L19 21l-.7-2.3L16.5 18l1.8-1.2z" />
+                    </svg>
+                  </span>
+                  <span className="thr-skillchip-label">Skill</span>
+                </button>
+              )
+            ) : null}
           </div>
         ) : null}
+        <MobileSkillSheet
+          open={skillSheetOpen}
+          skills={skills}
+          query=""
+          selected={skill}
+          broName={bro.name}
+          onChoose={(s) => { setSkill(s); setSkillSheetOpen(false); }}
+          onClose={() => setSkillSheetOpen(false)}
+        />
         {disabled ? (
           <div className="ob-composer-lock">
             <span className="ob-composer-lock-icon" aria-hidden="true">
@@ -2981,12 +3063,35 @@ function MobileThreadSurface({
   );
 }
 
+export function buildExecutorTextPayload(args: {
+  targetPersonaId: string;
+  targetThreadId: string | null;
+  createNewThread: boolean;
+  workspaceId?: string | null;
+  clientRequestId: string;
+  planMode: boolean;
+  skill: { name: string } | null;
+  text: string;
+}) {
+  return {
+    targetPersonaId: args.targetPersonaId,
+    targetThreadId: args.targetThreadId,
+    createNewThread: args.createNewThread,
+    ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
+    clientRequestId: args.clientRequestId,
+    ...(args.planMode ? { planMode: true } : {}),
+    ...(args.skill ? { skillName: args.skill.name } : {}),
+    text: args.text,
+  };
+}
+
 function DesktopComposerBar({
   bro,
   selectedThreadId,
   createNewThread,
   workspaceId,
   disabled,
+  skills,
   onTextTurn,
   onAudioTurn,
   onRemoveAudioTurn,
@@ -2997,6 +3102,7 @@ function DesktopComposerBar({
   createNewThread: boolean;
   workspaceId?: string | null;
   disabled: boolean;
+  skills: ExecutorSkill[];
   onTextTurn: (turn: TextTurn) => void;
   onAudioTurn: (turn: AudioTurn) => void;
   onRemoveAudioTurn: (turnId: string) => void;
@@ -3005,6 +3111,7 @@ function DesktopComposerBar({
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
   const [planMode, setPlanMode] = useState(false);
+  const [skill, setSkill] = useState<ExecutorSkill | null>(null);
   const [voiceMode, setVoiceMode] = useState<"ptt" | "free">("ptt");
   const [recording, setRecording] = useState(false);
   const [recSecs, setRecSecs] = useState(0);
@@ -3055,6 +3162,11 @@ function DesktopComposerBar({
     onThreadResolved,
     onSent: shell.refreshShellSession,
   });
+
+  // Clear selected skill when the active bro changes.
+  useEffect(() => {
+    setSkill(null);
+  }, [bro.id]);
 
   // Sync local recording state with recorder phase (covers cancel/blur reset)
   useEffect(() => {
@@ -3169,16 +3281,18 @@ function DesktopComposerBar({
       elapsed_ms: Math.round(performance.now() - startedAt),
     });
     setDraft("");
+    setSkill(null);
     try {
-      const response = await submitExecutorTextInstruction(shell.activeShellSessionId, {
+      const response = await submitExecutorTextInstruction(shell.activeShellSessionId, buildExecutorTextPayload({
         targetPersonaId: bro.id,
         targetThreadId: selectedThreadId,
         createNewThread,
-        ...(workspaceId ? { workspaceId } : {}),
+        workspaceId,
         clientRequestId: turnId,
-        ...(planMode ? { planMode: true } : {}),
+        planMode,
+        skill,
         text,
-      });
+      }));
       directExecutorMetric("ui.text.http.accepted", {
         client_request_id: turnId,
         instruction_id: response.instruction_id,
@@ -3268,6 +3382,16 @@ function DesktopComposerBar({
         </span>
       </div>
       <div className={`dt-cmp-bar${recording ? " dt-cmp-bar-rec" : ""}`}>
+        {skills.length > 0 && (
+          <SkillLeadCluster
+            skills={skills}
+            selected={skill}
+            broName={bro.name}
+            disabled={disabled}
+            onChoose={setSkill}
+            onClear={() => setSkill(null)}
+          />
+        )}
         {planChip}
         {recording ? (
           <div className="dt-cmp-rec">
@@ -3296,7 +3420,7 @@ function DesktopComposerBar({
                   if (!disabled) setPlanMode((current) => !current);
                 }
               }}
-              placeholder={disabled ? "Reconnect your computer before sending" : textState.enabled ? (planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
+              placeholder={disabled ? "Reconnect your computer before sending" : textState.enabled ? (skill ? (skill.hint ?? `Running with ${skill.display_name}…`) : planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
               disabled={disabled}
             />
           </>
@@ -3644,6 +3768,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
               createNewThread={directThreadIntent.createNewThread}
               workspaceId={directThreadIntent.workspaceId}
               disabled={Boolean(offline)}
+              skills={shell.broSkillsMap[bro.id] ?? []}
               onTextTurn={upsertTextTurn}
               onAudioTurn={upsertAudioTurn}
               onRemoveAudioTurn={removeAudioTurn}
@@ -4385,6 +4510,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
           onThreadResolved={resolveThread}
           disabled={Boolean(offline)}
           disabledReason={offline ? `${bro.executorType ?? offline.name} is not connected.` : null}
+          skills={shell.broSkillsMap[bro.id] ?? []}
         />
         <WorkspacePickerDialog
           open={workspacePickerOpen}

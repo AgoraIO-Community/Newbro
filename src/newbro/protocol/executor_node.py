@@ -7,6 +7,15 @@ from pydantic import BaseModel, Field, model_validator
 from .session import AgentResumeHandle
 
 
+class ExecutorSkill(BaseModel):
+    name: str
+    display_name: str
+    description: str = ""
+    hint: str | None = None
+    path: str
+    enabled: bool = True
+
+
 class ExecutorNodeExecutor(BaseModel):
     executor_type: str
     supports_resume: bool = False
@@ -18,6 +27,7 @@ class ExecutorNodeExecutor(BaseModel):
     version: str | None = None
     minimum_version: str | None = None
     availability_reason: str | None = None
+    skills: list[ExecutorSkill] = Field(default_factory=list)
 
 
 class ExecutorNodeRecord(BaseModel):

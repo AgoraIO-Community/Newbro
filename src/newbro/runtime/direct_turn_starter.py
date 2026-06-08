@@ -56,6 +56,7 @@ class DirectTurnStarter:
         source: str,
         node_not_ready_label: str,
         plan_mode: bool = False,
+        skill: dict[str, object] | None = None,
         audio_instruction_id: str | None = None,
         metadata: dict[str, object] | None = None,
     ) -> DirectTurnStartResult:
@@ -78,6 +79,7 @@ class DirectTurnStarter:
             execution_session=execution_session,
             latest_resume_handle=latest_resume_handle,
             plan_mode=plan_mode,
+            skill=skill,
             metadata=metadata,
         )
         outbound_request = OutboundTurnRequest(
@@ -160,6 +162,7 @@ class DirectTurnStarter:
         execution_session: ExecutionSession | None,
         latest_resume_handle: AgentResumeHandle | None,
         plan_mode: bool,
+        skill: dict[str, object] | None,
         metadata: dict[str, object] | None,
     ) -> dict[str, object]:
         outbound_metadata: dict[str, object] = {
@@ -173,6 +176,8 @@ class DirectTurnStarter:
             outbound_metadata["plan_mode"] = True
         elif source == "bro_detail_text":
             outbound_metadata["plan_mode"] = False
+        if skill:
+            outbound_metadata["skill"] = skill
         if client_request_id is not None:
             outbound_metadata["client_request_id"] = client_request_id
         if execution_session is not None:
