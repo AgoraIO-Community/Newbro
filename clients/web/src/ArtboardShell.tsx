@@ -17,15 +17,15 @@ import {
   type ExecutorConnectCommands,
 } from "./lib/session-client";
 import { useThreadSelection } from "./lib/useThreadSelection";
-import { buildBroCardModels, buildBroThreadRecords, buildReasoningStepsForNativeTurn, buildReasoningStepsForTurn, type ReasoningStep } from "./components/newbro/adapters";
+import { buildBroCardModels, buildBroThreadRecords } from "./components/newbro/adapters";
 import { BroAvatar, avatarTypeToCharacter } from "./components/newbro/BroAvatar";
 import { DevicePairingForm } from "./components/newbro/DevicePairingForm";
 import { MarkdownText } from "./components/ui/markdown-text";
 import { useNewbroShell } from "./NewbroShell";
-import { deriveLiveTurnState } from "./lib/reasoningPhase";
-import { splitLiveSteps } from "./lib/splitLiveSteps";
 import { LiveTurnBubble } from "./LiveTurnBubble";
 import { timelineRowKey } from "./lib/timelineRowKey";
+import { timelineMessageText } from "./lib/timelineMessage";
+import { buildTurnRenderModel } from "./lib/turnRenderModel";
 import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
@@ -1000,10 +1000,6 @@ function timelineTaskStatus(status: string): BroTaskRecord["status"] {
   return "completed";
 }
 
-function timelineMessageText(message: BroTimelineMessage | null): string {
-  if (!message) return "";
-  return (message.kind === "audio" ? message.transcript : message.text)?.trim() ?? "";
-}
 
 function timelineMetadataText(turn: BroTimelineTurn, key: string): string {
   const value = turn.metadata?.[key];
@@ -1122,52 +1118,18 @@ function TimelineTurnView({
   const record = timelineTaskRecord(turn);
   const proposalRequests = shell.interactionRequests.filter((request) => planProposalRequestMatchesTurn(request, turn));
 
-  // Reasoning bubble — rendered for in-flight turns (desktop + mobile) and collapsed pill for settled mobile turns.
-  const taskId = turn.task?.task_id ?? null;
-  const activeRun = taskId
-    ? (shell.executionRuns.find((r) => r.task_id === taskId && (r.status === "running" || r.status === "created" || r.status === "waiting_executor")) ?? null)
-    : null;
-  // For settled turns, find any run for this task (including completed runs).
-  const anyRun = activeRun ?? (taskId ? (shell.executionRuns.find((r) => r.task_id === taskId) ?? null) : null);
-  const details = taskId ? (shell.recentExecutionDetails[taskId] ?? null) : null;
-  const nativeReasoningSteps = buildReasoningStepsForNativeTurn(turn, shell.recentNativeTurnReasoning);
-  const nativeInFlight = nativeReasoningSteps.length > 0 && (turn.status === "running" || turn.status === "pending");
-  const nativeSettled = nativeReasoningSteps.length > 0 && !nativeInFlight;
-  const reasoningSteps = nativeInFlight ? nativeReasoningSteps : buildReasoningStepsForTurn(activeRun, details);
-  const settledReasoningSteps = nativeSettled
-    ? nativeReasoningSteps
-    : activeRun
-      ? []
-      : buildReasoningStepsForTurn(anyRun, details);
-  const answerText = timelineMessageText(turn.assistant) || record?.summary?.trim() || record?.description?.trim() || "";
-  const rawAnswerItemId = turn.assistant?.metadata?.codex_item_id;
-  const answerItemId = typeof rawAnswerItemId === "string" ? rawAnswerItemId : null;
-
-  const liveState = deriveLiveTurnState({
-    status: turn.status,
-    stepCount: reasoningSteps.length,
-    hasAnswer: answerText !== "",
-  });
-  // Codex multi-message turn split: while reasoning the latest step is the
-  // prominent streaming commentary line and the rest are compact steps; on
-  // answering/settled commentary collapses into the (deduped) step list and the
-  // final answer is the answer. See lib/splitLiveSteps for the contract.
-  const { activeCommentary, stepsForBubble, dedupedSettledSteps } = splitLiveSteps({
-    liveState,
-    reasoningSteps,
-    settledReasoningSteps,
-    answerItemId,
-  });
-  const stopTaskId = turn.task?.task_id ?? null;
-  const canStop = liveState.kind !== "settled" && stopTaskId !== null;
+  const { liveState, activeCommentary, stepsForBubble, answerText, settledHasNothing, canStop, stopTaskId } =
+    buildTurnRenderModel(turn, record, {
+      executionRuns: shell.executionRuns,
+      recentExecutionDetails: shell.recentExecutionDetails,
+      recentNativeTurnReasoning: shell.recentNativeTurnReasoning,
+    });
   const onStop = () => { if (stopTaskId) shell.cancelTask(stopTaskId); };
 
   const downloadContext =
     sessionId && turn.thread_id && turn.turn_id && workspaceRoot
       ? { sessionId, threadId: turn.thread_id, turnId: turn.turn_id, workspaceRoot }
       : undefined;
-  const settledHasNothing =
-    liveState.kind === "settled" && answerText === "" && dedupedSettledSteps.length === 0;
 
   return (
     <>
