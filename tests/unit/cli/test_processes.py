@@ -46,9 +46,18 @@ def test_terminate_child_terminates_then_kills_if_still_alive():
 
 
 def test_terminate_child_skips_kill_when_child_exits():
-    proc = FakeProc(alive_polls=0)
+    # Alive at first, exits right after terminate() → terminated, not killed.
+    proc = FakeProc(alive_polls=1)
     processes._terminate_child(proc, time_module=FakeTime(), timeout=5.0)
     assert proc.terminated is True
+    assert proc.killed is False
+
+
+def test_terminate_child_returns_early_when_already_dead():
+    # Already exited → neither terminate() nor kill() is called (spec guard).
+    proc = FakeProc(alive_polls=0)
+    processes._terminate_child(proc, time_module=FakeTime(), timeout=5.0)
+    assert proc.terminated is False
     assert proc.killed is False
 
 

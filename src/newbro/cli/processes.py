@@ -16,6 +16,8 @@ class ManagedProcessSpec:
 
 def _terminate_child(process: Any, *, time_module: ModuleType, timeout: float = 5.0) -> None:
     """SIGTERM the child, wait up to `timeout`, then SIGKILL if still alive."""
+    if process.poll() is not None:
+        return
     process.terminate()
     deadline = time_module.time() + timeout
     while process.poll() is None and time_module.time() < deadline:
