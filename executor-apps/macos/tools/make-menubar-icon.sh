@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regenerate macos/Resources/MenuBarBro.png (the menu bar template silhouette)
+# Regenerate executor-apps/macos/Resources/MenuBarBro.png (the menu bar template silhouette)
 # from the brand logo. Native tooling only (swift). Run when the logo changes.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO="$(cd "$HERE/../.." && pwd)"
+REPO="$(cd "$HERE/../../.." && pwd)"
 LOGO_WEBP="$REPO/design/assets/newbro-logo.webp"
 OUT="$HERE/../Resources/MenuBarBro.png"
 

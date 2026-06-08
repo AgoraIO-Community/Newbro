@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Regenerate macos/Resources/AppIcon.icns from the brand logo.
+# Regenerate executor-apps/macos/Resources/AppIcon.icns from the brand logo.
 # Native tooling only (sips + swift + iconutil); run when the logo changes.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO="$(cd "$HERE/../.." && pwd)"
+REPO="$(cd "$HERE/../../.." && pwd)"
 LOGO_WEBP="$REPO/design/assets/newbro-logo.webp"
 OUT="$HERE/../Resources/AppIcon.icns"
 

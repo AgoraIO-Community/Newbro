@@ -58,7 +58,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Core unit tests
-        run: swift test --package-path macos
+        run: swift test --package-path executor-apps/macos
 
       - name: Derive release version from tag
         env:
@@ -81,13 +81,13 @@ jobs:
         run: |
           set -euo pipefail
           export NEWBRO_APP_VERSION="$RELEASE_VERSION"
-          mkdir -p macos/release
+          mkdir -p executor-apps/macos/release
           for ARCH in arm64 x86_64; do
             echo "::group::build $ARCH"
-            NEWBRO_APP_ARCH="$ARCH" ./macos/package-app.sh
+            NEWBRO_APP_ARCH="$ARCH" ./executor-apps/macos/package-app.sh
             STAGE="$(mktemp -d)"
-            cp -R "macos/dist/Newbro Executor.app" "$STAGE/"
-            DMG="macos/release/NewbroExecutor-${NEWBRO_APP_VERSION}-${ARCH}.dmg"
+            cp -R "executor-apps/macos/dist/Newbro Executor.app" "$STAGE/"
+            DMG="executor-apps/macos/release/NewbroExecutor-${NEWBRO_APP_VERSION}-${ARCH}.dmg"
             rm -f "$DMG"
             create-dmg \
               --volname "Newbro Executor ${NEWBRO_APP_VERSION}" \
@@ -101,12 +101,12 @@ jobs:
             rm -rf "$STAGE"
             echo "::endgroup::"
           done
-          ls -la macos/release
+          ls -la executor-apps/macos/release
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: macos/release/*.dmg
+          files: executor-apps/macos/release/*.dmg
           fail_on_unmatched_files: true
           body: |
             ## Newbro Executor (macOS)
