@@ -2383,7 +2383,9 @@ describe("Newbro artboard shell", () => {
     clientMock.listBros
       .mockResolvedValueOnce(broListFromSnapshot(activeForgeSnapshot("session-existing")))
       .mockResolvedValueOnce(broListFromSnapshot(activeForgeSnapshot("session-existing", offlineNode)));
-    clientMock.subscribeBroThread.mockRejectedValueOnce(new Error(error));
+    // Subscribe failures are now non-blocking (only live attach is lost), so the
+    // surfaced thread-open error comes from the blocking timeline fetch instead.
+    clientMock.listBroTimelinePage.mockRejectedValueOnce(new Error(error));
     window.history.replaceState({}, "", "/bros/forge?sid=session-existing&thread=exec-1");
 
     render(<RouterProvider router={getRouter()} />);

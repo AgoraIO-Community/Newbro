@@ -665,13 +665,20 @@ function useNewbroShellState() {
     }
     try {
       setBroThreads((current) => markThreadTimeline(current, threadId, "loading"));
-      await subscribeBroThread(activeShellSessionId, { targetPersonaId, threadId });
+      // Subscribe (live updates) runs concurrently with the timeline fetch and must not
+      // block the visible history; a subscribe failure only loses live attach.
+      const subscribePromise = subscribeBroThread(activeShellSessionId, { targetPersonaId, threadId }).catch(
+        (error) => {
+          console.warn("bro thread subscribe failed", error);
+        },
+      );
       const page = await listBroTimelinePage(activeShellSessionId, {
         targetPersonaId,
         threadId,
         cursor: null,
         limit: 15,
       });
+      void subscribePromise;
       if (!mountedRef.current || threadOpenLatestKeyRef.current !== openKey) {
         return;
       }

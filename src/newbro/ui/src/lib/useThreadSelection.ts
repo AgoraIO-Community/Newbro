@@ -87,10 +87,8 @@ export function useThreadSelection<T extends { threadId: string }>(
   }, [broId, broSource]);
 
   function selectThread(threadId: string) {
-    if (broId && broSource === "runtime" && activeThreadId && activeThreadId !== threadId) {
-      closeThreadRef.current(broId, activeThreadId);
-      activeThreadRef.current = null;
-    }
+    // No close on switch: the new thread's subscribe POST replaces the previous
+    // subscription server-side. The old thread's cached timeline can stay.
     setPendingNewThread(false);
     setPendingWorkspaceId(null);
     setWorkspacePickerOpen(false);
@@ -108,10 +106,6 @@ export function useThreadSelection<T extends { threadId: string }>(
   }
 
   function selectWorkspace(workspaceId: string) {
-    if (broId && broSource === "runtime") {
-      closeThreadRef.current(broId, activeThreadId);
-      activeThreadRef.current = null;
-    }
     setPendingNewThread(true);
     setPendingWorkspaceId(workspaceId);
     setWorkspacePickerOpen(false);
