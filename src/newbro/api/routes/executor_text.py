@@ -20,6 +20,7 @@ class ExecutorTextInstructionRequest(BaseModel):
     workspace_id: str | None = Field(default=None, min_length=1)
     client_request_id: str | None = Field(default=None, min_length=1, max_length=120)
     plan_mode: bool = False
+    skill_name: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class ExecutorTextInstructionResponse(BaseModel):
@@ -84,6 +85,7 @@ async def submit_executor_text_instruction(
             workspace_id=body.workspace_id,
             client_request_id=body.client_request_id,
             plan_mode=body.plan_mode,
+            skill_name=body.skill_name,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

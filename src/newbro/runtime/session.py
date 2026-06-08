@@ -685,6 +685,7 @@ class SessionRuntime:
         workspace_id: str | None = None,
         client_request_id: str | None = None,
         plan_mode: bool = False,
+        skill_name: str | None = None,
     ) -> ExecutorTextInstruction:
         return await self._direct_executor().submit_text_instruction(
             target_persona_id=target_persona_id,
@@ -694,6 +695,7 @@ class SessionRuntime:
             workspace_id=workspace_id,
             client_request_id=client_request_id,
             plan_mode=plan_mode,
+            skill_name=skill_name,
         )
 
     async def handle_executor_audio_transcript_event(self, run_id: str, metadata: dict[str, object]) -> None:
