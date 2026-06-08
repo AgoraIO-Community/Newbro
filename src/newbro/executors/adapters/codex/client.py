@@ -181,16 +181,22 @@ class CodexAppServerClient:
         collaboration_mode: Literal["plan", "default"] | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        skill: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        input_items: list[dict[str, object]] = [
+            {
+                "type": "text",
+                "text": _apply_skill_marker(prompt, skill),
+                "textElements": [],
+            }
+        ]
+        s_name = skill.get("name") if skill else None
+        s_path = skill.get("path") if skill else None
+        if skill and isinstance(s_name, str) and s_name and isinstance(s_path, str) and s_path:
+            input_items.append({"type": "skill", "name": s_name, "path": s_path})
         params: dict[str, object] = {
             "threadId": thread_id,
-            "input": [
-                {
-                    "type": "text",
-                    "text": prompt,
-                    "textElements": [],
-                }
-            ],
+            "input": input_items,
         }
         if collaboration_mode is not None:
             if not model and collaboration_mode != "default":
@@ -244,6 +250,18 @@ def _as_dict(value: object) -> dict[str, object]:
     if isinstance(value, dict):
         return value
     return {}
+
+
+def _apply_skill_marker(prompt: str, skill: dict[str, object] | None) -> str:
+    if not skill:
+        return prompt
+    name = skill.get("name")
+    if not isinstance(name, str) or not name:
+        return prompt
+    marker = f"${name}"
+    if prompt.startswith(marker):
+        return prompt
+    return f"{marker} {prompt}"
 
 
 def _build_request_response(
