@@ -1204,6 +1204,7 @@ async def test_seeded_in_flight_turn_settles_final_answer_keeping_commentary_rea
 
     recent = session._recent_native_turn_reasoning()
     assert recent.get("codex::native-thread-1::turn-live") is not None
+    assert [s.text for s in recent["codex::native-thread-1::turn-live"]] == ["Reading"]
 
 
 @pytest.mark.anyio
