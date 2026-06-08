@@ -32,11 +32,13 @@ def test_main_returns_130_on_keyboard_interrupt(monkeypatch, capsys):
             return object()
 
     monkeypatch.setattr(executor_node_main, "ExecutorNodeService", FakeService)
-    monkeypatch.setattr(
-        executor_node_main.asyncio,
-        "run",
-        lambda _awaitable: (_ for _ in ()).throw(KeyboardInterrupt()),
-    )
+    def _fake_run(awaitable):
+        # Consume the coroutine so it isn't reported as "never awaited", then
+        # simulate a Ctrl-C arriving while the node runs.
+        awaitable.close()
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(executor_node_main.asyncio, "run", _fake_run)
 
     assert (
         executor_node_main.main(["--base-url", "http://127.0.0.1:8000", "--node-id", "node-1", "--token", "token-1"])
