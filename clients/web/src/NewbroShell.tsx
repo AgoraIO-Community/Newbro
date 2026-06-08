@@ -48,6 +48,7 @@ import type {
   ExecutionSession,
   ExecutionRun,
   ExecutorNodeRecord,
+  ExecutorSkill,
   AgentEvent,
   AttentionItem,
   BroListResponse,
@@ -433,6 +434,7 @@ function SignupPanel({
 function useNewbroShellState() {
   const [runtimePersonas, setRuntimePersonas] = useState<Persona[]>([]);
   const [executorNodes, setExecutorNodes] = useState<ExecutorNodeRecord[]>([]);
+  const [broSkillsMap, setBroSkillsMap] = useState<Record<string, ExecutorSkill[]>>({});
   const [tasks, setTasks] = useState<Task[]>([]);
   const [executionSessions, setExecutionSessions] = useState<ExecutionSession[]>([]);
   const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
@@ -491,6 +493,11 @@ function useNewbroShellState() {
   function applyBroList(response: BroListResponse) {
     setRuntimePersonas(personasFromBroList(response));
     setExecutorNodes(executorNodesFromBroList(response));
+    const skillsMap: Record<string, ExecutorSkill[]> = {};
+    for (const bro of response.bros) {
+      skillsMap[bro.persona_id] = bro.executor_node?.codex?.skills ?? [];
+    }
+    setBroSkillsMap(skillsMap);
   }
 
   function applyBroThreadPages(pages: BroThreadPageResponse[]) {
@@ -518,6 +525,7 @@ function useNewbroShellState() {
   function clearShellSessionState() {
     setRuntimePersonas([]);
     setExecutorNodes([]);
+    setBroSkillsMap({});
     setTasks([]);
     setExecutionSessions([]);
     setExecutionRuns([]);
@@ -1159,6 +1167,7 @@ function useNewbroShellState() {
     hasLoadedShellSnapshot,
     runtimePersonas,
     executorNodes,
+    broSkillsMap,
     tasks,
     executionSessions,
     executionRuns,

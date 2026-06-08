@@ -26,7 +26,8 @@ import { LiveTurnBubble } from "./LiveTurnBubble";
 import { timelineRowKey } from "./lib/timelineRowKey";
 import { timelineMessageText } from "./lib/timelineMessage";
 import { buildTurnRenderModel } from "./lib/turnRenderModel";
-import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, InteractionRequest, Persona, Task } from "./types";
+import { SkillLeadCluster } from "./components/newbro/SkillPicker";
+import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, ExecutorSkill, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
 const APP_DOWNLOAD_URL = "https://github.com/AgoraIO-Community/Newbro/releases/latest";
@@ -2981,12 +2982,35 @@ function MobileThreadSurface({
   );
 }
 
+export function buildExecutorTextPayload(args: {
+  targetPersonaId: string;
+  targetThreadId: string | null;
+  createNewThread: boolean;
+  workspaceId?: string | null;
+  clientRequestId: string;
+  planMode: boolean;
+  skill: { name: string } | null;
+  text: string;
+}) {
+  return {
+    targetPersonaId: args.targetPersonaId,
+    targetThreadId: args.targetThreadId,
+    createNewThread: args.createNewThread,
+    ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
+    clientRequestId: args.clientRequestId,
+    ...(args.planMode ? { planMode: true } : {}),
+    ...(args.skill ? { skillName: args.skill.name } : {}),
+    text: args.text,
+  };
+}
+
 function DesktopComposerBar({
   bro,
   selectedThreadId,
   createNewThread,
   workspaceId,
   disabled,
+  skills,
   onTextTurn,
   onAudioTurn,
   onRemoveAudioTurn,
@@ -2997,6 +3021,7 @@ function DesktopComposerBar({
   createNewThread: boolean;
   workspaceId?: string | null;
   disabled: boolean;
+  skills: ExecutorSkill[];
   onTextTurn: (turn: TextTurn) => void;
   onAudioTurn: (turn: AudioTurn) => void;
   onRemoveAudioTurn: (turnId: string) => void;
@@ -3005,6 +3030,7 @@ function DesktopComposerBar({
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
   const [planMode, setPlanMode] = useState(false);
+  const [skill, setSkill] = useState<ExecutorSkill | null>(null);
   const [voiceMode, setVoiceMode] = useState<"ptt" | "free">("ptt");
   const [recording, setRecording] = useState(false);
   const [recSecs, setRecSecs] = useState(0);
@@ -3055,6 +3081,11 @@ function DesktopComposerBar({
     onThreadResolved,
     onSent: shell.refreshShellSession,
   });
+
+  // Clear selected skill when the active bro changes.
+  useEffect(() => {
+    setSkill(null);
+  }, [bro.id]);
 
   // Sync local recording state with recorder phase (covers cancel/blur reset)
   useEffect(() => {
@@ -3169,16 +3200,18 @@ function DesktopComposerBar({
       elapsed_ms: Math.round(performance.now() - startedAt),
     });
     setDraft("");
+    setSkill(null);
     try {
-      const response = await submitExecutorTextInstruction(shell.activeShellSessionId, {
+      const response = await submitExecutorTextInstruction(shell.activeShellSessionId, buildExecutorTextPayload({
         targetPersonaId: bro.id,
         targetThreadId: selectedThreadId,
         createNewThread,
-        ...(workspaceId ? { workspaceId } : {}),
+        workspaceId,
         clientRequestId: turnId,
-        ...(planMode ? { planMode: true } : {}),
+        planMode,
+        skill,
         text,
-      });
+      }));
       directExecutorMetric("ui.text.http.accepted", {
         client_request_id: turnId,
         instruction_id: response.instruction_id,
@@ -3268,6 +3301,16 @@ function DesktopComposerBar({
         </span>
       </div>
       <div className={`dt-cmp-bar${recording ? " dt-cmp-bar-rec" : ""}`}>
+        {skills.length > 0 && (
+          <SkillLeadCluster
+            skills={skills}
+            selected={skill}
+            broName={bro.name}
+            disabled={disabled}
+            onChoose={setSkill}
+            onClear={() => setSkill(null)}
+          />
+        )}
         {planChip}
         {recording ? (
           <div className="dt-cmp-rec">
@@ -3296,7 +3339,7 @@ function DesktopComposerBar({
                   if (!disabled) setPlanMode((current) => !current);
                 }
               }}
-              placeholder={disabled ? "Reconnect your computer before sending" : textState.enabled ? (planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
+              placeholder={disabled ? "Reconnect your computer before sending" : textState.enabled ? (skill ? (skill.hint ?? `Running with ${skill.display_name}…`) : planMode ? `Describe the task — ${bro.name} will plan it first...` : `Type to ${bro.name}...`) : textState.reason}
               disabled={disabled}
             />
           </>
@@ -3644,6 +3687,7 @@ function DesktopDetail({ broId, onHome }: { broId: string; onHome: () => void })
               createNewThread={directThreadIntent.createNewThread}
               workspaceId={directThreadIntent.workspaceId}
               disabled={Boolean(offline)}
+              skills={shell.broSkillsMap[bro.id] ?? []}
               onTextTurn={upsertTextTurn}
               onAudioTurn={upsertAudioTurn}
               onRemoveAudioTurn={removeAudioTurn}
