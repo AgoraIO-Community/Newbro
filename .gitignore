@@ -6,6 +6,8 @@ build
 .venv/
 .env.local
 .DS_Store
+prototypes/design/.design-canvas.state.json
+prototypes/design/.thumbnail
 .pytest_cache/
 __pycache__/
 *.pyc

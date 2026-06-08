@@ -5,7 +5,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
-LOGO_WEBP="$REPO/design/assets/newbro-logo.webp"
+LOGO_WEBP="$REPO/prototypes/design/assets/newbro-logo.webp"
 OUT="$HERE/../Resources/AppIcon.icns"
 
 WORK="$(mktemp -d)"

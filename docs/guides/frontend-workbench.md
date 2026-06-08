@@ -4,7 +4,7 @@ The main frontend under `clients/web/` renders the active `Newbro` runtime
 shell at `/`.
 
 It keeps the protocol-first runtime behavior, but the active shell now follows
-the checked-in design prototype under `design/`: a compact glass top header,
+the checked-in design prototype under `prototypes/design/`: a compact glass top header,
 light gray workspace surface, bordered paper panels, coral primary actions,
 green live state, mono operational labels, design-port Bro avatars, empty
 onboarding cards, and mobile Walkie/detail variants.
@@ -222,7 +222,7 @@ design CSS copied into `src/styles/` from the prototype:
 - `RunnerBrainPanel`
 - `useVoiceSession`
 
-The visual language should stay close to the `design/` prototype:
+The visual language should stay close to the `prototypes/design/` prototype:
 
 - light gray app background with white bordered panels
 - orange `#ff6a3d` as the main action color

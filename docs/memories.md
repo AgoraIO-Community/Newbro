@@ -250,7 +250,7 @@ Short log of important design decisions and changes for Newbro.
 
 ## 2026-05-25
 
-- Refactored the active `src/newbro/ui` shell toward the checked-in `design/` prototype, porting design tokens, Bro avatars, top header, Home cards, onboarding/setup states, Bro Detail layout, and mobile-safe header behavior while keeping runtime data sourced from session snapshots.
+- Refactored the active `src/newbro/ui` shell toward the checked-in `prototypes/design/` prototype, porting design tokens, Bro avatars, top header, Home cards, onboarding/setup states, Bro Detail layout, and mobile-safe header behavior while keeping runtime data sourced from session snapshots.
 - Changed the Home empty state to show the design empty workspace when no runtime personas exist instead of filling the active session with seeded sample Bro cards.
 - Kept the root Home route as the workspace even when a default Bro exists; Bro Detail now requires explicit card or `/bros/:broId` navigation while preserving the active `sid`.
 

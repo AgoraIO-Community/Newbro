@@ -1,7 +1,7 @@
 # Frontend Handoff
 
 This document records the current handoff state for `clients/web/` after the
-active shell was refactored toward the design prototype in `design/` while
+active shell was refactored toward the design prototype in `prototypes/design/` while
 keeping the Newbro runtime clients wired.
 
 ## Current Product State
@@ -84,23 +84,23 @@ These should pass from the current state.
 ## Visual QA Evidence
 
 The current design refactor was checked against the design screenshots in
-`design/screenshots/` using desktop captures at `1440x900`, primary mobile
+`prototypes/design/screenshots/` using desktop captures at `1440x900`, primary mobile
 captures at `440x920`, and narrow mobile spot checks at `390x820`.
 
 | Required state | Design reference | Current evidence |
 | --- | --- | --- |
-| Desktop sign-in / invitation | `design/screenshots/onboarding-overview.png`, `design/screenshots/onboarding-right.png` | `/tmp/newbro-live-signin-desktop-current.png` |
-| Mobile sign-in / invitation | `design/screenshots/onboarding-overview.png`, `design/screenshots/onboarding-right.png` | `/tmp/newbro-live-signin-mobile-current.png` |
-| Desktop empty workspace | `design/screenshots/firsthome-sheet-closed.png`, `design/screenshots/recheck.png` | `/tmp/newbro-live-empty-desktop-current.png` |
-| Mobile empty workspace | `design/screenshots/firsthome-sheet-closed.png`, `design/screenshots/recheck.png` | `/tmp/newbro-live-empty-mobile-current.png` |
-| Desktop create/connect Bro | `design/screenshots/recheck-hq.png`, `design/screenshots/recheck.png` | `/tmp/newbro-live-create-sheet-desktop-current.png` |
-| Mobile create/connect Bro | `design/screenshots/recheck-hq.png`, `design/screenshots/recheck.png` | `/tmp/newbro-live-create-sheet-mobile-current.png` |
-| Desktop home workspace | `design/screenshots/01-canvas.png`, `design/screenshots/hero-only.png`, `design/screenshots/hero-tight.png`, `design/screenshots/hero-zoom.png` | `/tmp/newbro-live-home-desktop-current.png` |
-| Mobile home workspace | `design/screenshots/01-canvas.png`, `design/screenshots/hero-only.png`, `design/screenshots/hero-tight.png`, `design/screenshots/hero-zoom.png` | `/tmp/newbro-live-home-mobile-current.png` |
-| Desktop active Bro detail / thread | `design/screenshots/dt-detail-current.png`, `design/screenshots/02-stage-focus.png` | `/tmp/newbro-live-detail-connected-desktop-current.png` |
-| Mobile active Bro detail / thread | `design/screenshots/dt-detail-current.png`, `design/screenshots/02-stage-focus.png` | `/tmp/newbro-live-detail-connected-mobile-current.png` |
-| Desktop offline / send blocked | `design/screenshots/dt-detail-current.png` | `/tmp/newbro-live-offline-send-blocked-desktop-current.png` |
-| Mobile offline / send blocked | `design/screenshots/dt-detail-current.png` | `/tmp/newbro-live-offline-send-blocked-mobile-current.png` |
+| Desktop sign-in / invitation | `prototypes/design/screenshots/onboarding-overview.png`, `prototypes/design/screenshots/onboarding-right.png` | `/tmp/newbro-live-signin-desktop-current.png` |
+| Mobile sign-in / invitation | `prototypes/design/screenshots/onboarding-overview.png`, `prototypes/design/screenshots/onboarding-right.png` | `/tmp/newbro-live-signin-mobile-current.png` |
+| Desktop empty workspace | `prototypes/design/screenshots/firsthome-sheet-closed.png`, `prototypes/design/screenshots/recheck.png` | `/tmp/newbro-live-empty-desktop-current.png` |
+| Mobile empty workspace | `prototypes/design/screenshots/firsthome-sheet-closed.png`, `prototypes/design/screenshots/recheck.png` | `/tmp/newbro-live-empty-mobile-current.png` |
+| Desktop create/connect Bro | `prototypes/design/screenshots/recheck-hq.png`, `prototypes/design/screenshots/recheck.png` | `/tmp/newbro-live-create-sheet-desktop-current.png` |
+| Mobile create/connect Bro | `prototypes/design/screenshots/recheck-hq.png`, `prototypes/design/screenshots/recheck.png` | `/tmp/newbro-live-create-sheet-mobile-current.png` |
+| Desktop home workspace | `prototypes/design/screenshots/01-canvas.png`, `prototypes/design/screenshots/hero-only.png`, `prototypes/design/screenshots/hero-tight.png`, `prototypes/design/screenshots/hero-zoom.png` | `/tmp/newbro-live-home-desktop-current.png` |
+| Mobile home workspace | `prototypes/design/screenshots/01-canvas.png`, `prototypes/design/screenshots/hero-only.png`, `prototypes/design/screenshots/hero-tight.png`, `prototypes/design/screenshots/hero-zoom.png` | `/tmp/newbro-live-home-mobile-current.png` |
+| Desktop active Bro detail / thread | `prototypes/design/screenshots/dt-detail-current.png`, `prototypes/design/screenshots/02-stage-focus.png` | `/tmp/newbro-live-detail-connected-desktop-current.png` |
+| Mobile active Bro detail / thread | `prototypes/design/screenshots/dt-detail-current.png`, `prototypes/design/screenshots/02-stage-focus.png` | `/tmp/newbro-live-detail-connected-mobile-current.png` |
+| Desktop offline / send blocked | `prototypes/design/screenshots/dt-detail-current.png` | `/tmp/newbro-live-offline-send-blocked-desktop-current.png` |
+| Mobile offline / send blocked | `prototypes/design/screenshots/dt-detail-current.png` | `/tmp/newbro-live-offline-send-blocked-mobile-current.png` |
 
 Known intentional deltas:
 
