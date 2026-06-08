@@ -56,15 +56,30 @@ data contract, and end-to-end wiring needed to make the prototype's picker real.
   (`runtime/models.py`) → `BroExecutorCapabilitySummary` per bro. Capabilities
   reach the backend **only at `register_node`** — `node_status`
   (`api/ws/executors.py:81`) is acked but does not update registry state.
-- **Codex app-server skills contract:**
-  - `skills/list` params `{cwds, forceReload, perCwdExtraUserRoots}`; each skill
-    has `name`, `description`, `enabled`, optional `interface.{displayName,
-    shortDescription}`, optional `dependencies`.
+- **Codex app-server skills contract — verified against codex-cli 0.137.0** on
+  2026-06-08 (fixture: `docs/protocol/fixtures/codex-skills-list-sample.json`):
+  - `skills/list` params `{cwds, forceReload, perCwdExtraUserRoots}`.
+  - **Response is grouped per cwd:** `{data: [{cwd, skills: [...], errors: [...]}]}`.
+    The mapping must flatten across groups, dedupe by `(name, path)`, and surface
+    per-cwd `errors`.
+  - **Each skill** has: `name`, `description` (long trigger text), `path`
+    (absolute `SKILL.md` path — **always present**), `scope` (`"user"`|`"system"`),
+    `enabled` (bool). Optional `interface` = `{displayName, shortDescription,
+    iconSmall, iconLarge, brandColor, defaultPrompt}` where `iconSmall`/`iconLarge`
+    are **node-local file paths** (often non-null) and `defaultPrompt` is
+    UI-friendly prompt text. A few skills also carry a **top-level**
+    `shortDescription` (no `interface`). `dependencies` is **structured** (e.g.
+    `{"tools": [{"type":"mcp","value":…,"url":…}]}`), **not** `list[str]`, and is
+    rare (advisory).
   - `skills/changed` notification when watched skill files change.
   - Activation: add a `{type:"skill", name, path}` input item to `turn/start`
     and include the `$<skill-name>` marker in the user text; the server injects
-    full skill instructions.
+    full skill instructions. (`defaultPrompt` values literally use the `$name`
+    form, confirming the marker convention.)
   - `turn/start` already accepts an `input` array (today a single text item).
+  - **Size:** a real one-bro catalog was 55 skills / ~40 KB raw; a lean
+    projection is ~15 KB. The snapshot must carry the lean projection (below),
+    not the raw response.
 
 ## End-to-end shape
 
@@ -83,26 +98,30 @@ Codex app-server                Newbro executor node           Backend          
 
 ## Section 1 — Data model & protocol
 
-New shared model `ExecutorSkill` (lean — carries **no** instruction bodies, to
-respect the snapshot-size constraint that previously bit the Cardputer client):
+New shared model `ExecutorSkill` — the **lean snapshot projection** (carries no
+instruction bodies and not the long `description`, to respect the snapshot-size
+constraint that previously bit the Cardputer client; ~15 KB vs ~40 KB raw for a
+55-skill catalog):
 
 ```
-name: str                 # codex skill identifier; used for the "$name" marker + skill input item
-display_name: str         # interface.displayName, falls back to name
-description: str          # interface.shortDescription or description
-path: str | None          # absolute SKILL.md path, IF skills/list returns it (see "Open questions").
-                          #   When present, enables full-instruction activation via a skill input item.
-                          #   When absent, the turn uses marker-only activation ($name) — see §3.
-enabled: bool
-dependencies: list[ExecutorSkillDependency]   # structured, advisory: required tools / MCP servers
+name: str            # codex skill identifier; used for the "$name" marker + skill input item
+display_name: str    # interface.displayName → falls back to name
+description: str     # interface.shortDescription → top-level shortDescription → description[:160]
+hint: str | None     # interface.defaultPrompt — drives the composer placeholder (see §4)
+path: str            # absolute SKILL.md path; always returned by skills/list → enables skill input item
+enabled: bool        # disabled skills are shown greyed/non-selectable
 ```
 
-`ExecutorSkillDependency` is modeled as a structured object (e.g.
-`{kind, name}` or an opaque pass-through dict), **not** `list[str]` — the
-app-server reports structured dependency metadata. The exact shape is pinned by
-the captured fixture (see Testing + Open questions); until then it is carried as
-an opaque `dict[str, object]` so we neither lose data nor over-commit to a shape
-we have not observed.
+Deliberately **excluded** from the snapshot projection (kept only in node-side
+diagnostics, not shipped per-bro):
+- `description` (full long trigger text) — replaced by the truncated/short form.
+- `dependencies` — structured (`{"tools":[{"type":"mcp",…}]}`), rare, advisory;
+  not needed to render the picker or activate a skill. If a future feature needs
+  it, fetch on demand rather than bloating the snapshot.
+- `iconSmall`/`iconLarge` — these are **node-local filesystem paths** the web UI
+  cannot load. Icons are out of scope for v1 (see §4); the picker uses one
+  generic glyph. Revisiting requires a node→backend icon-bytes transport.
+- `scope`, `brandColor` — not needed for v1.
 
 **The capability snapshot path crosses THREE models, not one.** "Rides the
 existing capability path" requires updating each, plus the hand-written copy
@@ -141,7 +160,12 @@ backend or the UI snapshot:
 ## Section 2 — Discovery (executor → backend)
 
 - `CodexClient.skills_list(cwds, force_reload=False)` calls `skills/list` with the
-  bro's working directory as `cwds`.
+  bro's working directory as `cwds`. The response is **grouped per cwd**
+  (`data: [{cwd, skills, errors}]`); the mapper flattens across groups, dedupes by
+  `(name, path)`, projects each skill into the lean `ExecutorSkill` (§1), and logs
+  any per-cwd `errors` to node diagnostics. The catalog spans user + system scope
+  and multiple roots (`~/.codex/skills`, `~/.agents/skills`, plugin caches) —
+  the node does not enumerate the filesystem itself; it trusts `skills/list`.
 - `CodexExecutor` maps the response into `ExecutorCapabilities.skills`, carrying
   `enabled` through (UI greys out disabled skills — see §5). `CodexExecutor`
   already exposes `refresh_capabilities()` (`executor.py:85`), which
@@ -167,16 +191,12 @@ backend or the UI snapshot:
 ## Section 3 — Selection & execution (turn activation)
 
 **Activation primitive.** `CodexClient.turn_start` gains an optional
-`skill: {name, path}`. When present:
-- If `path` is known: append a second input item `{type:"skill", name, path}`
-  **and** prefix the prompt with the `$<name>` marker, so Codex injects the full
-  skill instructions server-side (the documented behavior).
-- If `path` is unknown (`skills/list` did not return it — see Open questions):
-  **marker-only activation** — prefix the prompt with `$<name>` and send no skill
-  input item. This relies on the model resolving the skill rather than
-  server-side injection. This is an explicit, documented tradeoff, not a silent
-  degrade; the implementer must confirm which mode the real app-server requires
-  via the captured fixture.
+`skill: {name, path}`. `path` is always available from discovery (verified), so
+the primary path is: append a second input item `{type:"skill", name, path}`
+**and** prefix the prompt with the `$<name>` marker, so Codex injects the full
+skill instructions server-side. (Defensive fallback only: if `path` were ever
+missing, send marker-only `$<name>` with no skill item — relies on model
+resolution. Not the expected path.)
 
 **Propagation chain (must be threaded explicitly at every hop — the API accepts
 `plan_mode` only today).** Skill rides the same metadata carriers as `plan_mode`:
@@ -215,9 +235,15 @@ pretends success).** Per the repo golden rules:
 
 - **Catalog source:** replace the hardcoded `SKILLS` / `THR_SKILLS` arrays with
   the per-bro list from `bro.executor_node.codex.skills`. Map
-  `display_name`/`description` into the existing row markup.
-- **Icons:** Codex skills ship no icons → use the single generic
-  `SKILL_DEFAULT_ICON` glyph for every row.
+  `display_name` → row title and `description` (already the short form) → row
+  subtitle.
+- **Icons:** skills *do* expose `iconSmall`/`iconLarge`, but as **node-local file
+  paths** the web UI cannot load without a new icon-bytes transport. v1 uses the
+  single generic `SKILL_DEFAULT_ICON` glyph for every row; real icons are a
+  follow-up (listed in Out of scope).
+- **Hint:** the prototype's per-skill `hint` maps to `ExecutorSkill.hint`
+  (`interface.defaultPrompt`); when absent, fall back to a generic
+  "Running with {display_name}…".
 - **Desktop** (`DesktopComposerBar`, `ArtboardShell.tsx`): port the lead cluster —
   `Skill` chip ↔ selected pill, the `DTSkillMenu` popover, and the inline
   `/`-to-filter trigger (`onInputChange`, `handleKey`). Sits beside the existing
@@ -226,8 +252,8 @@ pretends success).** Per the repo golden rules:
   sheet + chip/pill + `/` trigger.
 - **State:** `selectedSkill` lives in composer state; cleared after send (one
   skill rides one turn). Changing the active bro clears it (catalog is per-bro).
-- **Hint text:** Codex skills have no `hint` field → generic
-  "Running with {display_name}…".
+- **Hint text:** from `ExecutorSkill.hint` (`interface.defaultPrompt`); generic
+  "Running with {display_name}…" when a skill has no `defaultPrompt`.
 - **Empty/unavailable:** if the bro has no Codex node or an empty catalog, hide
   the Skill chip entirely (not shown disabled), matching the prototype's hidden
   lead cluster when offline.
@@ -242,16 +268,19 @@ pretends success).** Per the repo golden rules:
   skills.
 - **Skill vanished between pick and send (§3):** drop skill, run plain turn,
   emit a non-fatal notice; never claim the skill ran.
-- **Snapshot size:** `ExecutorSkill` carries no instruction bodies; cap an
-  unexpectedly large catalog (e.g. first N) to protect the snapshot contract.
+- **Snapshot size:** `ExecutorSkill` is the lean projection (§1) — a real
+  55-skill catalog is ~15 KB projected (vs ~40 KB raw). Still, cap an
+  unexpectedly large catalog (e.g. first N, with a "+M more" affordance) to
+  protect the snapshot contract across many bros.
 
 ## Section 6 — Testing
 
-- **Fixture first:** capture a real `skills/list` response (and a `skills/changed`
-  notification) from the installed Codex app-server into
-  `docs/protocol/fixtures/` (e.g. `codex-skills-list-sample.jsonl`). This pins
-  whether `path` is present and the real `dependencies` shape; all adapter
-  mapping tests replay against it rather than against prose-inferred shapes.
+- **Fixture (captured):** `docs/protocol/fixtures/codex-skills-list-sample.json`
+  is a real `skills/list` result (codex-cli 0.137.0) covering every shape variant
+  (plain, interface+null icons, interface+real icons, structured `dependencies`,
+  top-level `shortDescription`, grouped+errors). All adapter mapping tests replay
+  against it rather than prose-inferred shapes. Still to capture when wiring
+  freshness: a `skills/changed` notification payload.
 - **Adapter unit:** `skills_list` request/response mapping (against the fixture);
   `turn_start` builds the `{type:"skill"}` input item + `$name` marker when `path`
   is present, and marker-only when it is not; `skills/changed` triggers the
@@ -275,19 +304,26 @@ pretends success).** Per the repo golden rules:
 - **Docs:** add a stable doc under `docs/protocol/` (skill discovery + activation
   contract) and a one-line `docs/memories.md` note, per `AGENTS.md`.
 
-## Open questions (resolve during implementation)
+## Resolved against a live app-server (codex-cli 0.137.0, 2026-06-08)
 
-1. **Does the installed `skills/list` return `path`?** The public sample shows
-   `path` only in the *activation* input-item example, not the list response.
-   Resolution: capture the fixture (Testing) and pin it. `ExecutorSkill.path` is
-   optional and §3 defines marker-only activation as the fallback; the fixture
-   decides which path the implementation takes.
-2. **Real `dependencies` shape.** Modeled as structured/opaque
-   (`dict[str, object]` pass-through) until the fixture pins it; do not collapse
-   to `list[str]`.
-3. **`cwds` for discovery.** Confirm the bro's working directory used for
-   `skills/list` matches the cwd Codex turns run in, so the discovered catalog is
-   the one actually activatable for that bro.
+Captured to `docs/protocol/fixtures/codex-skills-list-sample.json`:
+
+1. **`path` IS returned** by `skills/list` for every skill → primary activation
+   uses the `{type:"skill", name, path}` input item (§3). `path` is required in
+   `ExecutorSkill`; marker-only is a defensive fallback only.
+2. **`dependencies` is structured** (`{"tools":[{"type":"mcp",…}]}`), confirmed —
+   never `list[str]`. Rare and advisory → excluded from the snapshot projection.
+3. **Response is grouped per cwd** with a per-cwd `errors` array → flatten +
+   dedupe by `(name, path)` (§2).
+4. **Icons exist** (`interface.iconSmall/iconLarge`) but as node-local file paths
+   → deferred; generic glyph in v1 (§4, Out of scope).
+5. **`interface.defaultPrompt` exists** and is the natural picker hint (§4).
+
+Remaining to confirm during implementation:
+- **`cwds` for discovery** matches the cwd Codex turns actually run in for the
+  bro, so the discovered catalog is the activatable one.
+- Exact **`skills/changed` notification payload** (capture into the fixture set
+  when wiring the `node_capabilities` refresh).
 
 ## Out of scope
 
