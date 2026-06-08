@@ -250,7 +250,7 @@ Short log of important design decisions and changes for Newbro.
 
 ## 2026-05-25
 
-- Refactored the active `src/newbro/ui` shell toward the checked-in `design/` prototype, porting design tokens, Bro avatars, top header, Home cards, onboarding/setup states, Bro Detail layout, and mobile-safe header behavior while keeping runtime data sourced from session snapshots.
+- Refactored the active `src/newbro/ui` shell toward the checked-in `prototypes/design/` prototype, porting design tokens, Bro avatars, top header, Home cards, onboarding/setup states, Bro Detail layout, and mobile-safe header behavior while keeping runtime data sourced from session snapshots.
 - Changed the Home empty state to show the design empty workspace when no runtime personas exist instead of filling the active session with seeded sample Bro cards.
 - Kept the root Home route as the workspace even when a default Bro exists; Bro Detail now requires explicit card or `/bros/:broId` navigation while preserving the active `sid`.
 
@@ -307,7 +307,7 @@ Short log of important design decisions and changes for Newbro.
 - Added first-class Codex goal/plan projection: Codex goals come from `thread/goal/get` and goal events, Codex plans come from documented plan events/items, plan state is stored separately from progress, and reasoning items stay hidden from Bro Detail timeline cards.
 - Changed the VPS Docker deployment workflow to prune stopped containers and unused images before pulling/updating Compose, then prune unused images again after start so replaced app images do not accumulate; volumes are not pruned.
 - Added a macOS menu-bar app (`newbro executor ui`, `macos-ui` extra) that supervises multiple concurrent executor-node profiles from `~/.newbro/menubar.json`, spawning one `newbro executor run` subprocess per active profile. It is a supervisor + connection-profile editor only; `newbro executor setup` still owns executor binary/audio config.
-- Replaced the Python rumps macOS menu-bar executor app with a native SwiftUI app under `macos/` (Swift package: `NewbroExecutorCore` logic + `NewbroExecutor` app). It supervises multiple concurrent `newbro executor run` profiles from `~/.newbro/menubar.json`, resolves the installed `newbro` CLI at runtime (`~/.local/bin/newbro`), and self-heals via the public `install-newbro-cli.sh`.
+- Replaced the Python rumps macOS menu-bar executor app with a native SwiftUI app under `executor-apps/macos/` (Swift package: `NewbroExecutorCore` logic + `NewbroExecutor` app). It supervises multiple concurrent `newbro executor run` profiles from `~/.newbro/menubar.json`, resolves the installed `newbro` CLI at runtime (`~/.local/bin/newbro`), and self-heals via the public `install-newbro-cli.sh`.
 - Updated the macOS executor app onboarding contract: the app probes Codex on launch, shows the detected Codex version or a missing-Codex warning, and pasted connect-command profiles are coalesced by normalized `(base_url, node_id)`, auto-started/restarted when possible, and surfaced through lifecycle notifications. The CLI may auto-configure minimal Codex executor runtime in non-interactive runs when Codex is detectable; `newbro executor setup` remains the advanced/recovery path.
 - Added machine-wide Codex binary probing and selection through `newbro executor probe/use` plus the macOS executor Settings window, so duplicate `codex` installs can be inspected by version/path and the selected absolute path is stored in `~/.newbro/config.yaml`.
 
@@ -331,3 +331,7 @@ Short log of important design decisions and changes for Newbro.
 ## 2026-06-06
 
 - Added macOS executor app profile-start diagnosis: Start/Restart now checks Newbro CLI and Codex readiness before launching, keeps blocked profiles stopped with a visible repair action, and routes Codex repair through the CLI-owned `newbro executor install-codex` flow.
+
+## 2026-06-08
+
+- Moved first-party clients to `clients/`, the macOS executor supervisor to `executor-apps/macos`, and design prototypes to `prototypes/design`, while keeping the Python runtime, executor CLI, executor node, and adapters under `src/newbro`.

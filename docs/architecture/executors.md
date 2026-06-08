@@ -43,7 +43,7 @@ Executor-node note:
 - the executor node's Newbro URL is a client-side runtime input passed through
   the UI's app-directed `newbro://connect?...` settings URL or terminal-only
   `newbro executor run --base-url ...` command, not server-owned node metadata
-- a native macOS menu-bar app (SwiftUI, under `macos/`) supervises multiple
+- a native macOS menu-bar app (SwiftUI, under `executor-apps/macos/`) supervises multiple
   executor-node profiles stored in `~/.newbro/menubar.json`. Each profile runs
   as an independent `newbro executor run` subprocess; several run concurrently.
   The app resolves the installed `newbro` CLI at runtime and only edits

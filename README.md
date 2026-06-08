@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/newbro/ui/public/newbro.webp" alt="Newbro logo" width="120" />
+  <img src="clients/web/public/newbro.webp" alt="Newbro logo" width="120" />
 </p>
 
 # Newbro
@@ -81,6 +81,6 @@ repo-checkout hosts.
 Frontend build check:
 
 ```bash
-cd src/newbro/ui
+cd clients/web
 npm run build
 ```

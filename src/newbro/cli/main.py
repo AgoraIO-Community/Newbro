@@ -37,7 +37,7 @@ from newbro.config_home import (
 
 MODULE_ROOT = Path(__file__).resolve().parents[3]
 ROOT = MODULE_ROOT
-FRONTEND = ROOT / "src" / "newbro" / "ui"
+FRONTEND = ROOT / "clients" / "web"
 VENV_DIR = ROOT / ".venv"
 ENV_LOCAL = SYNAPSE_ENV_FILE
 CLI_NAME = "newbro"

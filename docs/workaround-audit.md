@@ -6,18 +6,18 @@ Date: 2026-05-29
 
 Generated/vendor paths excluded:
 
-- `src/newbro/ui/node_modules/**`
-- `src/newbro/ui/vendor/**`
-- `src/newbro/ui/bun.lock`
-- `src/newbro/ui/package-lock.json`
+- `clients/web/node_modules/**`
+- `clients/web/vendor/**`
+- `clients/web/bun.lock`
+- `clients/web/package-lock.json`
 
 Commands run:
 
 ```bash
-rg -n --glob '!src/newbro/ui/node_modules/**' --glob '!src/newbro/ui/vendor/**' --glob '!src/newbro/ui/bun.lock' --glob '!src/newbro/ui/package-lock.json' "fallback|fall back|workaround|work around|best effort|best-effort|silently|ignore|ignored|except Exception|pass$|TODO|HACK|XXX|placeholder|dummy|fake|pretend|stub" src/newbro
-rg -n --glob '!src/newbro/ui/node_modules/**' --glob '!src/newbro/ui/vendor/**' "RuntimeDecision|should_speak|error_code|reason_code|diagnostic|diagnostics|HTTPException|ValueError|raise RuntimeError|except|pass$" src/newbro
-rg -n --glob '!src/newbro/ui/node_modules/**' --glob '!src/newbro/ui/vendor/**' "latest|active|default|mock|scripted|heuristic|keyword|timestamp|dedupe|suppress|swallow|no-op|noop" src/newbro
-rg -n --glob '!src/newbro/ui/node_modules/**' --glob '!src/newbro/ui/vendor/**' "client_request_id|target_thread_id|resume_handle|timeline_error|source_kind|system_fallback|mock_safe|requires_executor_capability|capability" src/newbro
+rg -n --glob '!clients/web/node_modules/**' --glob '!clients/web/vendor/**' --glob '!clients/web/bun.lock' --glob '!clients/web/package-lock.json' "fallback|fall back|workaround|work around|best effort|best-effort|silently|ignore|ignored|except Exception|pass$|TODO|HACK|XXX|placeholder|dummy|fake|pretend|stub" src/newbro
+rg -n --glob '!clients/web/node_modules/**' --glob '!clients/web/vendor/**' "RuntimeDecision|should_speak|error_code|reason_code|diagnostic|diagnostics|HTTPException|ValueError|raise RuntimeError|except|pass$" src/newbro
+rg -n --glob '!clients/web/node_modules/**' --glob '!clients/web/vendor/**' "latest|active|default|mock|scripted|heuristic|keyword|timestamp|dedupe|suppress|swallow|no-op|noop" src/newbro
+rg -n --glob '!clients/web/node_modules/**' --glob '!clients/web/vendor/**' "client_request_id|target_thread_id|resume_handle|timeline_error|source_kind|system_fallback|mock_safe|requires_executor_capability|capability" src/newbro
 ```
 
 The same commands were run with `-l` to verify the file-level hit set.
@@ -47,7 +47,7 @@ The same commands were run with `-l` to verify the file-level hit set.
 | `src/newbro/executors/node/service.py` contextlib suppress during cancellation/close | Benign cleanup | Cancellation and websocket shutdown cleanup should not create fake execution success. Runtime command errors emit explicit error messages. | Keep. |
 | `src/newbro/blackboard/backends/memory.py` best-effort snapshots | Benign implementation detail | In-memory reads are await-free snapshots; writes remain serialized and emit events. | Keep. |
 | `src/newbro/yaml_support.py`, `config_home.py`, connector/node config loaders | Compatibility/dev tooling | YAML fallback and config migration errors are CLI/config concerns, not runtime fake-success paths; invalid config generally raises or warns. | Keep. |
-| Frontend tests and UI placeholders under `src/newbro/ui/src/**` | Test-only or benign UI text | `stub`, `placeholder`, and ignored transcript test cases are fixture/UI terms, not hidden runtime fallback. | Keep. |
+| Frontend tests and UI placeholders under `clients/web/src/**` | Test-only or benign UI text | `stub`, `placeholder`, and ignored transcript test cases are fixture/UI terms, not hidden runtime fallback. | Keep. |
 | Lockfiles, generated CSS, TS config | Benign/generated | Hits are words such as placeholder/default/ignore in build artifacts or styles. | Excluded from runtime classification. |
 
 ## Fixed Bad Workarounds
@@ -111,4 +111,4 @@ The same commands were run with `-l` to verify the file-level hit set.
 
 ## Remaining Work For Goal Completion
 
-- No remaining verification blocker. Frontend tests/build were not run because this pass did not change frontend runtime behavior under `src/newbro/ui`.
+- No remaining verification blocker. Frontend tests/build were not run because this pass did not change frontend runtime behavior under `clients/web`.

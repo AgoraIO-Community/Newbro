@@ -14,7 +14,7 @@ from newbro.runtime.config import Settings
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_FRONTEND_DIST_DIR = ROOT / "src" / "newbro" / "ui" / "dist"
+DEFAULT_FRONTEND_DIST_DIR = ROOT / "clients" / "web" / "dist"
 
 
 def create_app(

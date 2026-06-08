@@ -20,7 +20,7 @@ That connector module owns:
 
 The active browser UI lives under:
 
-- `src/newbro/ui/`
+- `clients/web/`
 
 The connector host runs separately from the main Newbro API server:
 
@@ -165,7 +165,7 @@ This example now mirrors the official sample's split identity model:
 
 The frontend uses the agent RTM uid for toolkit messaging calls and the agent RTC uid for media/transcript identity.
 
-The main workbench under `src/newbro/ui/` uses Bro detail as the ConvoAI entry
+The main workbench under `clients/web/` uses Bro detail as the ConvoAI entry
 point. That UI path:
 
 - exposes ConvoAI Start only on Bro detail pages
@@ -201,7 +201,7 @@ For development with frontend + connector together:
 ./newbro dev
 ```
 
-For frontend development, use the active shell under `src/newbro/ui/` through `./newbro dev`.
+For frontend development, use the active shell under `clients/web/` through `./newbro dev`.
 
 The connector host reads its live config from the shared `~/.newbro/config.yaml`
 file and shared runtime env from `~/.newbro/.env`.
@@ -213,6 +213,6 @@ For this example, Newbro fixes `connectors.agora-convoai.convoai_area` to `US`.
 
 ## Ownership Note
 
-The active browser UI under `src/newbro/ui/` is the supported frontend. It is a
+The active browser UI under `clients/web/` is the supported frontend. It is a
 client of the connector host and is not part of the connector-host architecture
 boundary.

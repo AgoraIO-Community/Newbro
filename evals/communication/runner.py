@@ -4,13 +4,13 @@ from dataclasses import asdict, dataclass
 import json
 from typing import Any
 
-from synapse.blackboard import InMemoryBlackboard
-from synapse.communication import CommunicationBrain, InMemoryConversationHistory
-from synapse.communication.models import OpenAICommunicationModel
-from synapse.communication.tools import build_default_tool_registry
-from synapse.executor_core import ExecutorCapabilities
-from synapse.infrastructure.llm import OpenAIProvider
-from synapse.runtime import Settings
+from newbro.blackboard import InMemoryBlackboard
+from newbro.communication import CommunicationBrain, InMemoryConversationHistory
+from newbro.communication.models import OpenAICommunicationModel
+from newbro.communication.tools import build_default_tool_registry
+from newbro.executors.core import ExecutorCapabilities
+from newbro.infrastructure.llm import OpenAIProvider
+from newbro.runtime import Settings
 
 from .scenarios import COMMUNICATION_EVAL_SCENARIOS, CommunicationEvalScenario
 

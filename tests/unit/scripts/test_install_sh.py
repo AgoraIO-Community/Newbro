@@ -20,9 +20,10 @@ def write_executable(path: Path, content: str) -> None:
 
 
 def prepare_repo_root(root: Path) -> None:
-    (root / "src" / "newbro" / "ui").mkdir(parents=True)
+    frontend_dir = root / "clients" / "web"
+    frontend_dir.mkdir(parents=True)
     (root / "pyproject.toml").write_text("[project]\nname='newbro-cli'\n", encoding="utf-8")
-    (root / "src" / "newbro" / "ui" / "package.json").write_text(
+    (frontend_dir / "package.json").write_text(
         '{"name":"newbro-frontend"}\n',
         encoding="utf-8",
     )

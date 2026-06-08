@@ -7,11 +7,11 @@ on:
       - main
     paths:
       - ".github/workflows/deploy-ui-vercel.yml"
-      - "src/newbro/ui/**"
+      - "clients/web/**"
   pull_request:
     paths:
       - ".github/workflows/deploy-ui-vercel.yml"
-      - "src/newbro/ui/**"
+      - "clients/web/**"
 
 permissions:
   contents: read
@@ -32,7 +32,7 @@ jobs:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
     defaults:
       run:
-        working-directory: src/newbro/ui
+        working-directory: clients/web
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -113,7 +113,7 @@ jobs:
       VITE_GATEWAY_BASE_URL: https://newbro.plutoless.com
     defaults:
       run:
-        working-directory: src/newbro/ui
+        working-directory: clients/web
     steps:
       - name: Checkout
         uses: actions/checkout@v4

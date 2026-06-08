@@ -1,8 +1,10 @@
 # Repository Structure
 
-For open source, Newbro should move toward a `src` layout organized by domain boundaries.
+Newbro uses a role-based repository layout with Python runtime code under `src/`
+and first-party clients, executor app wrappers, and prototypes kept outside the
+runtime package.
 
-Recommended repository structure:
+Canonical repository structure:
 
 ```text
 .
@@ -12,9 +14,15 @@ Recommended repository structure:
 ├─ CONTRIBUTING.md
 ├─ pyproject.toml
 ├─ install.sh
+├─ clients/
+│  ├─ web/
+│  └─ cardputer/
+├─ executor-apps/
+│  └─ macos/
+├─ prototypes/
+│  └─ design/
 ├─ docs/
 ├─ examples/
-├─ exmaple-ui/
 ├─ schemas/
 ├─ tests/
 ├─ evals/
@@ -27,12 +35,14 @@ Recommended repository structure:
       ├─ communication/
       ├─ execution/
       ├─ executors/
+      ├─ interaction/
       ├─ notification/
+      ├─ observability/
       ├─ runtime/
+      ├─ service/
       ├─ api/
       ├─ connectors/
       ├─ cli/
-      ├─ ui/
       └─ infrastructure/
 ```
 
@@ -47,16 +57,18 @@ src/newbro/
 ├─ executors/
 │  ├─ core/
 │  ├─ adapters/
-│  └─ host/
+│  └─ node/
+├─ interaction/
 ├─ notification/
 ├─ runtime/
+├─ service/
 ├─ api/
 ├─ connectors/
 │  ├─ base/
 │  ├─ host/
 │  └─ voice/
 ├─ cli/
-├─ ui/
+├─ observability/
 └─ infrastructure/
 ```
 
@@ -78,6 +90,17 @@ Additional repository-level guidance:
 
 - `ARCHITECTURE.md`
   - single-entry open-source architecture overview
+- `clients/`
+  - first-party user-facing clients such as the React/Vite web app and Cardputer
+    firmware
+  - keep reusable backend, connector, and executor runtime logic out of this
+    directory
+- `executor-apps/`
+  - platform-specific wrappers that supervise executor-node workflows
+  - keep executor contracts, adapters, and `newbro executor ...` logic in
+    `src/newbro`
+- `prototypes/`
+  - design explorations and non-production prototypes
 - `tests/`
   - deterministic correctness
 - `evals/`
@@ -86,12 +109,8 @@ Additional repository-level guidance:
   - repository maintenance and dev helpers
 - `examples/`
   - minimal runnable demos and integration examples
-- `exmaple-ui/`
-  - repo-root example browser clients and first-party demo frontends
-  - keep reusable backend and connector logic out of this directory
 
-Migration rule:
+Package identity rule:
 
-- current `runtime/` remains a temporary prototype structure during migration
 - target package identity is `newbro`
 - avoid introducing a second public package name

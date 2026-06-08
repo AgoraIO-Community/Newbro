@@ -5,9 +5,9 @@ Native menu-bar app that supervises `newbro executor run` node profiles.
 ## Build & run
 
 ```bash
-swift test --package-path macos          # run the Core unit tests
-./macos/package-app.sh                    # build dist/Newbro Executor.app
-open "macos/dist/Newbro Executor.app"     # launch (menu-bar only, no Dock icon)
+swift test --package-path executor-apps/macos          # run the Core unit tests
+./executor-apps/macos/package-app.sh                    # build dist/Newbro Executor.app
+open "executor-apps/macos/dist/Newbro Executor.app"     # launch (menu-bar only, no Dock icon)
 ```
 
 The app resolves the `newbro` CLI at runtime (override → `~/.local/bin/newbro`
@@ -73,10 +73,10 @@ approval. No terminal or `xattr` is required.
 
 1. **Build and share (you):**
    ```bash
-   ./macos/package-app.sh
+   ./executor-apps/macos/package-app.sh
    ```
-   Then compress `macos/dist/Newbro Executor.app` (Finder → Compress, or
-   `ditto -c -k --keepParent "macos/dist/Newbro Executor.app" NewbroExecutor.zip`)
+   Then compress `executor-apps/macos/dist/Newbro Executor.app` (Finder → Compress, or
+   `ditto -c -k --keepParent "executor-apps/macos/dist/Newbro Executor.app" NewbroExecutor.zip`)
    and send it (AirDrop, download, etc.).
 
 2. **Recipient:** unzip it, and optionally drag `Newbro Executor.app` to

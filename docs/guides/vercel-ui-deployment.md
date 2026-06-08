@@ -1,6 +1,6 @@
 # Vercel UI Deployment
 
-Use this path when `src/newbro/ui/` is deployed on Vercel and the main Newbro
+Use this path when `clients/web/` is deployed on Vercel and the main Newbro
 backend stays on a separate HTTPS origin on your own server.
 
 ## Required Runtime Contract
@@ -75,13 +75,13 @@ VITE_API_BASE_URL=https://api.example.com
 VITE_CONNECTOR_BASE_URL=https://connectors.example.com
 ```
 
-That value is consumed by `src/newbro/ui/src/lib/session-client.ts` and is
+That value is consumed by `clients/web/src/lib/session-client.ts` and is
 used for both HTTPS requests and websocket URL derivation.
 `VITE_CONNECTOR_BASE_URL` is consumed by
-`src/newbro/ui/src/lib/connector-client.ts` for voice connector calls only.
+`clients/web/src/lib/connector-client.ts` for voice connector calls only.
 
 The frontend workspace now vendors the `agora-rtm` package locally under
-`src/newbro/ui/vendor/agora-rtm/` because the published `agora-rtm` npm
+`clients/web/vendor/agora-rtm/` because the published `agora-rtm` npm
 package still declares an incompatible peer on `agora-rtc-sdk-ng@4.23.0` while
 the Agora voice toolkit requires `agora-rtc-sdk-ng>=4.23.4`. Keep Vercel on the
 default `npm install` path; do not add `--legacy-peer-deps` for this project.

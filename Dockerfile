@@ -1,12 +1,12 @@
 FROM oven/bun:1.3.13-debian AS frontend
 
-WORKDIR /app/src/newbro/ui
+WORKDIR /app/clients/web
 
-COPY src/newbro/ui/package.json src/newbro/ui/bun.lock ./
-COPY src/newbro/ui/vendor ./vendor
+COPY clients/web/package.json clients/web/bun.lock ./
+COPY clients/web/vendor ./vendor
 RUN bun install --frozen-lockfile
 
-COPY src/newbro/ui ./
+COPY clients/web ./
 RUN bun run build
 
 
@@ -25,7 +25,7 @@ RUN apt-get update \
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY newbro ./newbro
-COPY --from=frontend /app/src/newbro/ui/dist ./src/newbro/ui/dist
+COPY --from=frontend /app/clients/web/dist ./clients/web/dist
 
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir -e .
