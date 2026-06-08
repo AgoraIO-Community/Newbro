@@ -1111,3 +1111,96 @@ async def test_completed_turn_does_not_seed_native_reasoning(monkeypatch: pytest
     )
 
     assert session._recent_native_turn_reasoning() == {}
+
+
+@pytest.mark.anyio
+async def test_seeded_in_flight_turn_settles_final_answer_keeping_commentary_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Load an in-flight commentary turn (seeds native reasoning, assistant empty),
+    # then a final_answer arrives over the subscription: the answer settles into the
+    # assistant slot while the commentary remains a reasoning step (not duplicated).
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    persona = Persona(
+        persona_id="forge",
+        name="Forge",
+        avatar="bro",
+        base_prompt="",
+        executor_node_id="node-forge",
+        bro_detail_session_id="detail-forge",
+        status="idle",
+    )
+    await session.blackboard.put_persona(persona)
+    projection = session._bro_detail_thread_projection()
+    _register_imported_codex_thread(projection, persona)
+
+    async def fake_request_codex_thread_turns(**kwargs):
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-live",
+                    "status": "inProgress",
+                    "items": [
+                        {"type": "agentMessage", "id": "c1", "text": "Reading", "phase": "commentary"},
+                    ],
+                    "startedAt": 1780650000,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", fake_request_codex_thread_turns)
+
+    await projection.list_bro_timeline_page(
+        persona=persona, public_thread_id="codex-import-1", node_id="node-forge"
+    )
+
+    projection.selected_codex_thread_subscriptions["forge"] = SelectedCodexThreadSubscription(
+        subscription_id="sub-1",
+        persona_id="forge",
+        public_thread_id="codex-import-1",
+        thread_continuity_key="codex-import-1",
+        node_id="node-forge",
+        codex_thread_id="native-thread-1",
+        resume_handle=AgentResumeHandle(executor_id="codex", session_handle="native-thread-1"),
+    )
+
+    await projection.handle_codex_thread_event(
+        CodexThreadEventMessage.model_validate(
+            {
+                "subscription_id": "sub-1",
+                "node_id": "node-forge",
+                "session_id": session.session_id,
+                "target_persona_id": "forge",
+                "target_thread_id": "codex-import-1",
+                "thread_id": "native-thread-1",
+                "method": "item/completed",
+                "params": {
+                    "turnId": "turn-live",
+                    "item": {
+                        "type": "agentMessage",
+                        "id": "a1",
+                        "text": "Done",
+                        "phase": "final_answer",
+                        "status": "completed",
+                    },
+                },
+            }
+        )
+    )
+
+    turns = projection.bro_thread_executor_turns.get("codex-import-1") or []
+    turn = next(t for t in turns if t.executor_turn_id == "turn-live")
+    assert turn.assistant is not None and turn.assistant.text == "Done"
+
+    recent = session._recent_native_turn_reasoning()
+    assert recent.get("codex::native-thread-1::turn-live") is not None
+    assert [s.text for s in recent["codex::native-thread-1::turn-live"]] == ["Reading"]
