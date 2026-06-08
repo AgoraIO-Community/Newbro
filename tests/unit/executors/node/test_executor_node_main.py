@@ -72,6 +72,9 @@ def test_main_applies_enabled_executor_and_acpx_agent_overrides(monkeypatch):
         async def run_forever(self):
             return None
 
+        async def aclose(self):
+            pass
+
     monkeypatch.setattr(executor_node_main, "ExecutorNodeService", FakeService)
 
     assert (
@@ -99,3 +102,24 @@ def test_main_applies_enabled_executor_and_acpx_agent_overrides(monkeypatch):
     assert captured["executors_config"]["acpx"]["agent"] == "openclaw"
     assert captured["audio_config"]["transcription"]["language"] == "zh"
     assert captured["audio_config"]["transcription"]["model"] == "small"
+
+
+def test_serve_runs_aclose_in_finally():
+    import asyncio
+    import contextlib
+
+    closed = {"n": 0}
+
+    class FakeService:
+        async def run_forever(self):
+            raise asyncio.CancelledError()
+
+        async def aclose(self):
+            closed["n"] += 1
+
+    async def drive():
+        with contextlib.suppress(asyncio.CancelledError):
+            await executor_node_main._serve(FakeService())
+
+    asyncio.run(drive())
+    assert closed["n"] == 1
