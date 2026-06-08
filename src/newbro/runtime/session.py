@@ -344,6 +344,7 @@ class SessionRuntime:
                 observability=self.observability,
                 publish_snapshot=lambda: self.publish_snapshot(sync_imported_codex_threads=False),
                 record_native_turn_reasoning=self._record_native_turn_reasoning,
+                record_history_native_reasoning=self._seed_native_turn_reasoning_from_history,
             )
         return self.bro_detail_thread_projection
 
@@ -564,6 +565,46 @@ class SessionRuntime:
         steps = steps[-_NATIVE_REASONING_STORE_STEPS:]
         self._native_turn_reasoning.pop(key, None)
         self._native_turn_reasoning[key] = steps
+        while len(self._native_turn_reasoning) > _NATIVE_REASONING_STORE_TURNS:
+            oldest = next(iter(self._native_turn_reasoning))
+            self._native_turn_reasoning.pop(oldest, None)
+
+    def _seed_native_turn_reasoning_from_history(
+        self,
+        executor_id: str,
+        executor_thread_id: str,
+        executor_turn_id: str,
+        steps: list[tuple[str, str, str]],
+    ) -> None:
+        # An in-flight turn loaded from codex history (e.g. opening the thread on a
+        # fresh page or from another profile) carries its commentary as items, but
+        # the live native-reasoning stream only populates this store for turns this
+        # session dispatched. Seed the commentary as reasoning steps so the bubble
+        # has something to render instead of a perpetual "connecting" shimmer.
+        key = _native_reasoning_key(executor_id, executor_thread_id, executor_turn_id)
+        if key is None:
+            return
+        # The live stream is the source of truth while a dispatched turn is in
+        # flight — never clobber it; only seed when we have nothing for this turn.
+        if self._native_turn_reasoning.get(key):
+            return
+        built: list[NativeReasoningStep] = []
+        for item_id, text, created_at in steps:
+            clean = (text or "").strip()
+            if not item_id or not clean:
+                continue
+            built.append(
+                NativeReasoningStep(
+                    item_id=item_id,
+                    text=clean[:_NATIVE_REASONING_TEXT_LIMIT],
+                    kind="progress",
+                    created_at=created_at,
+                )
+            )
+        if not built:
+            return
+        self._native_turn_reasoning.pop(key, None)
+        self._native_turn_reasoning[key] = built[-_NATIVE_REASONING_STORE_STEPS:]
         while len(self._native_turn_reasoning) > _NATIVE_REASONING_STORE_TURNS:
             oldest = next(iter(self._native_turn_reasoning))
             self._native_turn_reasoning.pop(oldest, None)

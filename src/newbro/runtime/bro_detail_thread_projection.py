@@ -65,6 +65,7 @@ from .bro_detail_thread_helpers import (
     _task_updated_at,
     _task_workspace_id,
     _thread_progress,
+    _thread_timestamp_from_turn,
     _timeline_turns_from_codex_thread,
     _title_from_codex_thread,
     _title_from_draft_text,
@@ -104,6 +105,7 @@ class BroDetailThreadProjection:
     observability: SessionObservability
     publish_snapshot: Callable[[], Awaitable[object]]
     record_native_turn_reasoning: Callable[[OutboundTurnRequest, CodexTurnEventMessage, str], None] | None = None
+    record_history_native_reasoning: Callable[[str, str, str, list[tuple[str, str, str]]], None] | None = None
     imported_codex_threads: dict[str, BroThread] = field(default_factory=dict)
     imported_codex_thread_resume_handles: dict[str, AgentResumeHandle] = field(default_factory=dict)
     imported_codex_thread_page_info: dict[str, CursorPageInfo] = field(default_factory=dict)
@@ -637,6 +639,7 @@ class BroDetailThreadProjection:
         if page.goal:
             self.bro_thread_goals[public_thread_id] = page.goal
         self._seed_live_item_phases_from_codex_turns(public_thread_id, page.turns)
+        self._seed_native_reasoning_from_codex_turns(native_thread_id, page.turns)
         for turn in _timeline_turns_from_codex_thread(
             thread={"id": page.thread_id, "goal": page.goal, "turns": list(reversed(page.turns))},
             public_thread_id=public_thread_id,
@@ -684,6 +687,7 @@ class BroDetailThreadProjection:
         if page.goal:
             self.bro_thread_goals[public_thread_id] = page.goal
         self._seed_live_item_phases_from_codex_turns(public_thread_id, page.turns)
+        seeded_reasoning = self._seed_native_reasoning_from_codex_turns(page.thread_id, page.turns)
         turns = list(
             _timeline_turns_from_codex_thread(
                 thread={"id": page.thread_id, "goal": page.goal, "turns": list(reversed(page.turns))},
@@ -705,6 +709,11 @@ class BroDetailThreadProjection:
         self.bro_thread_timeline_page_info[public_thread_id] = info
         self.timeline_status[public_thread_id] = "loaded"
         self.timeline_errors.pop(public_thread_id, None)
+        if seeded_reasoning:
+            # Deliver the seeded commentary to clients now rather than waiting for
+            # the next live event, so an in-flight turn renders reasoning instead
+            # of the connecting shimmer the moment the thread opens.
+            await self.publish_snapshot()
         return BroTimelineTurnPageResponse(
             thread_id=public_thread_id,
             thread=self.with_timeline_state([thread])[0],
@@ -1455,6 +1464,48 @@ class BroDetailThreadProjection:
                 phase = item.get("phase")
                 if isinstance(item_id, str) and item_id and isinstance(phase, str) and phase:
                     self.bro_thread_live_item_phase[(public_thread_id, turn_id, item_id)] = phase
+
+    def _seed_native_reasoning_from_codex_turns(self, executor_thread_id: str, raw_turns: object) -> bool:
+        # Surface an in-flight turn's commentary (loaded from codex history) as
+        # reasoning steps. Without this, an in-flight turn opened on a fresh page
+        # has no answer (commentary is intentionally kept out of the answer slot)
+        # and no live reasoning stream, so the bubble renders only the "connecting"
+        # shimmer. Only in-flight turns are seeded; completed turns settle on their
+        # final answer and need no synthetic steps. Returns whether anything was
+        # seeded so callers can publish a fresh snapshot to deliver it promptly.
+        if self.record_history_native_reasoning is None or not isinstance(raw_turns, list):
+            return False
+        seeded = False
+        for turn in raw_turns:
+            if not isinstance(turn, dict):
+                continue
+            status_text = str(turn.get("status") or "").lower()
+            if status_text not in {"running", "inprogress", "in_progress"}:
+                continue
+            turn_id = turn.get("id")
+            if not isinstance(turn_id, str) or not turn_id:
+                continue
+            items = turn.get("items")
+            if not isinstance(items, list):
+                continue
+            turn_timestamp = _thread_timestamp_from_turn(turn) or datetime.now(tz=UTC).isoformat()
+            steps: list[tuple[str, str, str]] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") not in {"assistantMessage", "agentMessage"}:
+                    continue
+                if item.get("phase") != "commentary":
+                    continue
+                item_id = item.get("id")
+                text = _extract_codex_item_text(item)
+                if not isinstance(item_id, str) or not item_id or not text:
+                    continue
+                steps.append((item_id, text, _thread_timestamp_from_turn(item) or turn_timestamp))
+            if steps:
+                self.record_history_native_reasoning("codex", executor_thread_id, turn_id, steps)
+                seeded = True
+        return seeded
 
     def upsert_bro_thread_executor_turn(self, turn: BroTimelineTurn) -> None:
         turns = list(self.bro_thread_executor_turns.get(turn.thread_id, []))
