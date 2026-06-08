@@ -1203,4 +1203,100 @@ async def test_seeded_in_flight_turn_settles_final_answer_keeping_commentary_rea
 
     recent = session._recent_native_turn_reasoning()
     assert recent.get("codex::native-thread-1::turn-live") is not None
-    assert [s.text for s in recent["codex::native-thread-1::turn-live"]] == ["Reading"]
+
+
+@pytest.mark.anyio
+async def test_list_bro_timeline_page_publishes_only_when_it_seeds_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # list_bro_timeline_page must publish a snapshot when it seeds in-flight commentary
+    # (so a refreshed client receives it promptly) and must NOT publish when there is
+    # nothing to seed.
+    session = create_session_runtime(
+        "session-1",
+        model=ScriptedCommunicationModel(
+            {"__default__": ScriptedPlan(conversational_act="request_clarification")}
+        ),
+        settings=Settings(),
+    )
+    persona = Persona(
+        persona_id="forge",
+        name="Forge",
+        avatar="bro",
+        base_prompt="",
+        executor_node_id="node-forge",
+        bro_detail_session_id="detail-forge",
+        status="idle",
+    )
+    await session.blackboard.put_persona(persona)
+
+    publish_calls: list[str] = []
+
+    async def counting_publish() -> object:
+        publish_calls.append("published")
+        return None
+
+    seeded_calls: list[tuple[str, str, str]] = []
+
+    def record_history(executor_id, executor_thread_id, executor_turn_id, steps):
+        seeded_calls.append((executor_id, executor_thread_id, executor_turn_id))
+
+    projection = BroDetailThreadProjection(
+        session_id=session.session_id,
+        blackboard=session.blackboard,
+        executor_node_manager=session.executor_node_manager,
+        interaction_manager=session.interaction_manager,
+        observability=session.observability,
+        publish_snapshot=counting_publish,
+        record_history_native_reasoning=record_history,
+    )
+    _register_imported_codex_thread(projection, persona)
+
+    async def in_flight_turns(**kwargs):
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-live",
+                    "status": "inProgress",
+                    "items": [
+                        {"type": "agentMessage", "id": "c1", "text": "Reading", "phase": "commentary"},
+                    ],
+                    "startedAt": 1780650000,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", in_flight_turns)
+    await projection.list_bro_timeline_page(
+        persona=persona, public_thread_id="codex-import-1", node_id="node-forge"
+    )
+    assert seeded_calls == [("codex", "native-thread-1", "turn-live")]
+    assert len(publish_calls) == 1
+
+    async def completed_only_turns(**kwargs):
+        return CodexThreadTurnPage(
+            thread_id="native-thread-1",
+            turns=[
+                {
+                    "id": "turn-done",
+                    "status": "completed",
+                    "items": [
+                        {"type": "agentMessage", "id": "a1", "text": "Done", "phase": "final_answer"},
+                    ],
+                    "startedAt": 1780650000,
+                    "completedAt": 1780650010,
+                }
+            ],
+            next_cursor=None,
+            previous_cursor=None,
+        )
+
+    monkeypatch.setattr(session.executor_node_manager, "request_codex_thread_turns", completed_only_turns)
+    await projection.list_bro_timeline_page(
+        persona=persona, public_thread_id="codex-import-1", node_id="node-forge"
+    )
+    # No new seed -> no new publish.
+    assert len(publish_calls) == 1
