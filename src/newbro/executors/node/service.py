@@ -1148,6 +1148,7 @@ class ExecutorNodeService:
             version=capabilities.version,
             minimum_version=capabilities.minimum_version,
             availability_reason=capabilities.availability_reason,
+            skills=capabilities.skills,
         )
 
     async def _cancel_active_runs(self) -> None:
