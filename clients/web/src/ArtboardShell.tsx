@@ -26,7 +26,7 @@ import { LiveTurnBubble } from "./LiveTurnBubble";
 import { timelineRowKey } from "./lib/timelineRowKey";
 import { timelineMessageText } from "./lib/timelineMessage";
 import { buildTurnRenderModel } from "./lib/turnRenderModel";
-import { SkillLeadCluster } from "./components/newbro/SkillPicker";
+import { MobileSkillSheet, SkillLeadCluster } from "./components/newbro/SkillPicker";
 import type { BroThread, BroTimelineMessage, BroTimelineTask, BroTimelineTurn, ExecutionRun, ExecutorNodeRecord, ExecutorSkill, InteractionRequest, Persona, Task } from "./types";
 import type { BroCardModel, BroTaskRecord, BroThreadRecord } from "./components/newbro/types";
 
@@ -2600,6 +2600,7 @@ function MobileThreadSurface({
   onThreadResolved,
   disabled,
   disabledReason,
+  skills,
 }: {
   bro: BroCardModel;
   selectedThreadId: string | null;
@@ -2615,10 +2616,13 @@ function MobileThreadSurface({
   onThreadResolved: (threadId: string | null) => void;
   disabled?: boolean;
   disabledReason?: string | null;
+  skills: ExecutorSkill[];
 }) {
   const shell = useNewbroShell();
   const [draft, setDraft] = useState("");
   const [planMode, setPlanMode] = useState(false);
+  const [skill, setSkill] = useState<ExecutorSkill | null>(null);
+  const [skillSheetOpen, setSkillSheetOpen] = useState(false);
   const threadBodyRef = useRef<HTMLElement | null>(null);
   const draftText = draft;
   const connected = shell.voiceSession.phase === "connected";
@@ -2673,16 +2677,19 @@ function MobileThreadSurface({
       elapsed_ms: Math.round(performance.now() - startedAt),
     });
     setDraft("");
+    setSkill(null);
+    setSkillSheetOpen(false);
     try {
-      const response = await submitExecutorTextInstruction(shell.activeShellSessionId, {
+      const response = await submitExecutorTextInstruction(shell.activeShellSessionId, buildExecutorTextPayload({
         targetPersonaId: bro.id,
         targetThreadId: selectedThreadId,
         createNewThread,
-        ...(workspaceId ? { workspaceId } : {}),
+        workspaceId,
         clientRequestId: turnId,
-        ...(planMode ? { planMode: true } : {}),
+        planMode,
+        skill,
         text,
-      });
+      }));
       directExecutorMetric("ui.text.http.accepted", {
         client_request_id: turnId,
         instruction_id: response.instruction_id,
@@ -2749,6 +2756,12 @@ function MobileThreadSurface({
       element.scrollTop = element.scrollHeight;
     });
   }, [threadScrollVersion]);
+
+  // Clear skill selection when bro changes.
+  useEffect(() => {
+    setSkill(null);
+    setSkillSheetOpen(false);
+  }, [bro.id]);
 
   return (
     <>
@@ -2885,8 +2898,63 @@ function MobileThreadSurface({
                 <span className="mob-mode-label">Plan mode</span>
               </button>
             ) : null}
+            {inputMode !== "free" && skills.length > 0 ? (
+              skill ? (
+                <span className="thr-skillpill">
+                  <button
+                    type="button"
+                    className="thr-skillpill-body"
+                    onClick={() => setSkillSheetOpen(true)}
+                    aria-label={`Skill: ${skill.display_name} — tap to change`}
+                  >
+                    <span className="thr-skillpill-ic" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 3l1.9 4.7L19 9l-4.1 2.3L13 16l-1-4.5L7 9l4.1-1.3z" />
+                        <path d="M19 15l.7 1.8L21.5 18l-1.8.7L19 21l-.7-2.3L16.5 18l1.8-1.2z" />
+                      </svg>
+                    </span>
+                    <span>{skill.display_name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="thr-skillpill-x"
+                    onClick={() => setSkill(null)}
+                    aria-label={`Remove ${skill.display_name} skill`}
+                  >
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={`thr-skillchip${skillSheetOpen ? " thr-skillchip-on" : ""}`}
+                  onClick={() => setSkillSheetOpen(true)}
+                  aria-label="Run with a skill"
+                  title="Run this turn with a skill"
+                >
+                  <span className="thr-skillchip-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 3l1.9 4.7L19 9l-4.1 2.3L13 16l-1-4.5L7 9l4.1-1.3z" />
+                      <path d="M19 15l.7 1.8L21.5 18l-1.8.7L19 21l-.7-2.3L16.5 18l1.8-1.2z" />
+                    </svg>
+                  </span>
+                  <span className="thr-skillchip-label">Skill</span>
+                </button>
+              )
+            ) : null}
           </div>
         ) : null}
+        <MobileSkillSheet
+          open={skillSheetOpen}
+          skills={skills}
+          query=""
+          selected={skill}
+          broName={bro.name}
+          onChoose={(s) => { setSkill(s); setSkillSheetOpen(false); }}
+          onClose={() => setSkillSheetOpen(false)}
+        />
         {disabled ? (
           <div className="ob-composer-lock">
             <span className="ob-composer-lock-icon" aria-hidden="true">
@@ -4429,6 +4497,7 @@ function MobileDetail({ bro, onBack }: { bro: BroCardModel; onBack: () => void }
           onThreadResolved={resolveThread}
           disabled={Boolean(offline)}
           disabledReason={offline ? `${bro.executorType ?? offline.name} is not connected.` : null}
+          skills={shell.broSkillsMap[bro.id] ?? []}
         />
         <WorkspacePickerDialog
           open={workspacePickerOpen}
