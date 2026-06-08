@@ -33,6 +33,24 @@ LOGGER = logging.getLogger(__name__)
 AUDIO_ACTIVE_RUN_STATUSES = {RunStatus.ASSIGNED, RunStatus.RUNNING, RunStatus.BLOCKED}
 
 
+def _resolve_skill_against_catalog(
+    skill_name: str | None,
+    catalog,
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    """Return (skill_ref, dropped_marker). Validate-before-write: only a skill that
+    exists and is enabled in the bro's current catalog produces a ref; otherwise it
+    is dropped with an observable marker (never silently 'ran')."""
+    if not skill_name:
+        return None, None
+    for skill in catalog or []:
+        if skill.name == skill_name and skill.enabled:
+            return (
+                {"name": skill.name, "path": skill.path, "display_name": skill.display_name},
+                None,
+            )
+    return None, {"name": skill_name, "reason": "not_available"}
+
+
 def _elapsed_ms(started_at: float) -> int:
     return int((time.perf_counter() - started_at) * 1000)
 
@@ -156,6 +174,7 @@ class DirectExecutorInteraction:
         workspace_id: str | None = None,
         client_request_id: str | None = None,
         plan_mode: bool = False,
+        skill_name: str | None = None,
     ) -> ExecutorTextInstruction:
         started_at = time.perf_counter()
         self._record_direct_executor_text_metric(
@@ -194,6 +213,9 @@ class DirectExecutorInteraction:
             details={"executor_node_id": persona.executor_node_id},
         )
 
+        node_skills = self.executor_node_manager.codex_skills_for_node(persona.executor_node_id)
+        skill_ref, skill_dropped = _resolve_skill_against_catalog(skill_name, node_skills)
+
         resolved_workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         resolve_started_at = time.perf_counter()
         thread_target = await self._thread_target(
@@ -225,6 +247,8 @@ class DirectExecutorInteraction:
                 "target_thread_id": thread_target.public_thread_id,
                 "client_request_id": client_request_id,
                 "plan_mode": plan_mode,
+                **({"skill": skill_ref} if skill_ref else {}),
+                **({"skill_dropped": skill_dropped} if skill_dropped else {}),
             },
         )
 
@@ -263,6 +287,7 @@ class DirectExecutorInteraction:
                 source="bro_detail_text",
                 node_not_ready_label="text",
                 plan_mode=plan_mode,
+                skill=skill_ref,
             )
             self._record_direct_executor_text_metric(
                 step="runtime.outbound_turn_started",
@@ -299,6 +324,12 @@ class DirectExecutorInteraction:
             task.metadata["mode"] = (
                 TaskMode.PROPOSAL_ONLY.value if plan_mode else TaskMode.MODIFY_ALLOWED.value
             )
+            if skill_ref:
+                task.metadata["skill"] = skill_ref
+            else:
+                task.metadata.pop("skill", None)
+            if skill_dropped:
+                task.metadata["skill_dropped"] = skill_dropped
             await self.blackboard.put_task(task)
 
         dispatch_started_at = time.perf_counter()
