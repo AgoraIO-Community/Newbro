@@ -25,6 +25,7 @@ from .client import CodexAppServerClient
 from .jsonrpc import JsonRpcPeer
 from .probe import CODEX_MINIMUM_SUPPORTED_VERSION_TEXT, probe_codex_command
 from .session import CodexExecutorSession
+from .skills import parse_skills_list
 
 
 LOGGER = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ class CodexExecutor:
             tuple[str, asyncio.Queue[dict[str, object]]],
         ] = {}
         self._last_detected_version: str | None = None
+        self._skills_loaded = False
 
     def get_capabilities(self) -> ExecutorCapabilities:
         return self._capabilities
@@ -94,7 +96,18 @@ class CodexExecutor:
         self._capabilities.supports_thread_list = supported
         self._capabilities.supports_pause = supported
         self._capabilities.supports_cancel = supported
+        if supported and not self._skills_loaded:
+            try:
+                result = await self._load_skills()
+                self._capabilities.skills = parse_skills_list(result)
+            except Exception:
+                self._capabilities.skills = []
+            self._skills_loaded = True
         return self._capabilities
+
+    async def _load_skills(self) -> dict[str, object]:
+        session = await self._ensure_app_session()
+        return await session.client.skills_list(cwds=[str(session.cwd)])
 
     async def create_session(self, workspace_id: str | None = None) -> CodexExecutorSession:
         cwd = Path(workspace_id or os.getcwd()).resolve()
