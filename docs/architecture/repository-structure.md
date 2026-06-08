@@ -35,12 +35,14 @@ Canonical repository structure:
       ├─ communication/
       ├─ execution/
       ├─ executors/
+      ├─ interaction/
       ├─ notification/
+      ├─ observability/
       ├─ runtime/
+      ├─ service/
       ├─ api/
       ├─ connectors/
       ├─ cli/
-      ├─ ui/
       └─ infrastructure/
 ```
 
@@ -108,8 +110,7 @@ Additional repository-level guidance:
 - `examples/`
   - minimal runnable demos and integration examples
 
-Migration rule:
+Package identity rule:
 
-- current `runtime/` remains a temporary prototype structure during migration
 - target package identity is `newbro`
 - avoid introducing a second public package name
