@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+# ExecutorSkill is defined canonically in newbro.protocol.executor_node and
+# re-exported here to avoid a circular import (protocol → executors.core).
 from newbro.protocol.executor_node import ExecutorSkill
 
 __all__ = ["ExecutorSkill", "ExecutorCapabilities"]
