@@ -15,6 +15,30 @@ class FakeCompletedProcess:
         self.returncode = returncode
 
 
+class FakePopenProc:
+    """Minimal subprocess.Popen stand-in for tests that use run_checked."""
+
+    def __init__(self, returncode: int = 0, raise_on_wait: BaseException | None = None):
+        self.returncode = returncode
+        self._raise_on_wait = raise_on_wait
+        self.args: list[str] = []
+        self.cwd = None
+
+    def wait(self):
+        if self._raise_on_wait is not None:
+            raise self._raise_on_wait
+        return self.returncode
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
 def test_frontend_tool_prefers_bun(monkeypatch):
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: f"/usr/bin/{name}" if name in {"bun", "npm"} else None)
 
@@ -1342,8 +1366,8 @@ def test_service_lifecycle_commands_use_sudo(monkeypatch, tmp_path: Path):
 def test_run_checked_returns_130_on_keyboard_interrupt(monkeypatch, tmp_path: Path, capsys):
     monkeypatch.setattr(
         cli_main.subprocess,
-        "run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+        "Popen",
+        lambda *_args, **_kwargs: FakePopenProc(returncode=0, raise_on_wait=KeyboardInterrupt()),
     )
 
     assert cli_main.run_checked(["echo", "hello"], cwd=tmp_path) == 130
@@ -1361,8 +1385,8 @@ def test_executor_run_returns_130_when_child_interrupts(monkeypatch, tmp_path: P
     monkeypatch.setattr(cli_main, "_executor_runtime_config_complete", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         cli_main.subprocess,
-        "run",
-        lambda *_args, **_kwargs: FakeCompletedProcess(returncode=130),
+        "Popen",
+        lambda *_args, **_kwargs: FakePopenProc(returncode=130),
     )
 
     assert (
@@ -1388,13 +1412,13 @@ def test_executor_run_uses_current_python_when_installed_from_package(monkeypatc
     monkeypatch.setattr(cli_main, "_executor_runtime_config_complete", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(cli_main.sys, "executable", "/opt/newbro/bin/python3")
 
-    run_calls: list[tuple[list[str], Path, bool]] = []
+    popen_calls: list[tuple[list[str], Path]] = []
 
-    def fake_run(cmd, cwd, check=False):
-        run_calls.append((cmd, cwd, check))
-        return FakeCompletedProcess(returncode=0)
+    def fake_popen(cmd, cwd=None):
+        popen_calls.append((cmd, cwd))
+        return FakePopenProc(returncode=0)
 
-    monkeypatch.setattr(cli_main.subprocess, "run", fake_run)
+    monkeypatch.setattr(cli_main.subprocess, "Popen", fake_popen)
 
     assert (
         cli_main.main(
@@ -1411,7 +1435,7 @@ def test_executor_run_uses_current_python_when_installed_from_package(monkeypatc
         )
         == 0
     )
-    assert run_calls == [
+    assert popen_calls == [
         (
             [
                 "/opt/newbro/bin/python3",
@@ -1425,7 +1449,6 @@ def test_executor_run_uses_current_python_when_installed_from_package(monkeypatc
                 "token-1",
             ],
             Path.cwd(),
-            False,
         )
     ]
 
@@ -1443,8 +1466,8 @@ def test_executor_run_triggers_setup_when_local_runtime_config_missing(monkeypat
     monkeypatch.setattr(cli_main, "_run_executor_setup_flow", lambda: setup_calls.append("called"))
     monkeypatch.setattr(
         cli_main.subprocess,
-        "run",
-        lambda *_args, **_kwargs: FakeCompletedProcess(returncode=130),
+        "Popen",
+        lambda *_args, **_kwargs: FakePopenProc(returncode=130),
     )
 
     assert (
@@ -1509,8 +1532,8 @@ def test_executor_run_auto_configures_detected_codex_without_tty(
     )
     monkeypatch.setattr(
         cli_main.subprocess,
-        "run",
-        lambda *_args, **_kwargs: FakeCompletedProcess(returncode=130),
+        "Popen",
+        lambda *_args, **_kwargs: FakePopenProc(returncode=130),
     )
 
     assert (
@@ -1601,8 +1624,8 @@ def test_executor_run_auto_config_preserves_existing_non_codex_executors(
     )
     monkeypatch.setattr(
         cli_main.subprocess,
-        "run",
-        lambda *_args, **_kwargs: FakeCompletedProcess(returncode=130),
+        "Popen",
+        lambda *_args, **_kwargs: FakePopenProc(returncode=130),
     )
 
     assert (
