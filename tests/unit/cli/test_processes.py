@@ -94,6 +94,33 @@ def test_run_checked_registers_handlers_and_returns_zero():
     assert sig.SIGTERM in sig.handlers and sig.SIGINT in sig.handlers
 
 
+def test_run_checked_sigterm_handler_forwards_to_child():
+    # Fire the registered SIGTERM handler while the child is "running" and
+    # assert run_checked forwards terminate() down to the child (the glue).
+    sig = FakeSignal()
+    proc = FakeProc(alive_polls=2, returncode=0)
+
+    class FakeSubprocess:
+        def Popen(self, cmd, cwd=None):
+            return proc
+
+    def _wait_simulating_sigterm():
+        sig.handlers[sig.SIGTERM](sig.SIGTERM, None)
+        return 0
+
+    proc.wait = _wait_simulating_sigterm  # type: ignore[method-assign]
+
+    rc = processes.run_checked(
+        ["x"],
+        cwd=__import__("pathlib").Path("."),
+        subprocess_module=FakeSubprocess(),
+        signal_module=sig,
+        time_module=FakeTime(),
+    )
+    assert rc == 0
+    assert proc.terminated is True
+
+
 def test_run_checked_raises_systemexit_on_nonzero():
     sig = FakeSignal()
 
