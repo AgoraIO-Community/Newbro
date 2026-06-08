@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -50,6 +52,8 @@ from newbro.executors.node.registry import (
     ExecutorNodeConnectionView,
     ExecutorNodeRegistry,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -692,9 +696,16 @@ class ExecutorNodeManager:
             thread_id=thread_id,
             workspace_id=workspace_id,
         )
+        started = time.perf_counter()
         try:
             await self._send_json(connection, command.model_dump(mode="json"))
             response = await asyncio.wait_for(future, timeout=timeout_seconds)
+            LOGGER.info(
+                "codex_thread subscribe round-trip node_id=%s thread_id=%s elapsed_ms=%d",
+                node_id,
+                thread_id,
+                int((time.perf_counter() - started) * 1000),
+            )
         except asyncio.CancelledError:
             self._codex_thread_subscribe_requests.pop(request_id, None)
             raise
