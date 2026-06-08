@@ -70,6 +70,8 @@ It keeps:
 - `executors/`
 - `cli/`
 - `infrastructure/`
+- all other existing runtime subpackages, including `interaction/`,
+  `notification/`, `observability/`, and `service/`
 
 The current `src/newbro/ui` should move to `clients/web` because it is a
 first-party user-facing client with its own Vite toolchain, not backend package
@@ -134,15 +136,36 @@ Move tracked folders with `git mv` so history is preserved:
 - `macos` -> `executor-apps/macos`
 - `design` -> `prototypes/design`
 
-Then update current operational references:
+Then update current operational references with a search-driven pass, not a
+fixed hand-written list. For each moved path, grep the repo while excluding
+archival design/planning history:
+
+```bash
+rg -n "src/newbro/ui|cardputer/|macos/|design/" \
+  --glob '!docs/rfcs/**' \
+  --glob '!docs/superpowers/**'
+```
+
+Every non-archival hit should be evaluated and updated unless it is explicitly
+describing pre-migration history. This includes ignore files and active agent
+instructions, not only scripts and docs. The implementation should keep a final
+grep result in its verification notes so missed path updates are visible.
+
+Known current examples include:
 
 - `Dockerfile`
+- `.dockerignore`
+- `.gitignore`
 - `.github/workflows/deploy-ui-vercel.yml`
 - `.github/workflows/release.yml`
 - `install.sh`
+- `AGENTS.md`
 - `README.md`
 - `docs/README.md`
+- `docs/architecture/executors.md`
 - `docs/architecture/repository-structure.md`
+- `docs/protocol/codex-turn-streaming.md`
+- `docs/workaround-audit.md`
 - relevant stable docs under `docs/guides/`
 - active tests that assert paths or install behavior
 
@@ -166,6 +189,9 @@ and review it. Initial candidates:
   Either update them to `newbro` if evals are still maintained, or remove the
   stale evals in a reviewed deletion pass.
 
+The Cardputer move has no known current incoming operational references outside
+the folder itself, so it should be a low-risk move compared with `clients/web`.
+
 Files with ambiguous historical value should move to an archive only if there
 is a clear owner need. Otherwise, prefer stable docs plus Git history over
 keeping root-level planning clutter.
@@ -184,6 +210,8 @@ changes:
 - frontend generated files such as `dist`, `*.tsbuildinfo`, generated
   declaration/build files, and `node_modules`
 - ignored legacy local package remnants: `src/synapse`, `src/synopse`
+- ignored empty/stale package remnants that contain only bytecode in this
+  checkout, such as `src/newbro/edge` and `src/newbro/executors/ui`
 
 This local cleanup can be performed after the reviewed tracked migration. It
 should not rely on these ignored files being present in other checkouts.
@@ -229,4 +257,3 @@ blocked by missing dependencies.
   active. Review the concrete deletion list before implementation deletes them.
 - Legacy `synapse_*` config names are still present intentionally. Treat those
   as a separate compatibility migration, not part of folder cleanup.
-
