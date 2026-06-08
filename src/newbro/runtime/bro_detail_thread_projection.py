@@ -427,7 +427,29 @@ class BroDetailThreadProjection:
             timeline_error=self.timeline_errors.get(thread_id),
         )
 
-    async def subscribe_bro_thread(
+    async def subscribe_bro_thread(self, *, target_persona_id: str, thread_id: str) -> BroThreadSubscriptionResponse:
+        started = time.perf_counter()
+        try:
+            result = await self._subscribe_bro_thread_impl(
+                target_persona_id=target_persona_id, thread_id=thread_id
+            )
+        except Exception:
+            LOGGER.info(
+                "subscribe_bro_thread persona_id=%s thread_id=%s elapsed_ms=%d outcome=error",
+                target_persona_id,
+                thread_id,
+                int((time.perf_counter() - started) * 1000),
+            )
+            raise
+        LOGGER.info(
+            "subscribe_bro_thread persona_id=%s thread_id=%s elapsed_ms=%d outcome=ok",
+            target_persona_id,
+            thread_id,
+            int((time.perf_counter() - started) * 1000),
+        )
+        return result
+
+    async def _subscribe_bro_thread_impl(
         self,
         *,
         target_persona_id: str,
