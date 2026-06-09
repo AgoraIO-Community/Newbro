@@ -1,7 +1,27 @@
 from types import SimpleNamespace
 
 from newbro.cli.commands import executor_settings
+from newbro.cli import config_files
 from newbro.cli import dispatch as cli_dispatch
+
+
+def _enabled(config_path):
+    raw = config_files.load_existing_connector_yaml(config_path)
+    return config_files.existing_executor_node_config(raw).get("enabled_executors")
+
+
+def test_set_hermes_command_replaces_enabled_with_single_family(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    executor_settings.set_codex_command(config_path=config_path, command="/usr/local/bin/codex")
+    executor_settings.set_hermes_command(config_path=config_path, command="/usr/local/bin/hermes")
+    assert _enabled(config_path) == ["hermes"]
+
+
+def test_set_codex_command_writes_single_family(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    executor_settings.set_hermes_command(config_path=config_path, command="/usr/local/bin/hermes")
+    executor_settings.set_codex_command(config_path=config_path, command="/usr/local/bin/codex")
+    assert _enabled(config_path) == ["codex"]
 
 
 def test_supported_executors_includes_hermes():

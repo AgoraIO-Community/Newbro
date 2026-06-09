@@ -261,10 +261,8 @@ def set_codex_command(*, config_path: Path, command: str) -> None:
     connector_host = config_files.existing_connector_host_config(raw)
     connectors = config_files.existing_connectors_config(raw)
     executor_node = config_files.existing_executor_node_config(raw)
-    enabled = list(executor_node.get("enabled_executors") or [])
-    if "codex" not in enabled:
-        enabled.append("codex")
-    executor_node["enabled_executors"] = enabled
+    # Single-family node invariant: a local node runs exactly one family.
+    executor_node["enabled_executors"] = ["codex"]
     executors = config_files.existing_executors_config(raw)
     codex_config = dict(executors.get("codex") or {})
     codex_config["command"] = command
@@ -286,10 +284,8 @@ def set_hermes_command(*, config_path: Path, command: str) -> None:
     connector_host = config_files.existing_connector_host_config(raw)
     connectors = config_files.existing_connectors_config(raw)
     executor_node = config_files.existing_executor_node_config(raw)
-    enabled = list(executor_node.get("enabled_executors") or [])
-    if "hermes" not in enabled:
-        enabled.append("hermes")
-    executor_node["enabled_executors"] = enabled
+    # Single-family node invariant: a local node runs exactly one family.
+    executor_node["enabled_executors"] = ["hermes"]
     executors = config_files.existing_executors_config(raw)
     hermes_config = dict(executors.get("hermes") or {})
     hermes_config["command"] = command
