@@ -12,6 +12,12 @@ from .client import HermesGatewayClient
 from .probe import probe_hermes_command
 from .session import HermesExecutorSession
 
+_PROGRESS_EVENTS = frozenset({
+    "message.delta", "tool.start", "tool.progress", "tool.complete", "tool.generating",
+    "reasoning.delta", "reasoning.available", "thinking.delta", "status.update",
+})
+_BLOCKING_EVENTS = frozenset({"approval.request", "clarify.request"})
+
 
 class HermesExecutor:
     def __init__(
@@ -98,5 +104,71 @@ class HermesExecutor:
         *,
         follow_up: bool = False,
     ) -> AsyncIterator[ExecutorEvent]:
-        # Implemented in Task 7.
-        raise NotImplementedError
+        self._sessions_by_run[run.run_id] = session
+        queue = await self._client.events_for(session.gateway_session_id)
+        try:
+            if follow_up:
+                # Single follow-up contract: steer only, no prompt.submit fallback.
+                await self._client.steer(session.gateway_session_id, text)
+            else:
+                await self._client.submit_prompt(session.gateway_session_id, text)
+        except Exception as exc:  # noqa: BLE001 - surface steer/submit failure observably
+            yield ExecutorEvent(
+                run_id=run.run_id,
+                session_id=session.session_id,
+                event_type=ExecutorEventType.FAILED,
+                message=f"hermes prompt failed: {exc}",
+            )
+            return
+
+        # Each queue item is an event `params` dict: {"type", "session_id", "payload"}.
+        while True:
+            params = await queue.get()
+            etype = params.get("type")
+            payload = params.get("payload") if isinstance(params.get("payload"), dict) else {}
+            text_value = payload.get("text")
+            progress_text = text_value or payload.get("preview") or payload.get("summary")
+            if etype in _PROGRESS_EVENTS:
+                yield ExecutorEvent(
+                    run_id=run.run_id,
+                    session_id=session.session_id,
+                    event_type=ExecutorEventType.PROGRESS,
+                    message=progress_text if isinstance(progress_text, str) else None,
+                    metadata={"hermes_event": etype},
+                )
+                continue
+            if etype == "message.complete":
+                status = payload.get("status")
+                if status == "interrupted":
+                    terminal = ExecutorEventType.CANCELLED
+                elif status == "error":
+                    terminal = ExecutorEventType.FAILED
+                else:
+                    terminal = ExecutorEventType.COMPLETED
+                yield ExecutorEvent(
+                    run_id=run.run_id,
+                    session_id=session.session_id,
+                    event_type=terminal,
+                    message=text_value if isinstance(text_value, str) else None,
+                    metadata={"hermes_event": etype, "status": status},
+                )
+                return
+            if etype in _BLOCKING_EVENTS:
+                prompt = payload.get("question") or payload.get("command") or payload.get("description")
+                yield ExecutorEvent(
+                    run_id=run.run_id,
+                    session_id=session.session_id,
+                    event_type=ExecutorEventType.BLOCKED,
+                    message=prompt if isinstance(prompt, str) else f"hermes requested {etype}",
+                    metadata={"hermes_event": etype, "request": payload},
+                )
+                return
+            if etype == "error":
+                yield ExecutorEvent(
+                    run_id=run.run_id,
+                    session_id=session.session_id,
+                    event_type=ExecutorEventType.FAILED,
+                    message=payload.get("message") if isinstance(payload.get("message"), str) else None,
+                    metadata={"hermes_event": etype},
+                )
+                return
