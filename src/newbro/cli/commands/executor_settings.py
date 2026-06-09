@@ -11,9 +11,11 @@ from typing import Any
 
 from newbro.cli import config_files
 from newbro.executors.adapters.codex import probe as codex_probe
+from newbro.executors.adapters.hermes import probe as hermes_probe
+from newbro.executors.families import SUPPORTED_EXECUTOR_FAMILIES
 
 
-SUPPORTED_EXECUTORS = ["codex"]
+SUPPORTED_EXECUTORS = list(SUPPORTED_EXECUTOR_FAMILIES)
 BUN_INSTALL_URL = "https://bun.sh/install"
 COMMAND_TIMEOUT_SECONDS = 300
 SYSTEM_CURL = Path("/usr/bin/curl")
@@ -32,10 +34,14 @@ def run_executor_install_codex(args: Any, app: Any) -> int:
 
 
 def run_executor_probe(args: Any, app: Any) -> int:
-    if args.executor != "codex":
+    if args.executor not in SUPPORTED_EXECUTORS:
         print(f"Unsupported executor: {args.executor}", file=sys.stderr)
         return 1
-    payload = codex_probe_payload(config_path=app.ENV_LOCAL.with_name("config.yaml"))
+    config_path = app.ENV_LOCAL.with_name("config.yaml")
+    if args.executor == "hermes":
+        payload = hermes_probe_payload(config_path=config_path)
+    else:
+        payload = codex_probe_payload(config_path=config_path)
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -44,20 +50,31 @@ def run_executor_probe(args: Any, app: Any) -> int:
 
 
 def run_executor_use(args: Any, app: Any) -> int:
-    if args.executor != "codex":
+    if args.executor not in SUPPORTED_EXECUTORS:
         print(f"Unsupported executor: {args.executor}", file=sys.stderr)
         return 1
     command = str(args.executor_binary_command)
-    if not os.path.isabs(command):
-        print("Codex command must be an absolute path.", file=sys.stderr)
-        return 1
-    result = codex_probe.probe_codex_command(command)
-    if not result.ok:
-        print(result.error or "Codex command is not usable.", file=sys.stderr)
-        return 1
     config_path = app.ENV_LOCAL.with_name("config.yaml")
-    set_codex_command(config_path=config_path, command=command)
-    print(f"Codex command set to {command}")
+    if args.executor == "hermes":
+        if not os.path.isabs(command):
+            print("Hermes command must be an absolute path.", file=sys.stderr)
+            return 1
+        result = hermes_probe.probe_hermes_command(command)
+        if not result.ok:
+            print(result.error or "Hermes command is not usable.", file=sys.stderr)
+            return 1
+        set_hermes_command(config_path=config_path, command=command)
+        print(f"Hermes command set to {command}")
+    else:
+        if not os.path.isabs(command):
+            print("Codex command must be an absolute path.", file=sys.stderr)
+            return 1
+        result = codex_probe.probe_codex_command(command)
+        if not result.ok:
+            print(result.error or "Codex command is not usable.", file=sys.stderr)
+            return 1
+        set_codex_command(config_path=config_path, command=command)
+        print(f"Codex command set to {command}")
     return 0
 
 
@@ -255,6 +272,73 @@ def set_codex_command(*, config_path: Path, command: str) -> None:
     )
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(rendered, encoding="utf-8")
+
+
+def set_hermes_command(*, config_path: Path, command: str) -> None:
+    raw = config_files.load_existing_connector_yaml(config_path)
+    runtime = config_files.existing_runtime_config(raw, removed_keys=set())
+    connector_host = config_files.existing_connector_host_config(raw)
+    connectors = config_files.existing_connectors_config(raw)
+    executor_node = config_files.existing_executor_node_config(raw)
+    enabled = list(executor_node.get("enabled_executors") or [])
+    if "hermes" not in enabled:
+        enabled.append("hermes")
+    executor_node["enabled_executors"] = enabled
+    executors = config_files.existing_executors_config(raw)
+    hermes_config = dict(executors.get("hermes") or {})
+    hermes_config["command"] = command
+    executors["hermes"] = hermes_config
+    rendered = config_files.render_connector_config(
+        runtime=runtime,
+        connector_host=connector_host,
+        connectors=connectors,
+        executor_node=executor_node,
+        executors=executors,
+    )
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(rendered, encoding="utf-8")
+
+
+def hermes_probe_payload(*, config_path: Path) -> dict[str, object]:
+    raw = config_files.load_existing_connector_yaml(config_path)
+    executors = config_files.existing_executors_config(raw)
+    configured_command = str((executors.get("hermes") or {}).get("command") or "hermes")
+    result = hermes_probe.probe_hermes_command(configured_command)
+    return {
+        "supported_executors": list(SUPPORTED_EXECUTORS),
+        "current": {
+            "executor": "hermes",
+            "command": configured_command,
+            "resolved_path": result.path,
+            "version": result.version,
+            "ok": result.ok,
+            "error": result.error,
+        },
+        "candidates": [],
+    }
+
+
+def install_hermes_cli(config_path: Path) -> str:
+    result = hermes_probe.probe_hermes_command("hermes")
+    if not result.ok:
+        raise RuntimeError(
+            "Hermes CLI is not available. Install it and run `hermes setup --portal` "
+            "to authenticate, then re-run."
+        )
+    command = result.path
+    set_hermes_command(config_path=config_path, command=command)
+    return command
+
+
+def run_executor_install_hermes(args: Any, app: Any) -> int:
+    config_path = app.ENV_LOCAL.with_name("config.yaml")
+    try:
+        command = install_hermes_cli(config_path)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"Hermes is ready: {command}")
+    return 0
 
 
 def _print_human_probe(payload: dict[str, object]) -> None:
