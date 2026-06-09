@@ -144,7 +144,7 @@ private struct CodexSettingsPane: View {
                         version: model.cachedCLIVersion
                     )
                 )
-                SettingsInfoRow(title: "Codex", detail: model.codexStatus.menuTitle)
+                SettingsInfoRow(title: "Codex", detail: model.statusByFamily["codex"]?.menuTitle ?? "No Codex found. Newbro may not work properly.")
 
                 if let diagnosed {
                     VStack(alignment: .leading, spacing: 4) {
@@ -166,9 +166,11 @@ private struct CodexSettingsPane: View {
                     settingsActionButton(action: action)
                 }
 
-                if model.codexSetupBusy || !model.codexSetupLog.isEmpty {
+                let codexSetupBusy = model.setupBusyByFamily["codex"] ?? false
+                let codexSetupLog = model.setupLogByFamily["codex"] ?? ""
+                if codexSetupBusy || !codexSetupLog.isEmpty {
                     ScrollView {
-                        Text(model.codexSetupLog.isEmpty ? "Codex setup is running…" : model.codexSetupLog)
+                        Text(codexSetupLog.isEmpty ? "Codex setup is running…" : codexSetupLog)
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
@@ -199,7 +201,7 @@ private struct CodexSettingsPane: View {
 
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(model.executorProbe?.candidates ?? []) { candidate in
+                    ForEach(model.probeByFamily["codex"]?.candidates ?? []) { candidate in
                         CandidateRow(
                             candidate: candidate,
                             onUse: { model.useCodexCandidate(candidate) },
@@ -212,7 +214,7 @@ private struct CodexSettingsPane: View {
     }
 
     var currentSummary: String {
-        guard let current = model.executorProbe?.current else {
+        guard let current = model.probeByFamily["codex"]?.current else {
             return model.executorSettingsBusy ? "Checking…" : "No Codex probe data yet."
         }
         let version = current.version ?? "version unavailable"
@@ -236,16 +238,17 @@ private struct CodexSettingsPane: View {
         if model.executorSettingsCanUpdateCLI {
             return .updateNewbroCLI
         }
-        if isLoginRequired(model.executorProbe?.current.error) {
+        let codexProbe = model.probeByFamily["codex"]
+        if isLoginRequired(codexProbe?.current.error) {
             return .signInCodex
         }
-        if let current = model.executorProbe?.current, !current.ok {
-            if model.executorProbe?.candidates.contains(where: { $0.ok && !$0.isCurrent }) == true {
+        if let current = codexProbe?.current, !current.ok {
+            if codexProbe?.candidates.contains(where: { $0.ok && !$0.isCurrent }) == true {
                 return .openCodexSettings
             }
             return .setUpCodex
         }
-        if !model.codexStatus.isAvailable && !model.executorSettingsBusy {
+        if model.statusByFamily["codex"]?.isAvailable != true && !model.executorSettingsBusy {
             return .setUpCodex
         }
         return nil
@@ -259,13 +262,13 @@ private struct CodexSettingsPane: View {
                 .disabled(model.executorSettingsBusy)
         case .setUpCodex:
             Button("Set Up Codex…") { model.setUpCodex(for: profile) }
-                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+                .disabled(model.executorSettingsBusy || model.setupBusyByFamily["codex"] ?? false)
         case .openCodexSettings:
             Text("Choose a Codex binary below.")
                 .foregroundStyle(.secondary)
         case .rerunDiagnosis:
             Button("Run Diagnosis") { model.rerunDiagnosis(for: profile) }
-                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+                .disabled(model.executorSettingsBusy || model.setupBusyByFamily["codex"] ?? false)
         case .openProfileSettings:
             Button("Edit Profile…") { model.editProfile(profile.id) }
         case .viewLog:
@@ -292,13 +295,13 @@ private struct CodexSettingsPane: View {
                 .disabled(model.executorSettingsBusy)
         case .setUpCodex:
             Button("Set Up Codex…") { model.setUpCodex(for: nil) }
-                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+                .disabled(model.executorSettingsBusy || model.setupBusyByFamily["codex"] ?? false)
         case .openCodexSettings:
             Text("Choose a Codex binary below.")
                 .foregroundStyle(.secondary)
         case .rerunDiagnosis:
             Button("Run Diagnosis") { model.refreshExecutorProbeAndStoredDiagnoses() }
-                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+                .disabled(model.executorSettingsBusy || model.setupBusyByFamily["codex"] ?? false)
         case .signInCodex:
             Text("Sign in to Codex from the Codex app or CLI, then refresh.")
                 .foregroundStyle(.secondary)

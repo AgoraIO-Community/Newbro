@@ -125,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             path: model.runtimeAvailable ? "newbro" : nil,
             version: model.cachedCLIVersion
         )))
-        menu.addItem(disabledMenuItem(title: model.codexStatus.menuTitle))
+        menu.addItem(disabledMenuItem(title: model.statusByFamily["codex"]?.menuTitle ?? "No Codex found. Newbro may not work properly."))
         menu.addItem(.separator())
 
         for profile in model.profiles {
