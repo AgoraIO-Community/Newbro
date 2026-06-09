@@ -2058,6 +2058,9 @@ function CreateConnectSheet({
   const [pendingBroName, setPendingBroName] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
+  const [executorFamily, setExecutorFamily] = useState<"codex" | "hermes">(
+    bro?.executorType === "hermes" ? "hermes" : "codex",
+  );
   const finalizingRef = useRef(false);
   const autoIssueStartedRef = useRef(false);
   const trimmedName = name.trim();
@@ -2065,6 +2068,9 @@ function CreateConnectSheet({
   const existingBroNameChanged = existingBroNameDirty && trimmedName.length > 0;
   const connectActionsDisabled = existingBroNameDirty || nameSaving;
   const canCreate = trimmedName.length > 0 && !busy && !nameSaving && !commands && !pendingNodeId && !completed;
+  // The agent client is fixed once a node exists (existing Bro) or once
+  // credentials have been issued; only a fresh Bro can still choose.
+  const familyLocked = Boolean(bro) || busy || Boolean(commands) || Boolean(pendingNodeId) || completed;
   const canSaveExistingBroName = Boolean(bro) && existingBroNameChanged && !busy && !nameSaving && !completed;
   const reconnectExistingBro = Boolean(bro?.nodeName) && mode !== "setup";
 
@@ -2153,7 +2159,7 @@ function CreateConnectSheet({
       const nextBroName = trimmedName;
       const issue = bro?.executorNodeId
         ? await revealExecutorNodeConnectCommand(sessionId, bro.executorNodeId)
-        : await createExecutorNode(sessionId, { name: `${nextBroName} local node`, enabled_executors: ["codex"] });
+        : await createExecutorNode(sessionId, { name: `${nextBroName} local node`, enabled_executors: [executorFamily] });
       const nextCommands = buildExecutorConnectCommands(issue.node.node_id, issue.token, {
         enabledExecutors: issue.node.enabled_executors,
         acpxAgent: issue.node.acpx_agent,
@@ -2265,16 +2271,32 @@ function CreateConnectSheet({
                 <div className="ob-fieldset">
                   <span className="ob-field-eyebrow ob-fieldset-eyebrow">STEP 2 · AGENT CLIENT</span>
                   <div className="ob-exec-grid">
-                    <div className="ob-exec-card ob-exec-card-on">
+                    <button
+                      type="button"
+                      className={`ob-exec-card${executorFamily === "codex" ? " ob-exec-card-on" : ""}`}
+                      aria-pressed={executorFamily === "codex"}
+                      disabled={familyLocked}
+                      onClick={() => { if (!familyLocked) setExecutorFamily("codex"); }}
+                    >
                       <span className="ob-exec-name">Codex</span>
                       <span className="ob-exec-desc">OpenAI&rsquo;s coding agent</span>
-                      <span className="ob-exec-check" aria-hidden="true"><Check size={11} strokeWidth={2.8} /></span>
-                    </div>
-                    <div className="ob-exec-card ob-exec-card-soon" aria-disabled="true">
+                      {executorFamily === "codex" ? (
+                        <span className="ob-exec-check" aria-hidden="true"><Check size={11} strokeWidth={2.8} /></span>
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      className={`ob-exec-card${executorFamily === "hermes" ? " ob-exec-card-on" : ""}`}
+                      aria-pressed={executorFamily === "hermes"}
+                      disabled={familyLocked}
+                      onClick={() => { if (!familyLocked) setExecutorFamily("hermes"); }}
+                    >
                       <span className="ob-exec-name">Hermes</span>
                       <span className="ob-exec-desc">Open-source agent by Nous Research</span>
-                      <span className="ob-exec-card-soon-badge">Coming soon</span>
-                    </div>
+                      {executorFamily === "hermes" ? (
+                        <span className="ob-exec-check" aria-hidden="true"><Check size={11} strokeWidth={2.8} /></span>
+                      ) : null}
+                    </button>
                   </div>
                   <span className="ob-field-hint">Pick the one you already use — newbro runs your tasks through it. You can switch anytime.</span>
                 </div>
