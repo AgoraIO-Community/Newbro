@@ -5,6 +5,7 @@ from importlib import metadata
 from pathlib import Path
 
 from newbro.config_home import format_user_path
+from newbro.executors.families import SUPPORTED_EXECUTOR_FAMILIES
 
 
 def add_host_port(
@@ -98,17 +99,21 @@ def build_parser(
         "install-codex",
         help="Install or repair the local Codex CLI used by executor nodes.",
     )
+    executor_subparsers.add_parser(
+        "install-hermes",
+        help="Install or repair the local Hermes CLI used by executor nodes.",
+    )
     executor_probe_parser = executor_subparsers.add_parser(
         "probe",
         help="Probe local executor binaries.",
     )
-    executor_probe_parser.add_argument("--executor", choices=["codex"], required=True)
+    executor_probe_parser.add_argument("--executor", choices=list(SUPPORTED_EXECUTOR_FAMILIES), required=True)
     executor_probe_parser.add_argument("--json", action="store_true", help="Print machine-readable probe JSON.")
     executor_use_parser = executor_subparsers.add_parser(
         "use",
         help="Select a local executor binary.",
     )
-    executor_use_parser.add_argument("--executor", choices=["codex"], required=True)
+    executor_use_parser.add_argument("--executor", choices=list(SUPPORTED_EXECUTOR_FAMILIES), required=True)
     executor_use_parser.add_argument(
         "--command",
         dest="executor_binary_command",
@@ -125,7 +130,7 @@ def build_parser(
     executor_run_parser.add_argument(
         "--enabled-executor",
         action="append",
-        choices=["codex", "acpx"],
+        choices=list(SUPPORTED_EXECUTOR_FAMILIES),
         help="Override the enabled executor families for this run. Repeat for multiple values.",
     )
     executor_run_parser.add_argument(
