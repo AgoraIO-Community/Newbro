@@ -26,11 +26,12 @@ Hermes thread import / skills / audio / interactive approval wiring.
 ## Key facts that shape the design
 
 - The official Hermes installer is the vendor script
-  `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash`. It is
-  **interactive by default but degrades gracefully without a TTY**: it checks
-  `[ -t 0 ]` / `/dev/tty`, and with no terminal it installs the binary, skips all
-  prompts, and defers setup ("Run 'hermes setup' after install"). So a headless
-  subprocess install (the app's case) installs the binary and will not hang.
+  `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash` (vendor-documented).
+  Reading the script, it is interactive by default but **appears to degrade without a
+  TTY** — it checks `[ -t 0 ]` / `/dev/tty` and, with no terminal, skips prompts and
+  defers setup ("Run 'hermes setup' after install"). This non-TTY behavior is inferred
+  from the script source, **not vendor-documented**, so the install path must be
+  defensive (A2) rather than assume it never blocks.
 - Hermes auth is OAuth via `hermes setup --portal` — genuinely interactive; it
   cannot be driven headlessly and stays a manual, surfaced step.
 - Updates are `hermes update`; auth status is shown by `hermes auth`.
@@ -70,18 +71,31 @@ real install mirroring `install_codex_cli`'s script-bootstrap shape:
 1. If a usable `hermes` is already resolvable, set the command and return (no
    reinstall).
 2. Otherwise download `https://hermes-agent.nousresearch.com/install.sh` with the
-   existing `SYSTEM_CURL` to a temp file and run it via `SYSTEM_BASH`
-   **non-interactively** (no inherited TTY; rely on the script's graceful
-   degradation to install the binary and skip prompts/auth). Reuse the existing
-   `_run_install_step` / `_run_logged` helpers and a `tempfile.TemporaryDirectory`,
-   exactly like the codex bun-script flow.
+   existing `SYSTEM_CURL` to a temp file and run it via `SYSTEM_BASH`. Reuse the
+   existing `_run_install_step` / `_run_logged` helpers and a
+   `tempfile.TemporaryDirectory`, like the codex bun-script flow, but **defensively**
+   (the non-TTY behavior is unverified): run with **stdin redirected from
+   `/dev/null`** (never inherit a TTY) and a **bounded timeout** (the existing
+   `COMMAND_TIMEOUT_SECONDS`). If the script blocks (timeout), exits non-zero, or
+   leaves `hermes` unavailable, raise `RuntimeError` directing the user to the
+   documented fallback: install Hermes manually (or via the macOS app's "Set Up
+   Hermes" which opens Terminal — B3) and run `hermes setup --portal`.
 3. Resolve the installed `hermes` (PATH + `~/.local/bin/hermes` + login-shell
    lookup, mirroring the codex command discovery), probe it, and `set_hermes_command`.
 4. On success print `Hermes is ready: <command>`; the caller surfaces that auth is
    still required (`hermes setup --portal`). `install-hermes` never attempts auth.
 
+**Single-family invariant.** `set_hermes_command` (and `use --executor hermes`) must
+**replace** the local `executor_node.enabled_executors` with `["hermes"]`, not append
+— a local node runs exactly one family, mirroring the node registry's one-family
+rule. (Today `set_hermes_command` appends, which can yield `["codex", "hermes"]`;
+this spec changes it to replace.) Switching family via `use`/`install` is the
+intended way to repoint a local node; the previously enabled family is dropped from
+the local enabled list by design.
+
 Failure modes raise `RuntimeError` with actionable text (curl/bash unavailable,
-script exited non-zero, `hermes --version` still unavailable after install).
+script timed out, script exited non-zero, `hermes --version` still unavailable after
+install).
 
 ### A3. Probe surfaces auth state (best-effort)
 
@@ -110,10 +124,14 @@ Replace the single global `executorProbe: ExecutorProbe?` and
 - per-family setup log/busy (`setupLogByFamily`, `setupBusyByFamily`) replacing the
   codex-specific `codexSetupLog`/`codexSetupBusy`.
 
-`refreshExecutorProbeAndStoredDiagnoses` probes each family a profile needs and
-stores results by family. `diagnoseStart(for:)` passes the probe for **that
-profile's** family, so a Codex profile and a Hermes profile diagnose independently
-(fixes the current bug where one global probe is applied to every profile).
+`refreshExecutorProbeAndStoredDiagnoses` probes **all supported families**
+(`SUPPORTED_EXECUTOR_FAMILIES`) and stores results in `probeByFamily`/`statusByFamily`,
+so the Settings panes (B3) can show Hermes status even before any Hermes profile
+exists. `diagnoseStart(for:)` then reads the probe for **that profile's** family, so
+a Codex profile and a Hermes profile diagnose independently (fixes the current bug
+where one global probe is applied to every profile). Probing all families on refresh
+is cheap (each is a `newbro executor probe --executor <family> --json` call) and runs
+off the main thread as today.
 
 ### B2. Family-aware `ProfileStartDiagnosis`
 
@@ -138,7 +156,8 @@ Add a `Hermes` tab to `ExecutorSettingsView` (`SettingsPane.hermes`) with a
 - shows detected `Hermes vX.Y.Z` / `No Hermes found.` from `statusByFamily["hermes"]`
   and a sign-in line from the probe's `authenticated` field,
 - a **Set Up Hermes** button → `install-hermes`, streaming output like the codex
-  setup flow (per-family busy/log),
+  setup flow (per-family busy/log); if it fails or times out, the pane shows the
+  error and a "Open Terminal to install" fallback (the documented A2 fallback path),
 - a **Sign in** action that opens Terminal at `hermes setup --portal`
   (`open -a Terminal` with the command), since OAuth is interactive,
 - a **Refresh** button reusing `refreshExecutorProbeAndStoredDiagnoses`.
@@ -150,10 +169,15 @@ The Codex pane is unchanged; the two panes share presentation helpers where natu
 Replace the two independent `codex`/`acpx` toggles with one selector (`Picker`/
 segmented) over a shared `supportedExecutorFamilies` constant
 (`["codex", "acpx", "hermes"]` — the Swift mirror of the backend's
-`SUPPORTED_EXECUTOR_FAMILIES`). The profile stores exactly one family. When `acpx`
-is selected, keep the existing `acpx_agent` sub-field; it's hidden for other
-families. This both adds Hermes and removes the pre-existing invalid-multi-family
-hazard.
+`SUPPORTED_EXECUTOR_FAMILIES`). The profile stores exactly one family in
+`Profile.enabledExecutors` (a single-element array), and `nodeArgv` continues to
+forward it as `--enabled-executor <family>`. This both adds Hermes and removes the
+pre-existing invalid-multi-family hazard.
+
+No `acpx_agent` handling is in scope: the macOS `Profile` model has no `acpxAgent`
+field and `nodeArgv` does not forward `--acpx-agent` today, so acpx continues to run
+with its default agent exactly as it does now. Adding acpx-agent persistence/argv is
+explicitly out of scope for this workstream.
 
 ### B5. `ExecutorSettingsClient` per family
 
@@ -179,8 +203,11 @@ Python:
 - `executor_runtime_ready` defaults an unconfigured hermes command to `hermes` and
   passes when on PATH; `executor run` does not launch setup in that case.
 - `install_hermes_cli` invokes the vendor script via curl+bash (mocked
-  `_run_logged`), then sets the command; raises with a clear message when the binary
-  is still unavailable.
+  `_run_logged`) with stdin from `/dev/null` and a bounded timeout, then sets the
+  command; raises with a clear, fallback-directing message when the script times out,
+  exits non-zero, or the binary is still unavailable (the non-TTY failure path).
+- `set_hermes_command` **replaces** `enabled_executors` with `["hermes"]` (never
+  produces `["codex", "hermes"]`) and writes `executors.hermes.command`.
 - `hermes_probe_payload` includes `authenticated` (bool or None) and the supported
   list; `--executor hermes --json` shape.
 
@@ -190,15 +217,18 @@ Swift:
   ready; **mixed-family** — a Codex profile and a Hermes profile each resolve against
   their own family's probe from `probeByFamily`.
 - `ExecutorSettingsClientTests`: per-family probe/install dispatch.
-- Profile editor: single-choice selector yields exactly one family; `acpx_agent`
-  shown only for acpx.
+- Profile editor: single-choice selector yields exactly one family in
+  `Profile.enabledExecutors`; `nodeArgv` forwards a single `--enabled-executor`.
 
 ## Flagged unknowns (resolve during implementation)
 
 1. The exact `hermes auth` (or equivalent) subcommand + non-interactive output for
    the `authenticated` field. If unavailable, ship `authenticated: None` and B2
    degrades to no sign-in gating (auth purely manual).
-2. The `install.sh` non-TTY path installs the binary cleanly in practice — verify
-   against the live script during implementation; if it still requires a TTY, fall
-   back to B's "Set Up Hermes" opening Terminal with the install command (the same
-   pattern as Sign in) rather than a headless install.
+2. Whether the `install.sh` non-TTY path installs the binary cleanly in practice is
+   **unverified** (inferred from the script, not vendor-documented). A2 is therefore
+   defensive by construction (stdin from `/dev/null`, bounded timeout, hard error on
+   block/failure). If implementation finds the headless install unreliable, the
+   documented product fallback is B3's "Set Up Hermes" opening Terminal with the
+   install command (the same pattern as Sign in) instead of a headless install — this
+   is an accepted fallback, not a silent degradation.
