@@ -63,6 +63,18 @@ Executor-node note:
   advanced/recovery path for custom Codex paths, ACPX, and broken local config.
   A rejected `node_id`/`token` shows as a continuous connecting/retrying state
   because the node service reconnects unboundedly.
+- the macOS app is family-aware: Codex and Hermes each have their own Settings
+  pane, readiness state is tracked per family (`probeByFamily`/`statusByFamily`),
+  and each pane's Refresh probes only its own family (a Codex-only user never spawns
+  Hermes). Profile-start diagnosis gates per the profile's family — Hermes missing
+  blocks with a Set-Up action (`newbro executor install-hermes`), Hermes present but
+  unauthenticated blocks with a sign-in prompt (`hermes setup --portal`, run in a
+  terminal), and authenticated/undetermined is ready (mirroring Codex's
+  login-required gate). The profile editor uses a single-choice executor picker over
+  the supported families with no fallback default — a profile must have exactly one
+  explicitly chosen family. Only `codex` and `hermes` are probeable;
+  `acpx` is run-only (no readiness probe, no start gate). `newbro executor run`
+  runs a family config-free when its command resolves on PATH.
 - local executor-family/tool config no longer uses an `executor_node.enabled`
   toggle; `newbro executor run` may trigger the same local setup flow when
   executor commands or enabled families are missing
