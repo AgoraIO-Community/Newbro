@@ -5,6 +5,7 @@ import NewbroExecutorCore
 enum SettingsPane: Hashable {
     case updates
     case codex
+    case hermes
 }
 
 struct NewbroSettingsView: View {
@@ -39,6 +40,8 @@ struct NewbroSettingsView: View {
                     UpdatesSettingsPane(model: model, updates: updates)
                 case .codex:
                     CodexSettingsPane(model: model)
+                case .hermes:
+                    CodexSettingsPane(model: model) // placeholder until HermesSettingsPane lands in Task 9
                 }
             }
             .padding(18)
@@ -270,6 +273,12 @@ private struct CodexSettingsPane: View {
         case .signInCodex:
             Text("Sign in to Codex from the Codex app or CLI, then refresh.")
                 .foregroundStyle(.secondary)
+        case .setUpHermes:
+            Button("Set Up Hermes…") { model.setUpHermes(for: profile) }
+                .disabled(model.executorSettingsBusy)
+        case .signInHermes:
+            Text("Run `hermes setup --portal` in a terminal, then Refresh.")
+                .foregroundStyle(.secondary)
         case .none:
             EmptyView()
         }
@@ -292,6 +301,12 @@ private struct CodexSettingsPane: View {
                 .disabled(model.executorSettingsBusy || model.codexSetupBusy)
         case .signInCodex:
             Text("Sign in to Codex from the Codex app or CLI, then refresh.")
+                .foregroundStyle(.secondary)
+        case .setUpHermes:
+            Button("Set Up Hermes…") { model.setUpHermes(for: nil) }
+                .disabled(model.executorSettingsBusy)
+        case .signInHermes:
+            Text("Run `hermes setup --portal` in a terminal, then Refresh.")
                 .foregroundStyle(.secondary)
         case .openProfileSettings, .viewLog, .none:
             EmptyView()

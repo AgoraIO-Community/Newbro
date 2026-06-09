@@ -17,6 +17,8 @@ public enum ProfileStartDiagnosisReason: Equatable, Sendable {
     case codexProbeFailed
     case codexLoginRequired
     case installerFailed
+    case hermesMissing
+    case hermesSignInRequired
 }
 
 public enum ProfileStartDiagnosisAction: Equatable, Sendable {
@@ -29,6 +31,8 @@ public enum ProfileStartDiagnosisAction: Equatable, Sendable {
     case viewLog
     case rerunDiagnosis
     case openProfileSettings
+    case setUpHermes
+    case signInHermes
 }
 
 public struct ProfileStartDiagnosis: Equatable, Sendable {
@@ -76,70 +80,88 @@ public func diagnoseProfileStart(_ profile: Profile,
         )
     }
 
-    let requiresCodex = profile.enabledExecutors.contains("codex")
-    guard requiresCodex else {
-        return readyDiagnosis(cliVersion: cliVersion)
-    }
-
-    if let probeError {
-        if probeError.contains("newer Newbro CLI") {
+    switch profile.enabledExecutors.first {
+    case "codex":
+        if let probeError {
+            if probeError.contains("newer Newbro CLI") {
+                return ProfileStartDiagnosis(
+                    status: .blocked,
+                    reason: .newbroTooOldForProbe,
+                    title: "Start blocked: Newbro CLI is too old",
+                    detail: probeError,
+                    primaryAction: .updateNewbroCLI
+                )
+            }
             return ProfileStartDiagnosis(
                 status: .blocked,
-                reason: .newbroTooOldForProbe,
-                title: "Start blocked: Newbro CLI is too old",
+                reason: .codexProbeFailed,
+                title: "Start blocked: Codex diagnosis failed",
                 detail: probeError,
-                primaryAction: .updateNewbroCLI
+                primaryAction: .rerunDiagnosis
             )
         }
+
+        guard let probe else {
+            return ProfileStartDiagnosis(
+                status: .checking,
+                reason: .ready,
+                title: "Checking Codex setup",
+                primaryAction: .none
+            )
+        }
+
+        if probe.current.ok {
+            return readyDiagnosis(cliVersion: cliVersion)
+        }
+
+        if isLoginRequired(probe.current.error) {
+            return ProfileStartDiagnosis(
+                status: .blocked,
+                reason: .codexLoginRequired,
+                title: "Start blocked: Codex sign-in required",
+                detail: probe.current.error,
+                primaryAction: .signInCodex
+            )
+        }
+
+        if probe.candidates.contains(where: { $0.ok && !$0.isCurrent }) {
+            return ProfileStartDiagnosis(
+                status: .blocked,
+                reason: .codexConfiguredButBroken,
+                title: "Start blocked: selected Codex is broken",
+                detail: probe.current.error,
+                primaryAction: .openCodexSettings
+            )
+        }
+
         return ProfileStartDiagnosis(
             status: .blocked,
-            reason: .codexProbeFailed,
-            title: "Start blocked: Codex diagnosis failed",
-            detail: probeError,
-            primaryAction: .rerunDiagnosis
+            reason: .codexMissing,
+            title: "Start blocked: Codex is not set up",
+            detail: probe.current.error,
+            primaryAction: .setUpCodex
         )
-    }
 
-    guard let probe else {
-        return ProfileStartDiagnosis(
-            status: .checking,
-            reason: .ready,
-            title: "Checking Codex setup",
-            primaryAction: .none
-        )
-    }
+    case "hermes":
+        guard let probe else {
+            return ProfileStartDiagnosis(status: .checking, reason: .ready, title: "Checking Hermes setup", primaryAction: .none)
+        }
+        if !probe.current.ok {
+            return ProfileStartDiagnosis(status: .blocked, reason: .hermesMissing,
+                                         title: "Start blocked: Hermes is not set up",
+                                         detail: probe.current.error, primaryAction: .setUpHermes)
+        }
+        if probe.current.authenticated == false {
+            return ProfileStartDiagnosis(status: .blocked, reason: .hermesSignInRequired,
+                                         title: "Start blocked: Hermes sign-in required",
+                                         detail: "Run `hermes setup --portal` in a terminal, then Refresh.",
+                                         primaryAction: .signInHermes)
+        }
+        return readyDiagnosis(cliVersion: cliVersion)
 
-    if probe.current.ok {
+    default:
         return readyDiagnosis(cliVersion: cliVersion)
     }
-
-    if isLoginRequired(probe.current.error) {
-        return ProfileStartDiagnosis(
-            status: .blocked,
-            reason: .codexLoginRequired,
-            title: "Start blocked: Codex sign-in required",
-            detail: probe.current.error,
-            primaryAction: .signInCodex
-        )
-    }
-
-    if probe.candidates.contains(where: { $0.ok && !$0.isCurrent }) {
-        return ProfileStartDiagnosis(
-            status: .blocked,
-            reason: .codexConfiguredButBroken,
-            title: "Start blocked: selected Codex is broken",
-            detail: probe.current.error,
-            primaryAction: .openCodexSettings
-        )
-    }
-
-    return ProfileStartDiagnosis(
-        status: .blocked,
-        reason: .codexMissing,
-        title: "Start blocked: Codex is not set up",
-        detail: probe.current.error,
-        primaryAction: .setUpCodex
-    )
 }
 
 private func readyDiagnosis(cliVersion: String?) -> ProfileStartDiagnosis {

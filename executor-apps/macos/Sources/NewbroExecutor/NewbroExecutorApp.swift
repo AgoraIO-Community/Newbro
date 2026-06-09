@@ -206,6 +206,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let self else { return }
                 self.model.showSettings(updates: self.updates, initialPane: .codex)
             }
+        case .setUpHermes, .signInHermes:
+            return ActionMenuItem(title: "Open Hermes Settings…") { [weak self] in
+                guard let self else { return }
+                self.model.showSettings(updates: self.updates, initialPane: .hermes)
+            }
         case .rerunDiagnosis:
             return ActionMenuItem(title: "Run Diagnosis") { [weak self] in
                 self?.model.rerunDiagnosis(for: profile)

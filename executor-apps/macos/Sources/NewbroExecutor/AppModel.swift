@@ -556,6 +556,11 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // Stub: full implementation arrives in Task 9 (Hermes Settings pane).
+    func setUpHermes(for profile: Profile?) {
+        refreshExecutorProbeAndStoredDiagnoses()
+    }
+
     private func appendCodexSetupLog(_ line: String) {
         codexSetupLog += line
         if !line.hasSuffix("\n") {
