@@ -328,6 +328,23 @@ def _first_usable_hermes_command() -> str | None:
     return _absolute_command_path(result.path) if result.ok else None
 
 
+def _probe_installed_hermes_command() -> str | None:
+    """Check well-known install locations for hermes after a vendor install.
+
+    Mirrors ``_probe_installed_codex_command``: the vendor install.sh places
+    the binary at ``~/.local/bin/hermes`` which may not be on the current
+    process PATH.
+    """
+    candidates = [
+        str(Path.home() / ".local" / "bin" / "hermes"),
+    ]
+    for candidate in candidates:
+        result = hermes_probe.probe_hermes_command(candidate)
+        if result.ok:
+            return _absolute_command_path(result.path)
+    return None
+
+
 def install_hermes_cli(config_path: Path) -> str:
     existing = _first_usable_hermes_command()
     if existing is not None:
@@ -349,6 +366,8 @@ def install_hermes_cli(config_path: Path) -> str:
         _run_install_step([str(SYSTEM_CURL), "-fsSL", HERMES_INSTALL_URL, "-o", installer], failure, env=env)
         _run_install_step([str(SYSTEM_BASH), installer], failure, env=env)
     command = _first_usable_hermes_command()
+    if command is None:
+        command = _probe_installed_hermes_command()
     if command is None:
         raise RuntimeError(
             "Hermes setup finished, but `hermes --version` is still unavailable. "

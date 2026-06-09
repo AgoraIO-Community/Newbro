@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 from types import SimpleNamespace
 
 from newbro.cli.commands import executor_settings
@@ -84,6 +85,30 @@ def test_install_hermes_raises_when_still_unavailable(tmp_path, monkeypatch):
                         lambda cmd: hermes_probe.HermesProbeResult(path="hermes", version=None, ok=False, error="command not found"))
     with pytest.raises(RuntimeError, match="hermes setup --portal"):
         executor_settings.install_hermes_cli(tmp_path / "config.yaml")
+
+
+def test_install_hermes_finds_local_bin_when_which_misses(tmp_path, monkeypatch):
+    """After install, resolution falls back to ~/.local/bin/hermes even when
+    ``which("hermes")`` (bare name PATH probe) returns nothing."""
+    local_bin_hermes = str(Path.home() / ".local" / "bin" / "hermes")
+
+    monkeypatch.setattr(executor_settings, "_run_install_step", lambda argv, msg, env=None: None)
+
+    def fake_probe(cmd):
+        if cmd == "hermes":
+            return hermes_probe.HermesProbeResult(path="hermes", version=None, ok=False, error="command not found")
+        if cmd == local_bin_hermes:
+            return hermes_probe.HermesProbeResult(path=local_bin_hermes, version="0.12.0", ok=True)
+        return hermes_probe.HermesProbeResult(path=cmd, version=None, ok=False, error="command not found")
+
+    monkeypatch.setattr(hermes_probe, "probe_hermes_command", fake_probe)
+
+    config_path = tmp_path / "config.yaml"
+    command = executor_settings.install_hermes_cli(config_path)
+    assert command == local_bin_hermes
+    raw = config_files.load_existing_connector_yaml(config_path)
+    executors = config_files.existing_executors_config(raw)
+    assert executors["hermes"]["command"] == local_bin_hermes
 
 
 def test_cmd_executor_routes_install_hermes_to_run_executor_install_hermes(monkeypatch):
