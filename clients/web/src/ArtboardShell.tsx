@@ -7,6 +7,7 @@ import {
   clearVoiceTarget,
   createExecutorNode,
   createPersona,
+  deleteExecutorNode,
   deletePersona,
   listExecutorNodes,
   revealExecutorNodeConnectCommand,
@@ -2068,9 +2069,10 @@ function CreateConnectSheet({
   const existingBroNameChanged = existingBroNameDirty && trimmedName.length > 0;
   const connectActionsDisabled = existingBroNameDirty || nameSaving;
   const canCreate = trimmedName.length > 0 && !busy && !nameSaving && !commands && !pendingNodeId && !completed;
-  // The agent client is fixed once a node exists (existing Bro) or once
-  // credentials have been issued; only a fresh Bro can still choose.
-  const familyLocked = Boolean(bro) || busy || Boolean(commands) || Boolean(pendingNodeId) || completed;
+  // The agent client is fixed for an existing Bro, while an issue is in flight,
+  // and once the node has connected. A fresh Bro can still switch while its
+  // node is only pending (not yet connected) — switching recreates the node.
+  const familyLocked = Boolean(bro) || busy || completed;
   const canSaveExistingBroName = Boolean(bro) && existingBroNameChanged && !busy && !nameSaving && !completed;
   const reconnectExistingBro = Boolean(bro?.nodeName) && mode !== "setup";
 
@@ -2186,6 +2188,29 @@ function CreateConnectSheet({
     void issueConnectCredentials({ copyInstall: true });
   }
 
+  async function chooseFamily(next: "codex" | "hermes") {
+    if (familyLocked || next === executorFamily) return;
+    setExecutorFamily(next);
+    // If a node was already auto-issued for the previous family but hasn't
+    // connected yet, recreate it for the new family. Resetting the issue state
+    // and the auto-issue guard lets the auto-issue effect re-fire with the new
+    // family on the next render (it reads executorFamily fresh there).
+    const stalePendingNodeId = pendingNodeId;
+    if (commands || stalePendingNodeId) {
+      if (stalePendingNodeId) {
+        try {
+          await deleteExecutorNode(sessionId, stalePendingNodeId);
+        } catch {
+          // Best effort: an orphan un-connected node is harmless if delete fails.
+        }
+      }
+      setCommands(null);
+      setPendingNodeId(null);
+      setCompleted(false);
+      autoIssueStartedRef.current = false;
+    }
+  }
+
   useEffect(() => {
     if (autoIssueStartedRef.current || bro || !canCreate) return;
     autoIssueStartedRef.current = true;
@@ -2276,7 +2301,7 @@ function CreateConnectSheet({
                       className={`ob-exec-card${executorFamily === "codex" ? " ob-exec-card-on" : ""}`}
                       aria-pressed={executorFamily === "codex"}
                       disabled={familyLocked}
-                      onClick={() => { if (!familyLocked) setExecutorFamily("codex"); }}
+                      onClick={() => { void chooseFamily("codex"); }}
                     >
                       <span className="ob-exec-name">Codex</span>
                       <span className="ob-exec-desc">OpenAI&rsquo;s coding agent</span>
@@ -2289,7 +2314,7 @@ function CreateConnectSheet({
                       className={`ob-exec-card${executorFamily === "hermes" ? " ob-exec-card-on" : ""}`}
                       aria-pressed={executorFamily === "hermes"}
                       disabled={familyLocked}
-                      onClick={() => { if (!familyLocked) setExecutorFamily("hermes"); }}
+                      onClick={() => { void chooseFamily("hermes"); }}
                     >
                       <span className="ob-exec-name">Hermes</span>
                       <span className="ob-exec-desc">Open-source agent by Nous Research</span>
