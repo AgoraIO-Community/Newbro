@@ -8,3 +8,7 @@ cannot drift apart.
 from __future__ import annotations
 
 SUPPORTED_EXECUTOR_FAMILIES: tuple[str, ...] = ("codex", "acpx", "hermes")
+
+# Families with a meaningful local readiness probe (binary presence/version).
+# ACPX is run-only: no probe, no start-readiness gate.
+PROBEABLE_EXECUTOR_FAMILIES: tuple[str, ...] = ("codex", "hermes")

@@ -12,7 +12,7 @@ from typing import Any
 from newbro.cli import config_files
 from newbro.executors.adapters.codex import probe as codex_probe
 from newbro.executors.adapters.hermes import probe as hermes_probe
-from newbro.executors.families import SUPPORTED_EXECUTOR_FAMILIES
+from newbro.executors.families import PROBEABLE_EXECUTOR_FAMILIES, SUPPORTED_EXECUTOR_FAMILIES
 
 
 SUPPORTED_EXECUTORS = list(SUPPORTED_EXECUTOR_FAMILIES)
@@ -34,14 +34,17 @@ def run_executor_install_codex(args: Any, app: Any) -> int:
 
 
 def run_executor_probe(args: Any, app: Any) -> int:
-    if args.executor not in SUPPORTED_EXECUTORS:
-        print(f"Unsupported executor: {args.executor}", file=sys.stderr)
+    if args.executor not in PROBEABLE_EXECUTOR_FAMILIES:
+        print(f"Executor '{args.executor}' has no probe.", file=sys.stderr)
         return 1
     config_path = app.ENV_LOCAL.with_name("config.yaml")
     if args.executor == "hermes":
         payload = hermes_probe_payload(config_path=config_path)
-    else:
+    elif args.executor == "codex":
         payload = codex_probe_payload(config_path=config_path)
+    else:
+        print(f"Executor '{args.executor}' has no probe.", file=sys.stderr)
+        return 1
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -50,8 +53,8 @@ def run_executor_probe(args: Any, app: Any) -> int:
 
 
 def run_executor_use(args: Any, app: Any) -> int:
-    if args.executor not in SUPPORTED_EXECUTORS:
-        print(f"Unsupported executor: {args.executor}", file=sys.stderr)
+    if args.executor not in PROBEABLE_EXECUTOR_FAMILIES:
+        print(f"Executor '{args.executor}' has no probe.", file=sys.stderr)
         return 1
     command = str(args.executor_binary_command)
     config_path = app.ENV_LOCAL.with_name("config.yaml")
@@ -65,7 +68,7 @@ def run_executor_use(args: Any, app: Any) -> int:
             return 1
         set_hermes_command(config_path=config_path, command=command)
         print(f"Hermes command set to {command}")
-    else:
+    elif args.executor == "codex":
         if not os.path.isabs(command):
             print("Codex command must be an absolute path.", file=sys.stderr)
             return 1
@@ -75,6 +78,9 @@ def run_executor_use(args: Any, app: Any) -> int:
             return 1
         set_codex_command(config_path=config_path, command=command)
         print(f"Codex command set to {command}")
+    else:
+        print(f"Executor '{args.executor}' has no probe.", file=sys.stderr)
+        return 1
     return 0
 
 
