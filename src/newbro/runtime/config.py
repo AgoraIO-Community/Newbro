@@ -8,6 +8,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from newbro.config_home import SYNAPSE_ENV_FILE, SYNAPSE_CONNECTOR_CONFIG_FILE
+from newbro.executors.families import SUPPORTED_EXECUTOR_FAMILIES
 from newbro.yaml_support import YAMLParseError, load_yaml_file
 
 
@@ -16,7 +17,7 @@ LOCAL_CONFIG_FILE = SYNAPSE_CONNECTOR_CONFIG_FILE
 LEGACY_CODEX_COMMAND_KEY = "SYNAPSE_CODEX_COMMAND"
 LEGACY_ACPX_COMMAND_KEY = "SYNAPSE_ACPX_COMMAND"
 LEGACY_ACPX_AGENT_KEY = "SYNAPSE_ACPX_AGENT"
-SUPPORTED_DETACHED_EXECUTOR_TYPES = ("codex", "acpx")
+SUPPORTED_DETACHED_EXECUTOR_TYPES = SUPPORTED_EXECUTOR_FAMILIES
 
 
 def load_local_env() -> None:
