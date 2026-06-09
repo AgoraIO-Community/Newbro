@@ -199,6 +199,27 @@ final class ExecutorSettingsClientTests: XCTestCase {
         ])
     }
 
+    func testProbeUsesRequestedFamilyAndDecodesAuthenticated() throws {
+        var seenArgv: [String] = []
+        let client = ExecutorSettingsClient(newbroPath: "/n", environment: nil) { argv, _ in
+            seenArgv = argv
+            return #"{"supported_executors":["codex","acpx","hermes"],"current":{"executor":"hermes","command":"hermes","version":"0.12.0","ok":true,"authenticated":true},"candidates":[]}"#
+        }
+        let probe = try client.probe(executor: "hermes")
+        XCTAssertTrue(seenArgv.contains("hermes"))
+        XCTAssertEqual(probe.current.authenticated, true)
+    }
+
+    func testInstallHermesInvokesInstallHermes() throws {
+        var seenArgv: [String] = []
+        let client = ExecutorSettingsClient(newbroPath: "/n", environment: nil) { argv, _ in
+            seenArgv = argv
+            return "Hermes is ready: /h"
+        }
+        _ = try client.installHermes()
+        XCTAssertEqual(seenArgv, ["/n", "executor", "install-hermes"])
+    }
+
     func testExecutorSettingsErrorsHaveHumanReadableDescriptions() {
         XCTAssertEqual(
             ExecutorSettingsClientError.emptyOutput.localizedDescription,

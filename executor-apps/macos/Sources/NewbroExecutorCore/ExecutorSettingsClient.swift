@@ -19,9 +19,10 @@ public struct CurrentExecutorProbe: Codable, Equatable, Sendable {
     public var version: String?
     public var ok: Bool
     public var error: String?
+    public var authenticated: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case executor, command, version, ok, error
+        case executor, command, version, ok, error, authenticated
         case resolvedPath = "resolved_path"
     }
 }
@@ -80,10 +81,10 @@ public final class ExecutorSettingsClient: @unchecked Sendable {
         self.runner = runner
     }
 
-    public func probe() throws -> ExecutorProbe {
+    public func probe(executor: String = "codex") throws -> ExecutorProbe {
         let output: String
         do {
-            output = try runner([newbroPath, "executor", "probe", "--executor", "codex", "--json"], environment)
+            output = try runner([newbroPath, "executor", "probe", "--executor", executor, "--json"], environment)
         } catch let error as ExecutorSettingsClientError {
             if error.isUnsupportedProbeSubcommand {
                 throw ExecutorSettingsClientError.runtimeTooOld(installedVersion: installedVersion())
@@ -93,8 +94,7 @@ public final class ExecutorSettingsClient: @unchecked Sendable {
         guard !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ExecutorSettingsClientError.emptyOutput
         }
-        let data = Data(output.utf8)
-        return try JSONDecoder().decode(ExecutorProbe.self, from: data)
+        return try JSONDecoder().decode(ExecutorProbe.self, from: Data(output.utf8))
     }
 
     public func useCodex(path: String) throws {
@@ -125,6 +125,18 @@ public final class ExecutorSettingsClient: @unchecked Sendable {
             }
             throw error
         }
+    }
+
+    public func useHermes(path: String) throws {
+        _ = try runner([newbroPath, "executor", "use", "--executor", "hermes", "--command", path], environment)
+    }
+
+    public func installHermes() throws -> String {
+        try runner([newbroPath, "executor", "install-hermes"], environment)
+    }
+
+    public func installHermesStreaming(onLine: @escaping @Sendable (String) -> Void) throws -> String {
+        try Self.runProcessStreaming(argv: [newbroPath, "executor", "install-hermes"], environment: environment, onLine: onLine)
     }
 
     private func installedVersion() -> String? {
