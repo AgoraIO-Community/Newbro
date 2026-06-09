@@ -18,7 +18,7 @@ from newbro.api.paths import API_PREFIX
 from newbro.communication.persona_pool import resolve_workspace
 from newbro.executors.adapters.acpx import AcpxExecutor, AcpxExecutorSession
 from newbro.executors.adapters.codex import CodexExecutor, CodexExecutorSession
-from newbro.executors.adapters.hermes import HermesExecutor, HermesExecutorSession
+from newbro.executors.adapters.hermes import HermesExecutor
 from newbro.executors.core import ExecutorEvent, ExecutorEventType, ExecutorSession
 from newbro.executors.node.workspace_files import (
     WorkspaceFileAccessError,

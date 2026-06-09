@@ -137,6 +137,17 @@ Adapter direction:
   `ExecutorEvent`s so execution runs expose live user-facing progress through
   `latest_progress_message` snapshots without leaking Codex-native event
   shapes to clients
+- Hermes is a real adapter family running through Hermes's TUI Gateway JSON-RPC
+  app-server over stdio (the project venv python running `-m tui_gateway.entry`,
+  with the workspace set via `TERMINAL_CWD` at spawn — so gateway processes are
+  keyed by working directory and multiplex sessions by `params.session_id`). V1 is
+  core run loop only (create/prompt/steer/interrupt with streamed progress and a
+  settled final answer); it advertises `supports_follow_up` and `supports_cancel`,
+  with `supports_pause`, `supports_resume`, and `supports_thread_list` false. Gateway
+  events normalize into the generic `ExecutorEvent` stream (the single terminal
+  `message.complete` selects COMPLETED / CANCELLED / FAILED via `payload.status`) and
+  do not use the Codex multi-message-turn contract. Follow-ups use `session.steer`
+  only, with no `prompt.submit` fallback. See `docs/protocol/hermes-gateway.md`.
 - OpenClaw or other executor families should fit behind the same normalized executor contract
 
 This is why:
