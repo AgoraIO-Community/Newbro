@@ -144,32 +144,54 @@ tests stay untouched.
   (Hermes reports false). No change needed beyond the executor reporting capabilities.
 - **`executors/node/config.py` / connector YAML**: read `executors.hermes.command`
   (default `hermes`) and optional `executors.hermes.timeout_seconds`.
-- **Node registry** (`executors/node/registry.py`): today the registry only enforces
-  *exactly one* family per node (`len == 1`); it never whitelists which families are
-  valid, so a typo or an unsupported family is silently accepted. Introduce a single
-  Python source of truth `SUPPORTED_EXECUTOR_FAMILIES = ("codex", "acpx", "hermes")`
-  (a new constant, e.g. `newbro/executors/families.py`) and have `create_node` /
-  `update_node` validate membership against it. No `acpx_agent`-style special field is
-  required for Hermes. This same constant backs the CLI parser choices (§5) so the
-  control plane, CLI, and registry cannot drift.
+- **Single source of truth for supported families.** There is already a runtime
+  constant `runtime/config.py: SUPPORTED_DETACHED_EXECUTOR_TYPES = ("codex", "acpx")`,
+  published into settings (`detached_executor_types`) at `load_settings()`. Adding a
+  *separate* `families.py` constant would leave this one stale and let API/status/
+  config drift. Instead: define the canonical tuple once in a low-level neutral module
+  `newbro/executors/families.py` as
+  `SUPPORTED_EXECUTOR_FAMILIES = ("codex", "acpx", "hermes")`, and have
+  `runtime/config.py` **import/alias** it (`SUPPORTED_DETACHED_EXECUTOR_TYPES =
+  SUPPORTED_EXECUTOR_FAMILIES`) rather than defining its own literal. Layering is fine
+  (runtime already depends on executors). Every other reference — registry, CLI
+  parsers, setup prompts, node `__main__` — imports this one tuple.
+- **Node registry** (`executors/node/registry.py`): today it only enforces *exactly
+  one* family per node (`len == 1`); it never whitelists which families are valid, so a
+  typo or unsupported family is silently accepted. Have `create_node` / `update_node`
+  validate membership against `SUPPORTED_EXECUTOR_FAMILIES`. No `acpx_agent`-style
+  special field is required for Hermes.
 - **`aclose`**: `HermesExecutor.aclose()` terminates the gateway subprocess; it is
   picked up by the existing `ExecutorNodeService.aclose` loop and SIGTERM/SIGINT
   handling (no new shutdown plumbing required).
 
 ## 5. CLI operational surface — `cli/commands/executor_settings.py`
 
-The CLI surface spans **three** files, not just `executor_settings.py`. All three
-must change or the new commands are unreachable:
+The CLI surface spans **five** files. All must change or the new family is
+unreachable somewhere in the chain:
 
-**`cli/parser.py`** (argparse) — today hardcodes Codex-only choices:
+**`cli/parser.py`** (top-level argparse) — today hardcodes Codex-only choices:
 - `probe --executor` and `use --executor`: change `choices=["codex"]` →
-  `choices=SUPPORTED_EXECUTOR_FAMILIES` (or the probeable subset). Drive the choices
-  from the shared §4 constant so they cannot drift from the registry.
+  `choices=SUPPORTED_EXECUTOR_FAMILIES` (or the probeable subset).
 - `--enabled-executor`: change `choices=["codex", "acpx"]` → include `"hermes"`.
 - Add an `install-hermes` subparser parallel to `install-codex`.
 
 **`cli/dispatch.py`** (`cmd_executor`) — today only routes `install-codex`. Add a
 route: `install-hermes` → `executor_settings_command.run_executor_install_hermes`.
+
+**`executors/node/__main__.py`** (the **detached node's own** argparse) — this is a
+second parser the top-level CLI forwards into: `command_specs.executor_node_command`
+builds `python -m newbro.executors.node --enabled-executor <family> …`, and
+`__main__.build_parser` independently hardcodes `--enabled-executor
+choices=["codex", "acpx"]`. Without updating it, a forwarded `--enabled-executor
+hermes` is rejected by the node process even though the top CLI accepted it. Change
+its choices to `SUPPORTED_EXECUTOR_FAMILIES`.
+
+**`cli/prompts.py` + `cli/setup_resolvers.py`** (the interactive `newbro executor
+setup` path) — `prompt_executor_selection` hardcodes `executors = ["codex", "acpx"]`,
+and `resolve_executor_setup_values` only writes Codex/ACPX executor blocks. Without
+Hermes here, the normal setup path cannot create `executors.hermes.command`. Add
+`hermes` to the selection list (from `SUPPORTED_EXECUTOR_FAMILIES`) and a Hermes
+branch that prompts for the command and writes the `executors.hermes` block.
 
 **`cli/commands/executor_settings.py`** — generalize the Codex-only logic:
 - `SUPPORTED_EXECUTORS = list(SUPPORTED_EXECUTOR_FAMILIES)` (shared constant).
@@ -194,6 +216,14 @@ Generalize the Codex-specific readiness path so a `hermes` profile gets the same
   `setUpHermes`, `openHermesSettings`). Codex reasons/actions stay; Hermes mirrors them.
 - **`ExecutorSettingsClient.swift`**: call `newbro executor probe --executor <family>`
   generically rather than assuming codex.
+- **`AppModel.swift` — per-family probe state.** Today `AppModel` holds a *single*
+  global `executorProbe` and `codexStatus`, and `diagnoseStart` passes that one probe
+  to *every* profile. With one Codex profile and one Hermes profile, a single probe
+  result cannot diagnose both. Replace the globals with per-family maps —
+  `probeByFamily: [String: ExecutorProbe]` and `statusByFamily: [String: CommandStatus]`
+  (plus per-family `executorSettingsError`) — and have `diagnoseStart` select the probe
+  for the profile's own family. The menu-bar status line shows the status of each
+  configured family.
 - **`ProfileEditView` / `ExecutorSettingsView`**: today the profile editor uses two
   *independent* toggles (`codex`, `acpx`), which already allows invalid multi-family
   profiles and would get worse with a third Hermes toggle. Replace the toggles with a
@@ -233,14 +263,23 @@ Per AGENTS.md golden rules (fix root causes, no silent fallback):
 - **Probe**: version-too-old / missing binary → correct `availability_reason`.
 - **Node**: `_build_executors` constructs a Hermes executor from config;
   `_descriptor` reports the expected capability flags.
+- **Families constant**: `runtime/config.py` exposes the aliased
+  `SUPPORTED_DETACHED_EXECUTOR_TYPES` including `hermes` (proves no drift from
+  `SUPPORTED_EXECUTOR_FAMILIES`).
 - **Registry**: an unsupported family value is rejected; `hermes` is accepted; two
   families still rejected.
-- **CLI**: `probe --executor hermes` is accepted by the parser and returns the
-  expected payload; `dispatch` routes `install-hermes`; `--enabled-executor hermes`
-  parses; `set_hermes_command` writes config.
+- **CLI (top parser)**: `probe --executor hermes` parses and returns the expected
+  payload; `dispatch` routes `install-hermes`; `--enabled-executor hermes` parses;
+  `set_hermes_command` writes config.
+- **CLI (node parser)**: `executors/node/__main__.build_parser` accepts
+  `--enabled-executor hermes`.
+- **CLI (setup)**: the setup resolver, given a `hermes` selection, writes an
+  `executors.hermes.command` block.
 - **Swift**: extend `ProfileStartRulesTests` / `ProfileStartDiagnosisTests` with
   Hermes readiness cases (missing, broken, ready, sign-in required); the editor's
-  single-choice selector yields exactly one family.
+  single-choice selector yields exactly one family; **mixed-family** diagnosis — a
+  Codex profile and a Hermes profile each resolve against their own family's probe
+  from `probeByFamily` (not a shared global).
 
 ## 9. Docs
 
