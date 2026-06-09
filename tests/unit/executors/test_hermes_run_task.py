@@ -89,3 +89,42 @@ async def test_run_task_maps_blocked_approval_request_terminally():
     assert seen[-1].event_type == ExecutorEventType.BLOCKED
     assert "rm -rf" in (seen[-1].message or "")
     assert seen[-1].metadata.get("hermes_event") == "approval.request"
+
+
+@pytest.mark.anyio
+async def test_gateway_closed_event_yields_failed():
+    """A __gateway_closed__ event in the queue must yield a terminal FAILED."""
+    event_params = [
+        {"type": "__gateway_closed__", "session_id": "sess-1", "returncode": 1},
+    ]
+    executor, session, run, task = _make(event_params)
+    seen = [event async for event in executor.run_task(run, task, session)]
+    assert len(seen) == 1
+    assert seen[0].event_type == ExecutorEventType.FAILED
+    assert "gateway exited" in (seen[0].message or "")
+    assert seen[0].metadata.get("returncode") == 1
+
+
+@pytest.mark.anyio
+async def test_timeout_yields_failed_not_hang():
+    """When timeout_seconds fires with no events, run_task must yield FAILED."""
+    executor = HermesExecutor(command="hermes", timeout_seconds=0.01)
+    empty_queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+
+    class _TimeoutClient:
+        async def submit_prompt(self, session_id, text):
+            pass
+
+        async def events_for(self, session_id):
+            return empty_queue
+
+    executor._client = _TimeoutClient()  # type: ignore[assignment]
+    session = HermesExecutorSession(session_id="sess-1", executor_type="hermes", metadata={})
+    session.attach(cwd=Path("/tmp"), gateway_session_id="sess-1")
+    run = ExecutionRun(run_id="run-1", execution_session_id="es-1", task_id="t-1", executor_type="hermes")
+    task = Task(task_id="t-1", root_task_id="t-1", title="Do it", goal="Do the thing")
+
+    seen = [event async for event in executor.run_task(run, task, session)]
+    assert len(seen) == 1
+    assert seen[0].event_type == ExecutorEventType.FAILED
+    assert "timed out" in (seen[0].message or "")

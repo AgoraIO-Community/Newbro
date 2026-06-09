@@ -124,6 +124,11 @@ class HermesGatewayClient:
 
     async def _route_events(self, gateway: _GatewayProcess) -> None:
         async for event in gateway.peer.iter_events():
+            if event.get("__peer_closed__"):
+                returncode = gateway.process.returncode
+                for queue in gateway.session_queues.values():
+                    queue.put_nowait({"type": "__gateway_closed__", "session_id": None, "returncode": returncode})
+                return
             params = event.get("params") if isinstance(event, dict) else None
             if not isinstance(params, dict):
                 continue

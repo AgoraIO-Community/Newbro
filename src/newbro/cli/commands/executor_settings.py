@@ -345,8 +345,9 @@ def _print_human_probe(payload: dict[str, object]) -> None:
     current = payload["current"]
     if isinstance(current, dict):
         status = "ok" if current.get("ok") else "broken"
+        executor_name = current.get("executor", "executor")
         print(
-            f"Codex current: {status} "
+            f"{executor_name} current: {status} "
             f"{current.get('version') or ''} {current.get('resolved_path') or current.get('command')}"
         )
     print("Candidates:")

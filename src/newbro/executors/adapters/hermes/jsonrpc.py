@@ -6,6 +6,8 @@ import contextlib
 import json
 from collections.abc import AsyncIterator
 
+PEER_CLOSED: dict[str, object] = {"__peer_closed__": True}
+
 
 class HermesJsonRpcPeer:
     """Newline-delimited JSON-RPC 2.0 peer over a stdio stream pair."""
@@ -67,6 +69,8 @@ class HermesJsonRpcPeer:
                 if not future.done():
                     future.set_exception(RuntimeError("Hermes gateway connection closed."))
             self._pending.clear()
+            with contextlib.suppress(asyncio.QueueFull):
+                self._events.put_nowait(dict(PEER_CLOSED))
 
     def _handle_response(self, message: dict[str, object]) -> None:
         request_id = message.get("id")

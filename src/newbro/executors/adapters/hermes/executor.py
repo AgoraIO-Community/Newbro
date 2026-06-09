@@ -17,6 +17,7 @@ _PROGRESS_EVENTS = frozenset({
     "reasoning.delta", "reasoning.available", "thinking.delta", "status.update",
 })
 _BLOCKING_EVENTS = frozenset({"approval.request", "clarify.request"})
+_GATEWAY_CLOSED_EVENT = "__gateway_closed__"
 
 
 class HermesExecutor:
@@ -123,8 +124,30 @@ class HermesExecutor:
 
         # Each queue item is an event `params` dict: {"type", "session_id", "payload"}.
         while True:
-            params = await queue.get()
+            try:
+                if self._timeout_seconds is not None:
+                    params = await asyncio.wait_for(queue.get(), timeout=self._timeout_seconds)
+                else:
+                    params = await queue.get()
+            except asyncio.TimeoutError:
+                yield ExecutorEvent(
+                    run_id=run.run_id,
+                    session_id=session.session_id,
+                    event_type=ExecutorEventType.FAILED,
+                    message=f"hermes turn timed out after {self._timeout_seconds}s with no gateway event",
+                )
+                return
             etype = params.get("type")
+            if etype == _GATEWAY_CLOSED_EVENT:
+                returncode = params.get("returncode")
+                yield ExecutorEvent(
+                    run_id=run.run_id,
+                    session_id=session.session_id,
+                    event_type=ExecutorEventType.FAILED,
+                    message=f"hermes gateway exited unexpectedly (returncode={returncode})",
+                    metadata={"hermes_event": etype, "returncode": returncode},
+                )
+                return
             payload = params.get("payload") if isinstance(params.get("payload"), dict) else {}
             text_value = payload.get("text")
             progress_text = text_value or payload.get("preview") or payload.get("summary")

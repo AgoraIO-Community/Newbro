@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from newbro.executors.adapters.hermes.jsonrpc import HermesJsonRpcPeer
+from newbro.executors.adapters.hermes.jsonrpc import HermesJsonRpcPeer, PEER_CLOSED
 
 
 async def _make_peer_over_pipe():
@@ -52,3 +52,13 @@ async def test_notifications_surface_as_events():
     event = await peer.next_event()
     assert event["method"] == "message.delta"
     await peer.close()
+
+
+@pytest.mark.anyio
+async def test_eof_pushes_peer_closed_sentinel():
+    """After reader EOF, next_event() must return PEER_CLOSED (not hang)."""
+    peer, reader, _ = await _make_peer_over_pipe()
+    reader.feed_eof()
+    event = await peer.next_event()
+    assert event == {"__peer_closed__": True}
+    assert event == PEER_CLOSED
