@@ -537,7 +537,7 @@ git commit -m "feat(hermes): add newline-delimited json-rpc stdio peer"
 - Modify: `src/newbro/executors/adapters/__init__.py`
 - Test: `tests/unit/executors/test_hermes_executor.py`
 
-The client launches one gateway process per node and routes events to per-session queues (multiplexing). **Use the launch argv and the session-id key recorded in Task 1.** Placeholders below (`HERMES_GATEWAY_LAUNCH_ARGS`, `_SESSION_ID_KEY`) are set from Task 1's doc.
+The client manages gateway processes keyed by working directory (Task 1: `TERMINAL_CWD` is per-process) and routes events to per-session queues by `params.session_id`. The launch/env details and method/event shapes below are reconciled with Task 1's `docs/protocol/hermes-gateway.md`.
 
 - [ ] **Step 1: Write the failing capabilities test**
 
@@ -599,96 +599,163 @@ class HermesExecutorSession(ExecutorSession):
         return self._gateway_session_id
 ```
 
+Reconciled with Task 1's findings (`docs/protocol/hermes-gateway.md`):
+- The gateway is **not** launched via the `hermes` binary. Spawn the Hermes project's venv python with `["-m", "tui_gateway.entry"]`, env `HERMES_PYTHON_SRC_ROOT`/`PYTHONPATH`/`TERMINAL_CWD`/`HERMES_CWD`, and process `cwd` = the workspace.
+- The working directory is set via **`TERMINAL_CWD` at spawn**, not a `session.create` param (`session.create` params are `{"cols": 80}`; the session id is `result["session_id"]`). So gateway **processes are keyed by working directory**; multiple sessions multiplex on one process via `params.session_id`.
+- The project root is parsed from `<command> --version` ("Project: …"), defaulting to `~/.hermes/hermes-agent`; the gateway python is `<root>/venv/bin/python3`.
+- The client's public API stays **session-id-keyed** (so the executor and the Task 7/8 fake clients are unaffected). The event router pushes each event's `params` dict (carrying `type`/`session_id`/`payload`) onto the per-session queue, skipping global events whose `session_id` is empty.
+
 ```python
 # src/newbro/executors/adapters/hermes/client.py
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import re
+import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .jsonrpc import HermesJsonRpcPeer
 
-# Set from Task 1's docs/protocol/hermes-gateway.md.
-HERMES_GATEWAY_LAUNCH_ARGS: list[str] = ["gateway", "run", "--stdio"]
-# The key under which session.create's result returns the session id (Task 1).
-_SESSION_ID_KEY = "session_id"
+GATEWAY_MODULE_ARGS: list[str] = ["-m", "tui_gateway.entry"]
+DEFAULT_PROJECT_ROOT = Path.home() / ".hermes" / "hermes-agent"
+
+
+def resolve_gateway_launch(command: str, project_root: str | None) -> tuple[str, Path]:
+    """Return (python_executable, project_root) for launching the gateway.
+
+    project_root defaults to parsing the `Project:` line of `<command> --version`,
+    falling back to ~/.hermes/hermes-agent. The gateway python is
+    <project_root>/venv/bin/python3.
+    """
+    root: Path | None = Path(project_root) if project_root else None
+    if root is None:
+        try:
+            completed = subprocess.run(
+                [command, "--version"], check=False, capture_output=True, text=True, timeout=8
+            )
+            match = re.search(r"^Project:\s*(.+)$", completed.stdout or "", re.MULTILINE)
+            if match:
+                root = Path(match.group(1).strip())
+        except Exception:  # noqa: BLE001 - fall back to the default root on any probe failure
+            root = None
+    if root is None:
+        root = DEFAULT_PROJECT_ROOT
+    return str(root / "venv" / "bin" / "python3"), root
+
+
+@dataclass(slots=True)
+class _GatewayProcess:
+    process: asyncio.subprocess.Process
+    peer: HermesJsonRpcPeer
+    router_task: asyncio.Task[None] | None = None
+    session_queues: dict[str, asyncio.Queue[dict[str, object]]] = field(default_factory=dict)
 
 
 class HermesGatewayClient:
-    """One long-lived gateway process per node, multiplexed by session id."""
+    """Gateway processes keyed by working directory (TERMINAL_CWD is per-process).
 
-    def __init__(self, *, command: str) -> None:
+    Public API is session-id-keyed; a session id is internally mapped to the
+    gateway process that owns it.
+    """
+
+    def __init__(self, *, command: str = "hermes", project_root: str | None = None) -> None:
         self._command = command
-        self._process: asyncio.subprocess.Process | None = None
-        self._peer: HermesJsonRpcPeer | None = None
+        self._project_root = project_root
         self._lock = asyncio.Lock()
-        self._router_task: asyncio.Task[None] | None = None
-        self._session_queues: dict[str, asyncio.Queue[dict[str, object]]] = {}
+        self._by_cwd: dict[str, _GatewayProcess] = {}
+        self._gateway_by_session: dict[str, _GatewayProcess] = {}
 
-    async def ensure_started(self) -> None:
+    async def _ensure_process(self, cwd: Path) -> _GatewayProcess:
+        key = str(cwd)
         async with self._lock:
-            if self._process is not None and self._process.returncode is None:
-                return
-            self._process = await asyncio.create_subprocess_exec(
-                self._command,
-                *HERMES_GATEWAY_LAUNCH_ARGS,
+            existing = self._by_cwd.get(key)
+            if existing is not None and existing.process.returncode is None:
+                return existing
+            python_executable, root = resolve_gateway_launch(self._command, self._project_root)
+            env = dict(os.environ)
+            env["HERMES_PYTHON_SRC_ROOT"] = str(root)
+            env["PYTHONPATH"] = os.pathsep.join(
+                [str(root), env.get("PYTHONPATH", "")]
+            ).rstrip(os.pathsep)
+            env["TERMINAL_CWD"] = key
+            env["HERMES_CWD"] = key
+            process = await asyncio.create_subprocess_exec(
+                python_executable,
+                *GATEWAY_MODULE_ARGS,
+                cwd=key,
+                env=env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            assert self._process.stdout is not None and self._process.stdin is not None
-            self._peer = HermesJsonRpcPeer(self._process.stdout, self._process.stdin)
-            self._router_task = asyncio.create_task(self._route_events())
+            assert process.stdout is not None and process.stdin is not None
+            gateway = _GatewayProcess(process=process, peer=HermesJsonRpcPeer(process.stdout, process.stdin))
+            gateway.router_task = asyncio.create_task(self._route_events(gateway))
+            self._by_cwd[key] = gateway
+            return gateway
 
-    @property
-    def peer(self) -> HermesJsonRpcPeer:
-        if self._peer is None:
-            raise RuntimeError("Hermes gateway not started.")
-        return self._peer
+    def _gateway(self, session_id: str) -> _GatewayProcess:
+        gateway = self._gateway_by_session.get(session_id)
+        if gateway is None:
+            raise RuntimeError(f"Unknown hermes session: {session_id}")
+        return gateway
 
     async def create_session(self, cwd: Path) -> str:
-        result = await self.peer.request("session.create", {"cwd": str(cwd)})
-        if not isinstance(result, dict) or _SESSION_ID_KEY not in result:
+        gateway = await self._ensure_process(cwd)
+        result = await gateway.peer.request("session.create", {"cols": 80})
+        if not isinstance(result, dict) or "session_id" not in result:
             raise RuntimeError(f"Hermes session.create returned unexpected result: {result!r}")
-        session_id = str(result[_SESSION_ID_KEY])
-        self._session_queues.setdefault(session_id, asyncio.Queue())
+        session_id = str(result["session_id"])
+        gateway.session_queues.setdefault(session_id, asyncio.Queue())
+        self._gateway_by_session[session_id] = gateway
         return session_id
 
     async def submit_prompt(self, session_id: str, text: str) -> None:
-        await self.peer.request("prompt.submit", {"session_id": session_id, "text": text})
+        await self._gateway(session_id).peer.request(
+            "prompt.submit", {"session_id": session_id, "text": text}
+        )
 
     async def steer(self, session_id: str, text: str) -> None:
-        await self.peer.request("session.steer", {"session_id": session_id, "text": text})
+        result = await self._gateway(session_id).peer.request(
+            "session.steer", {"session_id": session_id, "text": text}
+        )
+        if isinstance(result, dict) and result.get("status") == "rejected":
+            raise RuntimeError("hermes session.steer rejected")
 
     async def interrupt(self, session_id: str) -> None:
-        await self.peer.request("session.interrupt", {"session_id": session_id})
+        await self._gateway(session_id).peer.request("session.interrupt", {"session_id": session_id})
 
     async def events_for(self, session_id: str) -> asyncio.Queue[dict[str, object]]:
-        return self._session_queues.setdefault(session_id, asyncio.Queue())
+        return self._gateway(session_id).session_queues.setdefault(session_id, asyncio.Queue())
 
-    async def _route_events(self) -> None:
-        async for event in self.peer.iter_events():
+    async def _route_events(self, gateway: _GatewayProcess) -> None:
+        async for event in gateway.peer.iter_events():
             params = event.get("params") if isinstance(event, dict) else None
-            session_id = None
-            if isinstance(params, dict):
-                session_id = params.get("session_id")
-            if isinstance(session_id, str):
-                queue = self._session_queues.setdefault(session_id, asyncio.Queue())
-                await queue.put(event)
+            if not isinstance(params, dict):
+                continue
+            session_id = params.get("session_id")
+            if not isinstance(session_id, str) or not session_id:
+                continue  # global event (gateway.ready, skin.changed) — not session-scoped
+            queue = gateway.session_queues.setdefault(session_id, asyncio.Queue())
+            await queue.put(params)
 
     async def aclose(self) -> None:
-        if self._router_task is not None:
-            self._router_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._router_task
-        if self._peer is not None:
-            await self._peer.close()
-        if self._process is not None and self._process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                self._process.terminate()
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._process.wait(), timeout=5.0)
+        for gateway in list(self._by_cwd.values()):
+            if gateway.router_task is not None:
+                gateway.router_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await gateway.router_task
+            await gateway.peer.close()
+            if gateway.process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    gateway.process.terminate()
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(gateway.process.wait(), timeout=5.0)
+        self._by_cwd.clear()
+        self._gateway_by_session.clear()
 ```
 
 ```python
@@ -709,10 +776,16 @@ from .session import HermesExecutorSession
 
 
 class HermesExecutor:
-    def __init__(self, *, command: str = "hermes", timeout_seconds: float | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        command: str = "hermes",
+        project_root: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> None:
         self._command = command
         self._timeout_seconds = timeout_seconds
-        self._client = HermesGatewayClient(command=command)
+        self._client = HermesGatewayClient(command=command, project_root=project_root)
         self._capabilities = ExecutorCapabilities(
             executor_type="hermes",
             supports_resume=False,
@@ -737,7 +810,6 @@ class HermesExecutor:
 
     async def create_session(self, workspace_id: str | None = None) -> HermesExecutorSession:
         cwd = Path(workspace_id or os.getcwd()).resolve()
-        await self._client.ensure_started()
         gateway_session_id = await self._client.create_session(cwd)
         session = HermesExecutorSession(
             session_id=gateway_session_id,
@@ -832,13 +904,14 @@ git commit -m "feat(hermes): add gateway client, session, and executor capabilit
 - Modify: `src/newbro/executors/adapters/hermes/executor.py` (`_drive_prompt`)
 - Test: `tests/unit/executors/test_hermes_run_task.py`
 
-Drive a prompt and map gateway events to `ExecutorEvent` per spec §3. The test uses a fake client that replays the Task 1 fixture, so it is independent of a live binary.
+Drive a prompt and map gateway events to `ExecutorEvent`. Per Task 1's contract, the client's event router pushes each event's **`params` dict** (`{"type", "session_id", "payload"}`) onto the per-session queue; text lives in `payload.text`; `message.complete` is the single terminal event and its `payload.status` selects COMPLETED / CANCELLED / FAILED. The test uses a fake client that scripts those `params` dicts, so it is independent of a live binary.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/unit/executors/test_hermes_run_task.py
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -849,20 +922,14 @@ from newbro.protocol import ExecutionRun, Task
 
 
 class _FakeClient:
-    """Replays a scripted gateway event sequence for one session."""
+    """Scripts a gateway event sequence (each item is an event `params` dict)."""
 
-    def __init__(self, events: list[dict[str, object]]):
+    def __init__(self, event_params: list[dict[str, object]]):
         self._queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
-        for event in events:
-            self._queue.put_nowait(event)
+        for params in event_params:
+            self._queue.put_nowait(params)
         self.submitted: list[tuple[str, str]] = []
         self.interrupted: list[str] = []
-
-    async def ensure_started(self) -> None:
-        return None
-
-    async def create_session(self, cwd):
-        return "sess-1"
 
     async def submit_prompt(self, session_id, text):
         self.submitted.append((session_id, text))
@@ -877,11 +944,11 @@ class _FakeClient:
         return self._queue
 
 
-def _make(events):
+def _make(event_params):
     executor = HermesExecutor(command="hermes")
-    executor._client = _FakeClient(events)  # type: ignore[assignment]
+    executor._client = _FakeClient(event_params)  # type: ignore[assignment]
     session = HermesExecutorSession(session_id="sess-1", executor_type="hermes", metadata={})
-    session.attach(cwd=__import__("pathlib").Path("/tmp"), gateway_session_id="sess-1")
+    session.attach(cwd=Path("/tmp"), gateway_session_id="sess-1")
     run = ExecutionRun(run_id="run-1", execution_session_id="es-1", task_id="t-1", executor_type="hermes")
     task = Task(task_id="t-1", root_task_id="t-1", title="Do it", goal="Do the thing")
     return executor, session, run, task
@@ -889,12 +956,12 @@ def _make(events):
 
 @pytest.mark.asyncio
 async def test_run_task_streams_progress_then_completed():
-    events = [
-        {"method": "message.delta", "params": {"session_id": "sess-1", "text": "working"}},
-        {"method": "tool.start", "params": {"session_id": "sess-1", "name": "shell"}},
-        {"method": "message.complete", "params": {"session_id": "sess-1", "text": "done"}},
+    event_params = [
+        {"type": "message.delta", "session_id": "sess-1", "payload": {"text": "working"}},
+        {"type": "tool.start", "session_id": "sess-1", "payload": {"name": "shell"}},
+        {"type": "message.complete", "session_id": "sess-1", "payload": {"text": "done", "status": "complete"}},
     ]
-    executor, session, run, task = _make(events)
+    executor, session, run, task = _make(event_params)
     seen = [event async for event in executor.run_task(run, task, session)]
     types = [event.event_type for event in seen]
     assert types[-1] == ExecutorEventType.COMPLETED
@@ -904,11 +971,31 @@ async def test_run_task_streams_progress_then_completed():
 
 
 @pytest.mark.asyncio
-async def test_run_task_maps_blocked_approval_request_terminally():
-    events = [
-        {"method": "approval.request", "params": {"session_id": "sess-1", "prompt": "Run rm -rf?"}},
+async def test_message_complete_interrupted_maps_to_cancelled():
+    event_params = [
+        {"type": "message.complete", "session_id": "sess-1", "payload": {"text": "Operation interrupted", "status": "interrupted"}},
     ]
-    executor, session, run, task = _make(events)
+    executor, session, run, task = _make(event_params)
+    seen = [event async for event in executor.run_task(run, task, session)]
+    assert seen[-1].event_type == ExecutorEventType.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_message_complete_error_maps_to_failed():
+    event_params = [
+        {"type": "message.complete", "session_id": "sess-1", "payload": {"text": "boom", "status": "error"}},
+    ]
+    executor, session, run, task = _make(event_params)
+    seen = [event async for event in executor.run_task(run, task, session)]
+    assert seen[-1].event_type == ExecutorEventType.FAILED
+
+
+@pytest.mark.asyncio
+async def test_run_task_maps_blocked_approval_request_terminally():
+    event_params = [
+        {"type": "approval.request", "session_id": "sess-1", "payload": {"command": "rm -rf /", "description": "Run rm -rf?"}},
+    ]
+    executor, session, run, task = _make(event_params)
     seen = [event async for event in executor.run_task(run, task, session)]
     assert seen[-1].event_type == ExecutorEventType.BLOCKED
     assert "rm -rf" in (seen[-1].message or "")
@@ -924,6 +1011,18 @@ Expected: FAIL — `_drive_prompt` raises `NotImplementedError`.
 
 Replace the `_drive_prompt` body in `executor.py`:
 
+Define these module-level constants near the top of `executor.py` (event types grouped per Task 1 §7):
+
+```python
+_PROGRESS_EVENTS = frozenset({
+    "message.delta", "tool.start", "tool.progress", "tool.complete", "tool.generating",
+    "reasoning.delta", "reasoning.available", "thinking.delta", "status.update",
+})
+_BLOCKING_EVENTS = frozenset({"approval.request", "clarify.request"})
+```
+
+Replace the `_drive_prompt` body in `executor.py`:
+
 ```python
     async def _drive_prompt(
         self,
@@ -934,7 +1033,6 @@ Replace the `_drive_prompt` body in `executor.py`:
         follow_up: bool = False,
     ) -> AsyncIterator[ExecutorEvent]:
         self._sessions_by_run[run.run_id] = session
-        await self._client.ensure_started()
         queue = await self._client.events_for(session.gateway_session_id)
         try:
             if follow_up:
@@ -951,67 +1049,60 @@ Replace the `_drive_prompt` body in `executor.py`:
             )
             return
 
+        # Each queue item is an event `params` dict: {"type", "session_id", "payload"}.
         while True:
-            event = await queue.get()
-            method = event.get("method")
-            params = event.get("params") if isinstance(event.get("params"), dict) else {}
-            message = params.get("text") if isinstance(params, dict) else None
-            if method in ("message.delta", "tool.start", "tool.progress", "tool.complete"):
+            params = await queue.get()
+            etype = params.get("type")
+            payload = params.get("payload") if isinstance(params.get("payload"), dict) else {}
+            text_value = payload.get("text")
+            progress_text = text_value or payload.get("preview") or payload.get("summary")
+            if etype in _PROGRESS_EVENTS:
                 yield ExecutorEvent(
                     run_id=run.run_id,
                     session_id=session.session_id,
                     event_type=ExecutorEventType.PROGRESS,
-                    message=message if isinstance(message, str) else None,
-                    metadata={"hermes_event": method},
+                    message=progress_text if isinstance(progress_text, str) else None,
+                    metadata={"hermes_event": etype},
                 )
                 continue
-            if method == "message.complete":
+            if etype == "message.complete":
+                status = payload.get("status")
+                if status == "interrupted":
+                    terminal = ExecutorEventType.CANCELLED
+                elif status == "error":
+                    terminal = ExecutorEventType.FAILED
+                else:
+                    terminal = ExecutorEventType.COMPLETED
                 yield ExecutorEvent(
                     run_id=run.run_id,
                     session_id=session.session_id,
-                    event_type=ExecutorEventType.COMPLETED,
-                    message=message if isinstance(message, str) else None,
-                    metadata={"hermes_event": method},
+                    event_type=terminal,
+                    message=text_value if isinstance(text_value, str) else None,
+                    metadata={"hermes_event": etype, "status": status},
                 )
                 return
-            if method in ("approval.request", "clarify.request"):
-                prompt = params.get("prompt") if isinstance(params, dict) else None
+            if etype in _BLOCKING_EVENTS:
+                prompt = payload.get("question") or payload.get("command") or payload.get("description")
                 yield ExecutorEvent(
                     run_id=run.run_id,
                     session_id=session.session_id,
                     event_type=ExecutorEventType.BLOCKED,
-                    message=prompt if isinstance(prompt, str) else f"hermes requested {method}",
-                    metadata={"hermes_event": method, "request": params},
+                    message=prompt if isinstance(prompt, str) else f"hermes requested {etype}",
+                    metadata={"hermes_event": etype, "request": payload},
                 )
                 return
-            if method == _HERMES_CANCELLED_EVENT:
-                yield ExecutorEvent(
-                    run_id=run.run_id,
-                    session_id=session.session_id,
-                    event_type=ExecutorEventType.CANCELLED,
-                    message=message if isinstance(message, str) else None,
-                    metadata={"hermes_event": method},
-                )
-                return
-            if method == "error":
+            if etype == "error":
                 yield ExecutorEvent(
                     run_id=run.run_id,
                     session_id=session.session_id,
                     event_type=ExecutorEventType.FAILED,
-                    message=str(params),
-                    metadata={"hermes_event": method},
+                    message=payload.get("message") if isinstance(payload.get("message"), str) else None,
+                    metadata={"hermes_event": etype},
                 )
                 return
 ```
 
-Add the cancellation-event constant near the top of `executor.py` (its exact name is the interrupt-ack event recorded in Task 1 Step 3):
-
-```python
-# The event the gateway emits to acknowledge session.interrupt (Task 1).
-_HERMES_CANCELLED_EVENT = "session.cancelled"
-```
-
-Confirm the param key carrying text/prompt and the cancelled-event name match Task 1's fixture; adjust `params.get("text")` / `params.get("prompt")` / `_HERMES_CANCELLED_EVENT` to the real keys if they differ. The fixture-replay test is what proves the mapping.
+This matches Task 1's contract: `message.complete` is the single terminal event whose `payload.status` selects COMPLETED / CANCELLED / FAILED (no standalone interrupt-ack event). Cross-check against `docs/protocol/fixtures/hermes-gateway-sample.jsonl`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1053,9 +1144,6 @@ class _SteerFailsClient:
     def __init__(self):
         self._queue: asyncio.Queue = asyncio.Queue()
         self.submitted: list = []
-
-    async def ensure_started(self):
-        return None
 
     async def events_for(self, session_id):
         return self._queue
@@ -1180,6 +1268,9 @@ In `_build_executors`, after the `acpx` branch:
             elif executor_type == "hermes":
                 built[executor_type] = HermesExecutor(
                     command=str((config or {}).get("command", "hermes")),
+                    project_root=str((config or {}).get("project_root"))
+                    if (config or {}).get("project_root") not in (None, "")
+                    else None,
                     timeout_seconds=float((config or {}).get("timeout_seconds"))
                     if (config or {}).get("timeout_seconds") not in (None, "")
                     else None,
