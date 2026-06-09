@@ -28,6 +28,8 @@ struct NewbroSettingsView: View {
                 Section("Executors") {
                     Text("Codex")
                         .tag(SettingsPane.codex)
+                    Text("Hermes")
+                        .tag(SettingsPane.hermes)
                 }
             }
             .frame(width: 180)
@@ -41,7 +43,7 @@ struct NewbroSettingsView: View {
                 case .codex:
                     CodexSettingsPane(model: model)
                 case .hermes:
-                    CodexSettingsPane(model: model) // placeholder until HermesSettingsPane lands in Task 9
+                    HermesSettingsPane(model: model)
                 }
             }
             .padding(18)
@@ -132,7 +134,7 @@ private struct CodexSettingsPane: View {
                         .textSelection(.enabled)
                 }
                 Spacer()
-                Button("Refresh") { model.refreshExecutorProbeAndStoredDiagnoses() }
+                Button("Refresh") { model.refreshProbe(for: "codex") }
                     .disabled(model.executorSettingsBusy)
             }
 
@@ -210,6 +212,10 @@ private struct CodexSettingsPane: View {
                     }
                 }
             }
+        }
+        .onAppear {
+            model.viewedSettingsFamily = "codex"
+            model.refreshProbe(for: "codex")
         }
     }
 
@@ -324,6 +330,82 @@ private struct CodexSettingsPane: View {
             || text.contains("sign in")
             || text.contains("signin")
             || text.contains("auth")
+    }
+}
+
+private struct HermesSettingsPane: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Hermes")
+                        .font(.title3.weight(.semibold))
+                    Text(currentSummary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Button("Refresh") { model.refreshProbe(for: "hermes") }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                SettingsInfoRow(
+                    title: "Hermes",
+                    detail: model.statusByFamily["hermes"]?.menuTitle ?? "No Hermes found. Newbro may not work properly."
+                )
+
+                signInRow
+
+                Button("Set Up Hermes…") { model.setUpHermes(for: nil) }
+                    .disabled(model.setupBusyByFamily["hermes"] == true)
+
+                let hermesSetupBusy = model.setupBusyByFamily["hermes"] ?? false
+                let hermesSetupLog = model.setupLogByFamily["hermes"] ?? ""
+                if hermesSetupBusy || !hermesSetupLog.isEmpty {
+                    ScrollView {
+                        Text(hermesSetupLog.isEmpty ? "Hermes setup is running…" : hermesSetupLog)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 72)
+                }
+            }
+            .padding(10)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            Spacer()
+        }
+        .onAppear {
+            model.viewedSettingsFamily = "hermes"
+            model.refreshProbe(for: "hermes")
+        }
+    }
+
+    var currentSummary: String {
+        guard let current = model.probeByFamily["hermes"]?.current else {
+            return "No Hermes probe data yet."
+        }
+        let version = current.version ?? "version unavailable"
+        let path = current.resolvedPath ?? current.command
+        return current.ok ? "\(version) · \(path)" : "Unavailable · \(path)"
+    }
+
+    @ViewBuilder
+    private var signInRow: some View {
+        switch model.probeByFamily["hermes"]?.current.authenticated {
+        case true:
+            SettingsInfoRow(title: "Sign-in", detail: "Signed in")
+        default:
+            Text("Run `hermes setup --portal` in a terminal, then Refresh.")
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
     }
 }
 
