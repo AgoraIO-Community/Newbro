@@ -326,6 +326,8 @@ final class AppModel: ObservableObject {
     /// Probe a single executor family and store results into the per-family maps.
     /// Modelled on the old refreshExecutorProbe flow: same threading, same request-id
     /// guarding, same error handling, but scoped to one family.
+    /// On completion also re-derives stored per-profile diagnoses and drains pending starts
+    /// (mirroring the post-steps the full refreshExecutorProbeAndStoredDiagnoses performs).
     func refreshProbe(for family: String) {
         guard probeableExecutorFamilies.contains(family) else { return }
         probeRequestIDByFamily[family] = (probeRequestIDByFamily[family] ?? 0) + 1
@@ -336,6 +338,9 @@ final class AppModel: ObservableObject {
             executorSettingsCanUpdateCLI = false
             executorSettingsBusy = false
             executorProbeInFlight = false
+            let runtime = DiagnosisRuntimeContext(newbroPath: nil, cliVersion: nil)
+            refreshStoredProfileDiagnoses(runtime: runtime)
+            continuePendingStarts(runtime: runtime)
             return
         }
         executorSettingsBusy = true
@@ -346,7 +351,14 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard requestID == self.probeRequestIDByFamily[family] else { return }
+                // Build the runtime context using the resolved path and cached CLI version.
+                let runtime = DiagnosisRuntimeContext(
+                    newbroPath: newbro,
+                    cliVersion: self.cachedCLIVersion
+                )
                 self.applyProbeResult(result, for: family)
+                self.refreshStoredProfileDiagnoses(runtime: runtime)
+                self.continuePendingStarts(runtime: runtime)
             }
         }
     }

@@ -354,7 +354,13 @@ private struct HermesSettingsPane: View {
             VStack(alignment: .leading, spacing: 10) {
                 SettingsInfoRow(
                     title: "Hermes",
-                    detail: model.statusByFamily["hermes"]?.menuTitle ?? "No Hermes found. Newbro may not work properly."
+                    detail: {
+                        if let current = model.probeByFamily["hermes"]?.current, current.ok {
+                            let version = current.version ?? "version unavailable"
+                            return "Hermes \(version)"
+                        }
+                        return "No Hermes found. Newbro may not work properly."
+                    }()
                 )
 
                 signInRow
