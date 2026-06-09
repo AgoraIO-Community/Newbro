@@ -1,8 +1,10 @@
+import pytest
 from types import SimpleNamespace
 
 from newbro.cli.commands import executor_settings
 from newbro.cli import config_files
 from newbro.cli import dispatch as cli_dispatch
+from newbro.executors.adapters.hermes import probe as hermes_probe
 
 
 def _enabled(config_path):
@@ -61,6 +63,27 @@ def test_hermes_probe_payload_has_authenticated_key(tmp_path, monkeypatch):
     monkeypatch.setattr(hermes_probe, "probe_hermes_authenticated", lambda cmd: True)
     payload = executor_settings.hermes_probe_payload(config_path=tmp_path / "config.yaml")
     assert payload["current"]["authenticated"] is True
+
+
+def test_install_hermes_runs_vendor_script_then_sets_command(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(executor_settings, "_run_install_step", lambda argv, msg, env=None: calls.append(argv))
+    seq = iter([
+        hermes_probe.HermesProbeResult(path="hermes", version=None, ok=False, error="command not found"),
+        hermes_probe.HermesProbeResult(path="/Users/me/.local/bin/hermes", version="0.12.0", ok=True),
+    ])
+    monkeypatch.setattr(hermes_probe, "probe_hermes_command", lambda cmd: next(seq))
+    command = executor_settings.install_hermes_cli(tmp_path / "config.yaml")
+    assert command.endswith("/hermes")
+    assert any("install.sh" in " ".join(argv) for argv in calls)
+
+
+def test_install_hermes_raises_when_still_unavailable(tmp_path, monkeypatch):
+    monkeypatch.setattr(executor_settings, "_run_install_step", lambda argv, msg, env=None: None)
+    monkeypatch.setattr(hermes_probe, "probe_hermes_command",
+                        lambda cmd: hermes_probe.HermesProbeResult(path="hermes", version=None, ok=False, error="command not found"))
+    with pytest.raises(RuntimeError, match="hermes setup --portal"):
+        executor_settings.install_hermes_cli(tmp_path / "config.yaml")
 
 
 def test_cmd_executor_routes_install_hermes_to_run_executor_install_hermes(monkeypatch):

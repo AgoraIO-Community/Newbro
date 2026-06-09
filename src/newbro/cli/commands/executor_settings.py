@@ -17,6 +17,7 @@ from newbro.executors.families import PROBEABLE_EXECUTOR_FAMILIES, SUPPORTED_EXE
 
 SUPPORTED_EXECUTORS = list(SUPPORTED_EXECUTOR_FAMILIES)
 BUN_INSTALL_URL = "https://bun.sh/install"
+HERMES_INSTALL_URL = "https://hermes-agent.nousresearch.com/install.sh"
 COMMAND_TIMEOUT_SECONDS = 300
 SYSTEM_CURL = Path("/usr/bin/curl")
 SYSTEM_BASH = Path("/bin/bash")
@@ -181,7 +182,7 @@ def _run_logged(
     timeout_seconds: float = COMMAND_TIMEOUT_SECONDS,
 ) -> int:
     try:
-        completed = subprocess.run(argv, check=False, env=env, timeout=timeout_seconds)
+        completed = subprocess.run(argv, check=False, env=env, timeout=timeout_seconds, stdin=subprocess.DEVNULL)
     except FileNotFoundError as exc:
         raise RuntimeError(f"Command not found: {argv[0]}") from exc
     except subprocess.TimeoutExpired as exc:
@@ -322,14 +323,38 @@ def hermes_probe_payload(*, config_path: Path) -> dict[str, object]:
     }
 
 
-def install_hermes_cli(config_path: Path) -> str:
+def _first_usable_hermes_command() -> str | None:
     result = hermes_probe.probe_hermes_command("hermes")
-    if not result.ok:
+    return _absolute_command_path(result.path) if result.ok else None
+
+
+def install_hermes_cli(config_path: Path) -> str:
+    existing = _first_usable_hermes_command()
+    if existing is not None:
+        set_hermes_command(config_path=config_path, command=existing)
+        return existing
+    if not SYSTEM_CURL.exists() or not SYSTEM_BASH.exists():
         raise RuntimeError(
-            "Hermes CLI is not available. Install it and run `hermes setup --portal` "
-            "to authenticate, then re-run."
+            "Hermes setup needs curl and bash. Install Hermes manually with "
+            f"`curl -fsSL {HERMES_INSTALL_URL} | bash` then run `hermes setup --portal`."
         )
-    command = result.path
+    print("Installing Hermes...")
+    env = _bootstrap_environment()
+    with tempfile.TemporaryDirectory(prefix="newbro-hermes-") as directory:
+        installer = str(Path(directory) / "hermes-install.sh")
+        failure = (
+            "Hermes setup failed. Install Hermes manually with "
+            f"`curl -fsSL {HERMES_INSTALL_URL} | bash` then run `hermes setup --portal`."
+        )
+        _run_install_step([str(SYSTEM_CURL), "-fsSL", HERMES_INSTALL_URL, "-o", installer], failure, env=env)
+        _run_install_step([str(SYSTEM_BASH), installer], failure, env=env)
+    command = _first_usable_hermes_command()
+    if command is None:
+        raise RuntimeError(
+            "Hermes setup finished, but `hermes --version` is still unavailable. "
+            f"Install Hermes manually with `curl -fsSL {HERMES_INSTALL_URL} | bash` "
+            "then run `hermes setup --portal`."
+        )
     set_hermes_command(config_path=config_path, command=command)
     return command
 
@@ -342,6 +367,7 @@ def run_executor_install_hermes(args: Any, app: Any) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     print(f"Hermes is ready: {command}")
+    print("Sign in with: hermes setup --portal")
     return 0
 
 
