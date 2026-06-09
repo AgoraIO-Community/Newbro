@@ -330,7 +330,9 @@ def executor_runtime_ready(
             or "acpx"
         ).strip()
         return bool(command) and callbacks.command_available(command)
-    command = str(existing_block.get("command") or "").strip()
+    # Generic families (e.g. hermes): default the command to the family name and
+    # PATH-check it, matching what the executor node's _build_executors already does.
+    command = str(existing_block.get("command") or executor_type).strip()
     return bool(command) and callbacks.command_available(command)
 
 
