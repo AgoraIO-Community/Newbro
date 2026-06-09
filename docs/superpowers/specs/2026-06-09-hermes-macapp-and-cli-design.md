@@ -23,6 +23,11 @@ Two workstreams:
 Out of scope: web UI (the create-Bro agent-client picker already supports Hermes);
 Hermes thread import / skills / audio / interactive approval wiring.
 
+Follow-up (not this spec): the web create-Bro picker currently defaults to Codex and
+auto-issues credentials on open. For consistency with the no-fallback rule adopted
+for the macOS editor (B4), a later change should make the web picker require an
+explicit family choice before issuing. Tracked separately from this macOS/CLI work.
+
 ## Key facts that shape the design
 
 - The official Hermes installer is the vendor script
@@ -77,21 +82,25 @@ real install mirroring `install_codex_cli`'s script-bootstrap shape:
    (the non-TTY behavior is unverified): run with **stdin redirected from
    `/dev/null`** (never inherit a TTY) and a **bounded timeout** (the existing
    `COMMAND_TIMEOUT_SECONDS`). If the script blocks (timeout), exits non-zero, or
-   leaves `hermes` unavailable, raise `RuntimeError` directing the user to the
-   documented fallback: install Hermes manually (or via the macOS app's "Set Up
-   Hermes" which opens Terminal — B3) and run `hermes setup --portal`.
+   leaves `hermes` unavailable, raise `RuntimeError` whose message tells the user to
+   install Hermes manually (`curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash`)
+   and run `hermes setup --portal`. (The macOS app surfaces this same message in the
+   Hermes setup log — B3 — exactly as Codex surfaces install-codex failures; no
+   Terminal is launched.)
 3. Resolve the installed `hermes` (PATH + `~/.local/bin/hermes` + login-shell
    lookup, mirroring the codex command discovery), probe it, and `set_hermes_command`.
 4. On success print `Hermes is ready: <command>`; the caller surfaces that auth is
    still required (`hermes setup --portal`). `install-hermes` never attempts auth.
 
-**Single-family invariant.** `set_hermes_command` (and `use --executor hermes`) must
-**replace** the local `executor_node.enabled_executors` with `["hermes"]`, not append
-— a local node runs exactly one family, mirroring the node registry's one-family
-rule. (Today `set_hermes_command` appends, which can yield `["codex", "hermes"]`;
-this spec changes it to replace.) Switching family via `use`/`install` is the
-intended way to repoint a local node; the previously enabled family is dropped from
-the local enabled list by design.
+**Single-family invariant.** A local node runs exactly one family (mirroring the node
+registry's one-family rule), so the local-config writers must never manufacture a
+multi-family `executor_node.enabled_executors`. `set_hermes_command` (and
+`use`/`install-hermes`) **replace** the enabled list with `["hermes"]`, not append.
+For consistency, `set_codex_command` is aligned to write a single-element
+`["codex"]` as well (today it appends, which can yield `["codex", "hermes"]`). After
+this change neither writer can produce a registry-invalid list. Switching family via
+`use`/`install` is the intended way to repoint a local node; the previously enabled
+family is dropped from the local enabled list by design.
 
 Failure modes raise `RuntimeError` with actionable text (curl/bash unavailable,
 script timed out, script exited non-zero, `hermes --version` still unavailable after
@@ -100,15 +109,20 @@ install).
 ### A3. Probe surfaces auth state (best-effort)
 
 Extend `hermes_probe_payload` (and the underlying probe) with an optional
-`authenticated: bool | None` field, derived from a **non-interactive** `hermes auth`
-check. `None` means "could not determine" (the check is best-effort and must not
-hang or error the probe). Binary presence remains the authoritative `ok`; auth is
-advisory and feeds **only the Settings pane's sign-in row (B3)** — it does **not**
-gate profile start (B2). `probe --executor hermes --json` includes the field.
+`authenticated: bool | None` field, derived from **`hermes auth list`** (verified
+non-interactive, exit 0, prints one block per provider with a credential count).
+Rule: exit 0 with at least one listed credential → `true`; exit 0 with no
+credentials → `false`; non-zero/timeout/unrecognized output → `None` ("could not
+determine"). The check is best-effort, bounded by a short timeout, and must never
+hang or fail the probe. Binary presence remains the authoritative `ok` for the probe
+itself; the `authenticated` field gates **profile start** (B2) only when confidently
+`false` (mirroring Codex's login-required block) and is permissive when `true` or
+`None`. It also drives the Settings pane's sign-in row (B3).
+`probe --executor hermes --json` includes the field.
 
-Flagged unknown: confirm during implementation that `hermes auth` (or the right
-subcommand) prints status non-interactively and parseably; if not, ship
-`authenticated: None` and the Settings pane simply always offers the Sign-in action.
+(`hermes auth status` is rejected for this purpose: it requires a `provider`
+argument, so it can't answer "is Hermes usable at all" without knowing the
+configured model's provider. `hermes auth list` is provider-agnostic.)
 
 ### A4. Probe/use are limited to probeable families; ACPX is run-only
 
@@ -141,53 +155,75 @@ Replace the single global `executorProbe: ExecutorProbe?` and
 - per-family setup log/busy (`setupLogByFamily`, `setupBusyByFamily`) replacing the
   codex-specific `codexSetupLog`/`codexSetupBusy`.
 
-`refreshExecutorProbeAndStoredDiagnoses` probes the **probeable families**
-(`PROBEABLE_EXECUTOR_FAMILIES` = codex, hermes; ACPX has no probe — A4) and stores
-results in `probeByFamily`/`statusByFamily`, so the Settings panes (B3) can show
-Hermes status even before any Hermes profile exists. `diagnoseStart(for:)` reads the
-probe for **that profile's** family, so a Codex profile and a Hermes profile diagnose
-independently (fixes the current bug where one global probe is applied to every
-profile). A profile whose family is not probeable (acpx) keeps today's behavior:
-ready, no readiness gate. Probing both families on refresh is cheap (each is a
-`newbro executor probe --executor <family> --json` call) and runs off the main thread
-as today.
+**Scoped, per-family probing (no blanket refresh).** Introduce
+`refreshProbe(for family: String)` that probes **only that family**
+(`newbro executor probe --executor <family> --json`, off the main thread) and updates
+`probeByFamily[family]` / `statusByFamily[family]`, then re-derives stored diagnoses.
+Callers are scoped so an unrelated binary is never spawned:
+
+- **Each Settings pane's Refresh** probes only its own family (Codex pane →
+  `refreshProbe(for: "codex")`, Hermes pane → `refreshProbe(for: "hermes")`), and a
+  pane probes its family `onAppear`.
+- **Profile start diagnosis** probes only the **starting profile's family** — a
+  Codex-only user never spawns Hermes on a start.
+- **App launch** probes the families that existing profiles use (the union of
+  profile families), so stored diagnoses are ready without touching unused families.
+
+`diagnoseStart(for:)` reads `probeByFamily[profile's family]`, so a Codex profile and
+a Hermes profile diagnose independently (fixes the current bug where one global probe
+is applied to every profile). An acpx profile is not probeable (A4) and keeps today's
+behavior: ready, no readiness gate.
 
 ### B2. Family-aware `ProfileStartDiagnosis`
 
 Generalize the Codex-only `diagnoseProfileStart` into a family-keyed check driven by
-the profile's enabled family. **Start gating stays binary** — the existing status
-model (`.ready` / `.blocked` / `.checking`) is unchanged, so we don't risk the
-`.ready`-starts-and-clears vs `.blocked`-prevents-launch semantics in `AppModel`:
+the profile's enabled family, **mirroring Codex's existing readiness model**. The
+existing status set (`.ready` / `.blocked` / `.checking`) is unchanged — Codex
+already expresses "installed but not signed in" as `.blocked` (`codexLoginRequired` →
+`signInCodex`), so Hermes uses the same shape and needs no new status case:
 
 - Reuse the existing CLI / profile-completeness gates unchanged.
 - Codex retains its current reasons/actions.
-- Hermes: binary **missing** → `.blocked` with reason `hermesMissing` and action
-  `setUpHermes` (runs `install-hermes`). Binary **present** → `.ready` regardless of
-  auth — the node is allowed to launch (an unauthenticated Hermes simply fails the
-  first turn with its own auth error).
-- Auth is **not** a start-gate. The sign-in prompt lives only in the Hermes Settings
-  pane (B3), driven by the probe's `authenticated` field, so it never blocks a start
-  nor disappears when a `.ready` diagnosis is cleared.
+- Hermes, in order:
+  - binary **missing** → `.blocked` / reason `hermesMissing` / action `setUpHermes`
+    (runs `install-hermes`).
+  - binary **present** + probe `authenticated == false` → `.blocked` / reason
+    `hermesSignInRequired` / action `signInHermes`. This mirrors Codex's
+    `codexLoginRequired` exactly: the action is **informational** ("Run
+    `hermes setup --portal` in a terminal, then Refresh") — no Terminal is launched,
+    parallel to `signInCodex`.
+  - binary **present** + `authenticated == true` **or `None`** → `.ready`. The
+    `None` (could-not-determine) case resolves to `.ready` so an uncertain auth
+    check never false-blocks a start.
 
-The diagnosis enums grow only `hermesMissing` / `setUpHermes` (and `signInHermes`,
-used by the Settings pane action, not by start gating) alongside the Codex cases;
-nothing Codex is removed, and no new status case is added.
+So `authenticated` **does** gate start when it is confidently `false`, and is
+permissive when unknown. The diagnosis enums grow `hermesMissing` / `setUpHermes` /
+`hermesSignInRequired` / `signInHermes` alongside the Codex cases; nothing Codex is
+removed and no new status case is added.
 
 ### B3. Hermes Settings pane
 
-Add a `Hermes` tab to `ExecutorSettingsView` (`SettingsPane.hermes`) with a
-`HermesSettingsPane` mirroring `CodexSettingsPane`:
+Codex and Hermes are **two separate panes** under the Settings "Executors" section:
+the existing `SettingsPane.codex` / `CodexSettingsPane` stays, and a new
+`SettingsPane.hermes` / `HermesSettingsPane` is added alongside it (a distinct
+sidebar entry, not a merged pane). The Hermes pane mirrors `CodexSettingsPane`:
 
 - shows detected `Hermes vX.Y.Z` / `No Hermes found.` from `statusByFamily["hermes"]`
-  and a sign-in line from the probe's `authenticated` field,
+  and a sign-in line from the probe's `authenticated` field (signed in / sign-in
+  needed),
 - a **Set Up Hermes** button → `install-hermes`, streaming output like the codex
-  setup flow (per-family busy/log); if it fails or times out, the pane shows the
-  error and a "Open Terminal to install" fallback (the documented A2 fallback path),
-- a **Sign in** action that opens Terminal at `hermes setup --portal`
-  (`open -a Terminal` with the command), since OAuth is interactive,
-- a **Refresh** button reusing `refreshExecutorProbeAndStoredDiagnoses`.
+  setup flow (per-family busy/log); on failure/timeout the pane shows the error +
+  manual-install/`hermes setup --portal` guidance in the log, exactly as the Codex
+  pane shows install-codex failures (no Terminal launch),
+- when sign-in is needed, **informational text** ("Run `hermes setup --portal` in a
+  terminal, then Refresh"), parallel to the Codex `signInCodex` text — no Terminal
+  launch,
+- a **Refresh** button that calls `refreshProbe(for: "hermes")` — it probes **only
+  Hermes**, never Codex. (The Codex pane's Refresh is likewise scoped to
+  `refreshProbe(for: "codex")`.)
 
-The Codex pane is unchanged; the two panes share presentation helpers where natural.
+The Codex pane keeps its current behavior (its Refresh now scoped to codex); the two
+panes share presentation helpers where natural.
 
 ### B4. Single-choice executor picker in `ProfileEditView`
 
@@ -199,6 +235,22 @@ segmented) over a shared `supportedExecutorFamilies` constant
 forward it as `--enabled-executor <family>`. This both adds Hermes and removes the
 pre-existing invalid-multi-family hazard.
 
+**No fallback selection** (per the "don't hide problems with fallback behavior"
+rule):
+
+- A **new** manual profile starts with **no family selected** (placeholder "Choose an
+  agent client"). Save / issue-connect-credentials is **disabled until a family is
+  explicitly chosen** — no silent default to Codex. This also fixes the current
+  latent bug where both toggles off can save an empty `enabledExecutors`.
+- For an **existing** profile, select `enabledExecutors.first` only when it is a
+  supported family; if it is empty or an unrecognized/legacy value, leave the picker
+  **unselected and flag it** ("This profile has no valid agent client — choose one"),
+  forcing a correction rather than coercing to Codex.
+
+The editor therefore can never emit an empty or coerced family: every saved profile
+carries exactly one explicitly chosen supported family, and a corrupt/legacy profile
+is surfaced, not masked.
+
 No `acpx_agent` handling is in scope: the macOS `Profile` model has no `acpxAgent`
 field and `nodeArgv` does not forward `--acpx-agent` today, so acpx continues to run
 with its default agent exactly as it does now. Adding acpx-agent persistence/argv is
@@ -208,8 +260,8 @@ explicitly out of scope for this workstream.
 
 The probe call takes the family and invokes `newbro executor probe --executor <family> --json`;
 `install`/`use` calls likewise dispatch on family (`install-hermes` vs
-`install-codex`). The `signIn` action for Hermes opens Terminal rather than calling
-the CLI.
+`install-codex`). The Hermes `signIn` action is informational text only (the user
+runs `hermes setup --portal` themselves), mirroring `signInCodex`.
 
 ---
 
@@ -218,10 +270,11 @@ the CLI.
 - CLI: `install-hermes` failures raise `RuntimeError` with actionable messages; no
   silent fallback. A non-interactive `hermes auth` check that errors yields
   `authenticated: None`, never a probe failure.
-- App: a missing binary blocks profile start with a repair action; not-authed never
-  blocks start — it surfaces a Sign-in action in the Hermes Settings pane only (auth
-  state is best-effort). Per-family busy/log isolates one family's setup from
-  another's.
+- App: a missing binary blocks profile start (`setUpHermes`); a confidently
+  unauthenticated Hermes (`authenticated == false`) blocks start (`signInHermes`),
+  mirroring Codex's login-required block; `authenticated == true`/`None` is ready, so
+  an uncertain auth check never false-blocks. Per-family busy/log isolates one
+  family's setup from another's.
 
 ## Testing
 
@@ -242,25 +295,31 @@ Python:
 
 Swift:
 - `ProfileStartDiagnosisTests` / `ProfileStartRulesTests`: Hermes missing →
-  `.blocked` / `setUpHermes`; Hermes present → `.ready` regardless of auth (auth never
-  blocks start); an acpx profile → `.ready` (no probe/gate); **mixed-family** — a
-  Codex profile and a Hermes profile each resolve against their own family's probe
-  from `probeByFamily`.
+  `.blocked` / `setUpHermes`; Hermes present + `authenticated == false` → `.blocked` /
+  `signInHermes`; Hermes present + `authenticated == true` → `.ready`; Hermes present
+  + `authenticated == nil` → `.ready` (uncertain never false-blocks); an acpx profile
+  → `.ready` (no probe/gate); **mixed-family** — a Codex profile and a Hermes profile
+  each resolve against their own family's probe from `probeByFamily`.
 - Hermes Settings pane shows the Sign-in action when `authenticated == false`/`nil`
-  and hides it when `true` — independent of start gating.
+  and a "signed in" indicator when `true`.
 - `ExecutorSettingsClientTests`: per-family probe/install dispatch (codex, hermes).
-- Profile editor: single-choice selector yields exactly one family in
-  `Profile.enabledExecutors`; `nodeArgv` forwards a single `--enabled-executor`.
+- Scoped refresh: `refreshProbe(for:)` issues a probe for only the requested family;
+  the Codex pane's Refresh probes only codex and the Hermes pane's only hermes; a
+  Codex profile's start diagnosis does not probe hermes (assert via a fake
+  probe-runner recording which families were invoked).
+- Profile editor: a new profile has no family pre-selected and Save/issue is disabled
+  until one is chosen; selecting yields exactly one family in
+  `Profile.enabledExecutors`; an existing profile with empty/unrecognized
+  `enabledExecutors` loads unselected/flagged (not coerced to codex); `nodeArgv`
+  forwards a single `--enabled-executor`.
 
 ## Flagged unknowns (resolve during implementation)
 
-1. The exact `hermes auth` (or equivalent) subcommand + non-interactive output for
-   the `authenticated` field. If unavailable, ship `authenticated: None` and B2
-   degrades to no sign-in gating (auth purely manual).
-2. Whether the `install.sh` non-TTY path installs the binary cleanly in practice is
+1. Whether the `install.sh` non-TTY path installs the binary cleanly in practice is
    **unverified** (inferred from the script, not vendor-documented). A2 is therefore
    defensive by construction (stdin from `/dev/null`, bounded timeout, hard error on
    block/failure). If implementation finds the headless install unreliable, the
-   documented product fallback is B3's "Set Up Hermes" opening Terminal with the
-   install command (the same pattern as Sign in) instead of a headless install — this
-   is an accepted fallback, not a silent degradation.
+   documented product fallback is the install-failure message (in the CLI and in the
+   B3 setup log) instructing the user to run the install script and `hermes setup
+   --portal` manually — surfaced exactly as Codex surfaces install-codex failures, no
+   Terminal launch. This is an accepted fallback, not a silent degradation.
