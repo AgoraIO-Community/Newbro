@@ -204,6 +204,15 @@ def resolve_executor_setup_values(
                     existing_block.get("blocked_wait_timeout_seconds") or 900.0
                 ),
             }
+        elif executor_type == "hermes":
+            command = callbacks.prompt_text_value(
+                "Hermes command",
+                default_value=str(existing_block.get("command") or "hermes"),
+                required=True,
+            )
+            if not callbacks.command_available(command):
+                print(f"[warn] command '{command}' is not currently available on PATH")
+            executors_block["hermes"] = {"command": command}
         elif executor_type == "acpx":
             executors_block["acpx"] = {
                 "command": callbacks.prompt_text_value(
