@@ -103,12 +103,29 @@ Extend `hermes_probe_payload` (and the underlying probe) with an optional
 `authenticated: bool | None` field, derived from a **non-interactive** `hermes auth`
 check. `None` means "could not determine" (the check is best-effort and must not
 hang or error the probe). Binary presence remains the authoritative `ok`; auth is
-advisory. `probe --executor hermes --json` includes the field so the macOS app can
-render sign-in state.
+advisory and feeds **only the Settings pane's sign-in row (B3)** — it does **not**
+gate profile start (B2). `probe --executor hermes --json` includes the field.
 
 Flagged unknown: confirm during implementation that `hermes auth` (or the right
-subcommand) prints status non-interactively and parseably; if not, ship `authenticated: None`
-and treat auth purely as a manual step (B2 degrades to a soft hint only).
+subcommand) prints status non-interactively and parseably; if not, ship
+`authenticated: None` and the Settings pane simply always offers the Sign-in action.
+
+### A4. Probe/use are limited to probeable families; ACPX is run-only
+
+Only Codex and Hermes have a meaningful local readiness probe. Introduce
+`PROBEABLE_EXECUTOR_FAMILIES = ("codex", "hermes")`. Today `run_executor_probe` /
+`run_executor_use` dispatch `hermes` vs `else=codex`, so `--executor acpx` silently
+returns a **codex** payload — a bug. Fix:
+
+- `probe` / `use` `--executor` choices become `PROBEABLE_EXECUTOR_FAMILIES`
+  (codex, hermes). `acpx` is rejected by argparse for probe/use (it remains valid for
+  `--enabled-executor` on `run`, which is unchanged).
+- Dispatch on the family explicitly (codex → codex payload, hermes → hermes payload);
+  never fall through to codex for an unrecognized family.
+
+ACPX stays **run-only** with no local readiness gate — matching today's behavior,
+where `ProfileStartDiagnosis` only ever gated Codex and treated everything else as
+ready.
 
 ---
 
@@ -124,29 +141,37 @@ Replace the single global `executorProbe: ExecutorProbe?` and
 - per-family setup log/busy (`setupLogByFamily`, `setupBusyByFamily`) replacing the
   codex-specific `codexSetupLog`/`codexSetupBusy`.
 
-`refreshExecutorProbeAndStoredDiagnoses` probes **all supported families**
-(`SUPPORTED_EXECUTOR_FAMILIES`) and stores results in `probeByFamily`/`statusByFamily`,
-so the Settings panes (B3) can show Hermes status even before any Hermes profile
-exists. `diagnoseStart(for:)` then reads the probe for **that profile's** family, so
-a Codex profile and a Hermes profile diagnose independently (fixes the current bug
-where one global probe is applied to every profile). Probing all families on refresh
-is cheap (each is a `newbro executor probe --executor <family> --json` call) and runs
-off the main thread as today.
+`refreshExecutorProbeAndStoredDiagnoses` probes the **probeable families**
+(`PROBEABLE_EXECUTOR_FAMILIES` = codex, hermes; ACPX has no probe — A4) and stores
+results in `probeByFamily`/`statusByFamily`, so the Settings panes (B3) can show
+Hermes status even before any Hermes profile exists. `diagnoseStart(for:)` reads the
+probe for **that profile's** family, so a Codex profile and a Hermes profile diagnose
+independently (fixes the current bug where one global probe is applied to every
+profile). A profile whose family is not probeable (acpx) keeps today's behavior:
+ready, no readiness gate. Probing both families on refresh is cheap (each is a
+`newbro executor probe --executor <family> --json` call) and runs off the main thread
+as today.
 
 ### B2. Family-aware `ProfileStartDiagnosis`
 
 Generalize the Codex-only `diagnoseProfileStart` into a family-keyed check driven by
-the profile's enabled family:
+the profile's enabled family. **Start gating stays binary** — the existing status
+model (`.ready` / `.blocked` / `.checking`) is unchanged, so we don't risk the
+`.ready`-starts-and-clears vs `.blocked`-prevents-launch semantics in `AppModel`:
 
 - Reuse the existing CLI / profile-completeness gates unchanged.
 - Codex retains its current reasons/actions.
-- Add Hermes states: `hermesMissing` → action `setUpHermes` (runs `install-hermes`);
-  Hermes present but `authenticated == false` → soft state `hermesSignInRequired` →
-  action `signInHermes`; `authenticated == nil` → ready (auth undetermined, don't
-  block). Binary-missing is the only hard block for Hermes.
+- Hermes: binary **missing** → `.blocked` with reason `hermesMissing` and action
+  `setUpHermes` (runs `install-hermes`). Binary **present** → `.ready` regardless of
+  auth — the node is allowed to launch (an unauthenticated Hermes simply fails the
+  first turn with its own auth error).
+- Auth is **not** a start-gate. The sign-in prompt lives only in the Hermes Settings
+  pane (B3), driven by the probe's `authenticated` field, so it never blocks a start
+  nor disappears when a `.ready` diagnosis is cleared.
 
-The diagnosis enums grow Hermes cases alongside the Codex ones; nothing Codex is
-removed.
+The diagnosis enums grow only `hermesMissing` / `setUpHermes` (and `signInHermes`,
+used by the Settings pane action, not by start gating) alongside the Codex cases;
+nothing Codex is removed, and no new status case is added.
 
 ### B3. Hermes Settings pane
 
@@ -193,9 +218,10 @@ the CLI.
 - CLI: `install-hermes` failures raise `RuntimeError` with actionable messages; no
   silent fallback. A non-interactive `hermes auth` check that errors yields
   `authenticated: None`, never a probe failure.
-- App: a missing binary blocks profile start with a repair action; not-authed is a
-  soft sign-in prompt, not a hard block (auth state is best-effort). Per-family
-  busy/log isolates one family's setup from another's.
+- App: a missing binary blocks profile start with a repair action; not-authed never
+  blocks start — it surfaces a Sign-in action in the Hermes Settings pane only (auth
+  state is best-effort). Per-family busy/log isolates one family's setup from
+  another's.
 
 ## Testing
 
@@ -208,15 +234,21 @@ Python:
   exits non-zero, or the binary is still unavailable (the non-TTY failure path).
 - `set_hermes_command` **replaces** `enabled_executors` with `["hermes"]` (never
   produces `["codex", "hermes"]`) and writes `executors.hermes.command`.
+- `probe` / `use` reject `--executor acpx` (argparse choices = probeable families);
+  `probe --executor hermes` returns a hermes payload and never a codex payload for a
+  non-codex family.
 - `hermes_probe_payload` includes `authenticated` (bool or None) and the supported
   list; `--executor hermes --json` shape.
 
 Swift:
-- `ProfileStartDiagnosisTests` / `ProfileStartRulesTests`: Hermes missing → setUp,
-  Hermes present+unauthed → signIn (soft), Hermes present+authed/undetermined →
-  ready; **mixed-family** — a Codex profile and a Hermes profile each resolve against
-  their own family's probe from `probeByFamily`.
-- `ExecutorSettingsClientTests`: per-family probe/install dispatch.
+- `ProfileStartDiagnosisTests` / `ProfileStartRulesTests`: Hermes missing →
+  `.blocked` / `setUpHermes`; Hermes present → `.ready` regardless of auth (auth never
+  blocks start); an acpx profile → `.ready` (no probe/gate); **mixed-family** — a
+  Codex profile and a Hermes profile each resolve against their own family's probe
+  from `probeByFamily`.
+- Hermes Settings pane shows the Sign-in action when `authenticated == false`/`nil`
+  and hides it when `true` — independent of start gating.
+- `ExecutorSettingsClientTests`: per-family probe/install dispatch (codex, hermes).
 - Profile editor: single-choice selector yields exactly one family in
   `Profile.enabledExecutors`; `nodeArgv` forwards a single `--enabled-executor`.
 
