@@ -182,14 +182,14 @@ import pytest
 from newbro.executors.node.registry import ExecutorNodeRegistry, ExecutorNodeRegistryError
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_node_accepts_hermes(tmp_path):
     registry = ExecutorNodeRegistry(path=tmp_path / "nodes.yaml")
     issue = await registry.create_node(name="H", enabled_executors=["hermes"])
     assert issue.node.enabled_executors == ["hermes"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_node_rejects_unknown_family(tmp_path):
     registry = ExecutorNodeRegistry(path=tmp_path / "nodes.yaml")
     with pytest.raises(ExecutorNodeRegistryError, match="Unsupported executor family"):
@@ -397,7 +397,7 @@ async def _make_peer_over_pipe():
     return peer, reader, transport_writes
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_request_resolves_on_matching_response():
     peer, reader, writes = await _make_peer_over_pipe()
     request = asyncio.ensure_future(peer.request("session.create", {"cwd": "/tmp"}))
@@ -411,7 +411,7 @@ async def test_request_resolves_on_matching_response():
     await peer.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notifications_surface_as_events():
     peer, reader, _ = await _make_peer_over_pipe()
     reader.feed_data(
@@ -954,7 +954,7 @@ def _make(event_params):
     return executor, session, run, task
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_task_streams_progress_then_completed():
     event_params = [
         {"type": "message.delta", "session_id": "sess-1", "payload": {"text": "working"}},
@@ -970,7 +970,7 @@ async def test_run_task_streams_progress_then_completed():
     assert executor._client.submitted == [("sess-1", "Do the thing")]  # type: ignore[attr-defined]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_message_complete_interrupted_maps_to_cancelled():
     event_params = [
         {"type": "message.complete", "session_id": "sess-1", "payload": {"text": "Operation interrupted", "status": "interrupted"}},
@@ -980,7 +980,7 @@ async def test_message_complete_interrupted_maps_to_cancelled():
     assert seen[-1].event_type == ExecutorEventType.CANCELLED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_message_complete_error_maps_to_failed():
     event_params = [
         {"type": "message.complete", "session_id": "sess-1", "payload": {"text": "boom", "status": "error"}},
@@ -990,7 +990,7 @@ async def test_message_complete_error_maps_to_failed():
     assert seen[-1].event_type == ExecutorEventType.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_task_maps_blocked_approval_request_terminally():
     event_params = [
         {"type": "approval.request", "session_id": "sess-1", "payload": {"command": "rm -rf /", "description": "Run rm -rf?"}},
@@ -1164,7 +1164,7 @@ def _session():
     return session
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unsteerable_follow_up_fails_without_submit_fallback():
     executor = HermesExecutor(command="hermes")
     executor._client = _SteerFailsClient()  # type: ignore[assignment]
@@ -1178,7 +1178,7 @@ async def test_unsteerable_follow_up_fails_without_submit_fallback():
     assert executor._client.submitted == []  # type: ignore[attr-defined]  # no prompt.submit fallback
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_run_interrupts_the_session():
     executor = HermesExecutor(command="hermes")
     calls: list[str] = []
