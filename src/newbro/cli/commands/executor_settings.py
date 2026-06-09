@@ -306,6 +306,7 @@ def hermes_probe_payload(*, config_path: Path) -> dict[str, object]:
     executors = config_files.existing_executors_config(raw)
     configured_command = str((executors.get("hermes") or {}).get("command") or "hermes")
     result = hermes_probe.probe_hermes_command(configured_command)
+    authenticated = hermes_probe.probe_hermes_authenticated(configured_command) if result.ok else None
     return {
         "supported_executors": list(SUPPORTED_EXECUTORS),
         "current": {
@@ -315,6 +316,7 @@ def hermes_probe_payload(*, config_path: Path) -> dict[str, object]:
             "version": result.version,
             "ok": result.ok,
             "error": result.error,
+            "authenticated": authenticated,
         },
         "candidates": [],
     }

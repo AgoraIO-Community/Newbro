@@ -15,6 +15,37 @@ class HermesProbeResult:
     error: str | None = None
 
 
+def interpret_hermes_auth_list(*, returncode: int, output: str) -> bool | None:
+    """Best-effort: True if any credential is listed, False if none, None if unknown."""
+    if returncode != 0:
+        return None
+    text = (output or "").strip()
+    if not text:
+        return False
+    if re.search(r"\(\s*[1-9]\d*\s+credentials?\s*\)", text) or re.search(r"^\s*#\d+", text, re.MULTILINE):
+        return True
+    return False
+
+
+def probe_hermes_authenticated(command: str) -> bool | None:
+    path = command if os.path.isabs(command) else (shutil.which(command) or command)
+    try:
+        completed = subprocess.run(
+            [path, "auth", "list"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=8,
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception:  # noqa: BLE001 - auth status must never break the probe
+        return None
+    return interpret_hermes_auth_list(
+        returncode=completed.returncode,
+        output=completed.stdout or completed.stderr or "",
+    )
+
+
 def parse_hermes_version(output: str | None) -> str | None:
     if not output:
         return None

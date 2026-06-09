@@ -54,6 +54,15 @@ def test_print_human_probe_uses_executor_name_from_payload(capsys):
     assert "Codex current:" not in out
 
 
+def test_hermes_probe_payload_has_authenticated_key(tmp_path, monkeypatch):
+    from newbro.cli.commands import executor_settings
+    from newbro.executors.adapters.hermes import probe as hermes_probe
+    monkeypatch.setattr(hermes_probe, "probe_hermes_command", lambda cmd: hermes_probe.HermesProbeResult(path="/h", version="0.12.0", ok=True))
+    monkeypatch.setattr(hermes_probe, "probe_hermes_authenticated", lambda cmd: True)
+    payload = executor_settings.hermes_probe_payload(config_path=tmp_path / "config.yaml")
+    assert payload["current"]["authenticated"] is True
+
+
 def test_cmd_executor_routes_install_hermes_to_run_executor_install_hermes(monkeypatch):
     called_with: list[tuple[object, object]] = []
 
