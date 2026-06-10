@@ -7,23 +7,24 @@ import NewbroExecutorCore
 final class AppModel: ObservableObject {
     @Published var profiles: [Profile] = []
     @Published var runtimeAvailable: Bool = true
-    @Published var codexStatus = CommandStatus(
-        command: nil,
-        version: nil,
-        menuTitle: "No Codex found. Newbro may not work properly.",
-        isAvailable: false)
     @Published var isInstallingRuntime: Bool = false
     @Published var runtimeInstallError: String?
     @Published var installLog: String = ""
-    @Published var executorProbe: ExecutorProbe?
     @Published var executorSettingsError: String?
     @Published var executorSettingsBusy: Bool = false
     @Published var executorSettingsCanUpdateCLI: Bool = false
     @Published var profileDiagnoses: [String: ProfileStartDiagnosis] = [:]
     @Published var cachedCLIVersion: String?
-    @Published var codexSetupLog: String = ""
-    @Published var codexSetupBusy: Bool = false
     @Published var selectedSettingsPane: SettingsPane = .updates
+
+    // Per-family probe state
+    @Published var probeByFamily: [String: ExecutorProbe] = [:]
+    @Published var statusByFamily: [String: CommandStatus] = [:]
+    @Published var setupLogByFamily: [String: String] = [:]
+    @Published var setupBusyByFamily: [String: Bool] = [:]
+
+    /// The executor family currently shown in Settings (drives probeScope at launch/refresh).
+    var viewedSettingsFamily: String?
 
     private let supervisor: ProfileSupervisor
     private let notifier: AppNotifying
@@ -39,9 +40,10 @@ final class AppModel: ObservableObject {
     private var pendingRestartProfileIDs: Set<String> = []
     private var pendingSilentStartProfileIDs: Set<String> = []
     private var pendingSilentRestartProfileIDs: Set<String> = []
-    private var executorProbeRequestID: Int = 0
+    // Per-family probe request IDs to cancel stale results
+    private var probeRequestIDByFamily: [String: Int] = [:]
     private var executorProbeInFlight: Bool = false
-    private var codexSetupRequestID: Int = 0
+    private var setupRequestIDByFamily: [String: Int] = [:]
     private var cliVersionRequestID: Int = 0
     private var runtimeDiagnosisRefreshRequestID: Int = 0
     private let windows = WindowManager()
@@ -104,9 +106,9 @@ final class AppModel: ObservableObject {
 
     @discardableResult
     func refreshCodexStatus() -> CommandStatus {
-        refreshCommandStatus(&codexStatus) {
-            locator.codexRuntimeStatus()
-        }
+        let status = locator.codexRuntimeStatus()
+        statusByFamily["codex"] = status
+        return status
     }
 
     func autostart() {
@@ -230,12 +232,15 @@ final class AppModel: ObservableObject {
     @discardableResult
     private func diagnoseStart(for profile: Profile,
                                runtime: DiagnosisRuntimeContext) -> ProfileStartDiagnosis {
+        let family = profile.enabledExecutors.first ?? "codex"
+        let probe = runtime.newbroPath == nil ? nil : probeByFamily[family]
+        let probeError = runtime.newbroPath == nil ? nil : executorSettingsError
         let diagnosis = diagnoseProfileStart(
             profile,
             newbroPath: runtime.newbroPath,
             cliVersion: runtime.newbroPath == nil ? nil : runtime.cliVersion,
-            probe: runtime.newbroPath == nil ? nil : executorProbe,
-            probeError: runtime.newbroPath == nil ? nil : executorSettingsError
+            probe: probe,
+            probeError: probeError
         )
         profileDiagnoses[profile.id] = diagnosis
         return diagnosis
@@ -278,12 +283,15 @@ final class AppModel: ObservableObject {
 
     private func refreshStoredDiagnosis(for profile: Profile,
                                         runtime: DiagnosisRuntimeContext) {
+        let family = profile.enabledExecutors.first ?? "codex"
+        let probe = runtime.newbroPath == nil ? nil : probeByFamily[family]
+        let probeError = runtime.newbroPath == nil ? nil : executorSettingsError
         let diagnosis = diagnoseProfileStart(
             profile,
             newbroPath: runtime.newbroPath,
             cliVersion: runtime.newbroPath == nil ? nil : runtime.cliVersion,
-            probe: runtime.newbroPath == nil ? nil : executorProbe,
-            probeError: runtime.newbroPath == nil ? nil : executorSettingsError
+            probe: probe,
+            probeError: probeError
         )
         switch diagnosis.status {
         case .ready:
@@ -313,13 +321,75 @@ final class AppModel: ObservableObject {
         _ = requestRestartAfterDiagnosis(profile)
     }
 
+    // MARK: - Per-family scoped probe
+
+    /// Probe a single executor family and store results into the per-family maps.
+    /// Modelled on the old refreshExecutorProbe flow: same threading, same request-id
+    /// guarding, same error handling, but scoped to one family.
+    /// On completion also re-derives stored per-profile diagnoses and drains pending starts
+    /// (mirroring the post-steps the full refreshExecutorProbeAndStoredDiagnoses performs).
+    func refreshProbe(for family: String) {
+        guard probeableExecutorFamilies.contains(family) else { return }
+        probeRequestIDByFamily[family] = (probeRequestIDByFamily[family] ?? 0) + 1
+        let requestID = probeRequestIDByFamily[family]!
+        guard let newbro = locator.resolveNewbro() else {
+            probeByFamily.removeValue(forKey: family)
+            executorSettingsError = "newbro CLI not found"
+            executorSettingsCanUpdateCLI = false
+            executorSettingsBusy = false
+            executorProbeInFlight = false
+            let runtime = DiagnosisRuntimeContext(newbroPath: nil, cliVersion: nil)
+            refreshStoredProfileDiagnoses(runtime: runtime)
+            continuePendingStarts(runtime: runtime)
+            return
+        }
+        executorSettingsBusy = true
+        executorProbeInFlight = true
+        let client = ExecutorSettingsClient(newbroPath: newbro)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try client.probe(executor: family) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard requestID == self.probeRequestIDByFamily[family] else { return }
+                // Build the runtime context using the resolved path and cached CLI version.
+                let runtime = DiagnosisRuntimeContext(
+                    newbroPath: newbro,
+                    cliVersion: self.cachedCLIVersion
+                )
+                self.applyProbeResult(result, for: family)
+                self.refreshStoredProfileDiagnoses(runtime: runtime)
+                self.continuePendingStarts(runtime: runtime)
+            }
+        }
+    }
+
+    private func applyProbeResult(_ result: Result<ExecutorProbe, Error>, for family: String) {
+        executorSettingsBusy = false
+        executorProbeInFlight = false
+        switch result {
+        case .success(let probe):
+            probeByFamily[family] = probe
+            executorSettingsError = nil
+            executorSettingsCanUpdateCLI = false
+        case .failure(let error):
+            probeByFamily.removeValue(forKey: family)
+            executorSettingsError = error.localizedDescription
+            executorSettingsCanUpdateCLI = isRuntimeTooOld(error)
+        }
+    }
+
     private func refreshExecutorProbe(resolvedNewbro newbro: String?,
                                       pendingDiagnosisRuntime: DiagnosisRuntimeContext? = nil,
                                       after completion: (() -> Void)? = nil) {
-        executorProbeRequestID += 1
-        let requestID = executorProbeRequestID
+        // Bump all family probe request IDs to cancel any stale in-flight per-family probes
+        for family in probeableExecutorFamilies {
+            probeRequestIDByFamily[family] = (probeRequestIDByFamily[family] ?? 0) + 1
+        }
+        let requestIDs = probeRequestIDByFamily
         guard let newbro else {
-            executorProbe = nil
+            for family in probeableExecutorFamilies {
+                probeByFamily.removeValue(forKey: family)
+            }
             executorSettingsError = "newbro CLI not found"
             executorSettingsCanUpdateCLI = false
             executorSettingsBusy = false
@@ -330,13 +400,39 @@ final class AppModel: ObservableObject {
         }
         executorSettingsBusy = true
         executorProbeInFlight = true
+        let scope = probeScope(profiles: profiles, viewedFamily: viewedSettingsFamily)
         let client = ExecutorSettingsClient(newbroPath: newbro)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { try client.probe() }
+            // Probe only the families in scope (codex by default)
+            var results: [String: Result<ExecutorProbe, Error>] = [:]
+            for family in scope {
+                results[family] = Result { try client.probe(executor: family) }
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
-                guard requestID == self.executorProbeRequestID else { return }
-                self.applyExecutorProbeResult(result)
+                // Apply each result, guarded by request ID
+                var anyError: Error?
+                var anyOld = false
+                for (family, result) in results {
+                    guard requestIDs[family] == self.probeRequestIDByFamily[family] else { continue }
+                    switch result {
+                    case .success(let probe):
+                        self.probeByFamily[family] = probe
+                    case .failure(let error):
+                        self.probeByFamily.removeValue(forKey: family)
+                        if self.isRuntimeTooOld(error) { anyOld = true }
+                        anyError = error
+                    }
+                }
+                self.executorSettingsBusy = false
+                self.executorProbeInFlight = false
+                if let error = anyError {
+                    self.executorSettingsError = error.localizedDescription
+                    self.executorSettingsCanUpdateCLI = anyOld
+                } else {
+                    self.executorSettingsError = nil
+                    self.executorSettingsCanUpdateCLI = false
+                }
                 self.continuePendingStarts(runtime: pendingDiagnosisRuntime)
                 completion?()
             }
@@ -346,7 +442,10 @@ final class AppModel: ObservableObject {
     func refreshExecutorProbeAndStoredDiagnoses() {
         runtimeDiagnosisRefreshRequestID += 1
         let requestID = runtimeDiagnosisRefreshRequestID
-        executorProbeRequestID += 1
+        // Bump all family probe request IDs
+        for family in probeableExecutorFamilies {
+            probeRequestIDByFamily[family] = (probeRequestIDByFamily[family] ?? 0) + 1
+        }
         cliVersionRequestID += 1
         let versionRequestID = cliVersionRequestID
         executorSettingsBusy = true
@@ -364,7 +463,7 @@ final class AppModel: ObservableObject {
                 if versionRequestID == self.cliVersionRequestID {
                     self.cachedCLIVersion = cliVersion
                 }
-                self.codexStatus = codex
+                self.statusByFamily["codex"] = codex
                 self.refreshExecutorProbe(
                     resolvedNewbro: runtime.newbroPath,
                     pendingDiagnosisRuntime: runtime
@@ -377,34 +476,23 @@ final class AppModel: ObservableObject {
 
     private func applyMissingRuntimeDiagnosisState(codexStatus: CommandStatus) {
         runtimeDiagnosisRefreshRequestID += 1
-        executorProbeRequestID += 1
+        for family in probeableExecutorFamilies {
+            probeRequestIDByFamily[family] = (probeRequestIDByFamily[family] ?? 0) + 1
+        }
         cliVersionRequestID += 1
         let runtime = DiagnosisRuntimeContext(newbroPath: nil, cliVersion: nil)
         runtimeAvailable = false
         cachedCLIVersion = nil
-        self.codexStatus = codexStatus
-        executorProbe = nil
+        statusByFamily["codex"] = codexStatus
+        for family in probeableExecutorFamilies {
+            probeByFamily.removeValue(forKey: family)
+        }
         executorSettingsError = "newbro CLI not found"
         executorSettingsCanUpdateCLI = false
         executorSettingsBusy = false
         executorProbeInFlight = false
         continuePendingStarts(runtime: runtime)
         refreshStoredProfileDiagnoses(runtime: runtime)
-    }
-
-    private func applyExecutorProbeResult(_ result: Result<ExecutorProbe, Error>) {
-        executorSettingsBusy = false
-        executorProbeInFlight = false
-        switch result {
-        case .success(let probe):
-            executorProbe = probe
-            executorSettingsError = nil
-            executorSettingsCanUpdateCLI = false
-        case .failure(let error):
-            executorProbe = nil
-            executorSettingsError = error.localizedDescription
-            executorSettingsCanUpdateCLI = isRuntimeTooOld(error)
-        }
     }
 
     private func continuePendingStarts(runtime: DiagnosisRuntimeContext? = nil) {
@@ -489,11 +577,12 @@ final class AppModel: ObservableObject {
     }
 
     func setUpCodex(for profile: Profile?) {
-        guard !codexSetupBusy else { return }
+        guard setupBusyByFamily["codex"] != true else { return }
         let profileID = profile?.id
-        codexSetupRequestID += 1
-        let setupRequestID = codexSetupRequestID
-        executorProbeRequestID += 1
+        setupRequestIDByFamily["codex"] = (setupRequestIDByFamily["codex"] ?? 0) + 1
+        let setupRequestID = setupRequestIDByFamily["codex"]!
+        // Bump codex probe request ID to cancel stale results
+        probeRequestIDByFamily["codex"] = (probeRequestIDByFamily["codex"] ?? 0) + 1
         if let profileID {
             if profile.map(isActive) == true {
                 pendingStartProfileIDs.remove(profileID)
@@ -504,8 +593,8 @@ final class AppModel: ObservableObject {
             }
         }
         executorProbeInFlight = true
-        codexSetupBusy = true
-        codexSetupLog = "Preparing Codex setup...\n"
+        setupBusyByFamily["codex"] = true
+        setupLogByFamily["codex"] = "Preparing Codex setup...\n"
         executorSettingsBusy = true
         let loc = locator
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -513,9 +602,9 @@ final class AppModel: ObservableObject {
                 let codex = loc.codexRuntimeStatus()
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    guard setupRequestID == self.codexSetupRequestID else { return }
-                    self.codexSetupBusy = false
-                    self.codexSetupLog += "newbro CLI not found\n"
+                    guard setupRequestID == self.setupRequestIDByFamily["codex"] else { return }
+                    self.setupBusyByFamily["codex"] = false
+                    self.setupLogByFamily["codex", default: ""] += "newbro CLI not found\n"
                     self.applyMissingRuntimeDiagnosisState(codexStatus: codex)
                 }
                 return
@@ -525,23 +614,23 @@ final class AppModel: ObservableObject {
                 try client.installCodexStreaming { line in
                     DispatchQueue.main.async {
                         guard let self else { return }
-                        guard setupRequestID == self.codexSetupRequestID else { return }
-                        self.appendCodexSetupLog(line)
+                        guard setupRequestID == self.setupRequestIDByFamily["codex"] else { return }
+                        self.appendSetupLog(line, for: "codex")
                     }
                 }
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                guard setupRequestID == self.codexSetupRequestID else { return }
-                self.executorProbeRequestID += 1
-                self.codexSetupBusy = false
+                guard setupRequestID == self.setupRequestIDByFamily["codex"] else { return }
+                self.probeRequestIDByFamily["codex"] = (self.probeRequestIDByFamily["codex"] ?? 0) + 1
+                self.setupBusyByFamily["codex"] = false
                 switch result {
                 case .success:
                     self.refreshExecutorProbeAndStoredDiagnoses()
                 case .failure(let error):
-                    self.codexSetupLog += error.localizedDescription + "\n"
+                    self.setupLogByFamily["codex", default: ""] += error.localizedDescription + "\n"
                     let isRuntimeTooOld = self.isRuntimeTooOld(error)
-                    self.executorProbeRequestID += 1
+                    self.probeRequestIDByFamily["codex"] = (self.probeRequestIDByFamily["codex"] ?? 0) + 1
                     self.executorSettingsBusy = false
                     self.executorProbeInFlight = false
                     self.executorSettingsError = error.localizedDescription
@@ -556,11 +645,104 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func appendCodexSetupLog(_ line: String) {
-        codexSetupLog += line
-        if !line.hasSuffix("\n") {
-            codexSetupLog += "\n"
+    func setUpHermes(for profile: Profile?) {
+        guard setupBusyByFamily["hermes"] != true else { return }
+        let profileID = profile?.id
+        setupRequestIDByFamily["hermes"] = (setupRequestIDByFamily["hermes"] ?? 0) + 1
+        let setupRequestID = setupRequestIDByFamily["hermes"]!
+        // Bump hermes probe request ID to cancel stale results
+        probeRequestIDByFamily["hermes"] = (probeRequestIDByFamily["hermes"] ?? 0) + 1
+        if let profileID {
+            if profile.map(isActive) == true {
+                pendingStartProfileIDs.remove(profileID)
+                pendingRestartProfileIDs.insert(profileID)
+            } else {
+                pendingRestartProfileIDs.remove(profileID)
+                pendingStartProfileIDs.insert(profileID)
+            }
         }
+        executorProbeInFlight = true
+        setupBusyByFamily["hermes"] = true
+        setupLogByFamily["hermes"] = "Preparing Hermes setup...\n"
+        executorSettingsBusy = true
+        let loc = locator
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let newbro = loc.resolveNewbro() else {
+                let codex = loc.codexRuntimeStatus()
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    guard setupRequestID == self.setupRequestIDByFamily["hermes"] else { return }
+                    self.setupBusyByFamily["hermes"] = false
+                    self.setupLogByFamily["hermes", default: ""] += "newbro CLI not found\n"
+                    self.applyMissingRuntimeDiagnosisState(codexStatus: codex)
+                }
+                return
+            }
+            let client = ExecutorSettingsClient(newbroPath: newbro)
+            let result = Result {
+                try client.installHermesStreaming { line in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        guard setupRequestID == self.setupRequestIDByFamily["hermes"] else { return }
+                        self.appendSetupLog(line, for: "hermes")
+                    }
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard setupRequestID == self.setupRequestIDByFamily["hermes"] else { return }
+                self.probeRequestIDByFamily["hermes"] = (self.probeRequestIDByFamily["hermes"] ?? 0) + 1
+                self.setupBusyByFamily["hermes"] = false
+                switch result {
+                case .success:
+                    self.refreshProbe(for: "hermes")
+                    if let profileID,
+                       let profile = self.profiles.first(where: { $0.id == profileID }) {
+                        // Re-queue the pending profile to continue start after hermes probe completes
+                        if self.isActive(profile) {
+                            self.pendingStartProfileIDs.remove(profileID)
+                            self.pendingRestartProfileIDs.insert(profileID)
+                        } else {
+                            self.pendingRestartProfileIDs.remove(profileID)
+                            self.pendingStartProfileIDs.insert(profileID)
+                        }
+                    }
+                case .failure(let error):
+                    self.setupLogByFamily["hermes", default: ""] += error.localizedDescription + "\n"
+                    self.probeRequestIDByFamily["hermes"] = (self.probeRequestIDByFamily["hermes"] ?? 0) + 1
+                    self.executorSettingsBusy = false
+                    self.executorProbeInFlight = false
+                    self.executorSettingsError = error.localizedDescription
+                    self.executorSettingsCanUpdateCLI = false
+                    // Block any pending hermes profiles after setup failure
+                    var ids = self.pendingStartProfileIDs.union(self.pendingRestartProfileIDs)
+                    if let profileID { ids.insert(profileID) }
+                    let diagnosis = ProfileStartDiagnosis(
+                        status: .blocked,
+                        reason: .installerFailed,
+                        title: "Hermes setup failed",
+                        detail: error.localizedDescription,
+                        primaryAction: .setUpHermes
+                    )
+                    for id in ids {
+                        self.pendingStartProfileIDs.remove(id)
+                        self.pendingRestartProfileIDs.remove(id)
+                        self.pendingSilentStartProfileIDs.remove(id)
+                        self.pendingSilentRestartProfileIDs.remove(id)
+                        self.profileDiagnoses[id] = diagnosis
+                    }
+                }
+            }
+        }
+    }
+
+    private func appendSetupLog(_ line: String, for family: String) {
+        var log = setupLogByFamily[family] ?? ""
+        log += line
+        if !line.hasSuffix("\n") {
+            log += "\n"
+        }
+        setupLogByFamily[family] = log
     }
 
     private func blockPendingProfilesAfterCodexSetupFailure(error: Error,
@@ -771,7 +953,7 @@ final class AppModel: ObservableObject {
     }
 
     func canStart(_ profile: Profile) -> Bool {
-        return profileCanStart(profile, codexRuntimeAvailable: { codexStatus.isAvailable })
+        return profileCanStart(profile, codexRuntimeAvailable: { statusByFamily["codex"]?.isAvailable ?? false })
     }
 
     private func perform(_ action: ProfileLifecycleAction?) {

@@ -10,8 +10,8 @@ struct ProfileEditView: View {
     @State private var baseURL = ""
     @State private var nodeID = ""
     @State private var token = ""
-    @State private var codex = false
-    @State private var acpx = false
+    @State private var family: String? = nil
+    @State private var existingProfileHasNoFamily = false
     @State private var autoActivate = false
 
     var body: some View {
@@ -20,12 +20,26 @@ struct ProfileEditView: View {
             TextField("Base URL", text: $baseURL)
             TextField("Node ID", text: $nodeID)
             TextField("Token", text: $token)
-            Toggle("codex", isOn: $codex)
-            Toggle("acpx", isOn: $acpx)
+
+            Picker("Agent client", selection: $family) {
+                Text("Choose an agent client").tag(String?.none)
+                ForEach(supportedExecutorFamilies, id: \.self) { f in
+                    Text(f).tag(Optional(f))
+                }
+            }
+
+            if existingProfileHasNoFamily && family == nil {
+                Text("This profile has no valid agent client — choose one.")
+                    .foregroundColor(.red)
+                    .font(.caption)
+            }
+
             Toggle("Auto-activate at login", isOn: $autoActivate)
+
             HStack {
                 Button("Cancel") { onClose() }
                 Button("Save") { save() }
+                    .disabled(family == nil)
             }
         }
         .padding(20)
@@ -40,15 +54,13 @@ struct ProfileEditView: View {
         baseURL = profile.baseURL
         nodeID = profile.nodeID
         token = profile.token
-        codex = profile.enabledExecutors.contains("codex")
-        acpx = profile.enabledExecutors.contains("acpx")
+        family = initialPickerFamily(for: profile.enabledExecutors)
+        existingProfileHasNoFamily = family == nil
         autoActivate = profile.autoActivate
     }
 
     private func save() {
-        var executors: [String] = []
-        if codex { executors.append("codex") }
-        if acpx { executors.append("acpx") }
+        let executors = family.map { [$0] } ?? []
         let id = profileID ?? "profile-\(UUID().uuidString.prefix(8))"
         model.upsert(Profile(id: id, label: label, baseURL: baseURL, nodeID: nodeID,
                              token: token, enabledExecutors: executors, autoActivate: autoActivate))

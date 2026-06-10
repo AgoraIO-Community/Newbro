@@ -204,6 +204,15 @@ def resolve_executor_setup_values(
                     existing_block.get("blocked_wait_timeout_seconds") or 900.0
                 ),
             }
+        elif executor_type == "hermes":
+            command = callbacks.prompt_text_value(
+                "Hermes command",
+                default_value=str(existing_block.get("command") or "hermes"),
+                required=True,
+            )
+            if not callbacks.command_available(command):
+                print(f"[warn] command '{command}' is not currently available on PATH")
+            executors_block["hermes"] = {"command": command}
         elif executor_type == "acpx":
             executors_block["acpx"] = {
                 "command": callbacks.prompt_text_value(
@@ -321,7 +330,9 @@ def executor_runtime_ready(
             or "acpx"
         ).strip()
         return bool(command) and callbacks.command_available(command)
-    command = str(existing_block.get("command") or "").strip()
+    # Generic families (e.g. hermes): default the command to the family name and
+    # PATH-check it, matching what the executor node's _build_executors already does.
+    command = str(existing_block.get("command") or executor_type).strip()
     return bool(command) and callbacks.command_available(command)
 
 

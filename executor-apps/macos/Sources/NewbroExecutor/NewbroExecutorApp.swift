@@ -125,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             path: model.runtimeAvailable ? "newbro" : nil,
             version: model.cachedCLIVersion
         )))
-        menu.addItem(disabledMenuItem(title: model.codexStatus.menuTitle))
+        menu.addItem(disabledMenuItem(title: model.statusByFamily["codex"]?.menuTitle ?? "No Codex found. Newbro may not work properly."))
         menu.addItem(.separator())
 
         for profile in model.profiles {
@@ -205,6 +205,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return ActionMenuItem(title: "Open Codex Settings…") { [weak self] in
                 guard let self else { return }
                 self.model.showSettings(updates: self.updates, initialPane: .codex)
+            }
+        case .setUpHermes, .signInHermes:
+            return ActionMenuItem(title: "Open Hermes Settings…") { [weak self] in
+                guard let self else { return }
+                self.model.showSettings(updates: self.updates, initialPane: .hermes)
             }
         case .rerunDiagnosis:
             return ActionMenuItem(title: "Run Diagnosis") { [weak self] in

@@ -97,4 +97,39 @@ final class ProfileStartRulesTests: XCTestCase {
         XCTAssertNil(pastedProfileAction(for: codex, runtimeAvailable: true, isActive: false) { false })
         XCTAssertNil(pastedProfileAction(for: codex, runtimeAvailable: true, isActive: true) { false })
     }
+
+    // MARK: - Hermes diagnosis tests
+
+    private func hermesProfile() -> Profile {
+        Profile(id: "p", label: "h", baseURL: "u", nodeID: "n", token: "t", enabledExecutors: ["hermes"])
+    }
+    private func hermesProbe(ok: Bool, authenticated: Bool?) -> ExecutorProbe {
+        ExecutorProbe(supportedExecutors: ["codex", "acpx", "hermes"],
+                      current: CurrentExecutorProbe(executor: "hermes", command: "hermes", resolvedPath: nil,
+                                                    version: ok ? "0.12.0" : nil, ok: ok, error: ok ? nil : "command not found",
+                                                    authenticated: authenticated),
+                      candidates: [])
+    }
+
+    func testHermesMissingBlocksWithSetUp() {
+        let d = diagnoseProfileStart(hermesProfile(), newbroPath: "/n", cliVersion: "9.9.9",
+                                     probe: hermesProbe(ok: false, authenticated: nil), probeError: nil)
+        XCTAssertEqual(d.status, .blocked)
+        XCTAssertEqual(d.primaryAction, .setUpHermes)
+    }
+
+    func testHermesPresentUnauthedBlocksWithSignIn() {
+        let d = diagnoseProfileStart(hermesProfile(), newbroPath: "/n", cliVersion: "9.9.9",
+                                     probe: hermesProbe(ok: true, authenticated: false), probeError: nil)
+        XCTAssertEqual(d.status, .blocked)
+        XCTAssertEqual(d.primaryAction, .signInHermes)
+    }
+
+    func testHermesPresentAuthedOrUnknownReady() {
+        for auth in [true, nil] as [Bool?] {
+            let d = diagnoseProfileStart(hermesProfile(), newbroPath: "/n", cliVersion: "9.9.9",
+                                         probe: hermesProbe(ok: true, authenticated: auth), probeError: nil)
+            XCTAssertEqual(d.status, .ready)
+        }
+    }
 }

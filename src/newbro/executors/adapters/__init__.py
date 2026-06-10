@@ -4,6 +4,7 @@ from .hosted import HostedExecutor
 from .acpx import AcpxExecutor, AcpxExecutorSession
 from .codex import CodexExecutor, CodexExecutorSession
 from .mock import MockExecutor, MockExecutorConfig, MockExecutorSession
+from .hermes import HermesExecutor, HermesExecutorSession
 
 __all__ = [
     "HostedExecutor",
@@ -14,4 +15,6 @@ __all__ = [
     "MockExecutor",
     "MockExecutorConfig",
     "MockExecutorSession",
+    "HermesExecutor",
+    "HermesExecutorSession",
 ]

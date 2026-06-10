@@ -69,7 +69,8 @@ def test_executor_probe_json_reports_current_and_candidates(monkeypatch, tmp_pat
     assert cli_main.main(["executor", "probe", "--executor", "codex", "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["supported_executors"] == ["codex"]
+    assert "codex" in payload["supported_executors"]
+    assert "hermes" in payload["supported_executors"]
     assert payload["current"]["command"] == str(bad)
     assert payload["current"]["ok"] is False
     assert payload["current"]["error"] == "vendor executable missing"

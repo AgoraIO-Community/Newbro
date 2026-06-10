@@ -13,6 +13,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, ValidationError
 
 from newbro.config_home import SYNAPSE_HOME_DIR
+from newbro.executors.families import SUPPORTED_EXECUTOR_FAMILIES
 from newbro.protocol import ExecutorNodeCredentialIssue, ExecutorNodeExecutor, ExecutorNodeRecord
 from newbro.yaml_support import YAMLParseError, load_yaml_file
 
@@ -91,6 +92,7 @@ class ExecutorNodeRegistry:
             raise ExecutorNodeRegistryError("Executor node must enable exactly one executor family.")
         if len(normalized_executors) > 1:
             raise ExecutorNodeRegistryError("Executor node must choose exactly one executor family.")
+        _validate_supported_families(normalized_executors)
         if "acpx" in normalized_executors and not normalized_acpx_agent:
             normalized_acpx_agent = "codex"
         node_id = f"node-{uuid4().hex[:8]}"
@@ -137,6 +139,7 @@ class ExecutorNodeRegistry:
                     raise ExecutorNodeRegistryError("Executor node must enable exactly one executor family.")
                 if len(normalized_executors) > 1:
                     raise ExecutorNodeRegistryError("Executor node must choose exactly one executor family.")
+                _validate_supported_families(normalized_executors)
                 updates["enabled_executors"] = normalized_executors
             if acpx_agent is not None:
                 updates["acpx_agent"] = _normalize_optional_text(acpx_agent)
@@ -245,6 +248,15 @@ def _normalize_executor_list(values: list[str]) -> list[str]:
         seen.add(cleaned)
         normalized.append(cleaned)
     return normalized
+
+
+def _validate_supported_families(families: list[str]) -> None:
+    for family in families:
+        if family not in SUPPORTED_EXECUTOR_FAMILIES:
+            raise ExecutorNodeRegistryError(
+                f"Unsupported executor family: {family}. "
+                f"Supported: {', '.join(SUPPORTED_EXECUTOR_FAMILIES)}."
+            )
 
 
 def _hash_token(token: str) -> str:

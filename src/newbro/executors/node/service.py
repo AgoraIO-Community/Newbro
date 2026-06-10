@@ -18,6 +18,7 @@ from newbro.api.paths import API_PREFIX
 from newbro.communication.persona_pool import resolve_workspace
 from newbro.executors.adapters.acpx import AcpxExecutor, AcpxExecutorSession
 from newbro.executors.adapters.codex import CodexExecutor, CodexExecutorSession
+from newbro.executors.adapters.hermes import HermesExecutor
 from newbro.executors.core import ExecutorEvent, ExecutorEventType, ExecutorSession
 from newbro.executors.node.workspace_files import (
     WorkspaceFileAccessError,
@@ -1130,6 +1131,16 @@ class ExecutorNodeService:
                     agent=str((config or {}).get("agent", "codex")),
                     permission_mode=str((config or {}).get("permission_mode", "approve-all")),
                     non_interactive_permissions=str((config or {}).get("non_interactive_permissions", "deny")),
+                    timeout_seconds=float((config or {}).get("timeout_seconds"))
+                    if (config or {}).get("timeout_seconds") not in (None, "")
+                    else None,
+                )
+            elif executor_type == "hermes":
+                built[executor_type] = HermesExecutor(
+                    command=str((config or {}).get("command", "hermes")),
+                    project_root=str((config or {}).get("project_root"))
+                    if (config or {}).get("project_root") not in (None, "")
+                    else None,
                     timeout_seconds=float((config or {}).get("timeout_seconds"))
                     if (config or {}).get("timeout_seconds") not in (None, "")
                     else None,

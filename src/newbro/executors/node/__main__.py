@@ -6,6 +6,8 @@ import contextlib
 import signal
 from dataclasses import replace
 
+from newbro.executors.families import SUPPORTED_EXECUTOR_FAMILIES
+
 from .config import load_executor_node_config
 from .service import ExecutorNodeService
 
@@ -18,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--enabled-executor",
         action="append",
-        choices=["codex", "acpx"],
+        choices=list(SUPPORTED_EXECUTOR_FAMILIES),
         help="Override the enabled executor families for this run. Repeat for multiple values.",
     )
     parser.add_argument(

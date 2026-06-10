@@ -5,6 +5,7 @@ import NewbroExecutorCore
 enum SettingsPane: Hashable {
     case updates
     case codex
+    case hermes
 }
 
 struct NewbroSettingsView: View {
@@ -27,6 +28,8 @@ struct NewbroSettingsView: View {
                 Section("Executors") {
                     Text("Codex")
                         .tag(SettingsPane.codex)
+                    Text("Hermes")
+                        .tag(SettingsPane.hermes)
                 }
             }
             .frame(width: 180)
@@ -39,6 +42,8 @@ struct NewbroSettingsView: View {
                     UpdatesSettingsPane(model: model, updates: updates)
                 case .codex:
                     CodexSettingsPane(model: model)
+                case .hermes:
+                    HermesSettingsPane(model: model)
                 }
             }
             .padding(18)
@@ -129,7 +134,7 @@ private struct CodexSettingsPane: View {
                         .textSelection(.enabled)
                 }
                 Spacer()
-                Button("Refresh") { model.refreshExecutorProbeAndStoredDiagnoses() }
+                Button("Refresh") { model.refreshProbe(for: "codex") }
                     .disabled(model.executorSettingsBusy)
             }
 
@@ -141,7 +146,7 @@ private struct CodexSettingsPane: View {
                         version: model.cachedCLIVersion
                     )
                 )
-                SettingsInfoRow(title: "Codex", detail: model.codexStatus.menuTitle)
+                SettingsInfoRow(title: "Codex", detail: model.statusByFamily["codex"]?.menuTitle ?? "No Codex found. Newbro may not work properly.")
 
                 if let diagnosed {
                     VStack(alignment: .leading, spacing: 4) {
@@ -163,9 +168,11 @@ private struct CodexSettingsPane: View {
                     settingsActionButton(action: action)
                 }
 
-                if model.codexSetupBusy || !model.codexSetupLog.isEmpty {
+                let codexSetupBusy = model.setupBusyByFamily["codex"] ?? false
+                let codexSetupLog = model.setupLogByFamily["codex"] ?? ""
+                if codexSetupBusy || !codexSetupLog.isEmpty {
                     ScrollView {
-                        Text(model.codexSetupLog.isEmpty ? "Codex setup is running…" : model.codexSetupLog)
+                        Text(codexSetupLog.isEmpty ? "Codex setup is running…" : codexSetupLog)
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
@@ -196,7 +203,7 @@ private struct CodexSettingsPane: View {
 
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(model.executorProbe?.candidates ?? []) { candidate in
+                    ForEach(model.probeByFamily["codex"]?.candidates ?? []) { candidate in
                         CandidateRow(
                             candidate: candidate,
                             onUse: { model.useCodexCandidate(candidate) },
@@ -206,10 +213,14 @@ private struct CodexSettingsPane: View {
                 }
             }
         }
+        .onAppear {
+            model.viewedSettingsFamily = "codex"
+            model.refreshProbe(for: "codex")
+        }
     }
 
     var currentSummary: String {
-        guard let current = model.executorProbe?.current else {
+        guard let current = model.probeByFamily["codex"]?.current else {
             return model.executorSettingsBusy ? "Checking…" : "No Codex probe data yet."
         }
         let version = current.version ?? "version unavailable"
@@ -233,16 +244,17 @@ private struct CodexSettingsPane: View {
         if model.executorSettingsCanUpdateCLI {
             return .updateNewbroCLI
         }
-        if isLoginRequired(model.executorProbe?.current.error) {
+        let codexProbe = model.probeByFamily["codex"]
+        if isLoginRequired(codexProbe?.current.error) {
             return .signInCodex
         }
-        if let current = model.executorProbe?.current, !current.ok {
-            if model.executorProbe?.candidates.contains(where: { $0.ok && !$0.isCurrent }) == true {
+        if let current = codexProbe?.current, !current.ok {
+            if codexProbe?.candidates.contains(where: { $0.ok && !$0.isCurrent }) == true {
                 return .openCodexSettings
             }
             return .setUpCodex
         }
-        if !model.codexStatus.isAvailable && !model.executorSettingsBusy {
+        if model.statusByFamily["codex"]?.isAvailable != true && !model.executorSettingsBusy {
             return .setUpCodex
         }
         return nil
@@ -256,19 +268,25 @@ private struct CodexSettingsPane: View {
                 .disabled(model.executorSettingsBusy)
         case .setUpCodex:
             Button("Set Up Codex…") { model.setUpCodex(for: profile) }
-                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+                .disabled(model.executorSettingsBusy || model.setupBusyByFamily["codex"] ?? false)
         case .openCodexSettings:
             Text("Choose a Codex binary below.")
                 .foregroundStyle(.secondary)
         case .rerunDiagnosis:
             Button("Run Diagnosis") { model.rerunDiagnosis(for: profile) }
-                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+                .disabled(model.executorSettingsBusy || model.setupBusyByFamily["codex"] ?? false)
         case .openProfileSettings:
             Button("Edit Profile…") { model.editProfile(profile.id) }
         case .viewLog:
             Button("View Log…") { model.viewLog(profile.id) }
         case .signInCodex:
             Text("Sign in to Codex from the Codex app or CLI, then refresh.")
+                .foregroundStyle(.secondary)
+        case .setUpHermes:
+            Button("Set Up Hermes…") { model.setUpHermes(for: profile) }
+                .disabled(model.executorSettingsBusy)
+        case .signInHermes:
+            Text("Run `hermes setup --portal` in a terminal, then Refresh.")
                 .foregroundStyle(.secondary)
         case .none:
             EmptyView()
@@ -283,15 +301,21 @@ private struct CodexSettingsPane: View {
                 .disabled(model.executorSettingsBusy)
         case .setUpCodex:
             Button("Set Up Codex…") { model.setUpCodex(for: nil) }
-                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+                .disabled(model.executorSettingsBusy || model.setupBusyByFamily["codex"] ?? false)
         case .openCodexSettings:
             Text("Choose a Codex binary below.")
                 .foregroundStyle(.secondary)
         case .rerunDiagnosis:
             Button("Run Diagnosis") { model.refreshExecutorProbeAndStoredDiagnoses() }
-                .disabled(model.executorSettingsBusy || model.codexSetupBusy)
+                .disabled(model.executorSettingsBusy || model.setupBusyByFamily["codex"] ?? false)
         case .signInCodex:
             Text("Sign in to Codex from the Codex app or CLI, then refresh.")
+                .foregroundStyle(.secondary)
+        case .setUpHermes:
+            Button("Set Up Hermes…") { model.setUpHermes(for: nil) }
+                .disabled(model.executorSettingsBusy)
+        case .signInHermes:
+            Text("Run `hermes setup --portal` in a terminal, then Refresh.")
                 .foregroundStyle(.secondary)
         case .openProfileSettings, .viewLog, .none:
             EmptyView()
@@ -306,6 +330,88 @@ private struct CodexSettingsPane: View {
             || text.contains("sign in")
             || text.contains("signin")
             || text.contains("auth")
+    }
+}
+
+private struct HermesSettingsPane: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Hermes")
+                        .font(.title3.weight(.semibold))
+                    Text(currentSummary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Button("Refresh") { model.refreshProbe(for: "hermes") }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                SettingsInfoRow(
+                    title: "Hermes",
+                    detail: {
+                        if let current = model.probeByFamily["hermes"]?.current, current.ok {
+                            let version = current.version ?? "version unavailable"
+                            return "Hermes \(version)"
+                        }
+                        return "No Hermes found. Newbro may not work properly."
+                    }()
+                )
+
+                signInRow
+
+                Button("Set Up Hermes…") { model.setUpHermes(for: nil) }
+                    .disabled(model.setupBusyByFamily["hermes"] == true)
+
+                let hermesSetupBusy = model.setupBusyByFamily["hermes"] ?? false
+                let hermesSetupLog = model.setupLogByFamily["hermes"] ?? ""
+                if hermesSetupBusy || !hermesSetupLog.isEmpty {
+                    ScrollView {
+                        Text(hermesSetupLog.isEmpty ? "Hermes setup is running…" : hermesSetupLog)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 72)
+                }
+            }
+            .padding(10)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            Spacer()
+        }
+        .onAppear {
+            model.viewedSettingsFamily = "hermes"
+            model.refreshProbe(for: "hermes")
+        }
+    }
+
+    var currentSummary: String {
+        guard let current = model.probeByFamily["hermes"]?.current else {
+            return "No Hermes probe data yet."
+        }
+        let version = current.version ?? "version unavailable"
+        let path = current.resolvedPath ?? current.command
+        return current.ok ? "\(version) · \(path)" : "Unavailable · \(path)"
+    }
+
+    @ViewBuilder
+    private var signInRow: some View {
+        switch model.probeByFamily["hermes"]?.current.authenticated {
+        case true:
+            SettingsInfoRow(title: "Sign-in", detail: "Signed in")
+        default:
+            Text("Run `hermes setup --portal` in a terminal, then Refresh.")
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
     }
 }
 

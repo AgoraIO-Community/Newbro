@@ -11,10 +11,13 @@ from typing import Any
 
 from newbro.cli import config_files
 from newbro.executors.adapters.codex import probe as codex_probe
+from newbro.executors.adapters.hermes import probe as hermes_probe
+from newbro.executors.families import PROBEABLE_EXECUTOR_FAMILIES, SUPPORTED_EXECUTOR_FAMILIES
 
 
-SUPPORTED_EXECUTORS = ["codex"]
+SUPPORTED_EXECUTORS = list(SUPPORTED_EXECUTOR_FAMILIES)
 BUN_INSTALL_URL = "https://bun.sh/install"
+HERMES_INSTALL_URL = "https://hermes-agent.nousresearch.com/install.sh"
 COMMAND_TIMEOUT_SECONDS = 300
 SYSTEM_CURL = Path("/usr/bin/curl")
 SYSTEM_BASH = Path("/bin/bash")
@@ -32,10 +35,17 @@ def run_executor_install_codex(args: Any, app: Any) -> int:
 
 
 def run_executor_probe(args: Any, app: Any) -> int:
-    if args.executor != "codex":
-        print(f"Unsupported executor: {args.executor}", file=sys.stderr)
+    if args.executor not in PROBEABLE_EXECUTOR_FAMILIES:
+        print(f"Executor '{args.executor}' has no probe.", file=sys.stderr)
         return 1
-    payload = codex_probe_payload(config_path=app.ENV_LOCAL.with_name("config.yaml"))
+    config_path = app.ENV_LOCAL.with_name("config.yaml")
+    if args.executor == "hermes":
+        payload = hermes_probe_payload(config_path=config_path)
+    elif args.executor == "codex":
+        payload = codex_probe_payload(config_path=config_path)
+    else:
+        print(f"Executor '{args.executor}' has no probe.", file=sys.stderr)
+        return 1
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -44,20 +54,34 @@ def run_executor_probe(args: Any, app: Any) -> int:
 
 
 def run_executor_use(args: Any, app: Any) -> int:
-    if args.executor != "codex":
-        print(f"Unsupported executor: {args.executor}", file=sys.stderr)
+    if args.executor not in PROBEABLE_EXECUTOR_FAMILIES:
+        print(f"Executor '{args.executor}' has no probe.", file=sys.stderr)
         return 1
     command = str(args.executor_binary_command)
-    if not os.path.isabs(command):
-        print("Codex command must be an absolute path.", file=sys.stderr)
-        return 1
-    result = codex_probe.probe_codex_command(command)
-    if not result.ok:
-        print(result.error or "Codex command is not usable.", file=sys.stderr)
-        return 1
     config_path = app.ENV_LOCAL.with_name("config.yaml")
-    set_codex_command(config_path=config_path, command=command)
-    print(f"Codex command set to {command}")
+    if args.executor == "hermes":
+        if not os.path.isabs(command):
+            print("Hermes command must be an absolute path.", file=sys.stderr)
+            return 1
+        result = hermes_probe.probe_hermes_command(command)
+        if not result.ok:
+            print(result.error or "Hermes command is not usable.", file=sys.stderr)
+            return 1
+        set_hermes_command(config_path=config_path, command=command)
+        print(f"Hermes command set to {command}")
+    elif args.executor == "codex":
+        if not os.path.isabs(command):
+            print("Codex command must be an absolute path.", file=sys.stderr)
+            return 1
+        result = codex_probe.probe_codex_command(command)
+        if not result.ok:
+            print(result.error or "Codex command is not usable.", file=sys.stderr)
+            return 1
+        set_codex_command(config_path=config_path, command=command)
+        print(f"Codex command set to {command}")
+    else:
+        print(f"Executor '{args.executor}' has no probe.", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -158,7 +182,7 @@ def _run_logged(
     timeout_seconds: float = COMMAND_TIMEOUT_SECONDS,
 ) -> int:
     try:
-        completed = subprocess.run(argv, check=False, env=env, timeout=timeout_seconds)
+        completed = subprocess.run(argv, check=False, env=env, timeout=timeout_seconds, stdin=subprocess.DEVNULL)
     except FileNotFoundError as exc:
         raise RuntimeError(f"Command not found: {argv[0]}") from exc
     except subprocess.TimeoutExpired as exc:
@@ -238,10 +262,8 @@ def set_codex_command(*, config_path: Path, command: str) -> None:
     connector_host = config_files.existing_connector_host_config(raw)
     connectors = config_files.existing_connectors_config(raw)
     executor_node = config_files.existing_executor_node_config(raw)
-    enabled = list(executor_node.get("enabled_executors") or [])
-    if "codex" not in enabled:
-        enabled.append("codex")
-    executor_node["enabled_executors"] = enabled
+    # Single-family node invariant: a local node runs exactly one family.
+    executor_node["enabled_executors"] = ["codex"]
     executors = config_files.existing_executors_config(raw)
     codex_config = dict(executors.get("codex") or {})
     codex_config["command"] = command
@@ -257,12 +279,124 @@ def set_codex_command(*, config_path: Path, command: str) -> None:
     config_path.write_text(rendered, encoding="utf-8")
 
 
+def set_hermes_command(*, config_path: Path, command: str) -> None:
+    raw = config_files.load_existing_connector_yaml(config_path)
+    runtime = config_files.existing_runtime_config(raw, removed_keys=set())
+    connector_host = config_files.existing_connector_host_config(raw)
+    connectors = config_files.existing_connectors_config(raw)
+    executor_node = config_files.existing_executor_node_config(raw)
+    # Single-family node invariant: a local node runs exactly one family.
+    executor_node["enabled_executors"] = ["hermes"]
+    executors = config_files.existing_executors_config(raw)
+    hermes_config = dict(executors.get("hermes") or {})
+    hermes_config["command"] = command
+    executors["hermes"] = hermes_config
+    rendered = config_files.render_connector_config(
+        runtime=runtime,
+        connector_host=connector_host,
+        connectors=connectors,
+        executor_node=executor_node,
+        executors=executors,
+    )
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(rendered, encoding="utf-8")
+
+
+def hermes_probe_payload(*, config_path: Path) -> dict[str, object]:
+    raw = config_files.load_existing_connector_yaml(config_path)
+    executors = config_files.existing_executors_config(raw)
+    configured_command = str((executors.get("hermes") or {}).get("command") or "hermes")
+    result = hermes_probe.probe_hermes_command(configured_command)
+    authenticated = hermes_probe.probe_hermes_authenticated(configured_command) if result.ok else None
+    return {
+        "supported_executors": list(SUPPORTED_EXECUTORS),
+        "current": {
+            "executor": "hermes",
+            "command": configured_command,
+            "resolved_path": result.path,
+            "version": result.version,
+            "ok": result.ok,
+            "error": result.error,
+            "authenticated": authenticated,
+        },
+        "candidates": [],
+    }
+
+
+def _first_usable_hermes_command() -> str | None:
+    result = hermes_probe.probe_hermes_command("hermes")
+    return _absolute_command_path(result.path) if result.ok else None
+
+
+def _probe_installed_hermes_command() -> str | None:
+    """Check well-known install locations for hermes after a vendor install.
+
+    Mirrors ``_probe_installed_codex_command``: the vendor install.sh places
+    the binary at ``~/.local/bin/hermes`` which may not be on the current
+    process PATH.
+    """
+    candidates = [
+        str(Path.home() / ".local" / "bin" / "hermes"),
+    ]
+    for candidate in candidates:
+        result = hermes_probe.probe_hermes_command(candidate)
+        if result.ok:
+            return _absolute_command_path(result.path)
+    return None
+
+
+def install_hermes_cli(config_path: Path) -> str:
+    existing = _first_usable_hermes_command()
+    if existing is not None:
+        set_hermes_command(config_path=config_path, command=existing)
+        return existing
+    if not SYSTEM_CURL.exists() or not SYSTEM_BASH.exists():
+        raise RuntimeError(
+            "Hermes setup needs curl and bash. Install Hermes manually with "
+            f"`curl -fsSL {HERMES_INSTALL_URL} | bash` then run `hermes setup --portal`."
+        )
+    print("Installing Hermes...")
+    env = _bootstrap_environment()
+    with tempfile.TemporaryDirectory(prefix="newbro-hermes-") as directory:
+        installer = str(Path(directory) / "hermes-install.sh")
+        failure = (
+            "Hermes setup failed. Install Hermes manually with "
+            f"`curl -fsSL {HERMES_INSTALL_URL} | bash` then run `hermes setup --portal`."
+        )
+        _run_install_step([str(SYSTEM_CURL), "-fsSL", HERMES_INSTALL_URL, "-o", installer], failure, env=env)
+        _run_install_step([str(SYSTEM_BASH), installer], failure, env=env)
+    command = _first_usable_hermes_command()
+    if command is None:
+        command = _probe_installed_hermes_command()
+    if command is None:
+        raise RuntimeError(
+            "Hermes setup finished, but `hermes --version` is still unavailable. "
+            f"Install Hermes manually with `curl -fsSL {HERMES_INSTALL_URL} | bash` "
+            "then run `hermes setup --portal`."
+        )
+    set_hermes_command(config_path=config_path, command=command)
+    return command
+
+
+def run_executor_install_hermes(args: Any, app: Any) -> int:
+    config_path = app.ENV_LOCAL.with_name("config.yaml")
+    try:
+        command = install_hermes_cli(config_path)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"Hermes is ready: {command}")
+    print("Sign in with: hermes setup --portal")
+    return 0
+
+
 def _print_human_probe(payload: dict[str, object]) -> None:
     current = payload["current"]
     if isinstance(current, dict):
         status = "ok" if current.get("ok") else "broken"
+        executor_name = current.get("executor", "executor")
         print(
-            f"Codex current: {status} "
+            f"{executor_name} current: {status} "
             f"{current.get('version') or ''} {current.get('resolved_path') or current.get('command')}"
         )
     print("Candidates:")

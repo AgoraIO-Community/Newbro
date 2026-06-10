@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import ModuleType
 from typing import Callable
 
+from newbro.executors.families import SUPPORTED_EXECUTOR_FAMILIES
+
 
 def prompt_secret_value(
     name: str,
@@ -73,7 +75,7 @@ def prompt_executor_selection(
     *,
     default_selected: list[str] | None = None,
 ) -> list[str]:
-    executors = ["codex", "acpx"]
+    executors = list(SUPPORTED_EXECUTOR_FAMILIES)
     print("Available detached executors:")
     for index, executor_type in enumerate(executors, start=1):
         print(f"  {index}. {executor_type}")
